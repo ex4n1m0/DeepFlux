@@ -263,9 +263,20 @@
     back to the in-process backend in `create_backend`, so a broken SVP
     setup never costs playback. mpv's own interpolation/display-resample are
     deliberate no-ops in this backend: SVP already targets the display rate.
-  MEASURED end-to-end on `Mutiny (2026)`: container 23.976 fps ->
-  `estimated-vf-fps` 119.88 with `vf=[svp]`, while pause/seek/tracks/
-  position callbacks all keep working.
+  * `duration` MUST be observed, not read once after `loadfile`: mpv doesn't
+    know it until the file is demuxed, so a single read returns 0 and
+    `PlayerWidget._on_position` then treats the media as live — grey,
+    unclickable progress bar and disabled skip buttons (reported bug).
+  MEASURED end-to-end: local `Mutiny (2026)` and an IPTV **VOD** stream both
+  go 23.976 -> 119.88 fps with `vf=[svp]`; an IPTV **LIVE** channel goes
+  25 -> 50 fps (`vf=[lavfi, svp]`) and holds steady (20.1s of playback in
+  22s wall, no stall/restart) — so SVP is left enabled for live too.
+  Pause/seek/tracks/duration/position callbacks all keep working.
+  When a provider stream fails to open here, check the mpv log for
+  `tls: IO error: Error number -10054` (WSAECONNRESET) BEFORE suspecting this
+  backend: IPTV providers cap concurrent connections, so a second player
+  (e.g. the main app still running) makes the provider reset the new one.
+  Same URLs loaded fine once the extra connection was closed.
   VERIFIED LIMIT (2026-08, live probe of MpvBackend on this machine):
   mpv `interpolation` is frame BLENDING (smoothmotion), not motion
   synthesis — it only blends vsyncs that fall between source-frame times,

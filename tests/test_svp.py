@@ -187,6 +187,38 @@ def test_process_backend_mpv_interpolation_is_noop():
     assert be._pipe.write.call_count == 0
 
 
+def test_process_backend_observes_duration():
+    """duration must be OBSERVED, not read once after loadfile: mpv doesn't
+    know it until the file is demuxed, and a 0 duration makes the host treat
+    the media as unseekable (grey progress bar, disabled skip buttons)."""
+    assert "duration" in mpv_process._OBSERVED
+
+    be = MpvProcessBackend(None)
+    durations = []
+    be.on_position = lambda p, d: durations.append(d)
+
+    # Position before duration is known -> host correctly sees 0 (live-like).
+    be._dispatch({"event": "property-change", "name": "time-pos", "data": 1.0})
+    # Then mpv reports it, and subsequent positions carry it.
+    be._dispatch({"event": "property-change", "name": "duration", "data": 5703.84})
+    be._dispatch({"event": "property-change", "name": "time-pos", "data": 2.0})
+    assert durations == [0.0, 5703.84]
+
+    # Live streams report None -> stays 0.0 so seeking stays disabled.
+    be._dispatch({"event": "property-change", "name": "duration", "data": None})
+    be._dispatch({"event": "property-change", "name": "time-pos", "data": 3.0})
+    assert durations[-1] == 0.0
+
+
+def test_process_backend_play_resets_stale_duration():
+    """A new file must not inherit the previous file's duration."""
+    be = _wired_backend()
+    be._duration = 1234.0
+    with mock.patch.object(be, "_command", return_value=None):
+        be.play("http://example.com/stream.ts")
+    assert be._duration == 0.0
+
+
 def test_process_backend_dispatch_routes_events():
     be = MpvProcessBackend(None)
     states, positions, tracks, errors = [], [], [], []

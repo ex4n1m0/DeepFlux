@@ -40,8 +40,11 @@ _CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 PIPE_NAME = "mpvpipe"
 PIPE_PATH = r"\\.\pipe" + "\\" + PIPE_NAME
 
-# Properties we mirror into the PlayerBackend callbacks.
-_OBSERVED = ("time-pos", "pause", "eof-reached", "track-list")
+# Properties we mirror into the PlayerBackend callbacks. "duration" must be
+# OBSERVED, not read once after loadfile: mpv doesn't know it until the file
+# is demuxed, so a single read returns 0 and the host would treat the media
+# as unseekable live content (grey progress bar, disabled skip buttons).
+_OBSERVED = ("time-pos", "pause", "eof-reached", "track-list", "duration")
 
 # How often the reader polls the pipe for new data. mpv's own property
 # updates are ~10/s, so this is comfortably below the noticeable threshold.
@@ -272,7 +275,11 @@ class MpvProcessBackend(PlayerBackend):
                 self.on_error(str(msg.get("file_error") or "Playback failed"))
 
     def _on_property(self, name: str, data: Any) -> None:
-        if name == "time-pos" and data is not None and self.on_position:
+        if name == "duration":
+            # Live streams report None/0 — keep 0.0 so the host disables
+            # seeking, exactly as it does for the in-process backend.
+            self._duration = float(data or 0.0)
+        elif name == "time-pos" and data is not None and self.on_position:
             self.on_position(float(data), float(self._duration or 0.0))
         elif name == "pause":
             self._paused = bool(data)
@@ -300,8 +307,8 @@ class MpvProcessBackend(PlayerBackend):
                 self._set("user-agent", headers["User-Agent"])
             if headers.get("Referer"):
                 self._set("referrer", headers["Referer"])
+        self._duration = 0.0     # refreshed by the "duration" observer
         self._command("loadfile", url, "replace")
-        self._duration = float(self._get("duration", 0.0) or 0.0)
         if self.on_state:
             self.on_state("playing")
 
