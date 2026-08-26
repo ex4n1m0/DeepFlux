@@ -1,0 +1,38 @@
+DeepFlux — Third-party license notices for the IPTV player
+==============================================================
+
+DeepFlux bundles the following LGPL-licensed components as DYNAMICALLY
+LINKED libraries (DLLs). They are loaded at runtime, not linked statically,
+in accordance with the GNU Lesser General Public License (v2.1+).
+
+1. libmpv (mpv)
+   Copyright (c) mpv developers.
+   Homepage: https://github.com/mpv-player/mpv
+   License: GNU LGPL v2.1 or later (libmpv)
+   Source:   https://github.com/mpv-player/mpv
+
+   This product includes software developed by the mpv project.
+
+2. FFmpeg (libavcodec, libavformat, libavutil, libswscale, libswresample,
+   libavfilter)
+   Copyright (c) FFmpeg developers.
+   Homepage: https://ffmpeg.org
+   License: GNU LGPL v2.1 or later (the default build configuration)
+   Source:   https://ffmpeg.org/download.html
+
+   This software uses code from the FFmpeg library under the LGPL v2.1+.
+
+3. libVLC / VLC (optional fallback backend)
+   Copyright (c) VLC authors and VideoLAN.
+   Homepage: https://www.videolan.org
+   License: GNU LGPL v2.1 or later (libvlc)
+   Source:   https://www.videolan.org/vlc/download-sources.html
+
+The full text of the GNU LGPL v2.1 is available at:
+   https://www.gnu.org/licenses/old-licenses/lgpl-2.1.txt
+
+The corresponding source code for each component can be obtained from the
+URLs above. Written source offers may be requested by contacting the
+DeepFlux maintainers.
+
+These components are redistributed unmodified as binary DLLs.

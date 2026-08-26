@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepFlux — LLM-Powered Browser, Downloader, File Manager & Player</title>
+<meta name="description" content="One app for the whole media path: browse the web, grab videos, manage files, and play them. DeepFlux is an LLM-powered internet browser, video downloader, file manager, and video player.">
+<link rel="icon" type="image/webp" href="DeepFlux3.webp">
+<!-- Open Graph -->
+<meta property="og:title" content="DeepFlux — LLM-Powered Browser, Downloader, File Manager & Player">
+<meta property="og:description" content="One app for the whole media path: browse the web, grab videos, manage files, and play them. DeepFlux is an LLM-powered internet browser, video downloader, file manager, and video player.">
+<meta property="og:image" content="https://deepflux.space/deepflux/DeepFlux3.webp">
+<meta property="og:url" content="https://deepflux.space/deepflux/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="DeepFlux">
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="DeepFlux — LLM-Powered Browser, Downloader, File Manager & Player">
+<meta name="twitter:description" content="One app for the whole media path: browse the web, grab videos, manage files, and play them. DeepFlux is an LLM-powered internet browser, video downloader, file manager, and video player.">
+<meta name="twitter:image" content="https://deepflux.space/deepflux/DeepFlux3.webp">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    color: #fff;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  main {
+    display: flex;
+    justify-content: center;
+    /* No title above it any more — the logo is the top of the page. */
+    padding: 32px 16px 16px;
+    flex-shrink: 0;
+  }
+  main img {
+    width: min(50vmin, 400px);
+    height: auto;
+    display: block;
+  }
+  section.dl-wrap {
+    text-align: center;
+    padding: 0 24px 24px;
+    flex-shrink: 0;
+  }
+  a.dl {
+    display: inline-block;
+    color: #fff;
+    text-decoration: none;
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 999px;
+    padding: 14px 42px;
+    font-size: 0.95rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    text-indent: 0.25em;
+    transition: background 0.25s, color 0.25s;
+  }
+  a.dl:hover, a.dl:focus-visible { background: #fff; color: #000; }
+  p.meta {
+    margin-top: 14px;
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    color: rgba(255, 255, 255, 0.45);
+  }
+  section.info {
+    text-align: center;
+    padding: 0 24px 48px;
+    max-width: 720px;
+  }
+  p.tagline {
+    font-size: clamp(0.8rem, 2vw, 1.05rem);
+    font-weight: 300;
+    color: rgba(255, 255, 255, 0.85);
+    line-height: 1.6;
+  }
+  p.desc {
+    margin-top: 10px;
+    font-size: clamp(0.8rem, 2vw, 0.9rem);
+    color: rgba(255, 255, 255, 0.55);
+    line-height: 1.7;
+  }
+  footer.support {
+    text-align: center;
+    padding: 0 24px 48px;
+  }
+  /* White plate behind the QR — a black-on-black code will not scan. */
+  a.qr {
+    display: inline-block;
+    background: #fff;
+    border-radius: 12px;
+    padding: 10px;
+    line-height: 0;
+  }
+  a.qr img {
+    width: min(10vmin, 45px);
+    height: auto;
+    display: block;
+  }
+  a.bmc {
+    display: inline-block;
+    margin-top: 12px;
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    color: rgba(255, 255, 255, 0.5);
+    text-decoration: none;
+    word-break: break-all;
+    transition: color 0.25s;
+  }
+  a.bmc:hover, a.bmc:focus-visible { color: #fff; }
+</style>
+</head>
+<body>
+  <main>
+    <img src="DeepFlux3.webp" alt="DeepFlux logo">
+  </main>
+  <section class="dl-wrap">
+    <a class="dl" href="DeepFlux3.0.1Setup.exe" download>Download</a>
+    <p class="meta">DeepFlux 3.0.1 · Windows 10/11 64-bit · posted 2026-08-24</p>
+  </section>
+  <section class="info">
+    <p class="tagline">DeepFlux — LLM-Powered Browser, Downloader, File Manager &amp; Player</p>
+    <p class="desc">One app for the whole media path: browse the web, grab videos, manage files, and play them. DeepFlux is an LLM-powered internet browser, video downloader, file manager, and video player.</p>
+  </section>
+  <footer class="support">
+    <a class="qr" href="https://buymeacoffee.com/ex4n1m0" target="_blank" rel="noopener">
+      <img src="bmc-qr.png" alt="Buy me a coffee — QR code" width="45" height="45">
+    </a>
+    <br>
+    <a class="bmc" href="https://buymeacoffee.com/ex4n1m0" target="_blank" rel="noopener">https://buymeacoffee.com/ex4n1m0</a>
+  </footer>
+  <script>
+    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+  </script>
+  <script defer src="/_vercel/insights/script.js"></script>
+</body>
+</html>

@@ -1,0 +1,2585 @@
+"""IPTV tab widget for DeepFlux.
+
+Layout:
+    +----------------------------------------------------------+
+    | toolbar: [source▾] [Refresh] [search.....] [grid|list] ⚙ |
+    +----------+-----------------------------+-----------------+
+    | sidebar  | content (grid/list)         | player pane     |
+    | Live TV  |  artwork grid / list view   |  embedded video |
+    |  > News  |                             |  controls       |
+    | Movies   |                             |                 |
+    | Series   |                             |                 |
+    | Favorites|                             |                 |
+    | Recent   |                             |                 |
+    +----------+-----------------------------+-----------------+
+    | status bar: progress / messages                           |
+    +----------------------------------------------------------+
+
+All network/parse work runs through :class:`iptv.manager.IPTVManager` on
+background threads; results are marshalled back to the GUI thread via Qt
+signals. Lists/grids are virtualized (QListWidget in icon mode / QTableWidget)
+and artwork is lazy-loaded so 50k+ entries stay responsive.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import re
+import threading
+import zlib
+from collections import OrderedDict, deque
+from typing import Any, Dict, List, Optional
+
+from PySide6.QtCore import Qt, QPoint, QTimer, QUrl, Signal, QObject, QSize
+from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QPainter,
+                           QPixmap, QIcon)
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QDialog,
+    QMenu,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
+    QSplitter,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from config import DeeptorrentConfig, IPTVSourceConfig
+from iptv.artwork import PRIORITY_PREFETCH, PRIORITY_VISIBLE
+from iptv.manager import YEAR_OTHERS, IPTVManager
+from iptv.metadata import clean_title, extract_year, metadata_key
+from iptv.models import (
+    SECTION_FAVORITES,
+    SECTION_LIVE,
+    SECTION_MOVIES,
+    SECTION_RECENT,
+    SECTION_SERIES,
+    Channel,
+    Movie,
+    Series,
+)
+from iptv.player import PlayerBackend, create_backend
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Qt signal bridge: worker threads -> GUI thread
+# ---------------------------------------------------------------------------
+
+class _IPTVSignals(QObject):
+    progress = Signal(int, object)        # (count, total_or_None)
+    load_done = Signal(bool, object)      # (ok, Playlist)
+    artwork_ready = Signal(str, str)      # (url, local_path)
+    metadata_ready = Signal(str, dict)    # (key, metadata)
+    status = Signal(str)
+    player_state = Signal(str)
+    player_position = Signal(float, float)
+    player_error = Signal(str)
+
+
+# ---------------------------------------------------------------------------
+# Player widget — embeds a backend (mpv/vlc) and draws auto-hiding controls
+# ---------------------------------------------------------------------------
+
+class PlayerWidget(QWidget):
+    """Embedded video area with a control bar that auto-hides in fullscreen.
+
+    The embedded mpv/VLC native window covers the video surface and swallows
+    mouse events, so hover-based auto-hide is unreliable — once hidden there
+    is no hover event to bring the controls back. Instead, a timer polls the
+    global cursor position (QCursor.pos() reads it at OS level, unaffected
+    by the native window) and reveals the bar on any movement."""
+
+    # Backend callbacks fire on libmpv/libVLC event threads — touching Qt
+    # widgets from there is undefined behavior, so they only emit these
+    # signals; Qt queues delivery to the GUI thread automatically.
+    sig_state = Signal(str)
+    sig_position = Signal(float, float)
+    sig_tracks = Signal()
+    sig_error = Signal(str)
+
+    # Seconds the rewind/forward buttons (and ←/→ keys) jump.
+    SKIP_SECONDS = 10
+    # True on entering fullscreen — the host tab hides its chrome so only the
+    # player is visible. (The video widget can't be reparented to its own
+    # window: that would recreate the native winId mpv/VLC embed into.)
+    sig_fullscreen = Signal(bool)
+
+    def __init__(self, manager: IPTVManager, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.sig_state.connect(self._on_state)
+        self.sig_position.connect(self._on_position)
+        self.sig_error.connect(self._on_error)
+        self.sig_tracks.connect(self._apply_preferred_languages)
+        self._langs_applied_url = ""
+        self._manager = manager
+        self._config = config
+        self._engine: Any = None          # TorrentEngine, set via set_engine()
+        self._throttled = False
+        self._saved_limits = (0, 0)
+        self._backend: Optional[PlayerBackend] = None   # currently active
+        self._media_backend: Optional[PlayerBackend] = None  # mpv/VLC
+        self._media_backend_svp = False   # iptv.svp_enabled value at backend creation
+        self._backend_recreate_on_play = False  # SVP toggle pending (see apply_config)
+        self._milkdrop: Optional[Any] = None            # Butterchurn (audio)
+        self._current_item: Any = None
+        self._build_ui()
+        self._aspect_modes = ["auto", "16:9", "4:3", "2.35:1"]
+        self._aspect_idx = 0
+        # Fullscreen auto-hide state (see class docstring for why polling).
+        self._cursor_poll = QTimer(self)
+        self._cursor_poll.setInterval(150)
+        self._cursor_poll.timeout.connect(self._poll_cursor)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(2500)
+        self._hide_timer.timeout.connect(self._hide_controls)
+        self._last_cursor = None
+        self._controls_hidden = False
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # Video surface (the backend embeds into this widget via winId()).
+        self.surface = QFrame()
+        self.surface.setStyleSheet("background-color: #000000;")
+        self.surface.setMinimumHeight(220)
+        self.surface.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # The MilkDrop web view becomes a second page here rather than a child
+        # of the surface: a native child would make Qt re-create the surface's
+        # window handle and kill the embedded mpv instance.
+        self.video_stack = QStackedWidget()
+        self.video_stack.addWidget(self.surface)
+        layout.addWidget(self.video_stack, 1)
+
+        # Control bar (auto-hiding).
+        self.controls = QWidget()
+        self.controls.setStyleSheet("background-color: rgba(10,10,15,0.85);")
+        ctrl = QHBoxLayout(self.controls)
+        ctrl.setContentsMargins(8, 4, 8, 4)
+
+        # Rewind/forward start disabled: meaningless for live streams and
+        # before anything is loaded — _on_position enables them for VOD.
+        self.rw_btn = QPushButton("⏪")
+        self.rw_btn.setToolTip(f"Back {self.SKIP_SECONDS}s (←)")
+        self.rw_btn.setEnabled(False)
+        self.rw_btn.clicked.connect(lambda: self._skip(-self.SKIP_SECONDS))
+        ctrl.addWidget(self.rw_btn)
+
+        self.play_btn = QPushButton("⏸")
+        self.play_btn.setToolTip("Play/Pause (Space)")
+        self.play_btn.clicked.connect(self._toggle_pause)
+        ctrl.addWidget(self.play_btn)
+
+        self.stop_btn = QPushButton("⏹")
+        self.stop_btn.setToolTip("Stop")
+        self.stop_btn.clicked.connect(self.stop)
+        ctrl.addWidget(self.stop_btn)
+
+        self.ff_btn = QPushButton("⏩")
+        self.ff_btn.setToolTip(f"Forward {self.SKIP_SECONDS}s (→)")
+        self.ff_btn.setEnabled(False)
+        self.ff_btn.clicked.connect(lambda: self._skip(self.SKIP_SECONDS))
+        ctrl.addWidget(self.ff_btn)
+
+        self.seek = QSlider(Qt.Horizontal)
+        self.seek.setToolTip("Seek")
+        self.seek.sliderReleased.connect(self._on_seek)
+        ctrl.addWidget(self.seek, 1)
+
+        self.time_lbl = QLabel("00:00 / 00:00")
+        self.time_lbl.setStyleSheet("color: #c8d3e0;")
+        ctrl.addWidget(self.time_lbl)
+
+        self.mute_btn = QPushButton("�" if self._config.iptv.muted else "�🔊")
+        self.mute_btn.setToolTip("Mute (M)")
+        self.mute_btn.clicked.connect(self._toggle_mute)
+        ctrl.addWidget(self.mute_btn)
+
+        self.vol = QSlider(Qt.Horizontal)
+        self.vol.setMaximumWidth(90)
+        self.vol.setMaximum(100)
+        self.vol.setValue(max(0, min(100, self._config.iptv.volume)))
+        self.vol.valueChanged.connect(self._on_volume)
+        ctrl.addWidget(self.vol)
+
+        self.aspect_btn = QPushButton("⛶")
+        self.aspect_btn.setToolTip("Cycle aspect ratio (A)")
+        self.aspect_btn.clicked.connect(self._cycle_aspect)
+        ctrl.addWidget(self.aspect_btn)
+
+        self.audio_btn = QPushButton("🎧")
+        self.audio_btn.setToolTip("Audio track (# cycles)")
+        self.audio_btn.clicked.connect(lambda: self._show_track_menu("audio"))
+        ctrl.addWidget(self.audio_btn)
+
+        self.subs_btn = QPushButton("CC")
+        self.subs_btn.setToolTip("Subtitles (J cycles)")
+        self.subs_btn.clicked.connect(lambda: self._show_track_menu("sub"))
+        ctrl.addWidget(self.subs_btn)
+
+        # Only meaningful while the MilkDrop visualizer is on screen.
+        self.preset_btn = QPushButton("🌀")
+        self.preset_btn.setToolTip("MilkDrop preset")
+        self.preset_btn.clicked.connect(self._show_preset_menu)
+        self.preset_btn.hide()
+        ctrl.addWidget(self.preset_btn)
+
+        self.fs_btn = QPushButton("⛶ Full")
+        self.fs_btn.setToolTip("Fullscreen (F or double-click)")
+        self.fs_btn.clicked.connect(self._toggle_fullscreen)
+        ctrl.addWidget(self.fs_btn)
+
+        layout.addWidget(self.controls)
+
+        # Error overlay (hidden by default).
+        self.error_overlay = QWidget(self.surface)
+        self.error_overlay.setStyleSheet("background-color: rgba(10,10,15,0.9);")
+        el = QVBoxLayout(self.error_overlay)
+        self.error_lbl = QLabel("Stream unavailable")
+        self.error_lbl.setStyleSheet("color: #ff6b6b; font-size: 14px;")
+        self.error_lbl.setAlignment(Qt.AlignCenter)
+        el.addWidget(self.error_lbl)
+        self.retry_btn = QPushButton("Retry")
+        self.retry_btn.clicked.connect(self._retry)
+        el.addWidget(self.retry_btn, 0, Qt.AlignCenter)
+        self.error_overlay.hide()
+
+    # -- backend lifecycle ---------------------------------------------------
+    def _ensure_backend(self) -> bool:
+        """Create the media backend (mpv/VLC). MilkDrop is a second, lazily
+        created backend that takes over for audio files — see
+        :meth:`_play_with_milkdrop`."""
+        if self._media_backend is None:
+            svp_on = self._prepare_svp()
+            mb = create_backend(self.surface, preferred=self._config.iptv.preferred_player,
+                                svp=svp_on)
+            if mb is None:
+                self._show_error("No playback backend available. See Settings → IPTV.")
+                return False
+            # Snapshot the SETTING (not whether the backend honors it) so a
+            # VLC backend doesn't retrigger the recreate flag every time
+            # apply_config runs while SVP is enabled.
+            self._media_backend_svp = bool(self._config.iptv.svp_enabled)
+            self._wire_backend(mb)
+            mb.set_hwdec(self._config.iptv.hwdec)
+            mb.set_cache(self._config.iptv.cache_seconds)
+            mb.set_overscan(self._config.iptv.overscan_pct)
+            mb.set_interpolation(self._config.iptv.interpolation)
+            self._media_backend = mb
+        if self._backend is None:
+            self._backend = self._media_backend
+        return True
+
+    def _prepare_svp(self) -> bool:
+        """Arm SVP 4 motion interpolation for the next mpv backend creation.
+
+        Returns False (playback simply goes on without SVP) when the setting
+        is off, no SVP 4 install is found, or the Manager won't start. SVP's
+        mpv options are baked in at creation, so this only runs from
+        :meth:`_ensure_backend`."""
+        if not self._config.iptv.svp_enabled:
+            return False
+        from iptv import svp
+        inst = svp.find_install()
+        if inst is None:
+            logger.warning("SVP enabled in settings but no SVP 4 install found")
+            return False
+        svp.prepare_environment(inst)
+        # The manager (re)start polls (kill wait + boot wait) — run it off
+        # the GUI thread; SVP attaches mid-playback once it's up, which is
+        # its normal late-discovery behavior.
+        threading.Thread(target=svp.ensure_manager, args=(inst,), daemon=True).start()
+        return True
+
+    def _teardown_media_backend(self) -> None:
+        """Destroy the mpv/VLC backend so the next play() re-creates it.
+
+        Needed for settings that are baked into mpv at creation (SVP mode);
+        deferred to the next play() so a toggle never kills active playback."""
+        mb, self._media_backend = self._media_backend, None
+        if self._backend is mb:
+            self._backend = None
+        if mb is not None:
+            try:
+                mb.stop()
+                mb.destroy()
+            except Exception:
+                logger.debug("media backend teardown failed", exc_info=True)
+
+    def _wire_backend(self, backend: PlayerBackend) -> None:
+        backend.on_state = self.sig_state.emit
+        backend.on_position = self.sig_position.emit
+        backend.on_error = self.sig_error.emit
+        backend.on_tracks = lambda _t: self.sig_tracks.emit()
+        # Apply the persisted audio state to the fresh backend.
+        backend.set_volume(self.vol.value())
+        if self._config.iptv.muted:
+            backend.set_mute(True)
+
+    def _ensure_milkdrop(self) -> Optional[Any]:
+        """The Butterchurn backend, created on first use (it costs a
+        QWebEngineView, so audio-less sessions never pay for it)."""
+        if self._milkdrop is None:
+            from gui.milkdrop import MilkdropBackend
+            md = MilkdropBackend(self)
+            if not md.create():
+                return None
+            self._wire_backend(md)
+            self.video_stack.addWidget(md.view)  # sibling, never a child
+            self._milkdrop = md
+        return self._milkdrop
+
+    def _use_backend(self, backend: Any) -> None:
+        """Switch the active backend, showing its page and stopping the other."""
+        if backend is None:
+            # Nothing to switch to — still leave the video surface up rather
+            # than a stale visualizer.
+            self.video_stack.setCurrentWidget(self.surface)
+            self.preset_btn.setVisible(False)
+            return
+        if self._backend is backend:
+            return
+        other = self._backend
+        if other is not None:
+            try:
+                other.stop()
+            except Exception:
+                logger.debug("stopping previous backend failed", exc_info=True)
+        on_milkdrop = self._milkdrop is not None and backend is self._milkdrop
+        if on_milkdrop and self._milkdrop.view is not None:
+            self.video_stack.setCurrentWidget(self._milkdrop.view)
+        else:
+            self.video_stack.setCurrentWidget(self.surface)
+        self.preset_btn.setVisible(on_milkdrop)
+        self._backend = backend
+
+    def _play_with_milkdrop(self, item: Any) -> bool:
+        """Route audio files to the Butterchurn visualizer.
+
+        Returns False for anything it can't take (video, streams, formats
+        Chromium can't decode) so the caller falls back to mpv."""
+        from gui import milkdrop as md
+        if not self._config.iptv.milkdrop_enabled:
+            return False
+        url = getattr(item, "url", "")
+        if not md.is_audio_url(url):
+            return False
+        backend = self._ensure_milkdrop()
+        if backend is None:
+            return False
+        # Chromium refuses some files only once it tries to decode them;
+        # when that happens, replay through mpv instead.
+        backend.on_unsupported = lambda: self.play(item, allow_milkdrop=False)
+        self._use_backend(backend)
+        backend.set_preset(self._selected_preset(), blend=0.0)
+        backend.play(url)
+        self._manager.record_recent(item)
+        self.play_btn.setText("⏸")
+        return True
+
+    def _show_preset_menu(self) -> None:
+        """Switch MilkDrop preset on the fly (blended, like MilkDrop does)."""
+        from gui import milkdrop as md
+        if self._milkdrop is None:
+            return
+        presets = md.list_presets()
+        menu = QMenu(self)
+        current = self._milkdrop.current_preset()
+        for path in presets:
+            act = menu.addAction(md.preset_name(path))
+            act.setCheckable(True)
+            act.setChecked(path == current)
+            act.triggered.connect(lambda _c=False, p=path: self._pick_preset(p))
+        if not presets:
+            menu.addAction("No .milk presets found").setEnabled(False)
+        menu.addSeparator()
+        menu.addAction("Open presets folder…").triggered.connect(self._open_preset_folder)
+        menu.exec(self.preset_btn.mapToGlobal(self.preset_btn.rect().bottomLeft()))
+
+    def _pick_preset(self, path: str) -> None:
+        if self._milkdrop is not None:
+            self._milkdrop.set_preset(path, blend=2.0)
+        self._config.iptv.milkdrop_preset = os.path.basename(path)
+
+    def _open_preset_folder(self) -> None:
+        """Reveal the user preset folder (created on demand) in Explorer."""
+        from gui import milkdrop as md
+        target = md.user_preset_dir()
+        os.makedirs(target, exist_ok=True)
+        shipped = md.shipped_preset_dir()
+        readme = os.path.join(target, "README.txt")
+        if not os.path.exists(readme):
+            with open(readme, "w", encoding="utf-8") as fh:
+                fh.write("Drop MilkDrop .milk preset files here — they show up in the\n"
+                         "player's preset menu (the spiral button) after a restart.\n"
+                         "Presets shipped with DeepFlux live in:\n  " + shipped + "\n"
+                         "More presets: https://milkdrop.org\n")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(target))
+
+    def _selected_preset(self) -> str:
+        """Path of the configured .milk preset (or the first available one)."""
+        from gui import milkdrop as md
+        presets = md.list_presets()
+        if not presets:
+            return ""
+        want = self._config.iptv.milkdrop_preset
+        for p in presets:
+            if os.path.basename(p) == want:
+                return p
+        return presets[0]
+
+    # -- torrent throttling while streaming -----------------------------------
+    def set_engine(self, engine: Any) -> None:
+        """Give the player access to the torrent engine for QoS throttling."""
+        self._engine = engine
+
+    @staticmethod
+    def _effective_limit(current_kb: int, cap_kb: int) -> int:
+        """Only ever LOWER a limit; 0 (unlimited) is treated as infinite."""
+        if cap_kb <= 0:
+            return current_kb
+        if current_kb <= 0:
+            return cap_kb
+        return min(current_kb, cap_kb)
+
+    def _throttle_torrents(self) -> None:
+        """Cap torrent rates while streaming so the video doesn't starve."""
+        if self._throttled or self._engine is None or not self._config.iptv.throttle_torrents:
+            return
+        self._saved_limits = (
+            self._config.torrents.download_rate_limit_kb,
+            self._config.torrents.upload_rate_limit_kb,
+        )
+        dl = self._effective_limit(self._saved_limits[0], self._config.iptv.throttle_download_kb)
+        ul = self._effective_limit(self._saved_limits[1], self._config.iptv.throttle_upload_kb)
+        if (dl, ul) == self._saved_limits:
+            return  # already at or below the caps — nothing to do
+        self._throttled = True
+        logger.info("IPTV playing — throttling torrents to %d/%d KB/s", dl, ul)
+
+        def _work() -> None:
+            try:
+                self._engine.set_rate_limits(dl, ul)
+            except Exception:
+                logger.debug("throttle failed", exc_info=True)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _restore_torrent_rates(self) -> None:
+        """Restore the user's torrent rate limits after playback stops."""
+        if not self._throttled or self._engine is None:
+            return
+        self._throttled = False
+        dl, ul = self._saved_limits
+        logger.info("IPTV stopped — restoring torrent limits to %d/%d KB/s", dl, ul)
+
+        def _work() -> None:
+            try:
+                self._engine.set_rate_limits(dl, ul)
+            except Exception:
+                logger.debug("restore limits failed", exc_info=True)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    # -- playback ------------------------------------------------------------
+    def play(self, item: Any, allow_milkdrop: bool = True) -> None:
+        if self._backend_recreate_on_play:
+            self._backend_recreate_on_play = False
+            self._teardown_media_backend()
+        if not self._ensure_backend():
+            return
+        self._throttle_torrents()
+        self._current_item = item
+        self._langs_applied_url = ""  # new file — re-apply preferred languages
+        self.error_overlay.hide()
+        if allow_milkdrop and self._play_with_milkdrop(item):
+            return
+        self._use_backend(self._media_backend)
+        # Live TV runs on mpv's default audio-clock sync: display-resample
+        # (+interpolation) assumes a seekable, steadily-timestamped source,
+        # and on live streams it makes playback stall and restart.
+        self._backend.set_smooth_video(getattr(item, "section", "") != SECTION_LIVE)
+        headers = {}
+        src = self._manager.active_source()
+        if src and src.user_agent:
+            headers["User-Agent"] = src.user_agent
+        if src and src.referer:
+            headers["Referer"] = src.referer
+        # Per-entry #EXTVLCOPT headers from the playlist override source-level
+        # ones (some streams require a specific UA/Referer).
+        opts = (getattr(item, "extra", None) or {}).get("extvlcopt", [])
+        if isinstance(opts, str):
+            opts = [opts]
+        for opt in opts:
+            k, _, v = str(opt).partition("=")
+            k = k.strip().lower()
+            if k == "http-user-agent" and v.strip():
+                headers["User-Agent"] = v.strip()
+            elif k == "http-referrer" and v.strip():
+                headers["Referer"] = v.strip()
+        # Arbitrary headers passed by web-stream playback (cookies, origin...).
+        extra_headers = (getattr(item, "extra", None) or {}).get("headers")
+        if isinstance(extra_headers, dict):
+            headers.update({str(k): str(v) for k, v in extra_headers.items() if v})
+        self._backend.play(getattr(item, "url", ""), headers=headers)
+        self._manager.record_recent(item)
+        self.play_btn.setText("⏸")
+        # VLC has no track-list observer — poll once shortly after load.
+        QTimer.singleShot(2500, self._apply_preferred_languages)
+
+    def _retry(self) -> None:
+        if self._current_item:
+            self.play(self._current_item)
+
+    def _toggle_pause(self) -> None:
+        if self._backend is None:
+            return
+        if self._backend.is_playing:
+            self._backend.pause()
+            self.play_btn.setText("▶")
+        else:
+            self._backend.resume()
+            self.play_btn.setText("⏸")
+
+    def stop(self) -> None:
+        if self._backend is not None:
+            self._backend.stop()
+        self._restore_torrent_rates()
+        self.play_btn.setText("▶")
+        self.seek.setValue(0)
+        self.rw_btn.setEnabled(False)
+        self.ff_btn.setEnabled(False)
+        self.time_lbl.setText("00:00 / 00:00")
+
+    def _on_seek(self) -> None:
+        if self._backend is not None:
+            self._backend.seek(self.seek.value())
+
+    def _skip(self, delta: float) -> None:
+        if self._backend is not None:
+            self._backend.seek_by(delta)
+
+    def _on_volume(self, v: int) -> None:
+        self._config.iptv.volume = v  # persisted with the config on close
+        if self._backend is not None:
+            self._backend.set_volume(v)
+
+    def _toggle_mute(self) -> None:
+        if self._backend is not None:
+            mute = self.mute_btn.text() == "🔊"  # showing 🔊 = currently unmuted
+            self._backend.set_mute(mute)
+            self.mute_btn.setText("🔇" if mute else "🔊")
+            self._config.iptv.muted = mute  # persisted with the config on close
+
+    def _cycle_aspect(self) -> None:
+        if self._backend is None:
+            return
+        self._aspect_idx = (self._aspect_idx + 1) % len(self._aspect_modes)
+        self._backend.set_aspect(self._aspect_modes[self._aspect_idx])
+
+    # -- audio / subtitle tracks ---------------------------------------------
+    @staticmethod
+    def _track_label(t: dict) -> str:
+        bits = [b for b in (t.get("title") or "", t.get("lang") or "") if b]
+        return f"Track {t['id']}" + (f" — {' · '.join(bits)}" if bits else "")
+
+    def _show_track_menu(self, kind: str) -> None:
+        """Popup listing audio/subtitle tracks with the active one checked."""
+        if self._backend is None:
+            return
+        if kind == "audio":
+            tracks = self._backend.audio_tracks()
+            current = self._backend.current_audio_track()
+            btn = self.audio_btn
+            entries = [("Auto", "auto")] + [(self._track_label(t), t["id"]) for t in tracks]
+        else:
+            tracks = self._backend.subtitle_tracks()
+            current = self._backend.current_subtitle_track()
+            btn = self.subs_btn
+            entries = [("Off", "no")] + [(self._track_label(t), t["id"]) for t in tracks]
+        menu = QMenu(self)
+        if not tracks:
+            menu.addAction("No tracks available").setEnabled(False)
+        for label, tid in entries:
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(str(current) == str(tid))
+            act.triggered.connect(lambda _checked=False, t=tid, k=kind: self._set_track(k, t))
+        if kind == "sub":
+            menu.addSeparator()
+            find_act = menu.addAction("Find subtitles online…")
+            find_act.setEnabled(self._current_item is not None)
+            find_act.triggered.connect(self._find_subtitles_online)
+        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _find_subtitles_online(self) -> None:
+        """Open the OpenSubtitles search dialog for the current video."""
+        if self._backend is None or self._current_item is None:
+            return
+        url = getattr(self._current_item, "url", "")
+        name = getattr(self._current_item, "name", "") or os.path.basename(url)
+        file_path = url if os.path.isfile(url) else ""
+        from iptv.opensubtitles import clean_media_query
+        dlg = _SubtitleSearchDialog(
+            self._config, file_path, clean_media_query(file_path or name),
+            on_loaded=self._backend.add_subtitle_file, parent=self)
+        dlg.exec()
+
+    def _set_track(self, kind: str, track_id: Any) -> None:
+        if self._backend is None:
+            return
+        if kind == "audio":
+            self._backend.set_audio_track(track_id)
+        else:
+            self._backend.set_subtitle_track(track_id)
+
+    # -- preferred languages ---------------------------------------------------
+    # ISO 639-1 ↔ 639-2 aliases for the common cases mpv/VLC report.
+    _LANG_ALIASES = {
+        "en": "eng", "fr": "fra", "de": "deu", "es": "spa", "it": "ita",
+        "pt": "por", "ru": "rus", "ar": "ara", "zh": "zho", "ja": "jpn",
+        "ko": "kor", "nl": "nld", "pl": "pol", "sv": "swe", "tr": "tur",
+        "ro": "ron", "cs": "ces", "el": "ell", "he": "heb", "hi": "hin",
+    }
+
+    @classmethod
+    def _lang_matches(cls, track_lang: str, pref: str) -> bool:
+        t, p = (track_lang or "").strip().lower(), (pref or "").strip().lower()
+        if not t or not p:
+            return False
+        variants = {p, cls._LANG_ALIASES.get(p, "")}
+        variants |= {k for k, v in cls._LANG_ALIASES.items() if v == p}
+        return any(t == v or t.startswith(v) for v in variants if v)
+
+    def _apply_preferred_languages(self) -> None:
+        """Auto-select the configured audio/subtitle languages once per loaded
+        file — tracks appear asynchronously after playback starts (mpv's
+        track-list observer / a one-shot timer on VLC)."""
+        if self._backend is None or self._current_item is None:
+            return
+        url = getattr(self._current_item, "url", "")
+        if self._langs_applied_url == url:
+            return
+        audio = self._backend.audio_tracks()
+        subs = self._backend.subtitle_tracks()
+        if not audio and not subs:
+            return  # tracks not loaded yet — observer/timer will retry
+        self._langs_applied_url = url
+        cfg = self._config.iptv
+        if cfg.preferred_audio_lang:
+            for t in audio:
+                if self._lang_matches(t.get("lang", ""), cfg.preferred_audio_lang):
+                    self._backend.set_audio_track(t["id"])
+                    break
+        if cfg.preferred_sub_lang:
+            for t in subs:
+                if self._lang_matches(t.get("lang", ""), cfg.preferred_sub_lang):
+                    self._backend.set_subtitle_track(t["id"])
+                    break
+
+    def _toggle_fullscreen(self) -> None:
+        self._set_fullscreen(not self.window().isFullScreen())
+
+    def _set_fullscreen(self, on: bool) -> None:
+        win = self.window()
+        if on == win.isFullScreen():
+            return
+        if on:
+            win.showFullScreen()
+        else:
+            win.showNormal()
+        self.sig_fullscreen.emit(on)
+        self._set_controls_autohide(on)
+
+    # -- fullscreen control auto-hide -----------------------------------------
+    def _set_controls_autohide(self, on: bool) -> None:
+        if on:
+            self._last_cursor = QCursor.pos()
+            self._cursor_poll.start()
+            self._hide_timer.start()  # hide after the initial idle grace
+        else:
+            self._cursor_poll.stop()
+            self._hide_timer.stop()
+            self._show_controls()
+
+    def _poll_cursor(self) -> None:
+        pos = QCursor.pos()
+        if pos != self._last_cursor:
+            self._last_cursor = pos
+            self._show_controls()
+            self._hide_timer.start()  # restart the countdown after movement
+
+    def _show_controls(self) -> None:
+        if self._controls_hidden:
+            self._controls_hidden = False
+            self.controls.show()
+            self.window().unsetCursor()
+
+    def _hide_controls(self) -> None:
+        # Only in fullscreen; never mid-drag on the seek slider or while the
+        # pointer sits on the bar itself.
+        if not self.window().isFullScreen() or self.seek.isSliderDown() or self.controls.underMouse():
+            return
+        self._controls_hidden = True
+        self.controls.hide()
+        self.window().setCursor(Qt.BlankCursor)
+
+    # -- backend callbacks (delivered on the GUI thread via the signals) ----
+    def _on_state(self, state: str) -> None:
+        if state == "stopped":
+            self.play_btn.setText("▶")
+            self._restore_torrent_rates()
+        elif state == "playing":
+            self.play_btn.setText("⏸")
+
+    def _on_position(self, pos: float, dur: float) -> None:
+        # Cap slider range to duration for VOD; live streams report 0 duration
+        # (seeking is meaningless there, so the slider is disabled).
+        if dur > 0:
+            self.seek.setEnabled(True)
+            self.rw_btn.setEnabled(True)
+            self.ff_btn.setEnabled(True)
+            self.seek.setMaximum(int(dur))
+            # Don't fight the user while they're dragging the slider.
+            if not self.seek.isSliderDown():
+                self.seek.blockSignals(True)
+                self.seek.setValue(int(pos))
+                self.seek.blockSignals(False)
+        else:
+            self.seek.setEnabled(False)
+            self.rw_btn.setEnabled(False)
+            self.ff_btn.setEnabled(False)
+        self.time_lbl.setText(f"{_fmt_time(pos)} / {_fmt_time(dur)}")
+
+    def _on_error(self, msg: str) -> None:
+        self._show_error(msg)
+
+    def _show_error(self, msg: str) -> None:
+        self.error_lbl.setText(msg or "Stream unavailable")
+        self.error_overlay.resize(self.surface.size())
+        self.error_overlay.show()
+
+    # -- settings live-apply -------------------------------------------------
+    def apply_config(self) -> None:
+        """Re-apply player settings (buffer, hwdec, overscan, interpolation) to a live backend."""
+        if bool(self._config.iptv.svp_enabled) != self._media_backend_svp:
+            # SVP mode is baked into mpv at creation (IPC pipe + copy-back
+            # hwdec) — rebuild the backend when the next file plays.
+            self._backend_recreate_on_play = True
+        if self._media_backend is not None:
+            self._media_backend.set_cache(self._config.iptv.cache_seconds)
+            self._media_backend.set_hwdec(self._config.iptv.hwdec)
+            self._media_backend.set_overscan(self._config.iptv.overscan_pct)
+            self._media_backend.set_interpolation(self._config.iptv.interpolation)
+        if self._milkdrop is not None:
+            self._milkdrop.set_preset(self._selected_preset())
+        if self._backend is not None:
+            # Preferred languages changed? Re-run selection on the live file.
+            self._langs_applied_url = ""
+            self._apply_preferred_languages()
+
+    def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802
+        self._toggle_fullscreen()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        # Keep the error overlay covering the video surface after resizes.
+        if self.error_overlay.isVisible():
+            self.error_overlay.resize(self.surface.size())
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        # Any key press in fullscreen reveals the controls briefly.
+        if self.window().isFullScreen():
+            self._show_controls()
+            self._hide_timer.start()
+        k = event.key()
+        if k == Qt.Key_Space:
+            self._toggle_pause()
+        elif k == Qt.Key_Left:
+            self._skip(-self.SKIP_SECONDS)
+        elif k == Qt.Key_Right:
+            self._skip(self.SKIP_SECONDS)
+        elif k == Qt.Key_F:
+            self._toggle_fullscreen()
+        elif k == Qt.Key_M:
+            self._toggle_mute()
+        elif k == Qt.Key_A:
+            self._cycle_aspect()
+        elif k == Qt.Key_J:
+            if self._backend is not None:
+                self._backend.cycle_subtitle_track()
+        elif k == Qt.Key_NumberSign:
+            if self._backend is not None:
+                self._backend.cycle_audio_track()
+        elif k == Qt.Key_Escape and self.window().isFullScreen():
+            self._set_fullscreen(False)
+        else:
+            super().keyPressEvent(event)
+
+    def shutdown(self) -> None:
+        if self._backend is not None:
+            self._backend.destroy()
+            self._backend = None
+
+
+# ---------------------------------------------------------------------------
+# OpenSubtitles search dialog
+# ---------------------------------------------------------------------------
+
+class _SubtitleSearchDialog(QDialog):
+    """Search OpenSubtitles for the current video and load the chosen file.
+
+    Local files are matched by movie hash first (exact), with the editable
+    title query as fallback; network streams search by title only. Network
+    I/O runs on worker threads; results arrive via Qt signals."""
+
+    results_ready = Signal(object)        # list[dict] or Exception
+    download_done = Signal(str, str)      # (saved path, error message)
+
+    _LANGS = ["en", "es", "fr", "de", "it", "pt", "ro", "ru", "ar",
+              "zh", "ja", "ko", "nl", "pl", "sv", "tr", "all"]
+
+    def __init__(self, config: DeeptorrentConfig, file_path: str, query_hint: str,
+                 on_loaded: Any = None, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._config = config
+        self._file_path = file_path
+        self._on_loaded = on_loaded
+        self._results: List[dict] = []
+        self.setWindowTitle("Find Subtitles — OpenSubtitles")
+        self.setMinimumSize(640, 420)
+        self.setStyleSheet(
+            "QDialog { background-color: #0a0a0f; color: #c8d3e0; }"
+            "QLabel { color: #c8d3e0; }"
+            "QLineEdit, QComboBox { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 3px 8px; border-radius: 3px; }"
+            "QTableWidget { background-color: #0d1117; color: #c8d3e0; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; }"
+            "QPushButton { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 3px 12px; border-radius: 3px; }"
+            "QPushButton:hover { border-color: #2a7abf; color: #2a7abf; }"
+            "QLabel#hint { color: #4a6a8a; font-size: 11px; }"
+        )
+        self._build_ui(query_hint)
+        self.results_ready.connect(self._on_results)
+        self.download_done.connect(self._on_downloaded)
+
+    def _build_ui(self, query_hint: str) -> None:
+        layout = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self.query = QLineEdit(query_hint)
+        top.addWidget(self.query, 1)
+        self.lang = QComboBox()
+        self.lang.addItems(self._LANGS)
+        # Default to the user's preferred subtitle language when configured.
+        pref = (self._config.iptv.preferred_sub_lang or "").strip().lower()[:2]
+        idx = self._LANGS.index(pref) if pref in self._LANGS else 0
+        self.lang.setCurrentIndex(idx)
+        top.addWidget(self.lang)
+        self.search_btn = QPushButton("Search")
+        self.search_btn.clicked.connect(self._search)
+        top.addWidget(self.search_btn)
+        layout.addLayout(top)
+
+        if self._file_path:
+            hint = QLabel("Local file — matched by hash first, title query as fallback.")
+        else:
+            hint = QLabel("Network stream — title search only.")
+        hint.setObjectName("hint")
+        layout.addWidget(hint)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Release", "Lang", "Downloads", "Rating"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.doubleClicked.connect(lambda _i: self._download_selected())
+        layout.addWidget(self.table, 1)
+
+        self.status = QLabel("")
+        self.status.setObjectName("hint")
+        layout.addWidget(self.status)
+
+        bottom = QHBoxLayout()
+        self.dl_btn = QPushButton("Download && Load")
+        self.dl_btn.clicked.connect(self._download_selected)
+        bottom.addWidget(self.dl_btn)
+        bottom.addStretch()
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.reject)
+        bottom.addWidget(close_btn)
+        layout.addLayout(bottom)
+
+        if not self._config.iptv.opensubtitles_api_key:
+            self.status.setText(
+                "No OpenSubtitles API key — add one in Config → IPTV Settings "
+                "(free consumer key at opensubtitles.com).")
+            self.search_btn.setEnabled(False)
+            self.dl_btn.setEnabled(False)
+
+    # -- search ---------------------------------------------------------------
+    def _search(self) -> None:
+        from iptv.opensubtitles import OpenSubtitlesClient
+        cfg = self._config.iptv
+        client = OpenSubtitlesClient(cfg.opensubtitles_api_key,
+                                     cfg.opensubtitles_username,
+                                     cfg.opensubtitles_password)
+        query = self.query.text().strip()
+        languages = self.lang.currentText()
+        file_path = self._file_path
+        self.status.setText("Searching…")
+        self.search_btn.setEnabled(False)
+
+        def _work() -> None:
+            try:
+                self.results_ready.emit(client.search(
+                    query=query, file_path=file_path, languages=languages))
+            except Exception as exc:
+                self.results_ready.emit(exc)
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_results(self, results: object) -> None:
+        self.search_btn.setEnabled(True)
+        if isinstance(results, Exception):
+            self.status.setText(str(results))
+            return
+        self._results = list(results)
+        self.table.setRowCount(len(self._results))
+        for r, e in enumerate(self._results):
+            hi = " (HI)" if e.get("hearing_impaired") else ""
+            self.table.setItem(r, 0, QTableWidgetItem(str(e.get("release", "")) + hi))
+            self.table.setItem(r, 1, QTableWidgetItem(str(e.get("language", ""))))
+            self.table.setItem(r, 2, QTableWidgetItem(str(e.get("downloads", 0))))
+            self.table.setItem(r, 3, QTableWidgetItem(f"{e.get('rating', 0.0):.1f}"))
+        self.status.setText(f"{len(self._results)} result(s) — double-click or Download & Load.")
+
+    # -- download -------------------------------------------------------------
+    def _download_selected(self) -> None:
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self._results):
+            self.status.setText("Select a subtitle first.")
+            return
+        entry = self._results[row]
+        file_id = entry.get("file_id")
+        if not file_id:
+            return
+        dest = self._dest_path(entry)
+        from iptv.opensubtitles import OpenSubtitlesClient
+        cfg = self._config.iptv
+        client = OpenSubtitlesClient(cfg.opensubtitles_api_key,
+                                     cfg.opensubtitles_username,
+                                     cfg.opensubtitles_password)
+        self.status.setText("Downloading…")
+        self.dl_btn.setEnabled(False)
+
+        def _work() -> None:
+            try:
+                self.download_done.emit(client.download(int(file_id), dest), "")
+            except Exception as exc:
+                self.download_done.emit("", str(exc))
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _dest_path(self, entry: dict) -> str:
+        from iptv.opensubtitles import subtitle_dest_path
+        return subtitle_dest_path(self._file_path, self.query.text(),
+                                  entry.get("language", ""))
+
+    def _on_downloaded(self, path: str, error: str) -> None:
+        self.dl_btn.setEnabled(True)
+        if error:
+            self.status.setText(error)
+            return
+        if self._on_loaded is not None:
+            self._on_loaded(path)
+        self.status.setText(f"Loaded: {os.path.basename(path)}")
+        self.accept()
+
+
+def _fmt_time(s: float) -> str:
+    if s <= 0:
+        return "00:00"
+    s = int(s)
+    h, r = divmod(s, 3600)
+    m, s = divmod(r, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+# ---------------------------------------------------------------------------
+# Content grid (icon mode) + list view, stacked
+# ---------------------------------------------------------------------------
+
+_PLACEHOLDER_CACHE: "OrderedDict[str, QPixmap]" = OrderedDict()
+_TILE_SIZE = QSize(120, 160)
+# A 120x160 pixmap costs ~77 KB of RAM, and every decorated tile holds one:
+# per-name initials for a 16k-entry section would be ~335 MB. So icons only
+# exist for tiles near the viewport (see ContentGrid._release_far_icons) and
+# both caches are bounded.
+_MAX_PLACEHOLDERS = 400
+_MAX_CACHED_PIXMAPS = 1200
+_NEUTRAL: Optional[QPixmap] = None
+_ROW_ROLE = Qt.UserRole + 1
+
+# Tiles fetched ahead of/behind the viewport so scrolling rarely shows a
+# placeholder, and the ceiling on outstanding prefetch downloads that keeps a
+# fast scroll from starving the tiles actually on screen.
+_PREFETCH_TILES = 600
+_MAX_PENDING_ARTWORK = 1200
+# Icons are dropped this far outside the prefetch window (hysteresis: tiles
+# aren't cleared the moment they leave it, so a small scroll doesn't churn).
+_RELEASE_MARGIN = 300
+# Pixmap decodes per event-loop turn (~1.5 ms each).
+_DECODE_BATCH = 12
+# Background artwork sweep pacing (metadata lookups are limited to ~5/s).
+_SWEEP_BATCH = 5
+_SWEEP_INTERVAL_MS = 1000
+
+
+def _neutral_pixmap() -> QPixmap:
+    """The shared 'nothing loaded here' tile — one instance for the whole app."""
+    global _NEUTRAL
+    if _NEUTRAL is None:
+        pm = QPixmap(_TILE_SIZE)
+        pm.fill(QColor(24, 26, 34))
+        _NEUTRAL = pm
+    return _NEUTRAL
+
+
+def _initials(name: str) -> str:
+    """Up to 3 characters standing in for a channel name ("BBC News HD" -> BBC)."""
+    words = [w for w in re.findall(r"[0-9A-Za-z]+", name or "")
+             if w.upper() not in ("HD", "FHD", "UHD", "SD", "4K", "TV", "VIP")]
+    if not words:
+        words = re.findall(r"[0-9A-Za-z]+", name or "")
+    if not words:
+        return ""
+    if len(words) == 1:
+        return words[0][:3].upper()
+    return "".join(w[0] for w in words[:3]).upper()
+
+
+def _placeholder_pixmap(name: str = "") -> QPixmap:
+    """Tile used until (or instead of) a real logo.
+
+    A flat grey box reads as "broken", so channels without artwork get their
+    initials on a colour derived from the name — distinct per channel and
+    stable across restarts."""
+    text = _initials(name)
+    pm = _PLACEHOLDER_CACHE.get(text)
+    if pm is not None:
+        _PLACEHOLDER_CACHE.move_to_end(text)
+        return pm
+    pm = QPixmap(_TILE_SIZE)
+    hue = (zlib.crc32(text.encode("utf-8")) % 360) if text else 210
+    pm.fill(QColor.fromHsv(hue, 70, 95))
+    if text:
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.Antialiasing)
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(30 if len(text) < 3 else 22)
+        painter.setFont(font)
+        painter.setPen(QColor(232, 236, 244))
+        painter.drawText(pm.rect(), Qt.AlignCenter, text)
+        painter.end()
+    _PLACEHOLDER_CACHE[text] = pm
+    while len(_PLACEHOLDER_CACHE) > _MAX_PLACEHOLDERS:
+        _PLACEHOLDER_CACHE.popitem(last=False)
+    return pm
+
+
+class ContentGrid(QListWidget):
+    """Virtualized icon-mode grid with lazy artwork loading.
+
+    Artwork is only fetched for items currently visible in the viewport
+    (plus a small prefetch margin), so a 50k-entry section never queues
+    50k image downloads. Several items can share one logo URL — the
+    pending map is URL -> list of items so all of them get updated."""
+
+    itemActivated = Signal(object)  # double click / context Play -> play it
+    itemSelected = Signal(object)   # single click -> show the info panel
+    sweep_progress = Signal(int, int)  # (resolved, total) artwork lookups
+    sig_artwork = Signal(str, object)  # (url, path) — marshals worker -> GUI
+    sig_artwork_failed = Signal(str)   # (url) — fetch gave up, worker -> GUI
+    sig_logo = Signal(object, str)     # (item, url) — async channel-logo result
+
+    def __init__(self, manager: IPTVManager, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._manager = manager
+        self.setViewMode(QListWidget.IconMode)
+        self.setIconSize(QSize(120, 160))
+        self.setResizeMode(QListWidget.Adjust)
+        self.setMovement(QListWidget.Static)
+        self.setUniformItemSizes(True)
+        self.setWordWrap(True)
+        self.setTextElideMode(Qt.ElideRight)
+        self.setSpacing(8)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.itemDoubleClicked.connect(self._on_activate)
+        self.itemClicked.connect(self._on_select)
+        self.sig_artwork.connect(self._apply_artwork)
+        self.sig_artwork_failed.connect(lambda u: self._on_artwork_failed(u))
+        self.sig_logo.connect(self._apply_logo)
+        self.verticalScrollBar().valueChanged.connect(lambda _v: self._scan_timer.start())
+        self._items: List[Any] = []
+        self._artwork_requests: Dict[str, List[QListWidgetItem]] = {}
+        self._requested_urls: set = set()
+        # Loaded artwork, kept per URL: hundreds of channels share a single
+        # logo URL (58 for one logo in a typical playlist), and tiles that
+        # scroll in after the fetch completed must still get the icon.
+        self._pixmaps: "OrderedDict[str, QPixmap]" = OrderedDict()
+        self._decorated: set = set()  # rows currently holding a real/initials icon
+        self._failed_urls: set = set()       # gave up — don't re-queue
+        self._fail_counts: Dict[str, int] = {}  # url -> consecutive failures
+        self._logo_pending: Dict[int, List[QListWidgetItem]] = {}  # id(item) -> tiles
+        self._logo_tried: set = set()        # id(item) -> artwork lookup attempted
+        self._tiles_by_item: Dict[int, QListWidgetItem] = {}
+        # Background sweep: resolve artwork for every entry in the section that
+        # has none, a few per tick so the metadata rate limiter isn't flooded.
+        self._sweep_queue: deque = deque()
+        self._sweep_timer = QTimer(self)
+        self._sweep_timer.setInterval(_SWEEP_INTERVAL_MS)
+        self._sweep_timer.timeout.connect(self._sweep_step)
+        # Scrolling fires continuously; coalesce the (wider) prefetch scans.
+        self._scan_timer = QTimer(self)
+        self._scan_timer.setSingleShot(True)
+        self._scan_timer.setInterval(60)
+        self._scan_timer.timeout.connect(self._load_visible_artwork)
+        # Pixmap decoding is spread over event-loop turns (see _apply_artwork).
+        self._sweep_total = 0
+        self._sweep_done = 0
+        self._decode_queue: deque = deque()
+        self._decode_timer = QTimer(self)
+        self._decode_timer.setInterval(0)
+        self._decode_timer.timeout.connect(self._decode_step)
+
+    def set_items(self, items: List[Any]) -> None:
+        self._items = items
+        self._sweep_timer.stop()
+        self._sweep_queue.clear()
+        self._decode_timer.stop()
+        self._decode_queue.clear()
+        self._artwork_requests.clear()
+        self._requested_urls.clear()
+        self._pixmaps.clear()
+        self._failed_urls.clear()
+        self._fail_counts.clear()
+        self._logo_pending.clear()
+        self._logo_tried.clear()
+        self._tiles_by_item.clear()
+        self._decorated.clear()
+        self.clear()
+        neutral = QIcon(_neutral_pixmap())
+        for row, it in enumerate(items):
+            name = getattr(it, "name", "") or getattr(it, "display_name", "")
+            li = QListWidgetItem(name)
+            # Shared placeholder: a per-name one here would cost ~300 MB on a
+            # 16k-entry section. Real icons are attached near the viewport.
+            li.setIcon(neutral)
+            li.setData(Qt.UserRole, it)
+            li.setData(_ROW_ROLE, row)  # QListWidget.row() is a linear scan
+            self.addItem(li)
+            self._tiles_by_item[id(it)] = li
+            if not (getattr(it, "logo", "") or getattr(it, "poster", "")):
+                self._sweep_queue.append(li)
+        self._sweep_total = len(self._sweep_queue)
+        self._sweep_done = 0
+        self.sweep_progress.emit(0, self._sweep_total)
+        # Item geometry isn't valid until the layout pass after the widget is
+        # shown — defer slightly so the first visible batch loads immediately.
+        QTimer.singleShot(80, self._load_visible_artwork)
+        if self._sweep_queue:
+            self._sweep_timer.start()
+
+    # -- background artwork sweep -------------------------------------------
+    def _sweep_step(self) -> None:
+        """Resolve artwork for the next few entries that have none.
+
+        Visible tiles are handled first by :meth:`_load_visible_artwork`; this
+        walks the rest of the section so covers are already in the cache by
+        the time the user scrolls down to them."""
+        sent = 0
+        while self._sweep_queue and sent < _SWEEP_BATCH:
+            li = self._sweep_queue.popleft()
+            if self._resolve_missing_artwork(li):
+                sent += 1
+        if not self._sweep_queue:
+            self._sweep_timer.stop()
+
+    def _resolve_missing_artwork(self, li: QListWidgetItem,
+                                 framegrab: bool = False) -> bool:
+        """Kick off the artwork lookup for one artwork-less tile.
+
+        Returns True when a lookup was actually started (callers pace
+        themselves against the metadata rate limiter).
+
+        ``framegrab`` enables the FFmpeg last resort and is only ever set for
+        tiles on screen: it opens a video connection to the user's provider,
+        so the background sweep (tens of thousands of entries) must not."""
+        it = li.data(Qt.UserRole)
+        if it is None:
+            return False
+        if getattr(it, "logo", "") or getattr(it, "poster", ""):
+            return False  # artwork arrived from somewhere else meanwhile
+        if id(it) in self._logo_pending:
+            self._logo_pending[id(it)].append(li)
+            return False
+        if id(it) in self._logo_tried:
+            return False
+        self._logo_tried.add(id(it))
+        self._logo_pending[id(it)] = [li]
+        # Channels resolve against the local iptv-org index; movies/series go
+        # out to TMDb/TVmaze. Both run off the GUI thread.
+        if isinstance(it, Channel):
+            self._manager.resolve_channel_logo_async(it, self._on_logo_resolved)
+        else:
+            self._manager.resolve_poster_async(it, self._on_logo_resolved,
+                                               allow_framegrab=framegrab)
+        return True
+
+    def apply_external_artwork(self, item: Any, url: str) -> None:
+        """Artwork discovered outside the grid (detail-panel metadata).
+
+        Without this the tile keeps its placeholder until the section is
+        rebuilt, even though clicking the entry just found its poster."""
+        li = self._tiles_by_item.get(id(item))
+        if li is None or not url or url in self._failed_urls:
+            return
+        self._logo_tried.add(id(item))
+        self._logo_pending.setdefault(id(item), []).append(li)
+        self._apply_logo(item, url)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # Geometry is only valid once visible — (re)load the visible batch.
+        QTimer.singleShot(0, self._load_visible_artwork)
+
+    def _row_at(self, y: int) -> int:
+        """Row index at viewport height ``y``, or -1.
+
+        Probes a few x positions: icon mode leaves gaps between tiles, and a
+        single probe that lands in one returns an invalid index."""
+        vp = self.viewport().rect()
+        for frac in (0.5, 0.15, 0.85, 0.32, 0.68):
+            idx = self.indexAt(QPoint(int(vp.left() + vp.width() * frac), y))
+            if idx.isValid():
+                return idx.row()
+        return -1
+
+    def _visible_range(self) -> tuple:
+        """(first, last) row index in the viewport — O(1), not a full scan."""
+        vp = self.viewport().rect()
+        first = self._row_at(vp.top() + 2)
+        last = self._row_at(vp.bottom() - 2)
+        if first < 0 and last < 0:
+            # Nothing probed cleanly — approximate from the scroll position so
+            # a scrolled-down grid doesn't prefetch from the top of the list.
+            sb = self.verticalScrollBar()
+            span = sb.maximum() + sb.pageStep()
+            first = int(self.count() * sb.value() / span) if span > 0 else 0
+        if first < 0:
+            first = max(0, last - 60)
+        if last < 0:
+            last = min(self.count() - 1, first + 60)
+        return first, max(first, last)
+
+    def _load_visible_artwork(self) -> None:
+        if not self.isVisible() or not self.count():
+            return
+        first, last = self._visible_range()
+        lo = max(0, first - _PREFETCH_TILES)
+        hi = min(self.count() - 1, last + _PREFETCH_TILES)
+        self._release_far_icons(lo, hi)
+        for i in range(lo, hi + 1):
+            self._request_tile_artwork(self.item(i), prefetch=not (first <= i <= last))
+
+    def _release_far_icons(self, lo: int, hi: int) -> None:
+        """Drop icons well outside the window so RAM tracks the window size.
+
+        Coming back is cheap: the pixmap is usually still in ``_pixmaps``,
+        and otherwise the image is already on disk."""
+        lo -= _RELEASE_MARGIN
+        hi += _RELEASE_MARGIN
+        stale = [r for r in self._decorated if r < lo or r > hi]
+        if not stale:
+            return
+        neutral = QIcon(_neutral_pixmap())
+        for row in stale:
+            li = self.item(row)
+            if li is not None:
+                li.setIcon(neutral)
+            self._decorated.discard(row)
+
+    def _set_tile_icon(self, li: QListWidgetItem, pm: QPixmap) -> None:
+        li.setIcon(QIcon(pm))
+        row = li.data(_ROW_ROLE)
+        if row is not None:
+            self._decorated.add(row)
+
+    def _remember_pixmap(self, url: str, pm: QPixmap) -> None:
+        self._pixmaps[url] = pm
+        self._pixmaps.move_to_end(url)
+        while len(self._pixmaps) > _MAX_CACHED_PIXMAPS:
+            old, _ = self._pixmaps.popitem(last=False)
+            # Allow a re-fetch (disk cache hit) if it scrolls back into view.
+            self._requested_urls.discard(old)
+
+    def _request_tile_artwork(self, li: QListWidgetItem, prefetch: bool = False) -> None:
+        it = li.data(Qt.UserRole)
+        if it is None:
+            return
+        logo = getattr(it, "logo", "") or getattr(it, "poster", "")
+        if not logo or logo in self._failed_urls:
+            # No artwork (yet): show the initials tile, and for visible items
+            # kick off the lookup — channels fall back to iptv-org,
+            # movies/series to TMDb/TVmaze. The sweep covers the rest.
+            row = li.data(_ROW_ROLE)
+            if row is not None and row not in self._decorated:
+                self._set_tile_icon(li, _placeholder_pixmap(li.text()))
+            if not logo and not prefetch:
+                # On screen right now — the only place frame-grabbing is allowed.
+                self._resolve_missing_artwork(li, framegrab=True)
+            return
+        pm = self._pixmaps.get(logo)
+        if pm is not None:
+            self._set_tile_icon(li, pm)  # already downloaded for another tile
+            self._pixmaps.move_to_end(logo)
+            return
+        if logo in self._requested_urls:
+            # Fetch in flight — attach this tile so it gets the result too.
+            self._artwork_requests.setdefault(logo, []).append(li)
+            return
+        # Fast scrolling would otherwise pile up thousands of stale prefetches
+        # in front of the tiles the user is actually looking at.
+        if prefetch and len(self._artwork_requests) >= _MAX_PENDING_ARTWORK:
+            return
+        self._requested_urls.add(logo)
+        self._artwork_requests.setdefault(logo, []).append(li)
+        self._manager.fetch_artwork(
+            logo, self._on_artwork,
+            priority=PRIORITY_PREFETCH if prefetch else PRIORITY_VISIBLE)
+
+    def _on_logo_resolved(self, item: Any, url: str) -> None:
+        # Worker thread -> GUI thread.
+        self.sig_logo.emit(item, url)
+
+    def _apply_logo(self, item: Any, url: str) -> None:
+        tiles = self._logo_pending.pop(id(item), [])
+        # Every artwork-less entry produces exactly one result (hit or miss),
+        # so this is the honest progress counter for the sweep.
+        if self._sweep_total:
+            self._sweep_done = min(self._sweep_done + 1, self._sweep_total)
+            self.sweep_progress.emit(self._sweep_done, self._sweep_total)
+        if not url or url in self._failed_urls:
+            return  # nothing matched (or the fallback is dead too) — keep the initials tile
+        if isinstance(item, Channel):
+            item.logo = url
+        else:
+            item.poster = url  # VOD keeps artwork in poster; the grid reads either
+        pm = self._pixmaps.get(url)
+        if pm is not None:
+            for li in tiles:
+                self._set_tile_icon(li, pm)
+            return
+        self._artwork_requests.setdefault(url, []).extend(tiles)
+        if url in self._requested_urls:
+            return  # another tile already queued this URL
+        self._requested_urls.add(url)
+        self._manager.fetch_artwork(url, self._on_artwork)
+
+    def _on_artwork(self, url: str, path: Optional[str]) -> None:
+        # Called from a worker thread — marshal to the GUI thread via signal.
+        if path is None:
+            self.sig_artwork_failed.emit(url)
+            return
+        self.sig_artwork.emit(url, path)
+
+    def _apply_artwork(self, url: str, path: str) -> None:
+        # Decoding is ~1.5 ms per image and cached tiles all come back at once
+        # (a 600-tile scan over a warm cache was a 300 ms freeze), so spread
+        # the work across event-loop turns instead of blocking the scroll.
+        self._decode_queue.append((url, path))
+        if not self._decode_timer.isActive():
+            self._decode_timer.start()
+
+    def _decode_step(self) -> None:
+        for _ in range(_DECODE_BATCH):
+            if not self._decode_queue:
+                self._decode_timer.stop()
+                return
+            url, path = self._decode_queue.popleft()
+            self._decode_one(url, path)
+
+    def _decode_one(self, url: str, path: str) -> None:
+        items = self._artwork_requests.pop(url, [])
+        pm = self._pixmaps.get(url)
+        if pm is None:
+            pm = QPixmap(path)
+        if pm.isNull():
+            self._on_artwork_failed(url, items)
+            return
+        if pm.width() > _TILE_SIZE.width() or pm.height() > _TILE_SIZE.height():
+            # Tiles draw at 120x160; keeping the 200x300 cache image costs 3x
+            # the RAM for no visible difference.
+            pm = pm.scaled(_TILE_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self._remember_pixmap(url, pm)
+        for li in items:
+            self._set_tile_icon(li, pm)
+
+    def _on_artwork_failed(self, url: str, tiles: Optional[List[QListWidgetItem]] = None) -> None:
+        """The artwork URL is dead: fall back to iptv-org / TMDb for its tiles.
+
+        Playlists routinely carry stale ``tvg-logo`` URLs; without this the
+        tiles would keep the placeholder even though artwork exists upstream."""
+        if tiles is None:
+            tiles = self._artwork_requests.pop(url, [])
+        self._requested_urls.discard(url)
+        # One failure isn't proof the URL is dead — under a burst the CDN
+        # resets connections. Give it another pass before falling back.
+        self._fail_counts[url] = self._fail_counts.get(url, 0) + 1
+        if self._fail_counts[url] < 2:
+            return
+        self._failed_urls.add(url)
+        for li in tiles:
+            it = li.data(Qt.UserRole)
+            if it is None or id(it) in self._logo_tried:
+                continue
+            self._logo_tried.add(id(it))
+            self._logo_pending.setdefault(id(it), []).append(li)
+            if isinstance(it, Channel):
+                it.logo = ""
+                self._manager.resolve_channel_logo_async(it, self._on_logo_resolved)
+            else:
+                it.logo = ""
+                it.poster = ""
+                self._manager.resolve_poster_async(it, self._on_logo_resolved)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        # Resizing can reveal more tiles — load their artwork too.
+        QTimer.singleShot(0, self._load_visible_artwork)
+
+    def _on_activate(self, li: QListWidgetItem) -> None:
+        it = li.data(Qt.UserRole)
+        if it is not None:
+            self.itemActivated.emit(it)
+
+    def _on_select(self, li: QListWidgetItem) -> None:
+        # A single click only opens the info panel — playback needs a double
+        # click, so browsing a section doesn't start streams by accident.
+        it = li.data(Qt.UserRole)
+        if it is not None:
+            self.itemSelected.emit(it)
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N802
+        li = self.itemAt(event.pos())
+        if li is None:
+            return
+        it = li.data(Qt.UserRole)
+        menu = QMenu(self)
+        act_play = menu.addAction("Play")
+        act_fav = menu.addAction("Remove from Favorites" if getattr(it, "favorite", False) else "Add to Favorites")
+        chosen = menu.exec(event.globalPos())
+        if chosen == act_play:
+            self.itemActivated.emit(it)
+        elif chosen == act_fav:
+            self._manager.toggle_favorite(it)
+            self.viewport().update()
+
+
+class ContentList(QTableWidget):
+    """List view alternative with columns: name, category, EPG now-playing."""
+
+    itemActivated = Signal(object)
+
+    def __init__(self, manager: IPTVManager, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._manager = manager
+        self.setColumnCount(3)
+        self.setHorizontalHeaderLabels(["Name", "Category", "Now Playing"])
+        self.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.setAlternatingRowColors(True)
+        self.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.itemDoubleClicked.connect(self._on_activate)
+        self.verticalHeader().setDefaultSectionSize(20)
+        self._items: List[Any] = []
+        # Refresh the "Now Playing" column for visible rows periodically —
+        # EPG data goes stale as programmes change.
+        self._epg_timer = QTimer(self)
+        self._epg_timer.setInterval(60_000)
+        self._epg_timer.timeout.connect(self._refresh_visible_epg)
+        self._epg_timer.start()
+
+    def set_items(self, items: List[Any]) -> None:
+        self._items = items
+        self.setRowCount(len(items))
+        for r, it in enumerate(items):
+            name = getattr(it, "name", "") or getattr(it, "display_name", "")
+            self.setItem(r, 0, QTableWidgetItem(name))
+            self.setItem(r, 1, QTableWidgetItem(getattr(it, "group", "")))
+            now = ""
+            if isinstance(it, Channel) and it.tvg_id:
+                now = self._manager.epg_now_next(it.tvg_id).get("now", "")
+            self.setItem(r, 2, QTableWidgetItem(now))
+            self.item(r, 0).setData(Qt.UserRole, it)
+
+    def _refresh_visible_epg(self) -> None:
+        """Update the Now Playing column for rows currently in the viewport."""
+        if not self.isVisible() or self.rowCount() == 0:
+            return
+        first = max(0, self.rowAt(0))
+        last = self.rowAt(self.viewport().height())
+        if last < 0:
+            last = self.rowCount() - 1
+        for r in range(first, min(last + 1, self.rowCount())):
+            name_item = self.item(r, 0)
+            now_item = self.item(r, 2)
+            if name_item is None or now_item is None:
+                continue
+            it = name_item.data(Qt.UserRole)
+            if isinstance(it, Channel) and it.tvg_id:
+                now = self._manager.epg_now_next(it.tvg_id).get("now", "")
+                if now and now != now_item.text():
+                    now_item.setText(now)
+
+    def _on_activate(self, item: QTableWidgetItem) -> None:
+        it = self.item(item.row(), 0).data(Qt.UserRole)
+        if it is not None:
+            self.itemActivated.emit(it)
+
+
+# ---------------------------------------------------------------------------
+# Detail panel for movies/series
+# ---------------------------------------------------------------------------
+
+class DetailPanel(QScrollArea):
+    """Shows backdrop, synopsis, year, rating, genres, and episode list."""
+
+    play_requested = Signal(object)  # an Episode or the parent item
+    artwork_found = Signal(object, str)  # (item, poster url) — feeds the grid
+    sig_artwork = Signal(str, object)    # (url, path) — marshals worker -> GUI
+    sig_artwork_failed = Signal(str)     # (url) — fetch gave up, worker -> GUI
+    sig_metadata = Signal(str, dict)     # (key, metadata) — marshals worker -> GUI
+
+    def __init__(self, manager: IPTVManager, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._manager = manager
+        self.sig_artwork.connect(self._apply_artwork)
+        self.sig_artwork_failed.connect(self._on_artwork_gone)
+        self.sig_metadata.connect(self._apply_metadata)
+        self.setWidgetResizable(True)
+        self.setStyleSheet("QScrollArea { background-color: #0a0a0f; border: none; }")
+        inner = QWidget()
+        self._layout = QVBoxLayout(inner)
+        self._layout.setContentsMargins(12, 12, 12, 12)
+        self.setWidget(inner)
+
+        self.title = QLabel("")
+        self.title.setStyleSheet("color: #2a7abf; font-size: 18px; font-weight: 700;")
+        self.title.setWordWrap(True)
+        self._layout.addWidget(self.title)
+
+        self.meta_lbl = QLabel("")
+        self.meta_lbl.setStyleSheet("color: #8a9ab0; font-size: 12px;")
+        self.meta_lbl.setWordWrap(True)
+        self._layout.addWidget(self.meta_lbl)
+
+        self.backdrop = QLabel("")
+        self.backdrop.setFixedHeight(180)
+        self.backdrop.setStyleSheet("background-color: #111827; border: 1px solid #1a2a4a; border-radius: 6px;")
+        self.backdrop.setAlignment(Qt.AlignCenter)
+        self._layout.addWidget(self.backdrop)
+
+        self.synopsis = QLabel("")
+        self.synopsis.setStyleSheet("color: #c8d3e0; font-size: 13px;")
+        self.synopsis.setWordWrap(True)
+        self._layout.addWidget(self.synopsis)
+
+        self.episodes_label = QLabel("Episodes")
+        self.episodes_label.setObjectName("section_label")
+        self._layout.addWidget(self.episodes_label)
+        self.episodes_label.hide()
+
+        self.episodes = QListWidget()
+        self.episodes.itemDoubleClicked.connect(self._on_episode)
+        self._layout.addWidget(self.episodes)
+        self.episodes.hide()
+
+        self._current: Any = None
+        self._episodes: List[Any] = []
+        # Guards against stale async results: fast browsing must not apply the
+        # previous item's metadata/artwork to the newly shown one.
+        self._expected_meta_key = ""
+        self._expected_artwork_url = ""
+
+    def show_item(self, item: Any) -> None:
+        self._current = item
+        self.show()  # panel starts hidden until something is actually selected
+        if isinstance(item, Channel):
+            self._show_channel(item)
+            return
+        self.title.setText(getattr(item, "name", ""))
+        year = getattr(item, "year", "") or extract_year(getattr(item, "name", ""))
+        rating = getattr(item, "rating", 0.0)
+        genres = getattr(item, "genres", []) or []
+        self.meta_lbl.setText(
+            f"{year}  •  ★ {rating:.1f}  •  {', '.join(genres) if genres else '—'}"
+        )
+        self.synopsis.setText(getattr(item, "synopsis", "") or "Loading metadata…")
+
+        # Backdrop/poster artwork.
+        bd = getattr(item, "backdrop", "") or getattr(item, "poster", "") or getattr(item, "logo", "")
+        self._expected_artwork_url = bd
+        self.backdrop.setText("Loading artwork…")
+        self.backdrop.setPixmap(QPixmap())
+        if bd:
+            self._manager.fetch_artwork(bd, self._on_artwork)
+
+        # Episodes for series.
+        if isinstance(item, Series):
+            self.episodes_label.show()
+            self.episodes.show()
+            self.episodes.clear()
+            self._episodes = []
+            seasons = sorted({e.season for e in item.episodes} or [1])
+            for s in seasons:
+                hdr = QListWidgetItem(f"— Season {s} —")
+                hdr.setFlags(Qt.NoItemFlags)
+                self.episodes.addItem(hdr)
+                for ep in item.episodes_for(s):
+                    li = QListWidgetItem(f"S{ep.season:02d}E{ep.episode:02d}  {ep.title or ep.name}")
+                    li.setData(Qt.UserRole, ep)
+                    self.episodes.addItem(li)
+                    self._episodes.append(ep)
+        else:
+            self.episodes_label.hide()
+            self.episodes.hide()
+
+        # Resolve metadata on demand.
+        section = getattr(item, "section", SECTION_MOVIES)
+        self._expected_meta_key = metadata_key(section, getattr(item, "name", ""), year)
+        self._manager.resolve_metadata(section, getattr(item, "name", ""), year, self._on_metadata)
+
+    def _show_channel(self, ch: Any) -> None:
+        """Detail panel for a live TV channel: logo, group, EPG now/next.
+        No TMDb lookup — channels aren't movies."""
+        self.title.setText(ch.display_name)
+        epg = ""
+        if ch.epg_now:
+            epg = f"Now: {ch.epg_now}"
+            if ch.epg_next:
+                epg += f"  •  Next: {ch.epg_next}"
+        self.meta_lbl.setText(ch.group or "Live TV")
+        self.synopsis.setText(epg)
+        self.episodes_label.hide()
+        self.episodes.hide()
+        self._expected_meta_key = ""  # drop any in-flight movie/series metadata
+        self._expected_artwork_url = ch.logo
+        if ch.logo:
+            self.backdrop.setText("Loading logo…")
+            self.backdrop.setPixmap(QPixmap())
+            self._manager.fetch_artwork(ch.logo, self._on_artwork)
+        else:
+            self.backdrop.setText("")
+            self.backdrop.setPixmap(_placeholder_pixmap(ch.display_name))
+
+    def _on_artwork(self, url: str, path: Optional[str]) -> None:
+        if not path:
+            self.sig_artwork_failed.emit(url)
+            return
+        self.sig_artwork.emit(url, path)
+
+    def _on_artwork_gone(self, url: str) -> None:
+        # Don't leave the panel stuck on "Loading…" when the URL is dead.
+        if url != self._expected_artwork_url:
+            return
+        name = getattr(self._current, "name", "") or getattr(self._current, "display_name", "")
+        if isinstance(self._current, Channel):
+            self.backdrop.setText("")
+            self.backdrop.setPixmap(_placeholder_pixmap(name))
+        else:
+            self.backdrop.setText("No artwork available")
+
+    def _apply_artwork(self, url: str, path: str) -> None:
+        # Drop artwork that belongs to a previously shown item.
+        if url != self._expected_artwork_url:
+            return
+        pm = QPixmap(path)
+        if not pm.isNull():
+            self.backdrop.setPixmap(pm.scaled(self.backdrop.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _on_metadata(self, key: str, meta: Dict[str, Any]) -> None:
+        if not meta or self._current is None:
+            return
+        self.sig_metadata.emit(key, meta)
+
+    def _apply_metadata(self, key: str, meta: Dict[str, Any]) -> None:
+        # Drop metadata that belongs to a previously shown item.
+        if self._current is None or key != self._expected_meta_key:
+            return
+        if meta.get("synopsis"):
+            self._current.synopsis = meta["synopsis"]
+            self.synopsis.setText(meta["synopsis"])
+        if meta.get("year"):
+            self._current.year = meta["year"]
+        if meta.get("rating"):
+            self._current.rating = meta["rating"]
+        if meta.get("genres"):
+            self._current.genres = meta["genres"]
+        if meta.get("poster") and not getattr(self._current, "poster", ""):
+            self._current.poster = meta["poster"]
+            # The grid tile is still showing a placeholder — hand it the URL
+            # instead of making the user rebuild the section to see it.
+            self.artwork_found.emit(self._current, meta["poster"])
+        if meta.get("backdrop") and not getattr(self._current, "backdrop", ""):
+            self._current.backdrop = meta["backdrop"]
+        year = getattr(self._current, "year", "")
+        rating = getattr(self._current, "rating", 0.0)
+        genres = getattr(self._current, "genres", []) or []
+        self.meta_lbl.setText(
+            f"{year}  •  ★ {rating:.1f}  •  {', '.join(genres) if genres else '—'}"
+        )
+        bd = getattr(self._current, "backdrop", "") or getattr(self._current, "poster", "")
+        if bd and (not self.backdrop.pixmap() or self.backdrop.pixmap().isNull()):
+            self._expected_artwork_url = bd
+            self._manager.fetch_artwork(bd, self._on_artwork)
+
+    def _on_episode(self, li: QListWidgetItem) -> None:
+        ep = li.data(Qt.UserRole)
+        if ep is not None:
+            self.play_requested.emit(ep)
+
+
+# ---------------------------------------------------------------------------
+# Main IPTV tab
+# ---------------------------------------------------------------------------
+
+class IPTVTab(QWidget):
+    """The top-level IPTV tab."""
+
+    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._config = config
+        self._signals = _IPTVSignals()
+        self._signals.progress.connect(self._on_progress)
+        self._signals.load_done.connect(self._on_load_done)
+        self._signals.artwork_ready.connect(self._on_artwork_ready)
+        self._signals.metadata_ready.connect(self._on_metadata_ready)
+        self._signals.status.connect(self._on_status)
+        self._signals.player_state.connect(self._on_player_state)
+        self._signals.player_position.connect(self._on_player_position)
+        self._signals.player_error.connect(self._on_player_error)
+
+        self._manager = IPTVManager(
+            sources=[_source_from_config(s) for s in config.iptv.sources],
+            tmdb_api_key=config.iptv.tmdb_api_key,
+            data_dir=config.iptv.cache_dir or None,
+            cache_seconds=config.iptv.cache_seconds,
+            hwdec=config.iptv.hwdec,
+            tpdb_api_key=config.iptv.tpdb_api_key,
+            framegrab_posters=config.iptv.framegrab_posters,
+        )
+        self._current_section = SECTION_LIVE
+        self._current_category = ""
+        self._current_year = ""  # set when a year node is selected
+        # Which source the content pane is showing. Every enabled source is
+        # loaded and listed in the tree; this is just the current view.
+        self._current_source_id = ""
+        self._build_ui()
+        self._populate_source_dropdown()
+        # Show the source tree straight away (nodes read "loading…" until
+        # their playlist lands), then load every enabled source in the
+        # background — the first to arrive becomes the visible one.
+        self._rebuild_sidebar()
+        if any(s.enabled for s in self._manager.sources):
+            self._refresh()
+
+    # -- UI construction -----------------------------------------------------
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # --- Toolbar (in a widget so fullscreen mode can hide it) ---
+        self._toolbar_w = QWidget()
+        toolbar = QHBoxLayout(self._toolbar_w)
+        toolbar.setContentsMargins(0, 0, 0, 0)
+        toolbar.setSpacing(6)
+        self._source_combo = QComboBox()
+        self._source_combo.setMinimumWidth(180)
+        self._source_combo.currentTextChanged.connect(self._on_source_changed)
+        toolbar.addWidget(QLabel("Source:"))
+        toolbar.addWidget(self._source_combo)
+
+        self._refresh_btn = QPushButton("⟳")
+        self._refresh_btn.setToolTip("Refresh playlist")
+        self._refresh_btn.clicked.connect(self._refresh)
+        toolbar.addWidget(self._refresh_btn)
+
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search channels, movies, series…")
+        # Debounce: searching 50k entries on every keystroke stutters the UI.
+        self._search_timer = QTimer(self)
+        self._search_timer.setSingleShot(True)
+        self._search_timer.setInterval(300)
+        self._search_timer.timeout.connect(lambda: self._on_search(self._search.text()))
+        self._search.textChanged.connect(lambda _t: self._search_timer.start())
+        toolbar.addWidget(self._search, 1)
+
+        self._view_grid_btn = QPushButton("▦ Grid")
+        self._view_grid_btn.setObjectName("btn_accent")
+        self._view_grid_btn.clicked.connect(lambda: self._set_view("grid"))
+        toolbar.addWidget(self._view_grid_btn)
+
+        self._view_list_btn = QPushButton("≡ List")
+        self._view_list_btn.clicked.connect(lambda: self._set_view("list"))
+        toolbar.addWidget(self._view_list_btn)
+
+        self._open_file_btn = QPushButton("▶ Open File")
+        self._open_file_btn.setToolTip("Play a local video file")
+        self._open_file_btn.clicked.connect(self._open_local_file)
+        toolbar.addWidget(self._open_file_btn)
+
+        self._settings_btn = QPushButton("⚙")
+        self._settings_btn.setToolTip("IPTV Settings")
+        toolbar.addWidget(self._settings_btn)
+        layout.addWidget(self._toolbar_w)
+
+        # --- Body: splitter sidebar | content | player ---
+        splitter = QSplitter(Qt.Horizontal)
+
+        # Sidebar (grouping picker + section/category tree).
+        sidebar = QWidget()
+        sb_layout = QVBoxLayout(sidebar)
+        sb_layout.setContentsMargins(0, 0, 0, 0)
+        group_row = QHBoxLayout()
+        group_row.setContentsMargins(4, 2, 4, 2)
+        group_row.addWidget(QLabel("Group:"))
+        self._group_combo = QComboBox()
+        self._group_combo.addItem("Categories", "category")
+        self._group_combo.addItem("Years", "year")
+        self._group_combo.setToolTip(
+            "Group Movies/Series by provider category or by release year")
+        gidx = self._group_combo.findData(self._group_mode())
+        self._group_combo.setCurrentIndex(gidx if gidx >= 0 else 0)
+        # Connect after setCurrentIndex so restoring the saved mode doesn't
+        # fire a spurious change (which would re-save the config).
+        self._group_combo.currentIndexChanged.connect(self._on_group_mode_changed)
+        group_row.addWidget(self._group_combo, 1)
+        sb_layout.addLayout(group_row)
+        self._tree = QTreeWidget()
+        self._tree.setHeaderHidden(True)
+        self._tree.setMinimumWidth(160)
+        self._tree.itemClicked.connect(self._on_tree_click)
+        sb_layout.addWidget(self._tree)
+        splitter.addWidget(sidebar)
+        self._sidebar = sidebar
+
+        # Content area: stacked grid/list + detail panel.
+        content = QSplitter(Qt.Vertical)
+        self._grid = ContentGrid(self._manager)
+        self._list = ContentList(self._manager)
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._grid)
+        self._stack.addWidget(self._list)
+        self._stack.setCurrentWidget(self._grid)
+        content.addWidget(self._stack)
+
+        self._grid.sweep_progress.connect(self._on_artwork_progress)
+
+        self._detail = DetailPanel(self._manager)
+        self._detail.play_requested.connect(self._play_item)
+        self._detail.artwork_found.connect(self._grid.apply_external_artwork)
+        self._detail.hide()  # stays hidden until an item is selected
+        content.addWidget(self._detail)
+        content.setSizes([400, 200])
+        splitter.addWidget(content)
+        self._content = content
+
+        # Player pane.
+        player_col = QWidget()
+        pl_layout = QVBoxLayout(player_col)
+        pl_layout.setContentsMargins(0, 0, 0, 0)
+        self._player = PlayerWidget(self._manager, self._config)
+        self._player.sig_fullscreen.connect(self._on_player_fullscreen)
+        pl_layout.addWidget(self._player)
+        splitter.addWidget(player_col)
+        # Player gets ~2/3 of the width; sidebar + content share the rest.
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(2, 6)
+        splitter.setSizes([170, 280, 990])
+
+        layout.addWidget(splitter, 1)
+
+        # --- Status bar (in a widget so fullscreen mode can hide it) ---
+        self._status_w = QWidget()
+        status = QHBoxLayout(self._status_w)
+        status.setContentsMargins(0, 0, 0, 0)
+        self._status_lbl = QLabel("Ready")
+        self._status_lbl.setStyleSheet("color: #8a9ab0; font-size: 11px;")
+        status.addWidget(self._status_lbl)
+        status.addStretch()
+        # Artwork sweep indicator — the lookups are deliberately slow (rate
+        # limited), so show the progress rather than leaving the user
+        # wondering whether the blank tiles are ever going to fill in.
+        self._art_lbl = QLabel("")
+        self._art_lbl.setStyleSheet("color: #6f7f95; font-size: 11px;")
+        self._art_lbl.hide()
+        status.addWidget(self._art_lbl)
+        self._art_progress = QProgressBar()
+        self._art_progress.setMaximumWidth(120)
+        self._art_progress.setMaximumHeight(10)
+        self._art_progress.setTextVisible(False)
+        self._art_progress.hide()
+        status.addWidget(self._art_progress)
+        self._progress = QProgressBar()
+        self._progress.setMaximumWidth(240)
+        self._progress.setMaximumHeight(14)
+        self._progress.hide()
+        status.addWidget(self._progress)
+        layout.addWidget(self._status_w)
+
+        # Wire content activation -> play/detail.
+        self._grid.itemActivated.connect(self._on_item_activated)
+        self._grid.itemSelected.connect(self._on_item_selected)
+        self._list.itemActivated.connect(self._on_item_activated)
+
+    # -- sources -------------------------------------------------------------
+    def _populate_source_dropdown(self) -> None:
+        self._source_combo.blockSignals(True)
+        self._source_combo.clear()
+        for s in self._manager.sources:
+            if s.enabled:
+                self._source_combo.addItem(s.name, s.id)
+        self._source_combo.blockSignals(False)
+
+    def _sync_source_combo(self, source_id: str) -> None:
+        idx = self._source_combo.findData(source_id)
+        if idx >= 0 and idx != self._source_combo.currentIndex():
+            self._source_combo.blockSignals(True)
+            self._source_combo.setCurrentIndex(idx)
+            self._source_combo.blockSignals(False)
+
+    def _on_source_changed(self, _name: str) -> None:
+        """Dropdown is a jump, not a reload: every source is already loaded."""
+        sid = self._source_combo.currentData()
+        if not sid:
+            return
+        self._current_source_id = sid
+        self._manager.set_active_source(sid)
+        self._current_category = ""
+        self._current_year = ""
+        self._select_tree_node((sid, self._current_section, ""))
+        self._show_section(self._current_section, "", sid)
+
+    def _refresh(self) -> None:
+        """Load every enabled source in the background.
+
+        Each one publishes its playlist as it lands, so the first provider is
+        usable while the rest are still downloading."""
+        sources = [s for s in self._manager.sources if s.enabled]
+        if not sources:
+            self._set_status("No source configured. Open Settings → IPTV to add one.")
+            return
+        self._progress.show()
+        self._progress.setRange(0, 0)
+        self._pending_sources = len(sources)
+        self._set_status(f"Loading {len(sources)} source(s)…"
+                         if len(sources) > 1 else f"Loading {sources[0].name}…")
+        self._manager.load_all_async(
+            on_progress=lambda c, t: self._signals.progress.emit(c, t),
+            on_done=lambda ok, pl: self._signals.load_done.emit(ok, pl),
+        )
+
+    # -- signal handlers (GUI thread) ----------------------------------------
+    def _on_progress(self, count: int, total) -> None:
+        if total:
+            self._progress.setRange(0, total)
+            self._progress.setValue(count)
+        else:
+            self._progress.setRange(0, 0)
+        self._set_status(f"Loading… {count} entries")
+
+    def _on_load_done(self, ok: bool, pl: Any) -> None:
+        """One source finished. Others may still be loading behind it."""
+        loaded = set(self._manager.loaded_source_ids())
+        enabled = [s for s in self._manager.sources if s.enabled]
+        remaining = [s for s in enabled if s.id not in loaded]
+        stale_note = ""
+        if getattr(pl, "stale", False):
+            # Refresh failed; the manager kept the previous cached copy.
+            stale_note = " (refresh failed — showing cached data)"
+        if remaining:
+            self._set_status(f"Loaded {pl.total} entries from "
+                             f"{self._source_name(pl.source_id)}{stale_note} — "
+                             f"{len(remaining)} source(s) still loading…")
+        else:
+            self._progress.hide()
+            total = 0
+            stale = []
+            for s in enabled:
+                p = self._manager.playlist_for(s.id)
+                if p is None:
+                    continue
+                total += p.total
+                if p.stale:
+                    stale.append(self._source_name(s.id))
+            if total == 0:
+                self._set_status("No entries loaded. Check the source "
+                                 "URL/credentials in Settings → IPTV.")
+            elif stale:
+                self._set_status(f"Loaded {total} entries from "
+                                 f"{len(enabled)} source(s) — refresh failed "
+                                 f"for {', '.join(stale)}; showing cached data")
+            else:
+                self._set_status(f"Loaded {total} entries from "
+                                 f"{len(enabled)} source(s)")
+        # First source to arrive becomes the visible one.
+        first = not self._current_source_id
+        if first and pl.source_id:
+            self._current_source_id = pl.source_id
+            self._sync_source_combo(pl.source_id)
+        self._rebuild_sidebar()
+        if first or pl.source_id == self._current_source_id:
+            self._show_section(self._current_section, self._current_category,
+                               self._current_source_id, year=self._current_year)
+
+    def _source_name(self, source_id: str) -> str:
+        for s in self._manager.sources:
+            if s.id == source_id:
+                return s.name
+        return source_id
+
+    def _on_artwork_ready(self, url: str, path: str) -> None:
+        # Grid/list apply artwork via their own callbacks; this is a no-op hook.
+        pass
+
+    def _on_metadata_ready(self, key: str, meta: dict) -> None:
+        pass
+
+    def _on_artwork_progress(self, done: int, total: int) -> None:
+        """Show how far the missing-artwork sweep has got for this section."""
+        if not total or done >= total:
+            self._art_lbl.hide()
+            self._art_progress.hide()
+            return
+        self._art_lbl.setText(f"Finding artwork  {done}/{total}")
+        self._art_progress.setRange(0, total)
+        self._art_progress.setValue(done)
+        self._art_lbl.show()
+        self._art_progress.show()
+
+    def _on_status(self, msg: str) -> None:
+        self._set_status(msg)
+
+    def _on_player_state(self, state: str) -> None:
+        self._set_status(f"Player: {state}")
+
+    def _on_player_position(self, pos: float, dur: float) -> None:
+        pass
+
+    def _on_player_error(self, msg: str) -> None:
+        self._set_status(f"Player error: {msg}")
+
+    def sync_fullscreen_chrome(self, on: bool) -> None:
+        """Force the chrome to match the window's real fullscreen state.
+
+        Called by MainWindow.changeEvent: the window can leave fullscreen
+        without the player knowing (OS shortcuts, showNormal() from the tray
+        / open-target / agent-playback paths), and the menu bar would stay
+        hidden forever."""
+        self._on_player_fullscreen(on)
+        self._player._set_controls_autohide(on)
+
+    def _on_player_fullscreen(self, on: bool) -> None:
+        """Hide/show everything around the player so fullscreen is video-only.
+
+        The video widget itself can't be detached into its own window (the
+        mpv/VLC embed is tied to its native winId), so instead the tab and
+        main-window chrome collapse around it."""
+        for w in (self._toolbar_w, self._sidebar, self._content, self._status_w):
+            w.setVisible(not on)
+        # Also hide the main window's menu bar (best-effort). The main tab
+        # bar is NOT touched: it is permanently hidden (navigation lives in
+        # the menus), and un-hiding it on the way out of fullscreen left an
+        # empty strip under the menu bar.
+        win = self.window()
+        try:
+            menubar = win.menuBar() if hasattr(win, "menuBar") else None
+            if menubar is not None:
+                menubar.setVisible(not on)
+            statusbar = win.statusBar() if hasattr(win, "statusBar") else None
+            if statusbar is not None:
+                statusbar.setVisible(not on)
+            chrome = getattr(win, "set_video_fullscreen_chrome", None)
+            if chrome is not None:
+                chrome(on)
+        except Exception:
+            pass
+
+    # -- sidebar -------------------------------------------------------------
+    _SECTIONS = [
+        (SECTION_LIVE, "Live TV"),
+        (SECTION_MOVIES, "Movies"),
+        (SECTION_SERIES, "Series"),
+        (SECTION_FAVORITES, "Favorites"),
+        (SECTION_RECENT, "Recently Watched"),
+    ]
+
+    def _group_mode(self) -> str:
+        """Sidebar grouping for VOD sections: "category" (default) or "year"."""
+        return getattr(self._config.iptv, "vod_group_mode", "category")
+
+    def _on_group_mode_changed(self, _idx: int) -> None:
+        mode = self._group_combo.currentData() or "category"
+        if mode == self._group_mode():
+            return
+        self._config.iptv.vod_group_mode = mode
+        try:
+            self._config.to_file(DeeptorrentConfig.default_config_path())
+        except OSError:
+            pass
+        # A category selection doesn't translate to a year one — drop back to
+        # the whole section under the new grouping.
+        self._current_category = ""
+        self._current_year = ""
+        self._rebuild_sidebar()
+        self._show_section(self._current_section,
+                           source_id=self._current_source_id or None)
+
+    def _tree_state(self) -> tuple:
+        """Snapshot which nodes are expanded, keyed by their data tuple.
+
+        The tree is rebuilt every time a source finishes loading, so without
+        this the user's expansion and selection would be thrown away several
+        times during startup."""
+        expanded = set()
+
+        def _walk(node: QTreeWidgetItem) -> None:
+            data = node.data(0, Qt.UserRole)
+            if data is not None and node.isExpanded():
+                expanded.add(data)
+            for i in range(node.childCount()):
+                _walk(node.child(i))
+
+        for i in range(self._tree.topLevelItemCount()):
+            _walk(self._tree.topLevelItem(i))
+        current = self._tree.currentItem()
+        return expanded, (current.data(0, Qt.UserRole) if current else None)
+
+    def _rebuild_sidebar(self) -> None:
+        """Source -> Section -> Category.
+
+        Every enabled source is listed at once (they all stay loaded), so
+        moving between providers is just a click instead of a reload."""
+        expanded, selected = self._tree_state()
+        self._tree.clear()
+        sources = [s for s in self._manager.sources if s.enabled]
+        loaded = set(self._manager.loaded_source_ids())
+        # With a single source the extra level is pure friction — expand it.
+        only_one = len(sources) == 1
+
+        for src in sources:
+            key = (src.id, "", "")
+            top = QTreeWidgetItem([src.name])
+            top.setData(0, Qt.UserRole, key)
+            self._tree.addTopLevelItem(top)
+            if src.id not in loaded:
+                top.setText(0, f"{src.name}  (loading…)")
+                continue
+            pl = self._manager.playlist_for(src.id)
+            top.setText(0, f"{src.name} ({pl.total if pl else 0})")
+            for sid, label in self._SECTIONS:
+                sec_key = (src.id, sid, "")
+                sec = QTreeWidgetItem([f"{label} ({self._section_count(sid, src.id)})"])
+                sec.setData(0, Qt.UserRole, sec_key)
+                top.addChild(sec)
+                if sid in (SECTION_LIVE, SECTION_MOVIES, SECTION_SERIES):
+                    # Movies/Series sub-group each category by release year in
+                    # year mode. Years hang UNDER the category so the
+                    # provider's own separation (e.g. "Movie VOD" vs
+                    # "XXX VOD") survives; a year node is a 4-tuple
+                    # (src, section, category, year).
+                    by_year = (sid in (SECTION_MOVIES, SECTION_SERIES)
+                               and self._group_mode() == "year")
+                    # One pass over the section — NOT years_for per category
+                    # (thousands of categories x the full section each time).
+                    year_map = (self._manager.years_by_category(sid, src.id)
+                                if by_year else {})
+                    for cat in self._manager.categories_for(sid, src.id):
+                        child = QTreeWidgetItem([f"{cat.name} ({cat.count})"])
+                        child.setData(0, Qt.UserRole, (src.id, sid, cat.name))
+                        sec.addChild(child)
+                        if by_year:
+                            for yc in year_map.get(cat.name, []):
+                                ynode = QTreeWidgetItem([f"{yc.name} ({yc.count})"])
+                                ynode.setData(0, Qt.UserRole,
+                                              (src.id, sid, cat.name, yc.name))
+                                child.addChild(ynode)
+                            child.setExpanded((src.id, sid, cat.name) in expanded)
+                sec.setExpanded(sec_key in expanded)
+            top.setExpanded(only_one or key in expanded
+                            or src.id == self._current_source_id)
+
+        if selected is not None:
+            self._select_tree_node(selected)
+
+    def _select_tree_node(self, key: tuple) -> None:
+        """Restore selection after a rebuild (no-op if the node is gone)."""
+        def _walk(node: QTreeWidgetItem):
+            if node.data(0, Qt.UserRole) == key:
+                return node
+            for i in range(node.childCount()):
+                hit = _walk(node.child(i))
+                if hit is not None:
+                    return hit
+            return None
+
+        for i in range(self._tree.topLevelItemCount()):
+            hit = _walk(self._tree.topLevelItem(i))
+            if hit is not None:
+                self._tree.setCurrentItem(hit)
+                return
+
+    def _section_count(self, sid: str, source_id: Optional[str] = None) -> int:
+        if sid == SECTION_FAVORITES:
+            return len(self._manager.favorites(source_id))
+        if sid == SECTION_RECENT:
+            return len(self._manager.recent(source_id))
+        return len(self._manager.items_for(sid, source_id=source_id))
+
+    def _on_tree_click(self, item: QTreeWidgetItem, _col: int) -> None:
+        data = item.data(0, Qt.UserRole)
+        if data is None:
+            return
+        # Keys are 3-tuples (source/section/category nodes) or 4-tuples
+        # (year nodes under a category). Pad so both unpack the same way.
+        key = tuple(data)
+        source_id, section, category = (key + ("", "", ""))[:3]
+        year = key[3] if len(key) > 3 else ""
+        if source_id and source_id != self._current_source_id:
+            self._current_source_id = source_id
+            self._manager.set_active_source(source_id)
+            self._sync_source_combo(source_id)
+        if not section:
+            # Clicked the source itself — show its default section.
+            item.setExpanded(not item.isExpanded())
+            section, category, year = self._current_section, "", ""
+        self._current_section = section
+        self._current_category = category
+        self._current_year = year
+        self._show_section(section, category, source_id, year=year)
+
+    # -- content display -----------------------------------------------------
+    def _show_section(self, section: str, category: str = "",
+                      source_id: Optional[str] = None, year: str = "") -> None:
+        source_id = source_id or self._current_source_id or None
+        if section == SECTION_FAVORITES:
+            items = self._manager.favorites(source_id)
+        elif section == SECTION_RECENT:
+            # Recent is a list of dicts; surface as lightweight playable rows.
+            items = []
+            for r in self._manager.recent(source_id):
+                # Build a transient channel-like object for playback.
+                ch = Channel(id=r["item_id"], name=r["name"], url=r["url"], section=r["section"])
+                items.append(ch)
+        else:
+            items = self._manager.items_for(section, category, source_id=source_id,
+                                            year=year)
+        self._set_content_items(items)
+
+    def _set_content_items(self, items: List[Any]) -> None:
+        """Populate only the visible view; the hidden one is filled lazily on
+        view switch (populating both doubles the cost for huge playlists)."""
+        self._current_items = items
+        if self._stack.currentWidget() is self._grid:
+            self._grid.set_items(items)
+            self._list_synced = False
+        else:
+            self._list.set_items(items)
+            self._grid_synced = False
+
+    def _set_view(self, view: str) -> None:
+        if view == "grid":
+            if not getattr(self, "_grid_synced", True):
+                self._grid.set_items(getattr(self, "_current_items", []))
+            self._grid_synced = True
+            self._stack.setCurrentWidget(self._grid)
+            self._view_grid_btn.setObjectName("btn_accent")
+            self._view_list_btn.setObjectName("")
+        else:
+            if not getattr(self, "_list_synced", True):
+                self._list.set_items(getattr(self, "_current_items", []))
+            self._list_synced = True
+            self._stack.setCurrentWidget(self._list)
+            self._view_grid_btn.setObjectName("")
+            self._view_list_btn.setObjectName("btn_accent")
+        self._view_grid_btn.style().polish(self._view_grid_btn)
+        self._view_list_btn.style().polish(self._view_list_btn)
+
+    def _on_search(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            self._show_section(self._current_section, self._current_category,
+                               year=self._current_year)
+            return
+        results = self._manager.search(text)
+        items: List[Any] = []
+        for section in (SECTION_LIVE, SECTION_MOVIES, SECTION_SERIES):
+            items.extend(results.get(section, []))
+        self._set_content_items(items)
+
+    def _on_item_selected(self, item: Any) -> None:
+        """Single click: info only, never playback."""
+        self._detail.show_item(item)
+
+    def _on_item_activated(self, item: Any) -> None:
+        # Double click plays. Series are the exception: their url is empty
+        # (the user picks an episode from the detail panel), so there is
+        # nothing to play yet.
+        self._detail.show_item(item)
+        if not isinstance(item, Series):
+            self._play_item(item)
+
+    def _play_item(self, item: Any) -> None:
+        self._player.play(item)
+
+    # -- local file playback (generic player) --------------------------------
+    _VIDEO_EXT = ("*.mp4 *.mkv *.avi *.mov *.wmv *.flv *.webm *.m4v *.mpg "
+                  "*.mpeg *.ts *.m2ts *.vob *.3gp *.ogv")
+    _AUDIO_EXT = "*.mp3 *.flac *.m4a *.aac *.ogg *.opus *.wav *.wma *.aiff *.alac"
+    # Audio first-class: the default filter shows both, so music files aren't
+    # hidden behind a dropdown switch.
+    VIDEO_FILTER = (
+        f"Media Files ({_VIDEO_EXT} {_AUDIO_EXT});;"
+        f"Video Files ({_VIDEO_EXT});;"
+        f"Audio Files ({_AUDIO_EXT});;All Files (*)"
+    )
+
+    def _open_local_file(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(self, "Open Media File", "", self.VIDEO_FILTER)
+        if path:
+            self.play_file(path)
+
+    def play_file(self, path: str) -> None:
+        """Play a local media file (mpv/VLC decode virtually any codec)."""
+        if not os.path.isfile(path):
+            self._set_status(f"File not found: {path}")
+            return
+        ch = Channel(id=path, name=os.path.basename(path), url=path, section=SECTION_MOVIES)
+        self._player.play(ch)
+        self._set_status(f"Playing {os.path.basename(path)}")
+
+    def play_web_stream(self, url: str, title: str = "", headers: Optional[Dict[str, str]] = None) -> None:
+        """Play a remote stream (HLS/DASH/direct file) captured from the browser.
+
+        mpv decodes proprietary codecs (H.264/AAC) that the built-in
+        QtWebEngine browser lacks, so this is the in-app playback path for
+        HTML5-unplayable videos."""
+        if not url:
+            return
+        name = title or url.rstrip("/").rsplit("/", 1)[-1] or "Web stream"
+        ch = Channel(id=url, name=name, url=url, section=SECTION_MOVIES,
+                     extra={"headers": dict(headers or {})})
+        self._player.play(ch)
+        self._set_status(f"Playing {name}")
+
+    # -- settings hook (wired by MainWindow) ---------------------------------
+    def set_settings_callback(self, cb) -> None:
+        self._settings_btn.clicked.connect(cb)
+
+    def set_engine(self, engine: Any) -> None:
+        """Give the player access to the torrent engine for QoS throttling."""
+        self._player.set_engine(engine)
+
+    def reload_config(self, config: DeeptorrentConfig) -> None:
+        """Re-apply config after the user edits IPTV settings."""
+        self._config = config
+        self._manager.set_sources([_source_from_config(s) for s in config.iptv.sources])
+        self._manager.set_tmdb_key(config.iptv.tmdb_api_key)
+        self._manager.set_tpdb_key(config.iptv.tpdb_api_key)
+        self._manager.cache_seconds = config.iptv.cache_seconds
+        self._manager.hwdec = config.iptv.hwdec
+        # Apply buffer/hwdec changes to the running player immediately.
+        self._player.apply_config()
+        self._populate_source_dropdown()
+        # The viewed source may have just been deleted or disabled.
+        if self._current_source_id not in {s.id for s in self._manager.sources if s.enabled}:
+            self._current_source_id = ""
+        self._refresh()
+
+    # -- status helper -------------------------------------------------------
+    def _set_status(self, msg: str) -> None:
+        self._status_lbl.setText(msg)
+
+    # -- lifecycle -----------------------------------------------------------
+    def shutdown(self) -> None:
+        self._player.shutdown()
+        self._manager.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Config -> model adapter
+# ---------------------------------------------------------------------------
+
+def _source_from_config(s: IPTVSourceConfig):
+    from iptv.models import PlaylistSource
+
+    return PlaylistSource(
+        id=s.id,
+        name=s.name,
+        kind=s.kind,
+        url=s.url,
+        user_agent=s.user_agent,
+        referer=s.referer,
+        username=s.username,
+        password=s.password,
+        enabled=s.enabled,
+        auto_refresh_minutes=s.auto_refresh_minutes,
+        epg_url=getattr(s, "epg_url", ""),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Agent bridge: agent tools (worker threads) -> IPTV tab (GUI thread)
+# ---------------------------------------------------------------------------
+
+class _AgentBridgeSignals(QObject):
+    play_item = Signal(object)       # Channel/Movie from the playlist
+    play_url = Signal(str, str)      # (url, title)
+    play_file = Signal(str)
+    stop = Signal()
+    pause = Signal()
+    set_volume = Signal(int)
+    add_subs = Signal(str)           # subtitle file path → load into player
+
+
+class AgentIPTVBridge:
+    """Thread-safe bridge between the agent's iptv_* tools and the Play tab.
+
+    Agent tools run on AgentLoop worker threads, so every playback action is
+    emitted as a queued Qt signal and executed on the GUI thread. Reads go
+    through the IPTVManager (internally locked) and a state snapshot fed by
+    the player's signals, so no tool ever touches Qt objects off-thread."""
+
+    def __init__(self, tab: IPTVTab) -> None:
+        self._tab = tab
+        self.manager: IPTVManager = tab._manager
+        self._state_lock = threading.Lock()
+        self._state: Dict[str, Any] = {
+            "state": "stopped", "position": 0.0, "duration": 0.0, "title": "", "url": "",
+        }
+        s = self._signals = _AgentBridgeSignals()
+        s.play_item.connect(self._do_play_item)
+        s.play_url.connect(self._do_play_url)
+        s.play_file.connect(self._do_play_file)
+        s.stop.connect(tab._player.stop)
+        s.pause.connect(tab._player._toggle_pause)
+        # Setting the slider value re-triggers valueChanged -> _on_volume,
+        # which updates both the backend and the persisted config.
+        s.set_volume.connect(tab._player.vol.setValue)
+        s.add_subs.connect(self._do_add_subs)
+        # Queued delivery to the GUI thread — safe to snapshot player state.
+        tab._player.sig_state.connect(self._on_player_state)
+        tab._player.sig_position.connect(self._on_player_position)
+
+    # -- called from agent worker threads (queued onto the GUI thread) ------
+    def play_item(self, item: Any) -> None:
+        self._signals.play_item.emit(item)
+
+    def play_url(self, url: str, title: str = "") -> None:
+        self._signals.play_url.emit(url, title or "")
+
+    def play_file(self, path: str) -> None:
+        self._signals.play_file.emit(path)
+
+    def stop(self) -> None:
+        self._signals.stop.emit()
+
+    def pause(self) -> None:
+        self._signals.pause.emit()
+
+    def set_volume(self, level: int) -> None:
+        self._signals.set_volume.emit(max(0, min(100, int(level))))
+
+    def add_subtitle_file(self, path: str) -> None:
+        """Load a downloaded subtitle file into the player (GUI thread)."""
+        self._signals.add_subs.emit(path)
+
+    def status(self) -> Dict[str, Any]:
+        """Now-playing snapshot — callable from any thread."""
+        with self._state_lock:
+            out = dict(self._state)
+        cfg = self._tab._config.iptv
+        out["volume"] = cfg.volume
+        out["muted"] = cfg.muted
+        return out
+
+    # -- GUI thread slots ----------------------------------------------------
+    def _do_play_item(self, item: Any) -> None:
+        self._tab._play_item(item)
+        self._snapshot_item()
+        self._focus_tab()
+
+    def _do_play_url(self, url: str, title: str) -> None:
+        self._tab.play_web_stream(url, title)
+        self._snapshot_item()
+        self._focus_tab()
+
+    def _do_play_file(self, path: str) -> None:
+        self._tab.play_file(path)
+        self._snapshot_item()
+        self._focus_tab()
+
+    def _focus_tab(self) -> None:
+        """Bring the Play tab forward so the user sees what was started."""
+        tabs = getattr(self._tab.window(), "main_tabs", None)
+        if tabs is not None:
+            tabs.setCurrentWidget(self._tab)
+
+    def _do_add_subs(self, path: str) -> None:
+        backend = self._tab._player._backend
+        if backend is not None and os.path.isfile(path):
+            backend.add_subtitle_file(path)
+
+    def _snapshot_item(self) -> None:
+        item = self._tab._player._current_item
+        with self._state_lock:
+            self._state["title"] = getattr(item, "name", "") if item else ""
+            self._state["url"] = getattr(item, "url", "") if item else ""
+
+    def _on_player_state(self, state: str) -> None:
+        with self._state_lock:
+            self._state["state"] = state
+        self._snapshot_item()
+
+    def _on_player_position(self, pos: float, dur: float) -> None:
+        with self._state_lock:
+            self._state["position"] = pos
+            self._state["duration"] = dur

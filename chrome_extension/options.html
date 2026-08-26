@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DeepFlux Options</title>
+  <style>
+    body {
+      background: #0a0a0f;
+      color: #c8d3e0;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      max-width: 600px;
+      margin: 20px auto;
+      padding: 20px;
+    }
+    h1 {
+      color: #00e5ff;
+      font-size: 20px;
+      margin-bottom: 20px;
+    }
+    .setting {
+      background: #0d1117;
+      border: 1px solid #1a2a4a;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+    }
+    .setting label {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+    .setting input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      accent-color: #00e5ff;
+    }
+    .setting input[type="number"] {
+      background: #0a0a0f;
+      color: #c8d3e0;
+      border: 1px solid #1a2a4a;
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-size: 14px;
+      width: 120px;
+    }
+    .setting .hint {
+      color: #4a6a8a;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    .btn-save {
+      background: #00e5ff;
+      color: #0a0a0f;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-save:hover {
+      background: #80f0ff;
+    }
+    .saved-msg {
+      color: #00ff9d;
+      font-size: 13px;
+      margin-left: 12px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>DeepFlux Integration Module — Options</h1>
+
+  <div class="setting">
+    <label>
+      <input type="checkbox" id="autoCapture">
+      Auto-capture downloads (intercept browser downloads and send to DeepFlux)
+    </label>
+    <div class="hint">When enabled, files larger than the size threshold below will be downloaded by DeepFlux instead of the browser.</div>
+  </div>
+
+  <div class="setting">
+    <label>
+      Size threshold for auto-capture:
+      <input type="number" id="sizeThreshold" min="1" value="10"> MB
+    </label>
+    <div class="hint">Files smaller than this will download normally in the browser.</div>
+  </div>
+
+  <div class="setting">
+    <label>
+      <input type="checkbox" id="showOverlay" checked>
+      Show "Download Video" overlay button on pages with video
+    </label>
+    <div class="hint">A floating button appears near video players for quick download.</div>
+  </div>
+
+  <div class="setting">
+    <label>
+      Extension ID (for native messaging):
+      <input type="text" id="extensionId" style="width: 300px; background: #0a0a0f; color: #c8d3e0; border: 1px solid #1a2a4a; border-radius: 4px; padding: 6px 10px; font-size: 13px;" readonly>
+    </label>
+    <div class="hint">This is your extension's ID. Register it in DeepFlux via: DeepFlux.exe --register-native-host --extension-id YOUR_ID</div>
+  </div>
+
+  <button class="btn-save" id="save">Save Settings</button>
+  <span class="saved-msg" id="saved">Saved!</span>
+
+  <script src="options.js"></script>
+</body>
+</html>

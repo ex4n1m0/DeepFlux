@@ -1,0 +1,152 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MilkDrop</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    #c { display: block; width: 100vw; height: 100vh; }
+    #msg {
+      position: absolute; inset: 0; display: none; align-items: center;
+      justify-content: center; color: #8a9ab0; background: #000;
+      font: 13px "Segoe UI", sans-serif; text-align: center; padding: 24px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="msg"></div>
+  <audio id="a" crossorigin="anonymous"></audio>
+
+  <script src="butterchurn.min.js"></script>
+  <script src="milkdrop-preset-converter.min.js"></script>
+  <script>
+  // Butterchurn (MilkDrop in WebGL) driven by an <audio> element. The page
+  // owns playback because the visualizer needs a WebAudio node to analyse —
+  // Python drives it through the functions on `window.mp` (see gui/milkdrop.py).
+  (function () {
+    "use strict";
+
+    var canvas = document.getElementById("c");
+    var audio = document.getElementById("a");
+    var msg = document.getElementById("msg");
+    var ctx = null, viz = null, srcNode = null, running = false;
+    var presetCache = {};
+
+    // Python polls this instead of us pushing events across the bridge.
+    var state = {
+      ready: false, playing: false, ended: false,
+      position: 0, duration: 0, error: "", preset: ""
+    };
+    window.mpState = function () { return JSON.stringify(state); };
+
+    function showMessage(text) {
+      msg.textContent = text || "";
+      msg.style.display = text ? "flex" : "none";
+    }
+
+    function sizeToWindow() {
+      // Render at device pixels but cap the cost on huge/hidpi displays.
+      var scale = Math.min(window.devicePixelRatio || 1, 1.5);
+      var w = Math.max(64, Math.floor(window.innerWidth * scale));
+      var h = Math.max(64, Math.floor(window.innerHeight * scale));
+      canvas.width = w;
+      canvas.height = h;
+      if (viz) { viz.setRendererSize(w, h); }
+    }
+    window.addEventListener("resize", sizeToWindow);
+
+    function ensureVisualizer() {
+      if (viz) { return; }
+      var bc = window.butterchurn.default || window.butterchurn;
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      srcNode = ctx.createMediaElementSource(audio);
+      srcNode.connect(ctx.destination);
+      sizeToWindow();
+      viz = bc.createVisualizer(ctx, canvas, {
+        width: canvas.width, height: canvas.height, pixelRatio: 1
+      });
+      viz.connectAudio(srcNode);
+      if (!running) {
+        running = true;
+        var frame = function () { viz.render(); requestAnimationFrame(frame); };
+        requestAnimationFrame(frame);
+      }
+    }
+
+    // -- API called from Python ---------------------------------------------
+
+    window.mpLoad = function (url) {
+      state.error = "";
+      state.ended = false;
+      state.ready = false;   // set again on the 'playing' event
+      showMessage("");
+      try {
+        ensureVisualizer();
+      } catch (e) {
+        state.error = "visualizer: " + e.message;
+        showMessage("Visualizer unavailable: " + e.message);
+        return;
+      }
+      audio.src = url;
+      audio.load();
+      ctx.resume();
+      audio.play().catch(function (e) { state.error = "play: " + e.message; });
+    };
+
+    window.mpSetPreset = function (name, text, blendSeconds) {
+      try {
+        ensureVisualizer();
+      } catch (e) {
+        state.error = "visualizer: " + e.message;
+        return;
+      }
+      if (presetCache[name]) {
+        viz.loadPreset(presetCache[name], blendSeconds || 0);
+        state.preset = name;
+        return;
+      }
+      // .milk is MilkDrop's HLSL+equation format; the converter turns it into
+      // the GLSL/JS form butterchurn runs. Local (no network), but async.
+      window.milkdropPresetConverterAWS.convertPreset(text).then(function (p) {
+        presetCache[name] = p;
+        viz.loadPreset(p, blendSeconds || 0);
+        state.preset = name;
+        state.error = "";
+      }).catch(function (e) {
+        state.error = "preset '" + name + "': " + e.message;
+        showMessage("Could not load preset: " + name + "\n" + e.message);
+      });
+    };
+
+    window.mpPause = function () { audio.pause(); };
+    window.mpResume = function () { if (ctx) { ctx.resume(); } audio.play(); };
+    window.mpStop = function () { audio.pause(); audio.removeAttribute("src"); audio.load(); };
+    window.mpSeek = function (s) { try { audio.currentTime = s; } catch (e) {} };
+    window.mpSeekBy = function (d) { window.mpSeek((audio.currentTime || 0) + d); };
+    window.mpVolume = function (pct) { audio.volume = Math.max(0, Math.min(100, pct)) / 100; };
+    window.mpMute = function (on) { audio.muted = !!on; };
+
+    audio.addEventListener("timeupdate", function () {
+      state.position = audio.currentTime || 0;
+      state.duration = isFinite(audio.duration) ? audio.duration : 0;
+    });
+    audio.addEventListener("playing", function () {
+      state.playing = true; state.ready = true; state.ended = false;
+    });
+    audio.addEventListener("pause", function () { state.playing = false; });
+    audio.addEventListener("ended", function () {
+      state.playing = false; state.ended = true;
+    });
+    audio.addEventListener("error", function () {
+      var e = audio.error;
+      // code 4 = MEDIA_ELEMENT_ERROR: format not supported. Python uses this
+      // to hand the file back to mpv.
+      state.error = "media error " + (e ? e.code : "?");
+      state.playing = false;
+      showMessage("This audio format can't be decoded here.");
+    });
+  })();
+  </script>
+</body>
+</html>

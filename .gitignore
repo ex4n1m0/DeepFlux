@@ -1,0 +1,42 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+*.spec
+!packaging/app.spec
+*.iss
+!packaging/installer.iss
+.venv/
+env/
+venv/
+*.log
+*.torrent
+
+# Secrets — never commit. Real API keys live in ~/.deeptorrent/config.json
+# or the user's env vars, never in the tree.
+Test API.txt
+*.key
+*.pem
+.env
+.env.*
+
+# Shipped third-party binaries (see packaging/mpv/README.txt for where to
+# get them). Far too large for git; fetched/placed manually before a build.
+packaging/mpv/*.dll
+packaging/mpv/*.a
+packaging/ffmpeg/*.exe
+
+# Release artifacts (installers are ~315 MB each, over GitHub's file limit).
+website/**/*.exe
+Git/
+*.exe
+
+# Local scratch
+_repro*.py
+_*_probe*.py
+torrent file/

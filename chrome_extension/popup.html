@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>DeepFlux</title>
+  <style>
+    body {
+      width: 340px;
+      background: #0a0a0f;
+      color: #c8d3e0;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      margin: 0;
+      padding: 12px;
+    }
+    h2 {
+      color: #00e5ff;
+      font-size: 14px;
+      margin: 0 0 10px 0;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .section {
+      margin-bottom: 12px;
+    }
+    .media-item {
+      background: #0d1117;
+      border: 1px solid #1a2a4a;
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .media-info {
+      flex: 1;
+      overflow: hidden;
+    }
+    .media-title {
+      font-size: 12px;
+      color: #c8d3e0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .media-type {
+      font-size: 10px;
+      color: #00e5ff;
+      text-transform: uppercase;
+    }
+    .media-quality {
+      font-size: 10px;
+      color: #8a9ab0;
+    }
+    .btn-download {
+      background: #00e5ff;
+      color: #0a0a0f;
+      border: none;
+      border-radius: 4px;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-left: 8px;
+      flex-shrink: 0;
+    }
+    .btn-download:hover {
+      background: #80f0ff;
+    }
+    .status-bar {
+      background: #0d1117;
+      border: 1px solid #1a2a4a;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 12px;
+      color: #8a9ab0;
+      margin-bottom: 10px;
+    }
+    .status-bar .active {
+      color: #00ff9d;
+      font-weight: 600;
+    }
+    .no-media {
+      color: #4a6a8a;
+      font-size: 12px;
+      padding: 12px;
+      text-align: center;
+    }
+    .footer {
+      border-top: 1px solid #1a2a4a;
+      padding-top: 8px;
+      margin-top: 8px;
+      font-size: 11px;
+      color: #4a6a8a;
+    }
+    .footer a {
+      color: #00e5ff;
+      text-decoration: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <h2>DeepFlux</h2>
+
+  <div class="status-bar" id="status">
+    <span id="status-text">Connecting...</span>
+  </div>
+
+  <div class="section">
+    <h2 style="font-size: 12px;">Detected Media</h2>
+    <div id="media-list">
+      <div class="no-media">No media detected on this tab.</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a id="open-options">Options</a> &nbsp;|&nbsp;
+    <a id="ping-native">Test Connection</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

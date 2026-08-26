@@ -1,0 +1,569 @@
+"""IPTV Settings — split into small, focused pages (the old single dialog
+overflowed small windows):
+
+- :class:`IPTVSourcesDialog`   — playlist sources table (add/edit/remove)
+- :class:`IPTVMetadataDialog`  — TMDb key, artwork cache, EPG
+- :class:`IPTVSubtitlesDialog` — OpenSubtitles account + preferred languages
+- :class:`IPTVPlaybackDialog`  — backend, hwdec, buffer, overscan, throttling
+
+Every page lives on a scrollable canvas so nothing clips off-screen on small
+windows. Dark cyberpunk theme via ``_SHARED_STYLE``.
+"""
+from __future__ import annotations
+
+import logging
+import os
+import uuid
+from typing import Optional
+
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from config import DeeptorrentConfig, IPTVSourceConfig
+from gui.milkdrop import list_presets, preset_name
+
+logger = logging.getLogger(__name__)
+
+# Preferred-language dropdowns: the most common track languages, with a free-
+# text editable combo for anything not listed. Stored value is the ISO code.
+_PREF_LANGS = [
+    ("en", "English"), ("es", "Spanish"), ("fr", "French"), ("de", "German"),
+    ("it", "Italian"), ("pt", "Portuguese"), ("ru", "Russian"), ("ar", "Arabic"),
+    ("zh", "Chinese"), ("ja", "Japanese"), ("ko", "Korean"), ("hi", "Hindi"),
+]
+
+
+def _parse_lang_text(text: str) -> str:
+    """'English (en)' / 'en' / 'eng' → normalized ISO code ('' = default)."""
+    text = text.strip()
+    if not text or text.startswith("—"):
+        return ""
+    import re
+    m = re.search(r"\(([a-zA-Z]{2,3})\)\s*$", text)
+    return (m.group(1) if m else text).lower()
+
+
+def _lang_combo() -> QComboBox:
+    """Editable combo: popular languages in the dropdown, type your own."""
+    combo = QComboBox()
+    combo.setEditable(True)
+    combo.addItem("— Player default —", "")
+    for code, name in _PREF_LANGS:
+        combo.addItem(f"{name} ({code})", code)
+    return combo
+
+
+def _set_lang_combo(combo: QComboBox, code: str) -> None:
+    idx = combo.findData(code)
+    if idx >= 0:
+        combo.setCurrentIndex(idx)
+    else:
+        combo.setCurrentText(code)  # custom code typed previously
+
+
+_SHARED_STYLE = """
+    QDialog { background-color: #0a0a0f; color: #c8d3e0; }
+    QLabel { color: #c8d3e0; }
+    QGroupBox { color: #c8d3e0; border: 1px solid #1a2a4a; border-radius: 6px; margin-top: 12px; padding-top: 12px; }
+    QGroupBox::title { color: #2a7abf; subcontrol-origin: margin; left: 10px; padding: 0 5px; font-weight: 600; }
+    QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
+    QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border: 1px solid #2a7abf; }
+    QCheckBox { color: #c8d3e0; }
+    QCheckBox::indicator { border: 1px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
+    QCheckBox::indicator:checked { background-color: #2a7abf; border-color: #2a7abf; }
+    QPushButton { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
+    QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #2a7abf; }
+    QTableWidget { background-color: #0d1117; color: #c8d3e0; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; }
+    QScrollArea { background-color: transparent; border: none; }
+    QLabel#hint { color: #4a6a8a; font-size: 11px; }
+"""
+
+
+def _make_hint(text: str) -> QLabel:
+    """Word-wrapped hint label — long single-line hints used to stretch the
+    dialog far wider than the screen-friendly size."""
+    hint = QLabel(text)
+    hint.setObjectName("hint")
+    hint.setWordWrap(True)
+    return hint
+
+
+class _SettingsPage(QDialog):
+    """One small settings page on a scrollable canvas — content never clips
+    off-screen no matter how small the window gets."""
+
+    def __init__(self, config: DeeptorrentConfig, title: str,
+                 parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.config = config
+        self.setWindowTitle(title)
+        self.setMinimumWidth(480)
+        self.resize(600, 400)
+        self.setStyleSheet(_SHARED_STYLE)
+
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        outer.addWidget(scroll, 1)
+        body = QWidget()
+        self.body = QVBoxLayout(body)
+        scroll.setWidget(body)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        outer.addWidget(buttons)
+
+
+class _SourceEditDialog(QDialog):
+    """Add/edit a single IPTV source."""
+
+    def __init__(self, source: Optional[IPTVSourceConfig] = None, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Edit IPTV Source" if source else "Add IPTV Source")
+        self.setMinimumWidth(520)
+        self.setStyleSheet(_SHARED_STYLE)
+        self._build_ui()
+        if source:
+            self._load(source)
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+
+        self.name = QLineEdit()
+        form.addRow("Display name:", self.name)
+
+        self.kind = QComboBox()
+        self.kind.addItems(["M3U URL", "Local M3U file", "Xtream Codes API",
+                            "Media folder (local)"])
+        self.kind.setItemData(0, "m3u_url")
+        self.kind.setItemData(1, "m3u_file")
+        self.kind.setItemData(2, "xtream")
+        self.kind.setItemData(3, "local_folder")
+        self.kind.currentIndexChanged.connect(self._on_kind_changed)
+        form.addRow("Type:", self.kind)
+
+        self.url = QLineEdit()
+        self.url.setPlaceholderText("http://provider/playlist.m3u8")
+        form.addRow("URL / file path:", self.url)
+
+        self.browse_btn = QPushButton("Browse…")
+        self.browse_btn.clicked.connect(self._browse_file)
+        form.addRow("", self.browse_btn)
+
+        self.user_agent = QLineEdit()
+        form.addRow("User-Agent:", self.user_agent)
+
+        self.referer = QLineEdit()
+        form.addRow("Referer:", self.referer)
+
+        self.username = QLineEdit()
+        form.addRow("Xtream username:", self.username)
+
+        self.password = QLineEdit()
+        self.password.setEchoMode(QLineEdit.Password)
+        form.addRow("Xtream password:", self.password)
+
+        self.epg_url = QLineEdit()
+        self.epg_url.setPlaceholderText("http://provider/epg.xml (optional)")
+        form.addRow("EPG URL:", self.epg_url)
+
+        self.auto_refresh = QSpinBox()
+        self.auto_refresh.setRange(0, 10080)
+        self.auto_refresh.setSuffix(" min")
+        form.addRow("Auto-refresh:", self.auto_refresh)
+
+        self.enabled = QCheckBox("Enabled")
+        self.enabled.setChecked(True)
+        form.addRow("", self.enabled)
+
+        layout.addLayout(form)
+
+        layout.addWidget(_make_hint("Xtream credentials are stored locally and never logged."))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._on_kind_changed(0)
+
+    def _on_kind_changed(self, _idx: int) -> None:
+        kind = self.kind.currentData()
+        is_file = kind == "m3u_file"
+        is_folder = kind == "local_folder"
+        is_xtream = kind == "xtream"
+        self.browse_btn.setVisible(is_file or is_folder)
+        self.url.setPlaceholderText(
+            "Server URL (http://host:port)" if is_xtream
+            else ("Path to .m3u file" if is_file
+                  else ("Path to media folder (e.g. C:\\Media)" if is_folder
+                        else "http://provider/playlist.m3u8"))
+        )
+        # Xtream-only fields.
+        self.username.setVisible(is_xtream)
+        self.password.setVisible(is_xtream)
+        # Headers most relevant for URL sources; EPG is meaningless for a
+        # folder of local files.
+        for w in (self.user_agent, self.referer):
+            w.setVisible(not is_file and not is_folder)
+        self.epg_url.setVisible(not is_folder)
+
+    def _browse_file(self) -> None:
+        if self.kind.currentData() == "local_folder":
+            path = QFileDialog.getExistingDirectory(self, "Select media folder")
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "Select M3U file", "", "M3U playlists (*.m3u *.m3u8);;All files (*)")
+        if path:
+            self.url.setText(path)
+
+    def _load(self, s: IPTVSourceConfig) -> None:
+        self.name.setText(s.name)
+        kind_map = {"m3u_url": 0, "m3u_file": 1, "xtream": 2, "local_folder": 3}
+        self.kind.setCurrentIndex(kind_map.get(s.kind, 0))
+        self.url.setText(s.url)
+        self.user_agent.setText(s.user_agent)
+        self.referer.setText(s.referer)
+        self.username.setText(s.username)
+        self.password.setText(s.password)
+        self.auto_refresh.setValue(s.auto_refresh_minutes)
+        self.epg_url.setText(getattr(s, "epg_url", ""))
+        self.enabled.setChecked(s.enabled)
+
+    def to_source(self, existing: Optional[IPTVSourceConfig] = None) -> IPTVSourceConfig:
+        sid = existing.id if existing else str(uuid.uuid4())
+        return IPTVSourceConfig(
+            id=sid,
+            name=self.name.text().strip() or "Untitled",
+            kind=self.kind.currentData(),
+            url=self.url.text().strip(),
+            user_agent=self.user_agent.text().strip(),
+            referer=self.referer.text().strip(),
+            username=self.username.text().strip(),
+            password=self.password.text(),
+            auto_refresh_minutes=self.auto_refresh.value(),
+            epg_url=self.epg_url.text().strip(),
+            enabled=self.enabled.isChecked(),
+        )
+
+
+class IPTVSourcesDialog(_SettingsPage):
+    """Playlist sources table (add/edit/remove). Mutations apply to
+    config.iptv.sources immediately; OK/Cancel only decides whether the
+    caller persists to disk."""
+
+    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+        super().__init__(config, "IPTV — Playlist Sources", parent)
+        self.resize(640, 420)
+
+        src_group = QGroupBox("Playlist Sources")
+        sl = QVBoxLayout(src_group)
+
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(["Name", "Type", "URL / Server", "Auto-refresh", "Enabled"])
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        sl.addWidget(self.table)
+
+        btns = QHBoxLayout()
+        add_btn = QPushButton("+ Add")
+        add_btn.setObjectName("btn_accent")
+        add_btn.clicked.connect(self._add_source)
+        btns.addWidget(add_btn)
+        edit_btn = QPushButton("Edit")
+        edit_btn.clicked.connect(self._edit_source)
+        btns.addWidget(edit_btn)
+        del_btn = QPushButton("Remove")
+        del_btn.clicked.connect(self._remove_source)
+        btns.addWidget(del_btn)
+        btns.addStretch()
+        sl.addLayout(btns)
+        self.body.addWidget(src_group)
+        self._load_sources()
+
+    def _load_sources(self) -> None:
+        self.table.setRowCount(len(self.config.iptv.sources))
+        for r, s in enumerate(self.config.iptv.sources):
+            self.table.setItem(r, 0, QTableWidgetItem(s.name))
+            self.table.setItem(r, 1, QTableWidgetItem(s.kind))
+            self.table.setItem(r, 2, QTableWidgetItem(s.url))
+            self.table.setItem(r, 3, QTableWidgetItem(f"{s.auto_refresh_minutes} min"))
+            self.table.setItem(r, 4, QTableWidgetItem("Yes" if s.enabled else "No"))
+
+    def _selected_source(self) -> Optional[IPTVSourceConfig]:
+        r = self.table.currentRow()
+        if r < 0 or r >= len(self.config.iptv.sources):
+            return None
+        return self.config.iptv.sources[r]
+
+    def _add_source(self) -> None:
+        dlg = _SourceEditDialog(parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            self.config.iptv.sources.append(dlg.to_source())
+            self._load_sources()
+
+    def _edit_source(self) -> None:
+        s = self._selected_source()
+        if s is None:
+            return
+        dlg = _SourceEditDialog(source=s, parent=self)
+        if dlg.exec() == QDialog.Accepted:
+            idx = self.table.currentRow()
+            self.config.iptv.sources[idx] = dlg.to_source(existing=s)
+            self._load_sources()
+
+    def _remove_source(self) -> None:
+        s = self._selected_source()
+        if s is None:
+            return
+        if QMessageBox.question(self, "Remove source", f"Remove '{s.name}'?") == QMessageBox.Yes:
+            del self.config.iptv.sources[self.table.currentRow()]
+            self._load_sources()
+
+
+class IPTVMetadataDialog(_SettingsPage):
+    """Disk cache, EPG toggle. TMDb key lives in File → API Keys."""
+
+    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+        super().__init__(config, "IPTV — Metadata & Cache", parent)
+
+        cache_group = QGroupBox("Cache")
+        cl = QFormLayout(cache_group)
+        self.cache_dir = QLineEdit()
+        self.cache_dir.setPlaceholderText("Default: ~/.deeptorrent/iptv")
+        cl.addRow("Cache location:", self.cache_dir)
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(self._browse_cache_dir)
+        cl.addRow("", browse)
+        self.cache_limit = QSpinBox()
+        self.cache_limit.setRange(50, 10000)
+        self.cache_limit.setSuffix(" MB")
+        cl.addRow("Cache size limit:", self.cache_limit)
+        self.enable_epg = QCheckBox("Enable EPG (XMLTV) when available")
+        cl.addRow("", self.enable_epg)
+        self.body.addWidget(cache_group)
+
+        self.cache_dir.setText(self.config.iptv.cache_dir)
+        self.cache_limit.setValue(self.config.iptv.cache_limit_mb)
+        self.enable_epg.setChecked(self.config.iptv.enable_epg)
+
+    def _browse_cache_dir(self) -> None:
+        d = QFileDialog.getExistingDirectory(self, "Choose cache directory")
+        if d:
+            self.cache_dir.setText(d)
+
+    def accept(self) -> None:
+        # Validate the cache directory before saving: it must be creatable
+        # and writable, or the IPTV cache will fail at runtime.
+        cache_dir = self.cache_dir.text().strip()
+        if cache_dir:
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+                probe = os.path.join(cache_dir, ".deeptorrent_write_test")
+                with open(probe, "w") as f:
+                    f.write("ok")
+                os.unlink(probe)
+            except OSError as exc:
+                QMessageBox.warning(self, "Invalid cache location",
+                                    f"Cannot use this cache directory:\n{exc}")
+                return
+        self.config.iptv.cache_dir = cache_dir
+        self.config.iptv.cache_limit_mb = self.cache_limit.value()
+        self.config.iptv.enable_epg = self.enable_epg.isChecked()
+        super().accept()
+
+
+class IPTVSubtitlesDialog(_SettingsPage):
+    """Preferred audio/subtitle languages. OpenSubtitles keys live in File → API Keys."""
+
+    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+        super().__init__(config, "IPTV — Subtitles & Languages", parent)
+
+        lang_group = QGroupBox("Preferred Languages")
+        ll = QFormLayout(lang_group)
+        self.pref_audio_lang = _lang_combo()
+        ll.addRow("Audio language:", self.pref_audio_lang)
+        self.pref_sub_lang = _lang_combo()
+        ll.addRow("Subtitle language:", self.pref_sub_lang)
+        ll.addRow("", _make_hint(
+            "When a file has multiple tracks, the one in this language is selected "
+            "automatically on playback. Also the default language for subtitle searches "
+            "(CC menu and the agent). Pick from the list or type any ISO code (e.g. uk, vie)."))
+        self.body.addWidget(lang_group)
+
+        _set_lang_combo(self.pref_audio_lang, self.config.iptv.preferred_audio_lang)
+        _set_lang_combo(self.pref_sub_lang, self.config.iptv.preferred_sub_lang)
+
+    def accept(self) -> None:
+        self.config.iptv.preferred_audio_lang = _parse_lang_text(self.pref_audio_lang.currentText())
+        self.config.iptv.preferred_sub_lang = _parse_lang_text(self.pref_sub_lang.currentText())
+        super().accept()
+
+
+class IPTVPlaybackDialog(_SettingsPage):
+    """Player backend, decoding, buffering, torrent throttling."""
+
+    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+        super().__init__(config, "IPTV — Playback", parent)
+
+        play_group = QGroupBox("Playback")
+        pl = QFormLayout(play_group)
+        self.player = QComboBox()
+        self.player.addItems(["mpv (libmpv)", "libVLC"])
+        self.player.setItemData(0, "mpv")
+        self.player.setItemData(1, "vlc")
+        pl.addRow("Preferred player:", self.player)
+
+        self.hwdec = QComboBox()
+        self.hwdec.addItems(["auto-safe (recommended)", "auto", "no (software)"])
+        self.hwdec.setItemData(0, "auto-safe")
+        self.hwdec.setItemData(1, "auto")
+        self.hwdec.setItemData(2, "no")
+        pl.addRow("Hardware decoding:", self.hwdec)
+
+        self.cache = QSpinBox()
+        self.cache.setRange(1, 120)
+        self.cache.setSuffix(" s")
+        pl.addRow("Stream buffer:", self.cache)
+
+        self.overscan = QDoubleSpinBox()
+        self.overscan.setRange(0.0, 5.0)
+        self.overscan.setSingleStep(0.1)
+        self.overscan.setSuffix(" %")
+        self.overscan.setToolTip(
+            "Zooms the video slightly so dirty edge rows in broadcast streams are\n"
+            "pushed off-screen instead of showing as a faint bright line at the\n"
+            "frame edge (0.5% ≈ 5 px per side at 1080p). mpv backend only."
+        )
+        pl.addRow("Video overscan:", self.overscan)
+
+        self.interpolation = QCheckBox("Smooth motion (frame interpolation)")
+        self.interpolation.setToolTip(
+            "Blends frames to smooth out fps/refresh-rate mismatch judder.\n"
+            "Small GPU cost; mpv backend only.\n"
+            "Note: this is NOT TV-style motion smoothing — it never creates\n"
+            "new frames, and has no visible effect when the video fps divides\n"
+            "the refresh rate (e.g. 24 fps movies on a 120 Hz display)."
+        )
+        pl.addRow("", self.interpolation)
+
+        self.svp = QCheckBox("SVP motion interpolation (soap-opera effect)")
+        self.svp.setToolTip(
+            "True motion interpolation — synthesizes intermediate frames so\n"
+            "24 fps movies move like high-fps video. Works through your own\n"
+            "SVP 4 install (svp-team.com, 30-day trial); nothing is bundled.\n"
+            "DeepFlux hands SVP Manager the embedded mpv (mpv pipe + copy-back\n"
+            "decoding), then SVP does the processing. Files/VOD only, mpv\n"
+            "backend only; takes effect on the next playback."
+        )
+        from iptv import svp as _svp
+        if _svp.find_install() is None:
+            self.svp.setEnabled(False)
+            self.svp.setText("SVP motion interpolation (SVP 4 not installed)")
+            self.svp.setToolTip(
+                "No SVP 4 installation was found on this machine.\n"
+                "Install SVP 4 (30-day trial at svp-team.com) to enable\n"
+                "true motion interpolation, then reopen this dialog."
+            )
+        pl.addRow("", self.svp)
+
+        self.milkdrop = QCheckBox("MilkDrop visualizer for audio files")
+        self.milkdrop.setToolTip(
+            "Plays audio files with a MilkDrop (Butterchurn) visualization\n"
+            "instead of a black screen. Presets are .milk files — drop more\n"
+            "into the MilkDrop folder or %USERPROFILE%\\.deeptorrent\\presets."
+        )
+        pl.addRow("", self.milkdrop)
+
+        self.preset = QComboBox()
+        for path in list_presets():
+            self.preset.addItem(preset_name(path), os.path.basename(path))
+        if self.preset.count() == 0:
+            self.preset.addItem("(no .milk presets found)", "")
+        self.preset.setToolTip("Which MilkDrop preset to start with.")
+        pl.addRow("MilkDrop preset:", self.preset)
+
+        self.auto_next = QCheckBox("Auto-try next source on dead stream")
+        pl.addRow("", self.auto_next)
+        self.body.addWidget(play_group)
+
+        throttle_group = QGroupBox("Torrent Throttling While Playing")
+        tl = QFormLayout(throttle_group)
+        self.throttle = QCheckBox("Limit torrent speed while playing")
+        self.throttle.setToolTip("Caps torrent download/upload while a stream plays so the video doesn't starve.")
+        tl.addRow("", self.throttle)
+        self.throttle_dl = QSpinBox()
+        self.throttle_dl.setRange(0, 1000000)
+        self.throttle_dl.setSuffix(" KB/s")
+        tl.addRow("Torrent download cap:", self.throttle_dl)
+        self.throttle_ul = QSpinBox()
+        self.throttle_ul.setRange(0, 1000000)
+        self.throttle_ul.setSuffix(" KB/s")
+        tl.addRow("Torrent upload cap:", self.throttle_ul)
+        self.body.addWidget(throttle_group)
+
+        idx = max(0, self.player.findData(self.config.iptv.preferred_player))
+        self.player.setCurrentIndex(idx)
+        hidx = max(0, self.hwdec.findData(self.config.iptv.hwdec))
+        self.hwdec.setCurrentIndex(hidx if hidx >= 0 else 0)
+        self.cache.setValue(self.config.iptv.cache_seconds)
+        self.overscan.setValue(self.config.iptv.overscan_pct)
+        self.interpolation.setChecked(self.config.iptv.interpolation)
+        self.svp.setChecked(self.config.iptv.svp_enabled and self.svp.isEnabled())
+        self.milkdrop.setChecked(self.config.iptv.milkdrop_enabled)
+        pidx = self.preset.findData(self.config.iptv.milkdrop_preset)
+        self.preset.setCurrentIndex(pidx if pidx >= 0 else 0)
+        self.auto_next.setChecked(self.config.iptv.auto_try_next_source)
+        self.throttle.setChecked(self.config.iptv.throttle_torrents)
+        self.throttle_dl.setValue(self.config.iptv.throttle_download_kb)
+        self.throttle_ul.setValue(self.config.iptv.throttle_upload_kb)
+
+    def accept(self) -> None:
+        self.config.iptv.preferred_player = self.player.currentData()
+        self.config.iptv.hwdec = self.hwdec.currentData()
+        self.config.iptv.cache_seconds = self.cache.value()
+        self.config.iptv.overscan_pct = self.overscan.value()
+        self.config.iptv.interpolation = self.interpolation.isChecked()
+        # A greyed-out (SVP missing) box can only stay off; a disabled box
+        # still reports its checked state, so gate it explicitly.
+        self.config.iptv.svp_enabled = self.svp.isEnabled() and self.svp.isChecked()
+        self.config.iptv.milkdrop_enabled = self.milkdrop.isChecked()
+        self.config.iptv.milkdrop_preset = self.preset.currentData() or ""
+        self.config.iptv.auto_try_next_source = self.auto_next.isChecked()
+        self.config.iptv.throttle_torrents = self.throttle.isChecked()
+        self.config.iptv.throttle_download_kb = self.throttle_dl.value()
+        self.config.iptv.throttle_upload_kb = self.throttle_ul.value()
+        super().accept()
+
+
+# (menu label, dialog class) — Config → IPTV submenu and the Play tab's gear
+# picker are both built from this list.
+IPTV_SETTINGS_PAGES = [
+    ("Playlist Sources…", IPTVSourcesDialog),
+    ("Metadata && Cache…", IPTVMetadataDialog),
+    ("Subtitles && Languages…", IPTVSubtitlesDialog),
+    ("Playback…", IPTVPlaybackDialog),
+]

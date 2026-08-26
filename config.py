@@ -1,0 +1,619 @@
+"""Configuration loading and defaults for Deeptorrent."""
+from __future__ import annotations
+
+import json
+import logging
+import os
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except Exception:
+    pass
+
+logger = logging.getLogger(__name__)
+
+
+# No built-in/shared API keys are shipped: every key field defaults to empty
+# and the user enters their own (GUI settings dialogs or config.json). The
+# DEEPSEEK_API_KEY / JACKETT_API_KEY / BRAVE_API_KEY env vars are honored as
+# user-provided fallbacks in DeeptorrentConfig.from_file.
+
+
+# DeepFlux is a DeepSeek-native app. Two API surfaces are supported, both
+# serving the same DeepSeek models: the official DeepSeek API (sends
+# reasoning_effort) and OpenRouter (OpenAI-compatible, no reasoning_effort).
+# No keys are shipped — the user brings their own.
+LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
+    "deepseek": {
+        "label": "DeepSeek API (direct)",
+        "base_url": "https://api.deepseek.com",
+        "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        "key_hint": "Get one at https://platform.deepseek.com/api_keys\n"
+                    "Required for the agent — left blank, the app runs in offline demo mode.",
+    },
+    "openrouter": {
+        "label": "DeepSeek via OpenRouter",
+        "base_url": "https://openrouter.ai/api/v1",
+        "models": ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"],
+        "key_hint": "Get one at https://openrouter.ai/keys\n"
+                    "Uses OpenRouter's vendor/model slugs.",
+    },
+}
+
+
+@dataclass
+class LLMConfig:
+    provider: str = "deepseek"  # deepseek (direct API) or openrouter
+    api_key: str = ""
+    base_url: str = ""
+    model: str = "deepseek-v4-pro"       # main agent model — locked to DeepSeek
+    reasoning_effort: str = "high"       # planning turns; summaries always use "low"
+    fast_model: str = "deepseek-v4-flash"  # summaries/quick replies
+    max_turns: int = 500            # ReAct loop cap per user message; the loop self-terminates when the model stops calling tools
+    history_budget: int = 60        # max history messages sent to the LLM; oldest turns dropped first (0 = unlimited)
+    stream: bool = True             # stream tokens to the UI as they arrive
+    memory_enabled: bool = True     # persistent local memory (markdown files on disk)
+    memory_dir: str = ""            # empty = default (~/.deeptorrent/memory)
+
+
+@dataclass
+class IndexerConfig:
+    url: str = "http://localhost:9117"  # Jackett base URL
+    api_key: str = ""
+    torznab_path: str = "/api/v2.0/indexers/all/results/torznab"
+    timeout: int = 60  # aggregate 'all indexers' queries can be slow
+    # Start Jackett automatically when it's configured but not running
+    # (Windows service first, then the tray/console executable).
+    auto_start: bool = True
+    jackett_path: str = ""  # explicit Jackett exe path; empty = auto-detect
+
+
+@dataclass
+class WebSearchConfig:
+    provider: str = "perplexity"  # perplexity (last-resort backup; skipped without a key)
+    api_key: str = ""
+    brave_api_key: str = ""       # Brave Search API key — used between DDG and Perplexity
+    cx: str = ""
+    base_url: str = ""
+
+
+@dataclass
+class TorrentsConfig:
+    """libtorrent session settings."""
+    download_rate_limit_kb: int = 0  # KB/s, 0 = unlimited
+    upload_rate_limit_kb: int = 0
+    listen_port: int = 0             # 0 = random port each start
+    max_connections: int = 0         # 0 = libtorrent default
+    restore_completed: bool = True   # keep completed torrents in the list across restarts
+
+
+@dataclass
+class WatchdogConfig:
+    enabled: bool = False
+    stall_threshold_seconds: int = 300
+    auto_heal: bool = False
+
+
+@dataclass
+class RSSFeed:
+    """A single RSS feed subscription."""
+    url: str = ""
+    name: str = ""
+    mode: str = "monitor"  # "monitor" = load only, "auto_download" = download all
+    category: str = "Other"
+    last_checked: str = ""
+    seen_items: List[str] = field(default_factory=list)
+
+
+@dataclass
+class RSSConfig:
+    feeds: List[RSSFeed] = field(default_factory=list)
+    check_interval_seconds: int = 300  # 5 minutes
+
+
+@dataclass
+class Bookmark:
+    title: str = ""
+    url: str = ""
+    folder: str = ""  # "/" -separated folder path (e.g. "News/Tech"); "" = top level
+
+
+DEFAULT_BROWSER_HOMEPAGE = "https://deepflux.space/"
+
+
+@dataclass
+class BrowserConfig:
+    homepage: str = DEFAULT_BROWSER_HOMEPAGE  # empty migrates to the default on load
+    bookmarks: List[Bookmark] = field(default_factory=list)
+    adblock_enabled: bool = False  # Ad-block off by default
+
+
+@dataclass
+class DownloadCategory:
+    """Per-category download folder mapping."""
+    name: str = ""
+    folder: str = ""
+    extensions: List[str] = field(default_factory=list)
+
+
+@dataclass
+class SourceConfig:
+    """A single search source (torrent indexer or website)."""
+    id: str = ""           # Jackett indexer id or unique slug
+    name: str = ""         # Display name
+    url: str = ""          # Site link / homepage
+    type: str = "public"   # "public", "private"
+    enabled: bool = True
+    categories: List[str] = field(default_factory=list)  # e.g. ["Movies", "TV"]
+    popularity: int = 0    # 0 = unknown (falls back to DEFAULT_SOURCE_POPULARITY); higher = searched earlier
+
+
+# Rough popularity tiers for known sources (higher = more popular / better seeded).
+# Used to search the most productive sources first and stop early.
+DEFAULT_SOURCE_POPULARITY: Dict[str, int] = {
+    "iptorrents": 100,
+    "1337x": 95,
+    "nyaasi": 95,
+    "thepiratebay": 90,
+    "subsplease": 90,
+    "rutracker-ru": 90,
+    "torrentgalaxy": 85,
+    "noname-club": 85,
+    "sukebeinyaasi": 85,
+    "therarbg": 85,
+    "torrentgalaxyclone": 85,
+    "audiobookbay": 80,
+    "internetarchive": 80,
+    "rutor": 80,
+    "torrentdownloads": 80,
+    "byrutor": 75,
+    "ehentai": 75,
+    "ebookbay": 75,
+    "torrentdownload": 75,
+    "acgrip": 70,
+    "dmhy": 70,
+    "extto": 70,
+    "mikan": 70,
+    "showrss": 70,
+    "torrent9": 70,
+    "zamundarip": 70,
+    "bangumi-moe": 65,
+    "dontorrent": 65,
+    "epublibre": 65,
+    "limetorrents": 65,
+    "mactorrentsdownload": 65,
+    "shanaproject": 65,
+    "torrentscsv": 65,
+    "catorrent": 60,
+    "linuxtracker": 60,
+    "torrentkitty": 60,
+    "megapeer": 55,
+}
+
+
+def source_popularity(src: SourceConfig) -> int:
+    """Effective popularity: explicit per-source value wins, then the built-in map."""
+    return src.popularity or DEFAULT_SOURCE_POPULARITY.get(src.id, 0)
+
+
+# No built-in sources: fresh installs start with an empty list (the installer
+# also replaces config.json on every install, so upgrades start empty too).
+# Users add their own sources or fetch configured indexers from Jackett;
+# DEFAULT_SOURCE_POPULARITY still ranks any user-added source whose id
+# matches a known one. Anything added here is merged into existing user
+# configs by from_file (match by id, Jackett-style).
+DEFAULT_SOURCES: List[SourceConfig] = []
+
+
+@dataclass
+class SourcesConfig:
+    """Configuration for agent search sources."""
+    sources: List[SourceConfig] = field(default_factory=lambda: list(DEFAULT_SOURCES))
+    # When True, the agent uses Jackett to search all enabled sources.
+    # When False, the agent uses web search (Perplexity) as a fallback.
+    use_jackett: bool = True
+    # Search strategy tunables (source web-search path).
+    search_batch_size: int = 5   # sources queried concurrently per round, most popular first
+    min_results: int = 5         # stop searching more sources once this many results are found
+    min_seeders: int = 10        # Jackett path: private results with this many seeds make public results unnecessary
+    last_jackett_fetch: float = 0.0  # epoch of last successful source sync (infra.jackett); 0 = never
+
+
+@dataclass
+class DownloadConfig:
+    """Configuration for the IDM-style download manager."""
+    max_concurrent: int = 3
+    max_connections_per_download: int = 8       # 1–32
+    default_folder: str = str(Path.home() / "Downloads" / "DeepFlux")
+    bandwidth_limit_bps: int = 0                # 0 = unlimited
+    auto_start: bool = True
+    segment_threshold_mb: int = 1               # files smaller than this use single-stream
+    control_api_port: int = 53742
+    ffmpeg_path: str = ""                       # empty = use bundled
+    categories: List[DownloadCategory] = field(default_factory=list)
+
+
+@dataclass
+class IPTVSourceConfig:
+    """A saved IPTV source (M3U URL, local M3U file, Xtream Codes login, or
+    local media folder — url is the directory path for the latter).
+
+    Credentials (Xtream password) are persisted in the user's config file like
+    the rest of DeepFlux's settings, but are never logged by the IPTV
+    subsystem.
+    """
+    id: str = ""
+    name: str = ""
+    kind: str = "m3u_url"          # "m3u_url" | "m3u_file" | "xtream" | "local_folder"
+    url: str = ""
+    user_agent: str = ""
+    referer: str = ""
+    username: str = ""
+    password: str = ""
+    enabled: bool = True
+    auto_refresh_minutes: int = 0  # 0 = manual only
+    epg_url: str = ""              # optional XMLTV EPG URL (when the playlist doesn't declare one)
+
+
+@dataclass
+class IPTVConfig:
+    """Configuration for the IPTV tab."""
+    sources: List[IPTVSourceConfig] = field(default_factory=list)
+    tmdb_api_key: str = ""  # user enters their own in IPTV Settings; empty = TVmaze/Wikipedia fallback
+    # ThePornDB — metadata/posters for adult VOD, which TMDb filters out of
+    # its search results entirely. Empty = adult entries just fall through to
+    # TMDb (and usually stay artwork-less).
+    tpdb_api_key: str = ""
+    # Last-resort poster: grab a frame from the stream with FFmpeg when no
+    # metadata provider matched. Only ever runs for tiles on screen.
+    framegrab_posters: bool = True
+    # OpenSubtitles.com subtitle downloads in the player (CC menu). Key is
+    # required; account credentials are optional and raise the daily quota.
+    opensubtitles_api_key: str = ""
+    opensubtitles_username: str = ""
+    opensubtitles_password: str = ""
+    # Auto-selected on playback when a track with this language exists
+    # (ISO 639-1 "en" or 639-2 "eng" both work). Empty = player default.
+    preferred_audio_lang: str = ""
+    preferred_sub_lang: str = ""
+    cache_dir: str = ""             # empty = default (~/.deeptorrent/iptv)
+    cache_limit_mb: int = 500       # artwork/metadata disk cache cap
+    cache_seconds: int = 15         # network stream buffer (seconds)
+    hwdec: str = "auto-safe"        # mpv hardware decoding mode
+    interpolation: bool = True      # mpv smoothmotion frame blending (GPU cost)
+    # SVP 4 (SmoothVideo Project) true motion interpolation. Nothing is
+    # bundled — this only cooperates with the user's own SVP install (see
+    # iptv/svp.py). Files/VOD only; forces copy-back hwdec while active.
+    svp_enabled: bool = False
+    # MilkDrop (Butterchurn) visualization while audio-only media plays.
+    # milkdrop_preset is a .milk filename from the shipped MilkDrop/ folder or
+    # ~/.deeptorrent/presets; empty = the first one found.
+    milkdrop_enabled: bool = True
+    milkdrop_preset: str = ""
+    preferred_player: str = "mpv"   # "mpv" | "vlc"
+    enable_epg: bool = True
+    auto_try_next_source: bool = False
+    # While a stream is playing, cap torrent rates so the video doesn't starve.
+    throttle_torrents: bool = True
+    throttle_download_kb: int = 4096   # KB/s while playing (only lowers, never raises)
+    throttle_upload_kb: int = 512      # upload saturation is what usually kills streams
+    # Player audio state — persisted across restarts.
+    volume: int = 100
+    muted: bool = False
+    # Video overscan (% linear scale-up) — pushes dirty broadcast edge
+    # rows/columns off-screen so they don't show as a faint bright line.
+    overscan_pct: float = 0.5
+    # Movies/Series sidebar grouping: "year" (release year under each
+    # category, yearless entries under "Others") or "category" (flat
+    # provider groups).
+    vod_group_mode: str = "year"
+
+
+@dataclass
+class IRCNetworkConfig:
+    """A single IRC network/server entry for the IRC tab.
+
+    Credentials (server password / SASL) are persisted in the user's config
+    file like the rest of DeepFlux's settings, but are never logged.
+    """
+    id: str = ""                     # short slug, e.g. "libera"
+    host: str = ""
+    port: int = 6697
+    tls: bool = True
+    nick: str = "DeepFluxUser"
+    username: str = ""               # empty = nick
+    realname: str = "DeepFlux"
+    password: str = ""               # server PASS (rarely needed)
+    sasl_account: str = ""           # optional SASL PLAIN auth
+    sasl_password: str = ""
+    channels: List[str] = field(default_factory=list)
+    auto_connect: bool = False
+
+
+@dataclass
+class IRCConfig:
+    """Configuration for the IRC tab + agent IRC monitoring."""
+    networks: List[IRCNetworkConfig] = field(default_factory=list)
+    buffer_lines: int = 500          # per-channel ring buffer (agent reads this)
+    flood_delay: float = 2.0         # min seconds between outgoing messages
+    reconnect_max_seconds: int = 300
+
+
+# Built-in default IRC networks — merged into user configs by `from_file`
+# (match by `id`, Jackett-style). New users get Libera auto-connect + #DeepFlux
+# without having to configure anything.
+DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
+    IRCNetworkConfig(
+        id="libera",
+        host="irc.libera.chat",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#DeepFlux"],
+        auto_connect=True,
+    ),
+]
+
+
+@dataclass
+class VoiceConfig:
+    """Voice input for the agent box — local faster-whisper, fully offline.
+
+    The whisper model is downloaded from HuggingFace on first use into
+    ~/.deeptorrent/models/ and cached there."""
+    enabled: bool = True
+    model: str = "base"     # tiny / base / small / medium / large-v3
+    language: str = ""      # ISO 639-1 ("en", "pt", …); empty = auto-detect
+    device: str = "auto"    # auto / cpu / cuda
+    auto_send: bool = True  # send the transcript straight to the agent
+
+
+@dataclass
+class DeeptorrentConfig:
+    llm: LLMConfig = field(default_factory=LLMConfig)
+    indexer: IndexerConfig = field(default_factory=IndexerConfig)
+    web_search: WebSearchConfig = field(default_factory=WebSearchConfig)
+    watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
+    rss: RSSConfig = field(default_factory=RSSConfig)
+    browser: BrowserConfig = field(default_factory=BrowserConfig)
+    download: DownloadConfig = field(default_factory=DownloadConfig)
+    torrents: TorrentsConfig = field(default_factory=TorrentsConfig)
+    iptv: IPTVConfig = field(default_factory=IPTVConfig)
+    irc: IRCConfig = field(default_factory=IRCConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
+    sources: SourcesConfig = field(default_factory=SourcesConfig)
+    default_save_path: str = str(Path.home() / "Downloads" / "DeepFlux")
+    categories: List[str] = field(default_factory=lambda: ["Movies", "TV", "Software", "Other"])
+    log_level: str = "INFO"
+    # Reserved: auto-open completed videos in the Player (currently indicator-only).
+    autoplay_completed_video: bool = True
+    # UI state (window geometry base64, last active tab) — persisted on close.
+    ui_geometry: str = ""
+    ui_last_tab: int = 0
+    # System tray: completion toasts. (Closing the window quits the app.)
+    ui_notifications: bool = True
+    # Splitter states (name -> base64 QSplitter.saveState) — persisted on close.
+    ui_splitters: Dict[str, str] = field(default_factory=dict)
+    # Agent debug mode: raw tool args/results, full reasoning, watchdog activity in chat.
+    ui_agent_debug: bool = True
+
+    @classmethod
+    def from_file(cls, path: str) -> "DeeptorrentConfig":
+        data: Dict[str, Any] = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception as exc:
+                logger.warning("Failed to load config from %s: %s", path, exc)
+
+        # Environment variables fill in secrets only when the config file
+        # doesn't already set them — a saved GUI edit must never be clobbered
+        # by a machine-level env var on every launch.
+        # The DeepSeek env var only fills the key slot when DeepSeek is the
+        # configured provider — it must not leak into OpenRouter calls.
+        if (not data.get("llm", {}).get("api_key") and os.environ.get("DEEPSEEK_API_KEY")
+                and data.get("llm", {}).get("provider", "deepseek") in ("", "deepseek")):
+            data.setdefault("llm", {})["api_key"] = os.environ["DEEPSEEK_API_KEY"]
+        if not data.get("indexer", {}).get("api_key") and os.environ.get("JACKETT_API_KEY"):
+            data.setdefault("indexer", {})["api_key"] = os.environ["JACKETT_API_KEY"]
+        if not data.get("web_search", {}).get("brave_api_key") and os.environ.get("BRAVE_API_KEY"):
+            data.setdefault("web_search", {})["brave_api_key"] = os.environ["BRAVE_API_KEY"]
+        if not data.get("iptv", {}).get("opensubtitles_api_key") and os.environ.get("OPENSUBTITLES_API_KEY"):
+            data.setdefault("iptv", {})["opensubtitles_api_key"] = os.environ["OPENSUBTITLES_API_KEY"]
+        if not data.get("iptv", {}).get("tpdb_api_key") and os.environ.get("TPDB_API_KEY"):
+            data.setdefault("iptv", {})["tpdb_api_key"] = os.environ["TPDB_API_KEY"]
+
+        # No built-in API keys: anything still empty here stays empty. The
+        # GUI/CLI notice the missing LLM key and run the agent in offline
+        # dummy mode until the user enters their own key.
+        llm_data = data.setdefault("llm", {})
+
+        # Web search: Perplexity is the last-resort backup provider (only
+        # reached when the user has entered a key for it).
+        ws_data = data.setdefault("web_search", {})
+        ws_data["provider"] = "perplexity"
+        # Drop stale keys from older configs (e.g. the removed google_enabled).
+        ws_data = {k: v for k, v in ws_data.items() if k in WebSearchConfig.__dataclass_fields__}
+
+        # Migration: if the saved homepage is still a previous default,
+        # upgrade it to the new default. Users who explicitly set a custom
+        # homepage keep their value.
+        _OLD_DEFAULT_HOMEPAGES = {
+            "https://n38worth.com/", "https://www.youtube.com/",
+            "https://marginalia-search.com/", "https://duckduckgo.com/",
+            "https://www.startpage.com/",
+        }
+        browser_data = data.setdefault("browser", {})
+        if browser_data.get("homepage") in _OLD_DEFAULT_HOMEPAGES:
+            browser_data["homepage"] = BrowserConfig.homepage
+            logger.info("Migrated homepage from old default to %s", BrowserConfig.homepage)
+
+        # Migration: the default download folders moved from
+        # ~/Downloads/DeepTorrent (and ~/Downloads/Deeptorrent) to
+        # ~/Downloads/DeepFlux. Values still pointing at an old DEFAULT are
+        # upgraded; custom user folders are kept. Empty values (seeded by the
+        # installer) also resolve to the new default.
+        _OLD_DEFAULT_DOWNLOAD_DIRS = {
+            str(Path.home() / "Downloads" / "DeepTorrent"),
+            str(Path.home() / "Downloads" / "Deeptorrent"),
+        }
+        _NEW_DEFAULT_DOWNLOAD_DIR = str(Path.home() / "Downloads" / "DeepFlux")
+        save_path = (data.get("default_save_path") or "").strip()
+        if not save_path or save_path in _OLD_DEFAULT_DOWNLOAD_DIRS:
+            save_path = _NEW_DEFAULT_DOWNLOAD_DIR
+        download_data = data.setdefault("download", {})
+        dl_folder = (download_data.get("default_folder") or "").strip()
+        if not dl_folder or dl_folder in _OLD_DEFAULT_DOWNLOAD_DIRS:
+            dl_folder = _NEW_DEFAULT_DOWNLOAD_DIR
+
+        # Migration: merge built-in default sources into the saved list so
+        # newly shipped sources appear without wiping user customizations
+        # (saved entries keep their enabled state; missing defaults append).
+        merged_sources = [SourceConfig(**s) for s in data.get("sources", {}).get("sources", [])]
+        if merged_sources:
+            known_ids = {s.id for s in merged_sources}
+            merged_sources.extend(d for d in DEFAULT_SOURCES if d.id not in known_ids)
+        else:
+            merged_sources = list(DEFAULT_SOURCES)
+
+        # Merge built-in default IRC networks into the saved list (match by
+        # `id`, Jackett-style). New users auto-connect to Libera + #DeepFlux
+        # without configuring anything; existing user networks are preserved.
+        irc_data = data.get("irc", {})
+        merged_irc_nets = [IRCNetworkConfig(**{k: v for k, v in n.items()
+                                               if k in IRCNetworkConfig.__dataclass_fields__})
+                           for n in irc_data.get("networks", [])]
+        if merged_irc_nets:
+            known_ids = {n.id for n in merged_irc_nets}
+            merged_irc_nets.extend(d for d in DEFAULT_IRC_NETWORKS if d.id not in known_ids)
+        else:
+            merged_irc_nets = list(DEFAULT_IRC_NETWORKS)
+
+        # Migration: the merge above never touches existing ids, so entries
+        # created by the old test-era default keep "#deepflux-test" +
+        # auto_connect=False forever. Upgrade those in place: swap the test
+        # channel for #DeepFlux and turn auto-connect on. Entries the user
+        # actually customized (no test channel) are left untouched.
+        for n in merged_irc_nets:
+            if any(c.lower() == "#deepflux-test" for c in n.channels):
+                n.channels = [c for c in n.channels if c.lower() != "#deepflux-test"]
+                if not any(c.lower() == "#deepflux" for c in n.channels):
+                    n.channels.append("#DeepFlux")
+                n.auto_connect = True
+
+        # Drop stale keys from older configs (e.g. the removed `local_only`)
+        # so LLMConfig(**...) never fails on an unknown field.
+        llm_clean = {k: v for k, v in llm_data.items() if k in LLMConfig.__dataclass_fields__}
+
+        # Streaming and persistent memory are assumed always-on (no UI to
+        # toggle them anymore) — normalize stale configs that saved them off.
+        llm_clean["stream"] = True
+        llm_clean["memory_enabled"] = True
+
+        # Migration: a hand-edited switch to OpenRouter keeps the DeepSeek
+        # fast-model default, which doesn't exist there — clear it so summary
+        # calls fall back to the main model instead of 404ing.
+        if llm_clean.get("provider") == "openrouter" and llm_clean.get("fast_model") in LLM_PROVIDER_PRESETS["deepseek"]["models"]:
+            llm_clean["fast_model"] = ""
+
+        return cls(
+            llm=LLMConfig(**llm_clean),
+            indexer=IndexerConfig(**data.get("indexer", {})),
+            web_search=WebSearchConfig(**ws_data),
+            watchdog=WatchdogConfig(**data.get("watchdog", {})),
+            rss=RSSConfig(
+                feeds=[RSSFeed(**f) for f in data.get("rss", {}).get("feeds", [])],
+                check_interval_seconds=data.get("rss", {}).get("check_interval_seconds", 300),
+            ),
+            browser=BrowserConfig(
+                # Empty/missing homepage migrates to the default site; custom
+                # user homepages are preserved.
+                homepage=(data.get("browser", {}).get("homepage") or "").strip() or DEFAULT_BROWSER_HOMEPAGE,
+                bookmarks=[Bookmark(**b) for b in data.get("browser", {}).get("bookmarks", [])],
+                adblock_enabled=data.get("browser", {}).get("adblock_enabled", False),
+            ),
+            download=DownloadConfig(
+                max_concurrent=data.get("download", {}).get("max_concurrent", 3),
+                max_connections_per_download=data.get("download", {}).get("max_connections_per_download", 8),
+                default_folder=dl_folder,
+                bandwidth_limit_bps=data.get("download", {}).get("bandwidth_limit_bps", 0),
+                auto_start=data.get("download", {}).get("auto_start", True),
+                segment_threshold_mb=data.get("download", {}).get("segment_threshold_mb", 1),
+                control_api_port=data.get("download", {}).get("control_api_port", 53742),
+                ffmpeg_path=data.get("download", {}).get("ffmpeg_path", ""),
+                categories=[DownloadCategory(**c) for c in data.get("download", {}).get("categories", [])],
+            ),
+            torrents=TorrentsConfig(**data.get("torrents", {})),
+            iptv=IPTVConfig(
+                # Filter unknown keys: a config written by a NEWER build must
+                # not crash an older one with a TypeError here.
+                sources=[IPTVSourceConfig(**{k: v for k, v in s.items()
+                                             if k in IPTVSourceConfig.__dataclass_fields__})
+                         for s in data.get("iptv", {}).get("sources", [])],
+                tmdb_api_key=data.get("iptv", {}).get("tmdb_api_key", ""),
+                tpdb_api_key=data.get("iptv", {}).get("tpdb_api_key", ""),
+                framegrab_posters=bool(data.get("iptv", {}).get("framegrab_posters", True)),
+                opensubtitles_api_key=data.get("iptv", {}).get("opensubtitles_api_key", ""),
+                opensubtitles_username=data.get("iptv", {}).get("opensubtitles_username", ""),
+                opensubtitles_password=data.get("iptv", {}).get("opensubtitles_password", ""),
+                preferred_audio_lang=data.get("iptv", {}).get("preferred_audio_lang", ""),
+                preferred_sub_lang=data.get("iptv", {}).get("preferred_sub_lang", ""),
+                cache_dir=data.get("iptv", {}).get("cache_dir", ""),
+                cache_limit_mb=data.get("iptv", {}).get("cache_limit_mb", 500),
+                cache_seconds=data.get("iptv", {}).get("cache_seconds", 15),
+                hwdec=data.get("iptv", {}).get("hwdec", "auto-safe"),
+                interpolation=bool(data.get("iptv", {}).get("interpolation", True)),
+                svp_enabled=bool(data.get("iptv", {}).get("svp_enabled", False)),
+                milkdrop_enabled=bool(data.get("iptv", {}).get("milkdrop_enabled", True)),
+                milkdrop_preset=data.get("iptv", {}).get("milkdrop_preset", ""),
+                preferred_player=data.get("iptv", {}).get("preferred_player", "mpv"),
+                enable_epg=data.get("iptv", {}).get("enable_epg", True),
+                auto_try_next_source=data.get("iptv", {}).get("auto_try_next_source", False),
+                throttle_torrents=data.get("iptv", {}).get("throttle_torrents", True),
+                throttle_download_kb=data.get("iptv", {}).get("throttle_download_kb", 4096),
+                throttle_upload_kb=data.get("iptv", {}).get("throttle_upload_kb", 512),
+                volume=int(data.get("iptv", {}).get("volume", 100)),
+                muted=bool(data.get("iptv", {}).get("muted", False)),
+                overscan_pct=float(data.get("iptv", {}).get("overscan_pct", 0.5)),
+                vod_group_mode=data.get("iptv", {}).get("vod_group_mode", "year"),
+            ),
+            irc=IRCConfig(
+                networks=merged_irc_nets,
+                buffer_lines=int(irc_data.get("buffer_lines", 500)),
+                flood_delay=float(irc_data.get("flood_delay", 2.0)),
+                reconnect_max_seconds=int(irc_data.get("reconnect_max_seconds", 300)),
+            ),
+            voice=VoiceConfig(**{k: v for k, v in data.get("voice", {}).items()
+                                 if k in VoiceConfig.__dataclass_fields__}),
+            sources=SourcesConfig(
+                sources=merged_sources,
+                use_jackett=data.get("sources", {}).get("use_jackett", True),
+                search_batch_size=data.get("sources", {}).get("search_batch_size", 5),
+                min_results=data.get("sources", {}).get("min_results", 5),
+                min_seeders=data.get("sources", {}).get("min_seeders", 10),
+                last_jackett_fetch=float(data.get("sources", {}).get("last_jackett_fetch", 0.0) or 0.0),
+            ),
+            default_save_path=save_path,
+            categories=data.get("categories", ["Movies", "TV", "Software", "Other"]),
+            log_level=data.get("log_level", "INFO"),
+            autoplay_completed_video=bool(data.get("autoplay_completed_video", True)),
+            ui_geometry=data.get("ui_geometry", ""),
+            ui_last_tab=int(data.get("ui_last_tab", 0) or 0),
+            ui_notifications=bool(data.get("ui_notifications", True)),
+            ui_splitters=data.get("ui_splitters", {}) if isinstance(data.get("ui_splitters"), dict) else {},
+            ui_agent_debug=True,  # assumed always-on (no UI toggle anymore)
+        )
+
+    def to_file(self, path: str) -> None:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(asdict(self), f, indent=2)
+
+    def default_config_path() -> str:
+        return str(Path.home() / ".deeptorrent" / "config.json")

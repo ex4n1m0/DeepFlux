@@ -1,0 +1,107 @@
+/* DeepFlux Integration Module — Overlay styles */
+
+#deeptorrent-overlay-btn {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 2147483647;
+  background: linear-gradient(135deg, #011d3e, #001431);
+  color: #00e5ff;
+  border: 2px solid #00e5ff;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 229, 255, 0.3);
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+#deeptorrent-overlay-btn:hover {
+  background: linear-gradient(135deg, #002a5e, #001a44);
+  box-shadow: 0 6px 20px rgba(0, 229, 255, 0.5);
+  transform: translateY(-2px);
+}
+
+#deeptorrent-download-menu {
+  position: fixed;
+  bottom: 60px;
+  right: 20px;
+  z-index: 2147483647;
+  background: #0a0a0f;
+  border: 1px solid #1a2a4a;
+  border-radius: 10px;
+  padding: 8px;
+  min-width: 280px;
+  max-width: 400px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+.dt-menu-title {
+  color: #00e5ff;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 6px 10px;
+  border-bottom: 1px solid #1a2a4a;
+  margin-bottom: 4px;
+}
+
+.dt-menu-item {
+  color: #c8d3e0;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dt-menu-item:hover {
+  background: #1a2a4a;
+  color: #00e5ff;
+}
+
+.dt-menu-close {
+  color: #4a6a8a;
+  font-size: 12px;
+  padding: 6px 10px;
+  text-align: center;
+  cursor: pointer;
+  margin-top: 4px;
+  border-top: 1px solid #1a2a4a;
+}
+
+.dt-menu-close:hover {
+  color: #ff3366;
+}
+
+#deeptorrent-notif {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 2147483647;
+  background: #0a0a0f;
+  color: #00ff9d;
+  border: 1px solid #00ff9d;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-family: 'Segoe UI', Arial, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 255, 157, 0.3);
+  animation: dt-fade-out 0.5s ease 2.5s forwards;
+}
+
+@keyframes dt-fade-out {
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+}
