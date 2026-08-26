@@ -44,7 +44,8 @@ PIPE_PATH = r"\\.\pipe" + "\\" + PIPE_NAME
 # OBSERVED, not read once after loadfile: mpv doesn't know it until the file
 # is demuxed, so a single read returns 0 and the host would treat the media
 # as unseekable live content (grey progress bar, disabled skip buttons).
-_OBSERVED = ("time-pos", "pause", "eof-reached", "track-list", "duration")
+_OBSERVED = ("time-pos", "pause", "eof-reached", "track-list", "duration",
+             "paused-for-cache")
 
 # How often the reader polls the pipe for new data. mpv's own property
 # updates are ~10/s, so this is comfortably below the noticeable threshold.
@@ -91,6 +92,7 @@ class MpvProcessBackend(PlayerBackend):
         self._pending_lock = threading.Lock()
         self._tracks: List[dict] = []
         self._paused = False
+        self._paused_for_cache = False
         self._duration = 0.0
 
     # -- lifecycle -----------------------------------------------------------
@@ -282,9 +284,15 @@ class MpvProcessBackend(PlayerBackend):
         elif name == "time-pos" and data is not None and self.on_position:
             self.on_position(float(data), float(self._duration or 0.0))
         elif name == "pause":
-            self._paused = bool(data)
+            self._paused = data is True or str(data).lower() == "yes"
             if self.on_state:
-                self.on_state("paused" if data else "playing")
+                # Cache-starvation pauses are buffering, not a user pause.
+                if not data and self._paused_for_cache:
+                    self.on_state("buffering")
+                else:
+                    self.on_state("paused" if data else "playing")
+        elif name == "paused-for-cache":
+            self._paused_for_cache = data is True or str(data).lower() == "yes"
         elif name == "eof-reached":
             if data and self.on_state:
                 self.on_state("stopped")
@@ -414,6 +422,42 @@ class MpvProcessBackend(PlayerBackend):
         has_video = any(t.get("type") == "video" and not t.get("albumart")
                         for t in track_list)
         return has_audio and not has_video
+
+    def buffer_status(self) -> Dict[str, Any]:
+        """Return live mpv cache/playback state over IPC."""
+        if self._pipe is None:
+            return {}
+        try:
+            pct = self._get("cache-buffering-state")
+            pfc = self._get("paused-for-cache")
+            dcd = self._get("demuxer-cache-duration")
+            idle = self._get("core-idle")
+            tpos = self._get("time-pos")
+            pct = int(pct) if pct is not None else -1
+            pfc_bool = str(pfc).lower() == "yes" if pfc is not None else False
+            dcd_f = float(dcd or 0.0)
+            core_idle = str(idle).lower() == "yes" if idle is not None else True
+            tpos_f = float(tpos or 0.0)
+            if tpos_f > 0.0:
+                core_idle = False
+            if tpos_f > 0.0 and not pfc_bool and not core_idle:
+                state = "playing"
+            elif pfc_bool or (0 <= pct < 100) or (dcd_f > 0.0):
+                state = "buffering"
+            elif core_idle:
+                state = "opening"
+            else:
+                state = "buffering"
+            return {
+                "state": state,
+                "percent": pct,
+                "paused_for_cache": pfc_bool,
+                "demuxer_cache_duration": dcd_f,
+                "core_idle": core_idle,
+                "time_pos": tpos_f,
+            }
+        except Exception:
+            return {}
 
     @property
     def is_playing(self) -> bool:

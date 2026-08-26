@@ -168,7 +168,7 @@ class TMDBProvider(MetadataProvider):
                 "rating": float(res.get("vote_average", 0) or 0),
                 "synopsis": res.get("overview", ""),
                 "genres": [],
-                "poster": self._img(res.get("poster_path")),
+                "poster": self._img(res.get("poster_path"), "w780"),
                 "backdrop": self._img(res.get("backdrop_path"), "w1280"),
                 "provider": self.name,
             }

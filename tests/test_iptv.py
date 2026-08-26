@@ -234,6 +234,14 @@ def test_metadata_key_stable():
     assert k1.startswith("movies:")
 
 
+def test_tmdb_poster_uses_w780():
+    """Posters are fetched at a resolution that survives the larger tile size."""
+    from iptv.metadata import TMDBProvider
+    prov = TMDBProvider("key")
+    assert prov._img("/poster.jpg") == "https://image.tmdb.org/t/p/w500/poster.jpg"
+    assert prov._img("/poster.jpg", "w780") == "https://image.tmdb.org/t/p/w780/poster.jpg"
+
+
 # ---------------------------------------------------------------------------
 # Adult VOD -> ThePornDB
 # ---------------------------------------------------------------------------
@@ -477,6 +485,14 @@ def test_synthetic_url_is_stable_and_identifiable():
     assert a != synthetic_url("http://host/other.mkv")
     assert is_framegrab_url(a)
     assert not is_framegrab_url("http://cdn/poster.jpg")
+
+
+def test_artwork_cache_default_thumb_size_is_larger(tmp_path):
+    """The default thumbnail is big enough for the larger IPTV grid tiles."""
+    from iptv.artwork import ArtworkCache
+    cache = ArtworkCache(str(tmp_path))
+    assert cache.thumb_size == (300, 450)
+    assert "_300x450.png" in cache.thumb_path("http://host/poster.jpg")
 
 
 def test_framegrab_writes_into_the_artwork_cache(tmp_path):

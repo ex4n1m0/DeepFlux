@@ -25,7 +25,7 @@ import logging
 import math
 import os
 import sys
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,18 @@ class PlayerBackend:
         inside the verified contiguous prefix so it never reads the zeroed /
         unverified region past the download frontier."""
         pass
+
+    def buffer_status(self) -> Dict[str, Any]:
+        """Return a snapshot of the playback startup/buffer state.
+
+        Expected keys (all optional):
+          - state: one of 'opening'/'buffering'/'playing'/'stopped'
+          - percent: 0..100 cache/buffer fill, or -1 if unknown
+          - time_pos: current playback position in seconds
+          - paused_for_cache: True when the player is paused waiting for data
+          - demuxer_cache_duration: seconds of media buffered ahead
+        """
+        return {}
 
     def add_subtitle_file(self, path: str) -> None:
         """Load an external subtitle file and select it immediately."""
@@ -518,6 +530,53 @@ class MpvBackend(PlayerBackend):
             except Exception:
                 pass
 
+    def buffer_status(self) -> Dict[str, Any]:
+        """Return live mpv cache/playback state for the loading overlay."""
+        if self._mpv is None:
+            return {}
+
+        def _read(name: str, default: Any) -> Any:
+            try:
+                # Properties are accessed as attributes; hyphens become underscores.
+                return getattr(self._mpv, name.replace("-", "_"))
+            except Exception:
+                return default
+
+        try:
+            pct = _read("cache-buffering-state", None)
+            pfc = _read("paused-for-cache", "no")
+            dcd = _read("demuxer-cache-duration", 0.0)
+            idle = _read("core-idle", "yes")
+            tpos = _read("time-pos", None)
+
+            out: Dict[str, Any] = {
+                "percent": int(pct) if pct is not None else -1,
+                "paused_for_cache": str(pfc).lower() == "yes",
+                "demuxer_cache_duration": float(dcd or 0.0),
+                "core_idle": str(idle).lower() == "yes",
+                "time_pos": float(tpos or 0.0),
+            }
+            tpos_f = float(out["time_pos"])
+            # If time-pos is advancing, the core cannot be idle even if the
+            # core-idle property is unavailable.
+            if tpos_f > 0.0:
+                out["core_idle"] = False
+            pfc_b = bool(out["paused_for_cache"])
+            core_idle_b = bool(out["core_idle"])
+            pct_i = int(out["percent"])
+            dcd_f = float(out["demuxer_cache_duration"])
+            if tpos_f > 0.0 and not pfc_b and not core_idle_b:
+                out["state"] = "playing"
+            elif pfc_b or (0 <= pct_i < 100) or (dcd_f > 0.0):
+                out["state"] = "buffering"
+            elif core_idle_b:
+                out["state"] = "opening"
+            else:
+                out["state"] = "buffering"
+            return out
+        except Exception:
+            return {}
+
     @property
     def is_playing(self) -> bool:
         return self._mpv is not None and not bool(self._mpv.pause)
@@ -740,6 +799,23 @@ class LibVLCBackend(PlayerBackend):
 
     def set_smooth_video(self, on: bool) -> None:
         pass
+
+    def buffer_status(self) -> Dict[str, Any]:
+        """Return libVLC state for the loading overlay (coarse)."""
+        if self._player is None:
+            return {}
+        try:
+            import vlc  # noqa: E402  (imported locally in create)
+            st = self._player.get_state()
+            if st == vlc.State.Playing:
+                return {"state": "playing", "percent": 100}
+            if st in (vlc.State.Buffering, vlc.State.Opening):
+                return {"state": "buffering", "percent": -1}
+            if st == vlc.State.Paused:
+                return {"state": "paused", "percent": 0}
+            return {"state": "stopped", "percent": 0}
+        except Exception:
+            return {}
 
     @property
     def is_playing(self) -> bool:

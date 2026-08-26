@@ -122,7 +122,7 @@ class FrameGrabber:
             "-ss", str(seek),
             "-i", stream_url,
             "-frames:v", "1", "-an", "-sn",
-            "-vf", "scale=480:-2",
+            "-vf", "scale=720:-2",
             "-q:v", "3",
             "-f", "image2", dest,
         ]

@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import threading
+import time
 import zlib
 from collections import OrderedDict, deque
 from typing import Any, Dict, List, Optional
@@ -266,6 +267,35 @@ class PlayerWidget(QWidget):
         el.addWidget(self.retry_btn, 0, Qt.AlignCenter)
         self.error_overlay.hide()
 
+        # Loading / buffering overlay (shown until the first frame is ready).
+        self.loading_overlay = QWidget(self.surface)
+        self.loading_overlay.setStyleSheet("background-color: rgba(10,10,15,0.9);")
+        ll = QVBoxLayout(self.loading_overlay)
+        self.loading_lbl = QLabel("Opening stream…")
+        self.loading_lbl.setStyleSheet("color: #c8d3e0; font-size: 14px; font-weight: bold;")
+        self.loading_lbl.setAlignment(Qt.AlignCenter)
+        ll.addWidget(self.loading_lbl)
+        self.loading_progress = QProgressBar()
+        self.loading_progress.setMaximumWidth(260)
+        self.loading_progress.setTextVisible(True)
+        self.loading_progress.setAlignment(Qt.AlignCenter)
+        self.loading_progress.setStyleSheet(
+            "QProgressBar { color: #c8d3e0; background-color: #1a2a4a; "
+            "border: 1px solid #2a7abf; border-radius: 4px; text-align: center; }\n"
+            "QProgressBar::chunk { background-color: #2a7abf; border-radius: 3px; }"
+        )
+        ll.addWidget(self.loading_progress, 0, Qt.AlignCenter)
+        self.loading_detail = QLabel("")
+        self.loading_detail.setStyleSheet("color: #8a9ab0; font-size: 11px;")
+        self.loading_detail.setAlignment(Qt.AlignCenter)
+        ll.addWidget(self.loading_detail)
+        self.loading_overlay.hide()
+
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setInterval(250)
+        self._loading_timer.timeout.connect(self._update_loading)
+        self._loading_started = 0.0
+
     # -- backend lifecycle ---------------------------------------------------
     def _ensure_backend(self) -> bool:
         """Create the media backend (mpv/VLC). MilkDrop is a second, lazily
@@ -397,6 +427,7 @@ class PlayerWidget(QWidget):
         backend.play(url)
         self._manager.record_recent(item)
         self.play_btn.setText("⏸")
+        self._hide_loading()
         return True
 
     def _show_preset_menu(self) -> None:
@@ -517,6 +548,7 @@ class PlayerWidget(QWidget):
         if allow_milkdrop and self._play_with_milkdrop(item):
             return
         self._use_backend(self._media_backend)
+        self._show_loading()
         # Live TV runs on mpv's default audio-clock sync: display-resample
         # (+interpolation) assumes a seekable, steadily-timestamped source,
         # and on live streams it makes playback stall and restart.
@@ -566,6 +598,7 @@ class PlayerWidget(QWidget):
     def stop(self) -> None:
         if self._backend is not None:
             self._backend.stop()
+        self._hide_loading()
         self._restore_torrent_rates()
         self.play_btn.setText("▶")
         self.seek.setValue(0)
@@ -749,9 +782,14 @@ class PlayerWidget(QWidget):
     # -- backend callbacks (delivered on the GUI thread via the signals) ----
     def _on_state(self, state: str) -> None:
         if state == "stopped":
+            self._hide_loading()
             self.play_btn.setText("▶")
             self._restore_torrent_rates()
         elif state == "playing":
+            self.play_btn.setText("⏸")
+        elif state == "buffering":
+            # The overlay is already shown by play(); keep the pause icon so
+            # the user can hit space to pause once playback starts.
             self.play_btn.setText("⏸")
 
     def _on_position(self, pos: float, dur: float) -> None:
@@ -777,9 +815,94 @@ class PlayerWidget(QWidget):
         self._show_error(msg)
 
     def _show_error(self, msg: str) -> None:
+        self._hide_loading()
         self.error_lbl.setText(msg or "Stream unavailable")
         self.error_overlay.resize(self.surface.size())
         self.error_overlay.show()
+
+    # -- loading / buffering overlay ----------------------------------------
+    def _show_loading(self) -> None:
+        """Show the loading overlay and start polling the backend for status."""
+        self.loading_lbl.setText("Opening stream…")
+        self.loading_detail.setText("")
+        self.loading_progress.setRange(0, 0)
+        self.loading_progress.setTextVisible(False)
+        self.loading_overlay.resize(self.surface.size())
+        self.loading_overlay.show()
+        self._loading_started = time.monotonic()
+        self._loading_timer.start()
+
+    def _hide_loading(self) -> None:
+        """Hide the loading overlay and stop polling."""
+        self._loading_timer.stop()
+        self.loading_overlay.hide()
+
+    def _update_loading(self) -> None:
+        """Poll the backend and update the overlay text/progress.
+
+        Tries to show realistic stages: stream open / network handshake /
+        cache fill, then hides once playback has actually started.
+        """
+        if self._backend is None:
+            self._hide_loading()
+            return
+        elapsed = time.monotonic() - self._loading_started
+        status = self._backend.buffer_status()
+        state = status.get("state") or ""
+        pct = status.get("percent", -1)
+        pfc = bool(status.get("paused_for_cache"))
+        tpos = float(status.get("time_pos") or 0.0)
+        dcd = float(status.get("demuxer_cache_duration") or 0.0)
+        core_idle = bool(status.get("core_idle"))
+
+        # Once we have actual playback time and the player isn't stalled for
+        # cache, the stream is really playing.
+        if (tpos > 0.0 or state == "playing") and not pfc and not core_idle:
+            self._hide_loading()
+            return
+
+        # Live streams sometimes report time-pos == 0 for a few moments even
+        # though the cache is full and playing. Give up after a short grace.
+        if (pct == 100 and not pfc and not core_idle and dcd > 0.0
+                and elapsed > 5.0):
+            self._hide_loading()
+            return
+
+        if pct >= 0:
+            self.loading_progress.setRange(0, 100)
+            self.loading_progress.setValue(pct)
+            self.loading_progress.setTextVisible(True)
+        else:
+            # No per-cache percentage yet: keep the bar as a busy indicator.
+            self.loading_progress.setRange(0, 0)
+            self.loading_progress.setTextVisible(False)
+
+        # Choose a stage label that matches what's actually happening.
+        if state == "stopped" or core_idle:
+            self.loading_lbl.setText("Opening stream…")
+            self.loading_detail.setText("")
+        elif pct == 0 or (pct < 0 and not dcd):
+            self.loading_lbl.setText("Handshaking…")
+            self.loading_detail.setText("negotiating stream")
+        elif pfc or (0 < pct < 100):
+            if pfc:
+                self.loading_lbl.setText("Buffering…")
+                if dcd:
+                    self.loading_detail.setText(f"{dcd:.1f}s buffered")
+                else:
+                    self.loading_detail.setText("")
+            else:
+                self.loading_lbl.setText("Buffering…")
+                self.loading_detail.setText(f"{pct}%")
+        else:
+            # mpv reports full cache but hasn't produced a frame yet.
+            self.loading_lbl.setText("Starting playback…")
+            self.loading_detail.setText("")
+
+        # Safety valve: if nothing has happened for a very long time, stop
+        # trying to entertain the user and let the error overlay take over.
+        if elapsed > 45 and (pct == 0 or pct < 0) and not dcd:
+            self._hide_loading()
 
     # -- settings live-apply -------------------------------------------------
     def apply_config(self) -> None:
@@ -805,9 +928,11 @@ class PlayerWidget(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        # Keep the error overlay covering the video surface after resizes.
+        # Keep the overlays covering the video surface after resizes.
         if self.error_overlay.isVisible():
             self.error_overlay.resize(self.surface.size())
+        if self.loading_overlay.isVisible():
+            self.loading_overlay.resize(self.surface.size())
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         # Any key press in fullscreen reveals the controls briefly.
@@ -1031,24 +1156,24 @@ def _fmt_time(s: float) -> str:
 # ---------------------------------------------------------------------------
 
 _PLACEHOLDER_CACHE: "OrderedDict[str, QPixmap]" = OrderedDict()
-_TILE_SIZE = QSize(120, 160)
-# A 120x160 pixmap costs ~77 KB of RAM, and every decorated tile holds one:
+_TILE_SIZE = QSize(240, 320)
+# A 240x320 pixmap costs ~308 KB of RAM, and every decorated tile holds one:
 # per-name initials for a 16k-entry section would be ~335 MB. So icons only
 # exist for tiles near the viewport (see ContentGrid._release_far_icons) and
 # both caches are bounded.
 _MAX_PLACEHOLDERS = 400
-_MAX_CACHED_PIXMAPS = 1200
+_MAX_CACHED_PIXMAPS = 800
 _NEUTRAL: Optional[QPixmap] = None
 _ROW_ROLE = Qt.UserRole + 1
 
 # Tiles fetched ahead of/behind the viewport so scrolling rarely shows a
 # placeholder, and the ceiling on outstanding prefetch downloads that keeps a
 # fast scroll from starving the tiles actually on screen.
-_PREFETCH_TILES = 600
-_MAX_PENDING_ARTWORK = 1200
+_PREFETCH_TILES = 250
+_MAX_PENDING_ARTWORK = 800
 # Icons are dropped this far outside the prefetch window (hysteresis: tiles
 # aren't cleared the moment they leave it, so a small scroll doesn't churn).
-_RELEASE_MARGIN = 300
+_RELEASE_MARGIN = 120
 # Pixmap decodes per event-loop turn (~1.5 ms each).
 _DECODE_BATCH = 12
 # Background artwork sweep pacing (metadata lookups are limited to ~5/s).
@@ -1098,7 +1223,7 @@ def _placeholder_pixmap(name: str = "") -> QPixmap:
         painter.setRenderHint(QPainter.Antialiasing)
         font = painter.font()
         font.setBold(True)
-        font.setPointSize(30 if len(text) < 3 else 22)
+        font.setPointSize(60 if len(text) < 3 else 44)
         painter.setFont(font)
         painter.setPen(QColor(232, 236, 244))
         painter.drawText(pm.rect(), Qt.AlignCenter, text)
@@ -1128,7 +1253,7 @@ class ContentGrid(QListWidget):
         super().__init__(parent)
         self._manager = manager
         self.setViewMode(QListWidget.IconMode)
-        self.setIconSize(QSize(120, 160))
+        self.setIconSize(QSize(240, 320))
         self.setResizeMode(QListWidget.Adjust)
         self.setMovement(QListWidget.Static)
         self.setUniformItemSizes(True)
@@ -1609,7 +1734,7 @@ class DetailPanel(QScrollArea):
         self._layout.addWidget(self.meta_lbl)
 
         self.backdrop = QLabel("")
-        self.backdrop.setFixedHeight(180)
+        self.backdrop.setFixedHeight(360)
         self.backdrop.setStyleSheet("background-color: #111827; border: 1px solid #1a2a4a; border-radius: 6px;")
         self.backdrop.setAlignment(Qt.AlignCenter)
         self._layout.addWidget(self.backdrop)

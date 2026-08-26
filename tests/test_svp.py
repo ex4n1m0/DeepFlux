@@ -119,6 +119,22 @@ def test_in_process_mpv_set_hwdec():
     assert be._mpv.hwdec == "auto-safe"
 
 
+def test_in_process_mpv_buffer_status_maps_properties():
+    be = MpvBackend(None)
+    m = mock.Mock()
+    m.cache_buffering_state = 75
+    m.paused_for_cache = "no"
+    m.demuxer_cache_duration = 12.5
+    m.core_idle = "no"
+    m.time_pos = 3.0
+    be._mpv = m
+    st = be.buffer_status()
+    assert st["state"] == "playing"
+    assert st["percent"] == 75
+    assert st["demuxer_cache_duration"] == 12.5
+    assert st["time_pos"] == 3.0
+
+
 # -- out-of-process backend (SVP path) -----------------------------------------
 
 def _wired_backend():
@@ -217,6 +233,23 @@ def test_process_backend_play_resets_stale_duration():
     with mock.patch.object(be, "_command", return_value=None):
         be.play("http://example.com/stream.ts")
     assert be._duration == 0.0
+
+
+def test_process_backend_buffer_status_maps_properties():
+    be = _wired_backend()
+    responses = {
+        "cache-buffering-state": 45,
+        "paused-for-cache": "yes",
+        "demuxer-cache-duration": 8.0,
+        "core-idle": "no",
+        "time-pos": 0.0,
+    }
+    be._get = lambda name: responses.get(name)
+    st = be.buffer_status()
+    assert st["state"] == "buffering"
+    assert st["percent"] == 45
+    assert st["paused_for_cache"] is True
+    assert st["demuxer_cache_duration"] == 8.0
 
 
 def test_process_backend_dispatch_routes_events():

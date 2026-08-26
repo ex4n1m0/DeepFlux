@@ -98,7 +98,7 @@ def _is_image_file(path: str) -> bool:
 class ArtworkCache:
     """On-disk image cache with background fetching + thumbnailing."""
 
-    def __init__(self, root: str, thumb_size: Tuple[int, int] = (200, 300)) -> None:
+    def __init__(self, root: str, thumb_size: Tuple[int, int] = (300, 450)) -> None:
         self.root = root
         self.full_dir = os.path.join(root, "full")
         self.thumb_dir = os.path.join(root, "thumb")
@@ -121,7 +121,10 @@ class ArtworkCache:
         return os.path.join(self.full_dir, self._key(url) + ext)
 
     def thumb_path(self, url: str) -> str:
-        return os.path.join(self.thumb_dir, self._key(url) + ".png")
+        # Include the thumb size in the filename so a display-size bump
+        # automatically regenerates existing thumbnails from the cached fulls.
+        w, h = self.thumb_size
+        return os.path.join(self.thumb_dir, f"{self._key(url)}_{w}x{h}.png")
 
     # -- synchronous helpers -------------------------------------------------
     def get_cached(self, url: str) -> Optional[str]:
