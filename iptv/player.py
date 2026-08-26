@@ -166,30 +166,24 @@ class MpvBackend(PlayerBackend):
 
     name = "mpv"
 
-    def __init__(self, parent_widget: Any, svp_mode: bool = False) -> None:
+    def __init__(self, parent_widget: Any) -> None:
         super().__init__(parent_widget)
         self._mpv: Any = None
         self._created = False
         self._want_interpolation = False  # user setting; gated by smooth mode
         self._smooth = True               # False for live streams
-        # SVP 4 mode: mpv is created so SVP Manager can discover it and
-        # inject its VapourSynth motion-interpolation chain (see svp.py).
-        # Baked in at creation — changing it means recreating the backend.
-        self._svp_mode = bool(svp_mode)
 
     def _creation_kwargs(self, wid: str, vo: str) -> dict:
-        """mpv.MPV constructor kwargs, with the SVP contract when armed.
+        """mpv.MPV constructor kwargs.
 
-        SVP mode (per SVP's mpv guide): ``input-ipc-server=mpvpipe`` lets SVP
-        Manager discover this instance over a named pipe; VapourSynth filters
-        accept software frames only, so hwdec must be copy-back
-        (``auto-copy`` + all codecs); ``hr-seek-framedrop=no`` avoids audio
-        desync and ``resume_playback=False`` avoids the incompatible
-        watch-later feature."""
-        kwargs = dict(
+        NB: SVP cannot be driven from here. Its VapourSynth chain embeds a
+        CPython runtime that will not initialize inside our own Python
+        process (VSScript deadlocks), so SVP mode uses the separate
+        :class:`iptv.mpv_process.MpvProcessBackend` instead."""
+        return dict(
             wid=wid,
             vo=vo,
-            hwdec="auto-copy" if self._svp_mode else "auto-safe",
+            hwdec="auto-safe",
             video_sync="display-resample",
             keep_open="always",
             input_default_bindings=True,
@@ -197,14 +191,6 @@ class MpvBackend(PlayerBackend):
             input_cursor=False,
             osc=False,
         )
-        if self._svp_mode:
-            kwargs.update(
-                input_ipc_server="mpvpipe",
-                hwdec_codecs="all",
-                hr_seek_framedrop=False,
-                resume_playback=False,
-            )
-        return kwargs
 
     def create(self) -> bool:
         ensure_mpv_dll_on_path()
@@ -348,9 +334,7 @@ class MpvBackend(PlayerBackend):
     def set_hwdec(self, mode: str) -> None:
         if self._mpv is not None:
             try:
-                # SVP's VapourSynth chain needs copy-back frames; never let
-                # the configured hwdec knock it back to a zero-copy mode.
-                self._mpv.hwdec = "auto-copy" if self._svp_mode else (mode or "auto-safe")
+                self._mpv.hwdec = mode or "auto-safe"
             except Exception:
                 pass
 
@@ -766,16 +750,44 @@ class LibVLCBackend(PlayerBackend):
 # Factory
 # ---------------------------------------------------------------------------
 
+def create_svp_backend(parent_widget: Any) -> Optional[PlayerBackend]:
+    """The out-of-process mpv backend used for SVP motion interpolation.
+
+    Returns None whenever SVP isn't usable (not installed, mpv component
+    missing, process/IPC failure) so the caller can fall back to the normal
+    in-process backend — a broken SVP setup must never cost the user
+    playback."""
+    from . import svp as svp_mod
+    inst = svp_mod.find_install()
+    if inst is None or not inst.mpv_exe:
+        logger.info("SVP requested but no usable SVP mpv.exe found")
+        return None
+    from .mpv_process import MpvProcessBackend
+    b = MpvProcessBackend(parent_widget, mpv_exe=inst.mpv_exe)
+    if b.create():
+        logger.info("using out-of-process mpv for SVP: %s", inst.mpv_exe)
+        return b
+    b.destroy()
+    return None
+
+
 def create_backend(parent_widget: Any, preferred: str = "mpv",
                    svp: bool = False) -> Optional[PlayerBackend]:
     """Create the best available backend, falling back as needed.
 
-    ``svp`` arms SVP 4 motion-interpolation integration on the mpv backend
-    (see :mod:`iptv.svp`); the VLC backend can't do it and ignores the flag.
+    ``svp`` asks for SVP 4 motion interpolation, which requires the
+    out-of-process mpv backend (VapourSynth cannot initialize inside our
+    Python process — see :mod:`iptv.mpv_process`). Any failure there falls
+    through to the normal in-process backends.
     """
+    if svp and preferred != "vlc":
+        b = create_svp_backend(parent_widget)
+        if b is not None:
+            return b
+        logger.info("SVP backend unavailable; using in-process mpv")
     order = [("vlc", LibVLCBackend), ("mpv", MpvBackend)] if preferred == "vlc" else [("mpv", MpvBackend), ("vlc", LibVLCBackend)]
     for name, cls in order:
-        b = MpvBackend(parent_widget, svp_mode=svp) if cls is MpvBackend else cls(parent_widget)
+        b = cls(parent_widget)
         if b.create():
             if name != preferred:
                 logger.info("%s backend unavailable; fell back to %s", preferred, name)

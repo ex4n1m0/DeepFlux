@@ -46,11 +46,22 @@ class SvpInstall:
     """Paths into a detected SVP 4 installation."""
     install_dir: str   # e.g. C:\Program Files (x86)\SVP 4
     manager_exe: str   # SVPManager.exe
-    runtime_dir: str   # mpv64 — portable VapourSynth+Python for libmpv players
+    runtime_dir: str   # mpv64 — portable VapourSynth+Python, plus mpv.exe
 
     @property
     def usable(self) -> bool:
         return os.path.isfile(self.manager_exe) and os.path.isdir(self.runtime_dir)
+
+    @property
+    def mpv_exe(self) -> str:
+        """SVP's own mpv.exe (installed with the "mpv video player" package).
+
+        The out-of-process backend runs THIS binary: it sits next to SVP's
+        portable VapourSynth, so the frame server resolves without any
+        environment gymnastics, and it's a C host so VSScript initializes
+        normally. Empty string when the user didn't install the component."""
+        p = os.path.join(self.runtime_dir, "mpv.exe")
+        return p if os.path.isfile(p) else ""
 
 
 def _registry_install_dir() -> str:
@@ -133,31 +144,26 @@ def start_manager(inst: SvpInstall) -> bool:
 
 _prepared = False
 _started_by_us = False
-_dll_handles: list = []  # keep preloaded VapourSynth DLLs referenced
 
 
 def prepare_environment(inst: SvpInstall) -> None:
-    """Make SVP's portable VapourSynth runtime loadable in this process.
+    """Put SVP's runtime dir on PATH for CHILD processes.
 
-    Three layers, each needed by a different consumer:
+    SVP Manager resolves the frame server (``mpv64\\vapoursynth.dll``)
+    through PATH; when we start it ourselves it inherits this. The player
+    (SVP's own ``mpv.exe``) lives in that same folder, so it finds
+    VapourSynth next to itself.
 
-    - PATH append: SVP Manager resolves the frame server (``mpv64\\
-      vapoursynth.dll``) through PATH — it only finds it for libmpv players
-      when the manager process has mpv64 on its PATH (verified live: an
-      installer-autostarted manager logged "Frame server NOT FOUND", one
-      started by us found it). Appended, never prepended, so the bundled
-      libmpv-2.dll keeps winning its own lookup.
-    - ``os.add_dll_directory`` + ctypes PRELOAD by absolute path: this is an
-      MSIX-packaged Python (WindowsApps) — bare-name DLL resolution does NOT
-      consult PATH (verified: ctypes.CDLL("libmpv-2.dll") fails here even
-      with PATH set). mpv delay-loads "VSScript.dll" by bare name when SVP
-      injects the filter; preloading puts the module in the process's
-      loaded-module list, which every loader search order checks first.
+    Deliberately narrow — two things this must NEVER do, both verified the
+    hard way on this machine:
 
-    PATH only, NEVER PYTHONPATH: mpv64 holds a full Python 3.12 stdlib whose
-    .pyd files shadow OUR interpreter's modules (_ctypes & co.) — verified:
-    PYTHONPATH=mpv64 breaks `import ctypes` in our process. SVP's embedded
-    Python doesn't need it (python312._pth makes it self-contained).
+    - No PYTHONPATH: mpv64 ships a complete Python 3.12 stdlib whose .pyd
+      files shadow our interpreter's own modules ("Module use of
+      python312.dll conflicts with this version of Python").
+    - No ctypes preload of vapoursynth.dll/VSScript.dll into THIS process:
+      that pulls a second CPython (3.12) into our 3.11 runtime and hard-
+      crashes the app (exit 0xCFFFFFFF). Loading VapourSynth in-process is
+      exactly the thing the out-of-process backend exists to avoid.
 
     Process-local and idempotent."""
     global _prepared
@@ -167,18 +173,8 @@ def prepare_environment(inst: SvpInstall) -> None:
     path = os.environ.get("PATH", "")
     if d.lower() not in path.lower():
         os.environ["PATH"] = path + os.pathsep + d if path else d
-    try:
-        os.add_dll_directory(d)
-    except (AttributeError, OSError):
-        pass  # pre-3.8 / exotic platforms: preload below still helps
-    import ctypes
-    for dll in ("vapoursynth.dll", "VSScript.dll"):
-        try:
-            _dll_handles.append(ctypes.CDLL(os.path.join(d, dll)))
-        except OSError as exc:
-            logger.warning("SVP runtime preload failed for %s: %s", dll, exc)
     _prepared = True
-    logger.info("SVP runtime prepared: %s", d)
+    logger.info("SVP runtime added to PATH for child processes: %s", d)
 
 
 def ensure_manager(inst: SvpInstall, wait_s: float = 15.0) -> bool:

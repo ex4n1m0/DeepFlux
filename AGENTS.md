@@ -228,6 +228,44 @@
   stall/restart. `_apply_sync` in MpvBackend is the single place that writes
   both properties (`_smooth` gates `_want_interpolation`); all of it is a
   no-op on the VLC backend.
+- SVP 4 motion interpolation (`iptv/svp.py` + `iptv/mpv_process.py`, Play →
+  Playback "SVP motion interpolation", default OFF) is the ONLY way to get
+  real soap-opera-effect frame synthesis — mpv's own `interpolation` cannot
+  do it (see the verified limit below). NOTHING is bundled: SVP is
+  proprietary (~$25 lifetime, 30-day trial, one PC per license) and we only
+  cooperate with the user's own install, like SMPlayer/VLC/Plex do. No SVP
+  install = greyed-out checkbox, zero behavior change.
+  ARCHITECTURE, and why it must stay this way (all verified live, 2026-08):
+  * SVP injects its filter chain through VapourSynth, which EMBEDS ITS OWN
+    CPython 3.12. libmpv running inside DeepFlux's Python 3.11 process
+    therefore CANNOT use it: mpv logs "Failed to initialize VapourSynth
+    VSScript library", and calling `getVSScriptAPI` from our process
+    DEADLOCKS. Putting mpv64 on PYTHONPATH breaks `import ctypes` ("Module
+    use of python312.dll conflicts with this version of Python"), and
+    ctypes-preloading vapoursynth.dll hard-crashes the app (exit
+    0xCFFFFFFF). Do NOT try to make the in-process backend do SVP.
+  * So SVP mode runs SVP's OWN `mpv.exe` (`<SVP>\mpv64\mpv.exe`, a plain C
+    host) as a child process, embedded via `--wid=<surface winId>` and
+    driven over mpv's JSON IPC. `--input-ipc-server=mpvpipe` is what SVP
+    Manager scans for; mpv accepts several IPC clients, so SVP and DeepFlux
+    share the pipe. `--no-config` keeps SVP's own mpv.conf from fighting our
+    options; `--hwdec=auto-copy --hwdec-codecs=all` is mandatory
+    (VapourSynth takes software frames only); `--vo=gpu-next` preserves the
+    Dolby Vision behavior documented above.
+  * The IPC pipe handle is SYNCHRONOUS: a blocking read on the reader thread
+    also blocks writes from the GUI thread on the same handle (verified
+    deadlock). `_read_loop` therefore polls `PeekNamedPipe` and reads only
+    what's buffered, with ONE lock covering both directions. Never go back
+    to a blocking `read()`.
+  * `svp.prepare_environment` may only touch PATH (for child processes).
+    Never PYTHONPATH, never an in-process DLL preload — see above.
+  * Any failure (no SVP, missing mpv component, spawn/IPC failure) falls
+    back to the in-process backend in `create_backend`, so a broken SVP
+    setup never costs playback. mpv's own interpolation/display-resample are
+    deliberate no-ops in this backend: SVP already targets the display rate.
+  MEASURED end-to-end on `Mutiny (2026)`: container 23.976 fps ->
+  `estimated-vf-fps` 119.88 with `vf=[svp]`, while pause/seek/tracks/
+  position callbacks all keep working.
   VERIFIED LIMIT (2026-08, live probe of MpvBackend on this machine):
   mpv `interpolation` is frame BLENDING (smoothmotion), not motion
   synthesis — it only blends vsyncs that fall between source-frame times,

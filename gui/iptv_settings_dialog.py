@@ -472,22 +472,34 @@ class IPTVPlaybackDialog(_SettingsPage):
 
         self.svp = QCheckBox("SVP motion interpolation (soap-opera effect)")
         self.svp.setToolTip(
-            "True motion interpolation — synthesizes intermediate frames so\n"
-            "24 fps movies move like high-fps video. Works through your own\n"
-            "SVP 4 install (svp-team.com, 30-day trial); nothing is bundled.\n"
-            "DeepFlux hands SVP Manager the embedded mpv (mpv pipe + copy-back\n"
-            "decoding), then SVP does the processing. Files/VOD only, mpv\n"
-            "backend only; takes effect on the next playback."
+            "True motion interpolation — synthesizes intermediate frames, so\n"
+            "24 fps movies move like high-frame-rate video (verified here:\n"
+            "23.976 -> 119.88 fps).\n\n"
+            "Requires your own SVP 4 install (svp-team.com, 30-day trial);\n"
+            "nothing is bundled. Playback then runs in SVP's mpv player,\n"
+            "embedded in this window. Costs GPU; takes effect on the next\n"
+            "file you play. Not used for live TV."
         )
         from iptv import svp as _svp
-        if _svp.find_install() is None:
+        _inst = _svp.find_install()
+        if _inst is None or not _inst.mpv_exe:
             self.svp.setEnabled(False)
-            self.svp.setText("SVP motion interpolation (SVP 4 not installed)")
-            self.svp.setToolTip(
-                "No SVP 4 installation was found on this machine.\n"
-                "Install SVP 4 (30-day trial at svp-team.com) to enable\n"
-                "true motion interpolation, then reopen this dialog."
-            )
+            if _inst is None:
+                self.svp.setText("SVP motion interpolation (SVP 4 not installed)")
+                self.svp.setToolTip(
+                    "No SVP 4 installation was found on this machine.\n"
+                    "Install SVP 4 (30-day trial at svp-team.com) to enable\n"
+                    "true motion interpolation, then reopen this dialog."
+                )
+            else:
+                # SVP is there but the user skipped the mpv component, which
+                # is the player we embed.
+                self.svp.setText("SVP motion interpolation (SVP mpv component missing)")
+                self.svp.setToolTip(
+                    "SVP 4 is installed but its mpv player component is not.\n"
+                    "Re-run the SVP installer and include the mpv package\n"
+                    "(\"[VPS_64] mpv video player\"), then reopen this dialog."
+                )
         pl.addRow("", self.svp)
 
         self.milkdrop = QCheckBox("MilkDrop visualizer for audio files")
