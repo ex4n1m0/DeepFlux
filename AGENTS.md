@@ -29,7 +29,7 @@
   frozen build), irc (codes.txt).
 - Installer: `"$LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging/installer.iss`
   (Inno 7.0.2 also installed at `C:\Program Files\Inno Setup 7\`). Reads
-  `dist/DeepFlux/*` and writes `dist/DeepFlux3.0.1Setup.exe` — `BuildDir` in
+  `dist/DeepFlux/*` and writes `dist/DeepFlux3.0.2Setup.exe` — `BuildDir` in
   installer.iss is relative to the script. The old `Documents\DeePFlux`
   output folder is no longer used.
 - Logo: every derived asset (icon.ico, logo_48, wizard images, extension
@@ -47,6 +47,10 @@
   `/_vercel/insights/script.js` tag; don't remove it. If the CLI reports
   "No existing credentials found", `vercel login` (device-code flow, user
   clicks Verify in the browser) fixes it — non-interactive shells work.
+  `vercel --prod --yes` may fail with "Not authorized" even while
+  `vercel whoami` succeeds: the project lives under the **timedivision**
+  team, so pass `--scope timedivision` (the orgId in `website/.vercel/
+  project.json` does not resolve to the CLI's default personal scope).
   Version bumps touch: installer.iss (MyAppVersion + OutputBaseFilename),
   main_window title, help_dialog (H1/Version/About), opensubtitles UA,
   website index.html.
@@ -517,7 +521,7 @@
   NOTE: python-mpv's `m["x"]` is an OPTION, `m.x` is a PROPERTY — a test
   reading `m["width"]` fails with "property does not exist".
 - OpenSubtitles (`iptv/opensubtitles.py`): REST v1 client
-  (api.opensubtitles.com/api/v1) — `Api-Key` + UA "DeepFlux v3.0.1" headers;
+  (api.opensubtitles.com/api/v1) — `Api-Key` + UA "DeepFlux v3.0.2" headers;
   hash search (classic size + 64KiB head/tail sum) first for local files,
   title query fallback; download is two-step (POST /download {file_id} →
   short-lived link → GET). 406 = daily quota (suggest account creds);

@@ -42,7 +42,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.0.1 — User Guide</h1>
+<h1>DeepFlux 3.0.2 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -207,8 +207,22 @@ the torrent engine on completion.</p>
       and you can drop your own <code>.milk</code> files into
       <code>~/.deeptorrent\presets</code>.</li>
   <li><b>Smooth motion:</b> video is locked to your screen's refresh rate, and
-      Play → Playback can interpolate frames for extra-fluid motion (files and
-      VOD only — live TV uses the plain sync it needs to avoid restarts).</li>
+      Play → Playback can blend frames to remove judder (files and VOD only —
+      live TV uses the plain sync it needs to avoid restarts). This smooths
+      <i>mismatched</i> frame rates; it does not invent new frames, so a 24 fps
+      film on a 120 Hz screen already lines up perfectly and looks unchanged.
+      For true high-frame-rate motion, see SVP below.</li>
+  <li><b>SVP motion interpolation (soap-opera effect):</b> turns 24 fps film
+      into genuinely high-frame-rate video by generating intermediate frames
+      (measured: 23.976 → 119.88 fps). This needs
+      <a href="https://www.svp-team.com/">SVP 4</a>, a separate paid program
+      (~$25 one-off, 30-day free trial) — nothing is bundled, and DeepFlux
+      works exactly as before without it. Install SVP 4 <b>including its mpv
+      player component</b>, then tick "SVP motion interpolation" in
+      Play → Playback; it applies to the next file you play. Works with local
+      files, VOD and live TV, and costs GPU power. If SVP isn't found the
+      option stays greyed out, and if it ever fails DeepFlux falls back to
+      normal playback.</li>
   <li>Aspect ratio cycles with <code>A</code>; <code>F</code> or double-click for fullscreen.</li>
 </ul>
 
@@ -224,7 +238,7 @@ directory (Chrome → <code>chrome://extensions</code> → Developer mode → Lo
   <tr><td><b>File</b></td><td><b>API Keys</b> — every service key in one window: LLM endpoint, base URL and key, Jackett, Brave, Perplexity, TMDb, OpenSubtitles. Plus file associations, and <b>Export/Import Settings</b> — a passphrase-encrypted <code>.dfc</code> backup of everything (keys, sources, all settings) to keep safe or move to another PC. Import applies after a restart; your previous settings are kept as <code>config.json.bak</code>.</td></tr>
   <tr><td><b>Download</b></td><td><b>Jackett Settings</b> (URL; Test Connection syncs your indexer list), <b>Downloads Settings</b> (save paths, bandwidth limits, connections), <b>Sources</b> (which sites the agent searches), and <b>RSS Feeds</b> (subscriptions — or just ask the agent).</td></tr>
   <tr><td><b>Browse</b></td><td><b>Browser Settings</b> (homepage, ad blocking) and bookmark import.</td></tr>
-  <tr><td><b>Play</b></td><td>Four small pages: Playlist Sources, Metadata &amp; Cache (artwork cache, EPG), Subtitles &amp; Languages (preferred audio/subtitle language), and Playback (backend, decoding, buffer, smooth motion, throttling).</td></tr>
+  <tr><td><b>Play</b></td><td>Four small pages: Playlist Sources, Metadata &amp; Cache (artwork cache, EPG), Subtitles &amp; Languages (preferred audio/subtitle language), and Playback (backend, decoding, buffer, smooth motion, SVP interpolation, throttling).</td></tr>
   <tr><td><b>Command</b></td><td>—</td></tr>
   <tr><td><b>IRC</b></td><td><b>Networks</b> — servers, channels, SASL.</td></tr>
 </table>
@@ -276,7 +290,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.0.1 — AI Deep Search</p>
+<p>DeepFlux 3.0.2 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -343,7 +357,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 24px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.0.1 — AI Deep Search")
+        version = QLabel("3.0.2 — AI Deep Search")
         version.setStyleSheet("color: #c8d3e0; font-size: 14px;")
         layout.addWidget(version)
 
