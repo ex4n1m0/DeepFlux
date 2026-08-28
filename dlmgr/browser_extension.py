@@ -142,13 +142,19 @@ BROWSER_EXTENSION_JS = r"""
   // Video element detection
   // ---------------------------------------------------------------------------
   function scanForVideoElements() {
-    var videos = document.querySelectorAll('video, source, audio');
+    var videos = document.querySelectorAll('video, source, audio, [data-src], [data-url]');
     videos.forEach(function(el) {
-      var src = el.src || el.currentSrc || el.getAttribute('src');
+      var src = el.src || el.currentSrc || el.getAttribute('src') ||
+                el.getAttribute('data-src') || el.getAttribute('data-url');
       if (src && src.indexOf('http') === 0) {
+        // <source type="application/x-mpegURL"> or DASH mime overrides guess.
+        var mime = (el.getAttribute('type') || '').toLowerCase();
+        var type = guessType(src);
+        if (mime.indexOf('mpegurl') !== -1) type = 'hls';
+        else if (mime.indexOf('dash+xml') !== -1) type = 'dash';
         addVideo({
           url: src,
-          type: guessType(src),
+          type: type,
           title: document.title || ''
         });
       }
@@ -301,9 +307,8 @@ BROWSER_EXTENSION_JS = r"""
   }
 
   // Strategy 2: PerformanceObserver — catch real media network requests.
-  // Works for YouTube (googlevideo.com/videoplayback) and MissAV
-  // (surrit.com/{uuid}/playlist.m3u8 and /{quality}/video.m3u8).
-  // These URLs already have valid signatures/cookies applied by the player.
+  // Works for YouTube (googlevideo.com/videoplayback), MissAV (surrit.com),
+  // and any other site that loads .m3u8 / .mpd manifests.
   var mediaObserver = null;
   function startMediaNetworkInterceptor() {
     if (mediaObserver) return;
@@ -312,6 +317,18 @@ BROWSER_EXTENSION_JS = r"""
         list.getEntries().forEach(function(entry) {
           var name = entry.name || '';
           if (!name) return;
+
+          // Generic HLS/DASH manifest catch — any .m3u8 or .mpd resource.
+          if (name.indexOf('.m3u8') !== -1 || name.indexOf('.mpd') !== -1) {
+            // Avoid segment (.ts) noise; HLS manifests are .m3u8, DASH manifests .mpd.
+            addVideo({
+              url: name,
+              type: guessType(name),
+              title: document.title || '',
+              quality: ''
+            });
+            return;
+          }
 
           // YouTube media URLs:
           //   https://rr{N}.---sn-...googlevideo.com/videoplayback?...
@@ -526,6 +543,14 @@ BROWSER_EXTENSION_JS = r"""
     detectedVideos.push(media);
     showOverlayButton();
     updateStatusBadge();
+    // Cross-frame propagation: iframes (e.g. javplayer.cc on 123av.com) may
+    // catch the stream while the overlay lives on the top page. Post the
+    // detected URL up so the parent frame can also show it.
+    try {
+      if (window.parent && window.parent !== window && window.parent.postMessage) {
+        window.parent.postMessage({ type: 'deeptorrent:video', video: media }, '*');
+      }
+    } catch(e) {}
   }
 
   // ---------------------------------------------------------------------------
@@ -951,6 +976,14 @@ BROWSER_EXTENSION_JS = r"""
       sendDownload(href, guessType(href));
     }
   }, true);
+
+  // ---------------------------------------------------------------------------
+  // Listen for videos detected by child iframes (cross-frame postMessage).
+  // ---------------------------------------------------------------------------
+  window.addEventListener('message', function(event) {
+    if (!event.data || event.data.type !== 'deeptorrent:video' || !event.data.video) return;
+    addVideo(event.data.video);
+  });
 
   // ---------------------------------------------------------------------------
   // Initial scan + periodic rescan
