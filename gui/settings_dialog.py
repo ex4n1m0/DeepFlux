@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGroupBox,
@@ -193,7 +194,62 @@ class DownloadsSettingsDialog(QDialog):
         self.tor_restore_completed = QCheckBox("Keep completed torrents in the list across restarts")
         dl_layout.addRow("", self.tor_restore_completed)
 
+        # --- Queue / concurrency ---
+        queue_group = QGroupBox("Torrent Queue")
+        queue_layout = QFormLayout(queue_group)
+
+        self.tor_max_downloading = QSpinBox()
+        self.tor_max_downloading.setRange(0, 1000)
+        self.tor_max_downloading.setSpecialValueText("Unlimited")
+        self.tor_max_downloading.setValue(5)
+        queue_layout.addRow("Max downloading at once:", self.tor_max_downloading)
+
+        self.tor_max_seeding = QSpinBox()
+        self.tor_max_seeding.setRange(0, 1000)
+        self.tor_max_seeding.setSpecialValueText("Unlimited")
+        self.tor_max_seeding.setValue(5)
+        queue_layout.addRow("Max seeding at once:", self.tor_max_seeding)
+
+        self.tor_max_active = QSpinBox()
+        self.tor_max_active.setRange(0, 1000)
+        self.tor_max_active.setSpecialValueText("Unlimited")
+        self.tor_max_active.setValue(10)
+        queue_layout.addRow("Max active torrents:", self.tor_max_active)
+
+        self.tor_max_queued = QSpinBox()
+        self.tor_max_queued.setRange(0, 10000)
+        self.tor_max_queued.setSpecialValueText("Unlimited")
+        self.tor_max_queued.setValue(0)
+        queue_layout.addRow("Max queued torrents:", self.tor_max_queued)
+
+        self.tor_auto_manage_interval = QSpinBox()
+        self.tor_auto_manage_interval.setRange(5, 3600)
+        self.tor_auto_manage_interval.setSuffix(" s")
+        self.tor_auto_manage_interval.setValue(30)
+        queue_layout.addRow("Auto-manage interval:", self.tor_auto_manage_interval)
+
+        self.tor_seed_ratio = QDoubleSpinBox()
+        self.tor_seed_ratio.setRange(0.0, 100.0)
+        self.tor_seed_ratio.setSingleStep(0.1)
+        self.tor_seed_ratio.setSpecialValueText("Unlimited")
+        self.tor_seed_ratio.setSuffix(" x")
+        queue_layout.addRow("Stop seeding at ratio:", self.tor_seed_ratio)
+
+        self.tor_seed_time = QSpinBox()
+        self.tor_seed_time.setRange(0, 10080)
+        self.tor_seed_time.setSingleStep(60)
+        self.tor_seed_time.setSpecialValueText("Unlimited")
+        self.tor_seed_time.setSuffix(" min")
+        queue_layout.addRow("Stop seeding after:", self.tor_seed_time)
+
+        self.tor_auto_save = QSpinBox()
+        self.tor_auto_save.setRange(10, 3600)
+        self.tor_auto_save.setSuffix(" s")
+        self.tor_auto_save.setValue(60)
+        queue_layout.addRow("Auto-save state interval:", self.tor_auto_save)
+
         layout.addWidget(dl_group)
+        layout.addWidget(queue_group)
 
         # Download Manager (IDM-style)
         dm_group = QGroupBox("Download Manager")
@@ -253,6 +309,14 @@ class DownloadsSettingsDialog(QDialog):
         self.tor_listen_port.setValue(self.config.torrents.listen_port)
         self.tor_max_connections.setValue(self.config.torrents.max_connections)
         self.tor_restore_completed.setChecked(self.config.torrents.restore_completed)
+        self.tor_max_downloading.setValue(self.config.torrents.max_downloading_torrents)
+        self.tor_max_seeding.setValue(self.config.torrents.max_seeding_torrents)
+        self.tor_max_active.setValue(self.config.torrents.max_active_torrents)
+        self.tor_max_queued.setValue(self.config.torrents.max_queued_torrents)
+        self.tor_auto_manage_interval.setValue(self.config.torrents.auto_manage_interval_seconds)
+        self.tor_seed_ratio.setValue(float(self.config.torrents.seed_ratio_limit))
+        self.tor_seed_time.setValue(self.config.torrents.seed_time_limit_minutes)
+        self.tor_auto_save.setValue(self.config.torrents.auto_save_state_seconds)
         self.dm_max_concurrent.setValue(self.config.download.max_concurrent)
         self.dm_max_connections.setValue(self.config.download.max_connections_per_download)
         self.dm_default_folder.setText(self.config.download.default_folder)
@@ -277,6 +341,14 @@ class DownloadsSettingsDialog(QDialog):
         self.config.torrents.listen_port = self.tor_listen_port.value()
         self.config.torrents.max_connections = self.tor_max_connections.value()
         self.config.torrents.restore_completed = self.tor_restore_completed.isChecked()
+        self.config.torrents.max_downloading_torrents = self.tor_max_downloading.value()
+        self.config.torrents.max_seeding_torrents = self.tor_max_seeding.value()
+        self.config.torrents.max_active_torrents = self.tor_max_active.value()
+        self.config.torrents.max_queued_torrents = self.tor_max_queued.value()
+        self.config.torrents.auto_manage_interval_seconds = self.tor_auto_manage_interval.value()
+        self.config.torrents.seed_ratio_limit = self.tor_seed_ratio.value()
+        self.config.torrents.seed_time_limit_minutes = self.tor_seed_time.value()
+        self.config.torrents.auto_save_state_seconds = self.tor_auto_save.value()
         self.config.download.max_concurrent = self.dm_max_concurrent.value()
         self.config.download.max_connections_per_download = self.dm_max_connections.value()
         self.config.download.default_folder = self.dm_default_folder.text().strip() or self.config.download.default_folder

@@ -172,3 +172,65 @@ def test_state_manager_resume_files(tmp_path):
     assert sm.load_resume_data("def456") is None
     sm.remove_resume_data("abc123")
     assert sm.load_resume_data("abc123") is None
+
+
+def test_queue_settings_apply_and_session_stats():
+    """Queue settings are accepted and aggregate stats are returned."""
+    with TorrentEngine(
+        max_downloading_torrents=4,
+        max_seeding_torrents=3,
+        max_active_torrents=5,
+        seed_ratio_limit=2.0,
+        seed_time_limit_minutes=120,
+    ) as eng:
+        magnet = (
+            "magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062ec9b3ee0"
+            "&dn=Big+Buck+Bunny&tr=udp%3A%2F%2Ftracker.example.com%3A80"
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            info_hash = eng.add_magnet(magnet, tmpdir, "Movies")
+            stats = eng.get_session_stats()
+            assert stats["total"] == 1
+            assert "counts" in stats
+            assert "dht_nodes" in stats
+            status = eng.get_torrent_status(info_hash)
+            assert "queue_position" in status
+            assert "ratio" in status
+            assert "is_queued" in status
+            assert "seeding_time" in status
+            # set_queue_settings should not raise.
+            eng.set_queue_settings(
+                max_downloading_torrents=2,
+                max_seeding_torrents=2,
+                max_active_torrents=3,
+            )
+
+
+def test_state_manager_persists_magnet_and_backup(tmp_path):
+    from engine.state import TorrentStateManager
+    sm = TorrentStateManager(str(tmp_path))
+    torrents = [
+        {
+            "info_hash": "abc123",
+            "name": "Test",
+            "save_path": str(tmp_path),
+            "category": "Movies",
+            "progress": 0.5,
+            "state": "downloading",
+            "paused": False,
+            "magnet_uri": "magnet:?xt=urn:btih:abc123",
+        }
+    ]
+    sm.save_state(torrents)
+    sm.store_magnet_uri("abc123", "magnet:?xt=urn:btih:abc123")
+    loaded = sm.load_state()
+    assert len(loaded) == 1
+    assert loaded[0]["magnet_uri"] == "magnet:?xt=urn:btih:abc123"
+    assert (tmp_path / "torrents_state.json").is_file()
+    assert sm.get_stored_magnet_uri("abc123") == "magnet:?xt=urn:btih:abc123"
+    # A second save creates the .bak copy; fallback loads it if main is removed.
+    sm.save_state(torrents)
+    assert (tmp_path / "torrents_state.json.bak").is_file()
+    (tmp_path / "torrents_state.json").unlink()
+    loaded = sm.load_state()
+    assert len(loaded) == 1

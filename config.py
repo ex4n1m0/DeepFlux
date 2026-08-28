@@ -90,6 +90,17 @@ class TorrentsConfig:
     listen_port: int = 0             # 0 = random port each start
     max_connections: int = 0         # 0 = libtorrent default
     restore_completed: bool = True   # keep completed torrents in the list across restarts
+    # Queue / concurrency — 0 means unlimited / use libtorrent default.
+    max_downloading_torrents: int = 5
+    max_seeding_torrents: int = 5
+    max_active_torrents: int = 10
+    max_queued_torrents: int = 0
+    auto_manage_interval_seconds: int = 30
+    # Seeding limits — 0 means disabled (unlimited).
+    seed_ratio_limit: float = 0.0
+    seed_time_limit_minutes: int = 0
+    # Crash-safe persistence cadence.
+    auto_save_state_seconds: int = 60
 
 
 @dataclass

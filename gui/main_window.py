@@ -652,6 +652,13 @@ class MainWindow(QMainWindow):
             upload_limit_kb=self.config.torrents.upload_rate_limit_kb,
             listen_port=self.config.torrents.listen_port,
             max_connections=self.config.torrents.max_connections,
+            max_downloading_torrents=self.config.torrents.max_downloading_torrents,
+            max_seeding_torrents=self.config.torrents.max_seeding_torrents,
+            max_active_torrents=self.config.torrents.max_active_torrents,
+            max_queued_torrents=self.config.torrents.max_queued_torrents,
+            auto_manage_interval_seconds=self.config.torrents.auto_manage_interval_seconds,
+            seed_ratio_limit=self.config.torrents.seed_ratio_limit,
+            seed_time_limit_minutes=self.config.torrents.seed_time_limit_minutes,
         )
         self.engine.start()
         self._state_manager = TorrentStateManager(
@@ -734,7 +741,7 @@ class MainWindow(QMainWindow):
         self._jackett_timer.start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.0.3 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.0.6 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1622,6 +1629,13 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self._refresh)
         self.timer.start(1000)
 
+        # Periodic crash-safe persistence for torrents.
+        self._torrent_save_timer = QTimer(self)
+        self._torrent_save_timer.timeout.connect(self._persist_torrent_state)
+        self._torrent_save_timer.start(
+            max(10, self.config.torrents.auto_save_state_seconds) * 1000
+        )
+
         # RSS monitor timer — checks auto-download feeds periodically.
         self._rss_timer = QTimer(self)
         self._rss_timer.timeout.connect(self._check_rss_feeds)
@@ -1649,7 +1663,10 @@ class MainWindow(QMainWindow):
         """Refresh the status bar summary (called from _render_torrents)."""
         t_down = sum(t.get("download_rate", 0) for t in torrents)
         t_up = sum(t.get("upload_rate", 0) for t in torrents)
-        t_active = sum(1 for t in torrents if t.get("state") == "downloading" and not t.get("paused"))
+        t_downloading = sum(1 for t in torrents if t.get("state") == "downloading" and not t.get("paused"))
+        t_seeding = sum(1 for t in torrents if t.get("state") == "seeding" and not t.get("paused"))
+        t_queued = sum(1 for t in torrents if t.get("is_queued"))
+        t_paused = sum(1 for t in torrents if t.get("paused"))
         try:
             jobs = self._dl_engine.list_jobs()
         except Exception:
@@ -1658,10 +1675,19 @@ class MainWindow(QMainWindow):
         d_speed = sum(j.speed_bps for j in jobs if j.status.value == "downloading")
 
         parts = []
-        if t_active:
-            parts.append(f"Torrents: {t_active} active  ↓ {format_rate(t_down)}  ↑ {format_rate(t_up)}")
-        elif torrents:
-            parts.append(f"Torrents: {len(torrents)} idle")
+        if torrents:
+            parts.append(f"Torrents: {len(torrents)} total  ↓ {format_rate(t_down)}  ↑ {format_rate(t_up)}")
+            sub = []
+            if t_downloading:
+                sub.append(f"{t_downloading} downloading")
+            if t_seeding:
+                sub.append(f"{t_seeding} seeding")
+            if t_queued:
+                sub.append(f"{t_queued} queued")
+            if t_paused:
+                sub.append(f"{t_paused} paused")
+            if sub:
+                parts[-1] += " (" + ", ".join(sub) + ")"
         if d_active:
             parts.append(f"Downloads: {d_active} active  ↓ {format_rate(d_speed)}")
         self._status_label.setText("   •   ".join(parts) if parts else "Ready")
@@ -2993,6 +3019,7 @@ class MainWindow(QMainWindow):
             # Surface the Agent tab so the new torrent is visible.
             self.main_tabs.setCurrentWidget(self._torrents_tab)
             self._refresh()
+            self._persist_torrent_state()
         except Exception as exc:
             self._append_error(f"Downloaded torrent could not be added: {exc}")
         finally:
@@ -3524,11 +3551,15 @@ class MainWindow(QMainWindow):
         if ok and uri:
             try:
                 result = self.tools.call("add_magnet", {"uri": uri, "save_path": self.config.default_save_path, "category": "Other"})
-                self._append_agent(f"**Magnet added successfully.**\n\n- **Info hash:** `{result.get('info_hash', '')}`\n- **Category:** {result.get('category', '')}\n- **Save path:** `{result.get('save_path', '')}`")
+                info_hash = result.get("info_hash", "")
+                if info_hash:
+                    self._state_manager.store_magnet_uri(info_hash, uri)
+                self._append_agent(f"**Magnet added successfully.**\n\n- **Info hash:** `{info_hash}`\n- **Category:** {result.get('category', '')}\n- **Save path:** `{result.get('save_path', '')}`")
                 self.main_tabs.setCurrentWidget(self._torrents_tab)
             except Exception as exc:
                 self._append_error(f"Error adding magnet: {exc}")
             self._refresh()
+            self._persist_torrent_state()
 
     def _add_torrent_file_dialog(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open Torrent File", "", "Torrent Files (*.torrent);;All Files (*)")
@@ -3544,6 +3575,7 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 self._append_error(f"Error adding torrent file: {exc}")
             self._refresh()
+            self._persist_torrent_state()
 
     def _on_torrent_double_clicked(self, _item) -> None:
         """Double-click: play completed videos; stream in-progress ones; else open the folder."""
@@ -4255,6 +4287,19 @@ class MainWindow(QMainWindow):
                 )
             except Exception:
                 pass
+            # Queue/concurrency and seeding limits also apply live.
+            try:
+                self.engine.set_queue_settings(
+                    max_downloading_torrents=self.config.torrents.max_downloading_torrents,
+                    max_seeding_torrents=self.config.torrents.max_seeding_torrents,
+                    max_active_torrents=self.config.torrents.max_active_torrents,
+                    max_queued_torrents=self.config.torrents.max_queued_torrents,
+                    auto_manage_interval_seconds=self.config.torrents.auto_manage_interval_seconds,
+                    seed_ratio_limit=self.config.torrents.seed_ratio_limit,
+                    seed_time_limit_minutes=self.config.torrents.seed_time_limit_minutes,
+                )
+            except Exception:
+                pass
             # Download-manager bandwidth limit applies live too.
             try:
                 self._dl_engine.set_bandwidth_limit(self.config.download.bandwidth_limit_bps)
@@ -4522,15 +4567,23 @@ class MainWindow(QMainWindow):
                 if stored_path:
                     self.engine.add_torrent_file(stored_path, save_path, category, paused=paused, resume=resume)
                     restored += 1
-                elif magnet_uri:
+                    continue
+                # Fall back to the stored magnet URI if we saved one.
+                stored_magnet = self._state_manager.get_stored_magnet_uri(info_hash)
+                if stored_magnet:
+                    self.engine.add_magnet(stored_magnet, save_path, category, paused=paused, resume=resume)
+                    restored += 1
+                    continue
+                if magnet_uri:
                     self.engine.add_magnet(magnet_uri, save_path, category, paused=paused, resume=resume)
                     restored += 1
-                elif torrent_file and os.path.isfile(torrent_file):
+                    continue
+                if torrent_file and os.path.isfile(torrent_file):
                     self.engine.add_torrent_file(torrent_file, save_path, category, paused=paused, resume=resume)
                     restored += 1
-                else:
-                    failed += 1
-                    logger.warning("Cannot restore torrent %s: no magnet or torrent file", info_hash)
+                    continue
+                failed += 1
+                logger.warning("Cannot restore torrent %s: no magnet or torrent file", info_hash)
             except Exception as exc:
                 failed += 1
                 logger.warning("Failed to restore torrent %s: %s", info_hash, exc)
@@ -4548,15 +4601,30 @@ class MainWindow(QMainWindow):
         """Save current torrent state to disk for next session."""
         try:
             torrents = self.engine.list_torrents()
-            # Store .torrent files for torrents added via file (so we can restore them).
             for t in torrents:
-                torrent_file = t.get("torrent_file", "")
                 info_hash = t.get("info_hash", "")
-                if torrent_file and info_hash and os.path.isfile(torrent_file):
+                if not info_hash:
+                    continue
+                # Store .torrent files for torrents added via file.
+                torrent_file = t.get("torrent_file", "")
+                if torrent_file and os.path.isfile(torrent_file):
                     self._state_manager.store_torrent_file(torrent_file, info_hash)
+                # Persist magnet URIs so we can always restore after a crash.
+                magnet_uri = t.get("magnet_uri", "")
+                if magnet_uri:
+                    self._state_manager.store_magnet_uri(info_hash, magnet_uri)
             self._state_manager.save_state(torrents)
         except Exception as exc:
             logger.warning("Failed to save torrent state: %s", exc)
+
+    def _persist_torrent_state(self) -> None:
+        """Crash-safe background save: resume data + torrent state + metadata."""
+        try:
+            resume = self.engine.export_resume_data(timeout=5)
+            self._state_manager.save_resume_data(resume)
+        except Exception as exc:
+            logger.warning("Failed to export resume data: %s", exc)
+        self._save_torrent_state()
 
     def closeEvent(self, event) -> None:
         # Closing the window (X) quits the app — no background instance is
@@ -4610,6 +4678,10 @@ class MainWindow(QMainWindow):
         # Save torrent state before closing.
         self._save_torrent_state()
         self.timer.stop()
+        try:
+            self._torrent_save_timer.stop()
+        except Exception:
+            pass
         try:
             self._rss_timer.stop()
         except Exception:

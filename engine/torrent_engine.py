@@ -72,6 +72,13 @@ class TorrentEngine:
         upload_limit_kb: int = 0,
         listen_port: int = 0,
         max_connections: int = 0,
+        max_downloading_torrents: int = 5,
+        max_seeding_torrents: int = 5,
+        max_active_torrents: int = 10,
+        max_queued_torrents: int = 0,
+        auto_manage_interval_seconds: int = 30,
+        seed_ratio_limit: float = 0.0,
+        seed_time_limit_minutes: int = 0,
     ) -> None:
         self._settings = {
             "listen_interfaces": listen_interfaces or [f"0.0.0.0:{listen_port}"],
@@ -83,6 +90,15 @@ class TorrentEngine:
             # libtorrent rate limits are bytes/s; 0 = unlimited.
             "download_rate_limit": max(0, download_limit_kb) * 1024,
             "upload_rate_limit": max(0, upload_limit_kb) * 1024,
+            # Queue/concurrency settings (0 = libtorrent default/unlimited).
+            "active_downloads": max(0, max_downloading_torrents) if max_downloading_torrents > 0 else 0,
+            "active_seeds": max(0, max_seeding_torrents) if max_seeding_torrents > 0 else 0,
+            "active_limit": max(0, max_active_torrents) if max_active_torrents > 0 else 0,
+            "active_loaded_limit": max(0, max_queued_torrents) if max_queued_torrents > 0 else 0,
+            "auto_manage_interval": max(1, auto_manage_interval_seconds),
+            # libtorrent expects an integer in hundredths (200 = 2.0); 0 = disabled.
+            "share_ratio_limit": int(max(0.0, float(seed_ratio_limit)) * 100) if seed_ratio_limit > 0 else 0,
+            "seed_time_limit": max(0, seed_time_limit_minutes) * 60 if seed_time_limit_minutes > 0 else 0,
         }
         if max_connections > 0:
             self._settings["connections_limit"] = max_connections
@@ -125,6 +141,12 @@ class TorrentEngine:
             settings["upload_rate_limit"] = self._settings["upload_rate_limit"]
             if "connections_limit" in self._settings:
                 settings["connections_limit"] = self._settings["connections_limit"]
+            # Queue / concurrency settings.
+            for key in ("active_downloads", "active_seeds", "active_limit",
+                        "active_loaded_limit", "auto_manage_interval",
+                        "share_ratio_limit", "seed_time_limit"):
+                if self._settings.get(key):
+                    settings[key] = self._settings[key]
             settings["alert_mask"] = int(lt.alert.category_t.all_categories)
 
             self._session = lt.session(settings)
@@ -211,6 +233,11 @@ class TorrentEngine:
         future = self._enqueue(lambda: self._set_rate_limits(download_kb, upload_kb))
         return self._wait(future)
 
+    def set_queue_settings(self, **kwargs: Any) -> None:
+        """Apply queue/concurrency settings at runtime."""
+        future = self._enqueue(lambda: self._set_queue_settings(kwargs))
+        return self._wait(future)
+
     def export_resume_data(self, timeout: float = 15.0) -> Dict[str, bytes]:
         """Snapshot per-torrent resume data for fast restart (no re-hash)."""
         future = self._enqueue(lambda: self._export_resume_data(timeout))
@@ -290,6 +317,11 @@ class TorrentEngine:
     def get_swarm_stats(self, info_hash: str) -> Dict[str, Any]:
         """Return swarm health diagnostics."""
         future = self._enqueue(lambda: self._get_swarm_stats(info_hash))
+        return self._wait(future)
+
+    def get_session_stats(self) -> Dict[str, Any]:
+        """Return aggregate session status (counts by state, totals, dht)."""
+        future = self._enqueue(lambda: self._get_session_stats())
         return self._wait(future)
 
     # ------------------------------------------------------------------
@@ -373,6 +405,35 @@ class TorrentEngine:
         })
         self._settings["download_rate_limit"] = max(0, download_kb) * 1024
         self._settings["upload_rate_limit"] = max(0, upload_kb) * 1024
+
+    def _set_queue_settings(self, kwargs: Dict[str, Any]) -> None:
+        """Apply queue/concurrency settings. 0 values are treated as "leave as configured"."""
+        apply: Dict[str, Any] = {}
+        mapping = {
+            "max_downloading_torrents": "active_downloads",
+            "max_seeding_torrents": "active_seeds",
+            "max_active_torrents": "active_limit",
+            "max_queued_torrents": "active_loaded_limit",
+            "auto_manage_interval_seconds": "auto_manage_interval",
+            "seed_ratio_limit": "share_ratio_limit",
+            "seed_time_limit_minutes": "seed_time_limit",
+        }
+        for user_key, lt_key in mapping.items():
+            value = kwargs.get(user_key)
+            if value is None:
+                continue
+            if lt_key == "auto_manage_interval":
+                value = max(1, int(value))
+            elif lt_key == "seed_time_limit":
+                value = max(0, int(value)) * 60
+            elif lt_key == "share_ratio_limit":
+                value = int(max(0.0, float(value)) * 100)
+            else:
+                value = max(0, int(value))
+            apply[lt_key] = value
+            self._settings[lt_key] = value
+        if apply:
+            self._session.apply_settings(apply)
 
     def _export_resume_data(self, timeout: float) -> Dict[str, bytes]:
         """Collect save_resume_data alerts for all managed torrents.
@@ -533,6 +594,37 @@ class TorrentEngine:
         record.handle.force_reannounce()
         return True
 
+    def _get_session_stats(self) -> Dict[str, Any]:
+        with self._lock:
+            records = list(self._torrents.values())
+        counts: Dict[str, int] = {}
+        total_down = 0
+        total_up = 0
+        for record in records:
+            status = self._status_dict(record)
+            state = status["state"]
+            counts[state] = counts.get(state, 0) + 1
+            total_down += status.get("download_rate", 0)
+            total_up += status.get("upload_rate", 0)
+        dht_nodes = 0
+        try:
+            dht_nodes = self._session.status().dht_nodes
+        except Exception:
+            pass
+        return {
+            "total": len(records),
+            "counts": counts,
+            "download_rate": total_down,
+            "upload_rate": total_up,
+            "dht_nodes": dht_nodes,
+            "downloading": counts.get("downloading", 0),
+            "seeding": counts.get("seeding", 0),
+            "finished": counts.get("finished", 0),
+            "queued_for_checking": counts.get("queued_for_checking", 0),
+            "checking_files": counts.get("checking_files", 0),
+            "downloading_metadata": counts.get("downloading_metadata", 0),
+        }
+
     def _get_swarm_stats(self, info_hash: str) -> Dict[str, Any]:
         record = self._get_record(info_hash)
         handle = record.handle
@@ -626,6 +718,12 @@ class TorrentEngine:
         if status.download_rate > 0 and remaining > 0:
             eta = int(remaining / status.download_rate)
 
+        # libtorrent sets queue_position to -1 for torrents that are not queued.
+        queue_position = int(getattr(status, "queue_position", -1))
+        is_queued = queue_position >= 0 and status.state in (0, 3)  # queued_for_checking or downloading
+        all_time_download = getattr(status, "all_time_download", 0)
+        all_time_upload = getattr(status, "all_time_upload", 0)
+        ratio = round(all_time_upload / all_time_download, 4) if all_time_download > 0 else 0.0
         return {
             "eta": eta,
             "info_hash": record.info_hash,
@@ -646,6 +744,14 @@ class TorrentEngine:
             # (paused AND not auto-managed).
             "paused": bool(status.flags & lt.torrent_flags.paused)
             and not bool(status.flags & lt.torrent_flags.auto_managed),
+            "auto_managed": bool(status.flags & lt.torrent_flags.auto_managed),
+            "queue_position": queue_position,
+            "is_queued": is_queued,
+            "ratio": ratio,
+            "all_time_download": all_time_download,
+            "all_time_upload": all_time_upload,
+            "seeding_time": getattr(status, "seeding_time", 0),
+            "finished_time": getattr(status, "finished_time", 0),
             "magnet_uri": record.magnet_uri,
             "torrent_file": record.torrent_file_path,
         }
