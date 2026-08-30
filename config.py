@@ -311,6 +311,11 @@ class IPTVConfig:
     # (ISO 639-1 "en" or 639-2 "eng" both work). Empty = player default.
     preferred_audio_lang: str = ""
     preferred_sub_lang: str = ""
+    # Global XMLTV EPG URL, applied to every source that doesn't have its own
+    # per-source epg_url. Precedence: per-source > this > playlist url-tvg.
+    # Times are stored as epoch (offsets honored), so the guide is correct in
+    # whatever timezone the system is in.
+    epg_url: str = ""
     cache_dir: str = ""             # empty = default (~/.deeptorrent/iptv)
     # Artwork disk cache cap, enforced by LRU eviction (ArtworkCache.
     # enforce_size_limit). 10 GB default: posters are small and re-downloading
@@ -780,6 +785,7 @@ class DeeptorrentConfig:
                 opensubtitles_password=data.get("iptv", {}).get("opensubtitles_password", ""),
                 preferred_audio_lang=data.get("iptv", {}).get("preferred_audio_lang", ""),
                 preferred_sub_lang=data.get("iptv", {}).get("preferred_sub_lang", ""),
+                epg_url=data.get("iptv", {}).get("epg_url", ""),
                 cache_dir=data.get("iptv", {}).get("cache_dir", ""),
                 cache_limit_mb=iptv_cache_limit,
                 cache_seconds=data.get("iptv", {}).get("cache_seconds", 15),

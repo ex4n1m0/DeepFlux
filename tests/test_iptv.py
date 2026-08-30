@@ -2591,6 +2591,21 @@ def test_manager_clear_caches_keeps_user_data(tmp_path):
     mgr.shutdown()
 
 
+def test_manager_framegrab_toggle_at_runtime(tmp_path):
+    """The settings checkbox toggles the FrameGrabber without a restart."""
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    assert mgr.framegrab is not None  # default on
+    mgr.set_framegrab_enabled(False)
+    assert mgr.framegrab is None
+    mgr.set_framegrab_enabled(False)  # idempotent
+    assert mgr.framegrab is None
+    mgr.set_framegrab_enabled(True)
+    assert mgr.framegrab is not None
+    mgr.set_framegrab_enabled(True)  # idempotent
+    assert mgr.framegrab is not None
+    mgr.shutdown()
+
+
 def test_manager_enforce_cache_limit(tmp_path):
     mgr, _pl = _manager_with_playlist(tmp_path)
     mgr.cache_limit_mb = 0.0001  # 104 bytes
@@ -3245,6 +3260,297 @@ def test_refresh_source_applies_epg_url_override(tmp_path):
     assert pl.url_tvg == "http://x/epg.xml"
     epg_update.assert_called_once()
     assert epg_update.call_args[0][0] == "http://x/epg.xml"
+
+
+def _m3u_resp(body: bytes):
+    resp = mock.Mock()
+    resp.raise_for_status = mock.Mock()
+    resp.content = body
+    return resp
+
+
+def test_refresh_source_global_epg_url_applies(tmp_path):
+    """The global EPG URL (Metadata & Cache) applies to sources without their
+    own per-source URL — and wins over the playlist's own url-tvg."""
+    from iptv.manager import IPTVManager
+    src = PlaylistSource(id="s", name="S", kind="m3u_url", url="http://x/pl.m3u")
+    mgr = IPTVManager(sources=[src], tmdb_api_key="", data_dir=str(tmp_path),
+                      epg_url="http://x/global-epg.xml")
+    body = b'#EXTM3U url-tvg="http://x/list-epg.xml"\n#EXTINF:-1,CNN\nhttp://s/1.ts\n'
+    with mock.patch("iptv.manager.requests.get", return_value=_m3u_resp(body)):
+        with mock.patch.object(mgr.epg, "update_async") as epg_update:
+            pl = mgr._refresh_source(src, None, None, False)
+    assert pl.url_tvg == "http://x/global-epg.xml"
+    assert epg_update.call_args[0][0] == "http://x/global-epg.xml"
+
+
+def test_refresh_source_epg_precedence_per_source_beats_global(tmp_path):
+    from iptv.manager import IPTVManager
+    src = PlaylistSource(id="s", name="S", kind="m3u_url", url="http://x/pl.m3u",
+                         epg_url="http://x/per-source.xml")
+    mgr = IPTVManager(sources=[src], tmdb_api_key="", data_dir=str(tmp_path),
+                      epg_url="http://x/global-epg.xml")
+    body = b"#EXTM3U\n#EXTINF:-1,CNN\nhttp://s/1.ts\n"
+    with mock.patch("iptv.manager.requests.get", return_value=_m3u_resp(body)):
+        with mock.patch.object(mgr.epg, "update_async") as epg_update:
+            pl = mgr._refresh_source(src, None, None, False)
+    assert pl.url_tvg == "http://x/per-source.xml"
+    assert epg_update.call_args[0][0] == "http://x/per-source.xml"
+
+
+def test_refresh_source_playlist_tvg_when_no_override(tmp_path):
+    from iptv.manager import IPTVManager
+    src = PlaylistSource(id="s", name="S", kind="m3u_url", url="http://x/pl.m3u")
+    mgr = IPTVManager(sources=[src], tmdb_api_key="", data_dir=str(tmp_path))
+    body = b'#EXTM3U url-tvg="http://x/list-epg.xml"\n#EXTINF:-1,CNN\nhttp://s/1.ts\n'
+    with mock.patch("iptv.manager.requests.get", return_value=_m3u_resp(body)):
+        with mock.patch.object(mgr.epg, "update_async") as epg_update:
+            pl = mgr._refresh_source(src, None, None, False)
+    assert pl.url_tvg == "http://x/list-epg.xml"
+    assert epg_update.call_args[0][0] == "http://x/list-epg.xml"
+
+
+def test_refresh_source_epg_disabled_skips_update(tmp_path):
+    """The enable_epg toggle gates the guide download."""
+    from iptv.manager import IPTVManager
+    src = PlaylistSource(id="s", name="S", kind="m3u_url", url="http://x/pl.m3u")
+    mgr = IPTVManager(sources=[src], tmdb_api_key="", data_dir=str(tmp_path),
+                      enable_epg=False)
+    body = b'#EXTM3U url-tvg="http://x/list-epg.xml"\n#EXTINF:-1,CNN\nhttp://s/1.ts\n'
+    with mock.patch("iptv.manager.requests.get", return_value=_m3u_resp(body)):
+        with mock.patch.object(mgr.epg, "update_async") as epg_update:
+            mgr._refresh_source(src, None, None, False)
+    epg_update.assert_not_called()
+
+
+def test_manager_set_epg_fetches_only_on_change(tmp_path):
+    from iptv.manager import IPTVManager
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    with mock.patch.object(mgr.epg, "update_async") as epg_update:
+        mgr.set_epg("http://x/epg.xml", True)
+        assert epg_update.call_count == 1
+        mgr.set_epg("http://x/epg.xml", True)   # unchanged — no refetch
+        assert epg_update.call_count == 1
+        mgr.set_epg("http://x/other.xml", True)
+        assert epg_update.call_count == 2
+        mgr.set_epg("http://x/third.xml", False)  # disabled — no fetch
+        assert epg_update.call_count == 2
+    mgr.shutdown()
+
+
+def test_parse_xmltv_tolerates_truncation(tmp_path):
+    """A server that closes mid-document (verified: epg.mybunny.tv stops
+    cold at line 112659) yields the partial guide instead of nothing."""
+    from iptv.epg import parse_xmltv
+    p = tmp_path / "epg.xml"
+    p.write_bytes(
+        b'<?xml version="1.0" encoding="UTF-8"?><tv>'
+        b'<programme start="20260830120000 +0000" stop="20260830130000 +0000" channel="c1">'
+        b"<title>Kept</title></programme>"
+        b'<programme start="20260830130000 +0000" stop="20260830140000 +0000" channel="c1">'
+        b"<title>Cut off mid-wa"  # truncated mid-tag: ParseError at EOF
+    )
+    programs = parse_xmltv(str(p))
+    assert len(programs) == 1
+    assert programs[0]["title"] == "Kept"
+
+
+def test_parse_xmltv_latin1_payload_despite_utf8_declaration(tmp_path):
+    """Providers that declare UTF-8 but serve latin-1 bytes get decoded as
+    latin-1 — otherwise iterparse dies on the first accented title."""
+    from iptv.epg import parse_xmltv
+    p = tmp_path / "epg.xml"
+    p.write_bytes(
+        '<?xml version="1.0" encoding="UTF-8"?><tv>'
+        '<programme start="20260830120000 +0000" stop="20260830130000 +0000" channel="c1">'
+        "<title>Memória</title></programme></tv>".encode("latin-1")
+    )
+    programs = parse_xmltv(str(p))
+    assert programs[0]["title"] == "Memória"
+
+
+def test_parse_xmltv_collects_channels(tmp_path):
+    """with_channels=True returns the guide's <channel> directory too — the
+    surface for name-based tvg-id fallback matching."""
+    from iptv.epg import parse_xmltv
+    p = tmp_path / "e.xml"
+    p.write_bytes(
+        b'<?xml version="1.0"?><tv>'
+        b'<channel id="c1"><display-name>CNN International</display-name>'
+        b'<icon src="http://x/i.png"/></channel>'
+        b'<programme start="20260830120000 +0000" stop="20260830130000 +0000" channel="c1">'
+        b"<title>T</title></programme></tv>"
+    )
+    programs, channels = parse_xmltv(str(p), with_channels=True)
+    assert programs[0]["title"] == "T"
+    assert channels == [("c1", "CNN International")]
+    # Default return shape unchanged (programmes list only).
+    assert isinstance(parse_xmltv(str(p)), list)
+
+
+def test_manager_epg_name_fallback_resolution(tmp_path):
+    """No tvg-id: the channel name is normalized and matched against the
+    guide's display names ('PT: SPORT TV 1 FHD' ~ 'PT: SPORT TV 1 2K')."""
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    now = time.time()
+    mgr.cache.save_epg("url", [
+        {"channel_id": "SPORT.TV1.HD.pt", "start": int(now - 60),
+         "end": int(now + 600), "title": "Football", "desc": ""},
+    ], channels=[("SPORT.TV1.HD.pt", "PT: SPORT TV 1 2K")])
+    assert mgr.epg_channel_id("", "PT: SPORT TV 1 FHD") == "SPORT.TV1.HD.pt"
+    nn = mgr.epg_now_next_for("", "PT: SPORT TV 1 FHD")
+    assert nn["now"] == "Football"
+    assert mgr.epg_channel_id("", "Nonexistent Channel") == ""  # miss, memoized
+    mgr.shutdown()
+
+
+def test_manager_epg_tvg_id_wins_over_name(tmp_path):
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    now = time.time()
+    mgr.cache.save_epg("url", [
+        {"channel_id": "tvg-1", "start": int(now - 60), "end": int(now + 600),
+         "title": "Show", "desc": ""},
+    ], channels=[("tvg-1", "Some Other Name")])
+    assert mgr.epg_channel_id("tvg-1", "Unrelated Playlist Name") == "tvg-1"
+    mgr.shutdown()
+
+
+def test_manager_epg_guide_for(tmp_path):
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    now = time.time()
+    mgr.cache.save_epg("url", [
+        {"channel_id": "c1", "start": int(now - 60), "end": int(now + 600), "title": "On Air", "desc": ""},
+        {"channel_id": "c1", "start": int(now + 600), "end": int(now + 1200), "title": "Later", "desc": ""},
+        {"channel_id": "c1", "start": int(now - 7200), "end": int(now - 3600), "title": "Gone", "desc": ""},
+    ])
+    guide = mgr.epg_guide_for("c1")
+    assert guide["now_next"]["now"] == "On Air"
+    titles = [p["title"] for p in guide["programmes"]]
+    assert titles == ["On Air", "Later"]  # past programme excluded
+    assert mgr.epg_guide_for("", "")["programmes"] == []
+    mgr.shutdown()
+
+
+def test_manager_maybe_refresh_epg(tmp_path):
+    """Stale guides re-fetch; fresh ones are skipped; the toggle gates it."""
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    mgr.epg_url = "http://x/epg.xml"
+    with mock.patch.object(mgr.epg, "update_async") as upd:
+        mgr.maybe_refresh_epg()          # never fetched -> stale
+        assert upd.call_count == 1
+        mgr.cache.save_epg("http://x/epg.xml", [
+            {"channel_id": "c1", "start": 1, "end": 2, "title": "t", "desc": ""},
+        ])
+        mgr.maybe_refresh_epg()          # just fetched -> fresh
+        assert upd.call_count == 1
+        mgr.cache._conn().execute("UPDATE epg_meta SET updated_at=0 WHERE url=?",
+                                  ("http://x/epg.xml",))
+        mgr.cache._conn().commit()
+        mgr.maybe_refresh_epg()          # stale again -> refetch
+        assert upd.call_count == 2
+        mgr.enable_epg = False
+        mgr.maybe_refresh_epg()          # disabled -> skip
+        assert upd.call_count == 2
+    mgr.shutdown()
+
+
+def test_config_epg_url_roundtrip(tmp_path):
+    """The global EPG URL persists through save/load (temp path — never the
+    real ~/.deeptorrent/config.json)."""
+    from config import DeeptorrentConfig
+    path = str(tmp_path / "config.json")
+    cfg = DeeptorrentConfig()
+    cfg.iptv.epg_url = "https://epg.example.com/guide.xml"
+    cfg.to_file(path)
+    assert DeeptorrentConfig.from_file(path).iptv.epg_url == "https://epg.example.com/guide.xml"
+    assert DeeptorrentConfig().iptv.epg_url == ""  # default empty
+
+
+def test_epg_timezone_offsets_are_honored(tmp_path):
+    """'+0200' must land on the same epoch as the equivalent UTC time —
+    otherwise every programme shifts by the offset."""
+    from iptv.epg import _parse_xmltv_date
+    assert _parse_xmltv_date("20260830120000 +0200") == _parse_xmltv_date("20260830100000 +0000")
+    assert _parse_xmltv_date("20260830100000") == _parse_xmltv_date("20260830100000 +0000")
+
+
+def test_epg_now_next_returns_times(tmp_path):
+    import time as _time
+    cache = IPTVCache(str(tmp_path))
+    now = _time.time()
+    cache.save_epg("url", [
+        {"channel_id": "c1", "start": int(now - 60), "end": int(now + 600), "title": "On Air", "desc": ""},
+        {"channel_id": "c1", "start": int(now + 600), "end": int(now + 1200), "title": "Later", "desc": ""},
+    ])
+    nn = cache.epg_now_next("c1")
+    assert nn["now"] == "On Air" and nn["next"] == "Later"
+    assert nn["now_start"] == int(now - 60) and nn["now_end"] == int(now + 600)
+    assert nn["next_start"] == int(now + 600)
+
+
+def test_fmt_now_title_uses_system_local_time():
+    """Rendering goes through time.localtime — automatically the system TZ."""
+    from gui.iptv_tab import _fmt_now_title
+    start = 1788000000
+    end = start + 3600
+    expected = (f"{time.strftime('%H:%M', time.localtime(start))}–"
+                f"{time.strftime('%H:%M', time.localtime(end))}  Show")
+    assert _fmt_now_title({"now": "Show", "now_start": start, "now_end": end}) == expected
+    assert _fmt_now_title({"now": "Show"}) == "Show"
+    assert _fmt_now_title({"now": ""}) == ""
+
+
+def test_detail_panel_channel_shows_epg_now_next(tmp_path):
+    """The channel detail panel reads the EPG store live — the epg_now item
+    attribute was never populated anywhere, so the panel was blank before."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from gui.iptv_tab import DetailPanel
+
+    mgr, pl = _manager_with_playlist(tmp_path)
+    ch = pl.channels[0]
+    ch.tvg_id = "cnn"
+    now = time.time()
+    mgr.cache.save_epg("url", [
+        {"channel_id": "cnn", "start": int(now - 60), "end": int(now + 600), "title": "On Air", "desc": ""},
+        {"channel_id": "cnn", "start": int(now + 600), "end": int(now + 1200), "title": "Later", "desc": ""},
+    ])
+    panel = DetailPanel(mgr)
+    panel._show_channel(ch)
+    text = panel.synopsis.text()
+    assert "Now:" in text and "On Air" in text
+    assert "Next:" in text and "Later" in text
+    assert time.strftime("%H:%M", time.localtime(int(now - 60))) in text
+    # The 24h guide list is populated and display-only (clicking plays nothing).
+    from PySide6.QtCore import Qt
+    assert panel.episodes_label.isHidden() is False
+    assert panel.episodes.count() == 2
+    assert "On Air" in panel.episodes.item(0).text()
+    assert panel.episodes.item(0).data(Qt.UserRole) is None
+    mgr.shutdown()
+
+
+def test_grid_live_tiles_show_now_playing(tmp_path):
+    """Visible live tiles get the current programme as their second text line."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+    from gui.iptv_tab import ContentGrid, _EPG_ROLE
+
+    mgr, pl = _manager_with_playlist(tmp_path)
+    ch = pl.channels[0]
+    ch.tvg_id = "cnn"
+    now = time.time()
+    mgr.cache.save_epg("url", [
+        {"channel_id": "cnn", "start": int(now - 60), "end": int(now + 600),
+         "title": "On Air", "desc": ""},
+    ])
+    grid = ContentGrid(mgr)
+    grid.set_items(pl.channels)
+    grid._update_epg_tiles(full=True)
+    assert "On Air" in (grid.item(0).data(_EPG_ROLE) or "")
+    mgr.shutdown()
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 ; Then open this script in Inno Setup and Compile.
 
 #define MyAppName "DeepFlux"
-#define MyAppVersion "3.2.7"
+#define MyAppVersion "3.2.8"
 #define MyAppPublisher "DeepFlux"
 #define MyAppExeName "DeepFlux.exe"
 ; PyInstaller onedir output, relative to this script (packaging/..\dist).
@@ -18,7 +18,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir={#BuildDir}
-OutputBaseFilename=DeepFlux3.2.7Setup
+OutputBaseFilename=DeepFlux3.2.8Setup
 SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes

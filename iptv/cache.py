@@ -55,6 +55,16 @@ CREATE TABLE IF NOT EXISTS epg_meta (
     channel_count INTEGER
 );
 
+-- The guide's own <channel> directory (id + display name). Needed for
+-- name-based matching: playlists without matching tvg-ids still get EPG by
+-- normalizing their channel names against these display names.
+CREATE TABLE IF NOT EXISTS epg_channels (
+    url TEXT,
+    channel_id TEXT,
+    name TEXT,
+    PRIMARY KEY (url, channel_id)
+);
+
 CREATE TABLE IF NOT EXISTS favorites (
     source_id TEXT,
     item_id TEXT,
@@ -181,7 +191,8 @@ class IPTVCache:
             logger.debug("VACUUM failed: %s", exc)
 
     # -- EPG -----------------------------------------------------------------
-    def save_epg(self, url: str, programs: List[Dict[str, Any]]) -> None:
+    def save_epg(self, url: str, programs: List[Dict[str, Any]],
+                 channels: Optional[List[tuple]] = None) -> None:
         conn = self._conn()
         # Only replace rows belonging to this EPG source — other sources'
         # programs must survive an update.
@@ -194,25 +205,78 @@ class IPTVCache:
             "INSERT OR REPLACE INTO epg(channel_id, start, \"end\", title, \"desc\", url) VALUES(?,?,?,?,?,?)",
             rows,
         )
+        if channels is not None:
+            conn.execute("DELETE FROM epg_channels WHERE url=?", (url,))
+            conn.executemany(
+                "INSERT OR REPLACE INTO epg_channels(url, channel_id, name) VALUES(?,?,?)",
+                [(url, cid, name) for cid, name in channels],
+            )
         conn.execute(
             "INSERT OR REPLACE INTO epg_meta(url, updated_at, channel_count) VALUES(?,?,?)",
             (url, time.time(), len({r[0] for r in rows})),
         )
         conn.commit()
 
-    def epg_now_next(self, channel_id: str, now: Optional[float] = None) -> Dict[str, str]:
+    def epg_has_channel(self, channel_id: str) -> bool:
+        row = self._conn().execute(
+            "SELECT 1 FROM epg WHERE channel_id=? LIMIT 1", (channel_id,)
+        ).fetchone()
+        return row is not None
+
+    def epg_channels(self) -> List[tuple]:
+        """Every (channel_id, display_name) the guides declare, all sources."""
+        return [
+            (r["channel_id"], r["name"])
+            for r in self._conn().execute(
+                "SELECT channel_id, name FROM epg_channels"
+            ).fetchall()
+        ]
+
+    def epg_programmes(self, channel_id: str, from_ts: float, to_ts: float,
+                       limit: int = 30) -> List[Dict[str, Any]]:
+        """Programmes overlapping [from_ts, to_ts), start order — the guide view."""
+        return [
+            {"start": r["start"], "end": r["end"], "title": r["title"],
+             "desc": r["desc"]}
+            for r in self._conn().execute(
+                "SELECT start, \"end\", title, \"desc\" FROM epg "
+                "WHERE channel_id=? AND \"end\">? AND start<? "
+                "ORDER BY start LIMIT ?",
+                (channel_id, from_ts, to_ts, limit),
+            ).fetchall()
+        ]
+
+    def epg_age(self, url: str) -> Optional[float]:
+        """updated_at of the last successful fetch for ``url``, else None."""
+        row = self._conn().execute(
+            "SELECT updated_at FROM epg_meta WHERE url=?", (url,)
+        ).fetchone()
+        return row["updated_at"] if row else None
+
+    def epg_now_next(self, channel_id: str, now: Optional[float] = None) -> Dict[str, Any]:
+        """Now/next titles plus their epoch times.
+
+        The epoch fields let the UI render programme times in the SYSTEM local
+        timezone (``time.localtime``) — the XMLTV offsets are already baked in
+        at parse time, so the display always matches the user's clock."""
         now = now or time.time()
-        rows = self._conn().execute(
-            "SELECT title FROM epg WHERE channel_id=? AND start<=? AND \"end\">? "
+        row = self._conn().execute(
+            "SELECT title, start, \"end\" FROM epg WHERE channel_id=? AND start<=? AND \"end\">? "
             "ORDER BY start LIMIT 1",
             (channel_id, now, now),
-        ).fetchall()
-        now_title = rows[0]["title"] if rows else ""
+        ).fetchone()
         nxt = self._conn().execute(
-            "SELECT title FROM epg WHERE channel_id=? AND start>? ORDER BY start LIMIT 1",
+            "SELECT title, start, \"end\" FROM epg WHERE channel_id=? AND start>? ORDER BY start LIMIT 1",
             (channel_id, now),
         ).fetchone()
-        return {"now": now_title, "next": nxt["title"] if nxt else ""}
+        return {
+            "now": row["title"] if row else "",
+            "next": nxt["title"] if nxt else "",
+            "now_start": row["start"] if row else 0,
+            "now_end": row["end"] if row else 0,
+            "next_start": nxt["start"] if nxt else 0,
+            "next_end": nxt["end"] if nxt else 0,
+        }
 
     # -- favorites -----------------------------------------------------------
     def add_favorite(self, source_id: str, item_id: str, section: str) -> None:

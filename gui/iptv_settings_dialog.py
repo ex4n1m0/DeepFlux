@@ -377,8 +377,25 @@ class IPTVMetadataDialog(_SettingsPage):
             "Disk cap for cached covers/artwork. When the cache grows past\n"
             "this, the least-recently-viewed images are evicted first.")
         cl.addRow("Cache size limit:", self.cache_limit)
+        self.framegrab = QCheckBox("Frame-grab poster fallback")
+        self.framegrab.setToolTip(
+            "When no metadata provider finds a poster for a movie/series,\n"
+            "grab a frame from the stream itself with FFmpeg (100% coverage).\n"
+            "Only ever runs for tiles currently on screen — each grab opens\n"
+            "a video connection to your provider, so off-screen entries are\n"
+            "never grabbed.")
+        cl.addRow("", self.framegrab)
         self.enable_epg = QCheckBox("Enable EPG (XMLTV) when available")
         cl.addRow("", self.enable_epg)
+        self.epg_url = QLineEdit()
+        self.epg_url.setPlaceholderText("https://provider/epg.xml")
+        self.epg_url.setToolTip(
+            "XMLTV guide URL applied to every source that doesn't have its\n"
+            "own per-source EPG URL. Precedence: per-source > this > the\n"
+            "playlist's own url-tvg. Programme times are stored with their\n"
+            "UTC offsets, so the guide always shows correctly in your\n"
+            "system's timezone.")
+        cl.addRow("EPG URL (all sources):", self.epg_url)
         self.body.addWidget(cache_group)
 
         if manager is not None:
@@ -400,7 +417,9 @@ class IPTVMetadataDialog(_SettingsPage):
 
         self.cache_dir.setText(self.config.iptv.cache_dir)
         self.cache_limit.setValue(self.config.iptv.cache_limit_mb)
+        self.framegrab.setChecked(self.config.iptv.framegrab_posters)
         self.enable_epg.setChecked(self.config.iptv.enable_epg)
+        self.epg_url.setText(self.config.iptv.epg_url)
 
     @staticmethod
     def _fmt_mb(n: float) -> str:
@@ -472,11 +491,16 @@ class IPTVMetadataDialog(_SettingsPage):
                 return
         self.config.iptv.cache_dir = cache_dir
         self.config.iptv.cache_limit_mb = self.cache_limit.value()
+        self.config.iptv.framegrab_posters = self.framegrab.isChecked()
         self.config.iptv.enable_epg = self.enable_epg.isChecked()
+        self.config.iptv.epg_url = self.epg_url.text().strip()
         if self._manager is not None:
             # Apply the (possibly lowered) cap to the running app right away.
             self._manager.cache_limit_mb = self.cache_limit.value()
             self._manager.enforce_cache_limit_async()
+            self._manager.set_framegrab_enabled(self.framegrab.isChecked())
+            # Fetches the guide immediately when the URL changed.
+            self._manager.set_epg(self.config.iptv.epg_url, self.enable_epg.isChecked())
         super().accept()
 
 

@@ -67,6 +67,8 @@ class IPTVManager:
         enable_fanza: bool = True,
         enable_wikipedia: bool = True,
         cache_limit_mb: int = 10240,
+        epg_url: str = "",
+        enable_epg: bool = True,
     ) -> None:
         self.sources: List[PlaylistSource] = list(sources)
         self.data_dir = data_dir or default_data_dir()
@@ -87,6 +89,10 @@ class IPTVManager:
         self.epg = EPGManager(self.cache)
         self.cache_seconds = cache_seconds
         self.hwdec = hwdec
+        # Global EPG override (Metadata & Cache settings): applies to every
+        # source without its own per-source epg_url.
+        self.epg_url = epg_url
+        self.enable_epg = enable_epg
 
         # The currently loaded playlist (per source) and the active source id.
         self._playlists: Dict[str, Playlist] = {}
@@ -103,6 +109,10 @@ class IPTVManager:
         self._reload_requested = False
         # source_id -> Event, present while that source is being refreshed.
         self._refresh_events: Dict[str, threading.Event] = {}
+        # EPG resolution memos (see epg_channel_id).
+        self._epg_id_cache: Dict[str, str] = {}
+        self._epg_map: Dict[str, str] = {}
+        self._epg_map_version = -1
 
     # -- source management ---------------------------------------------------
     def set_sources(self, sources: List[PlaylistSource]) -> None:
@@ -123,6 +133,29 @@ class IPTVManager:
 
     def set_fanarttv_key(self, key: str) -> None:
         self.metadata.set_fanarttv_key(key)
+
+    def set_epg(self, url: str, enabled: bool) -> None:
+        """Apply EPG settings at runtime; a newly set/changed URL fetches
+        immediately so the guide appears without a playlist refresh."""
+        changed = bool(url) and url != self.epg_url
+        self.epg_url = url
+        self.enable_epg = enabled
+        if enabled and changed:
+            self.epg.update_async(url)
+
+    def set_framegrab_enabled(self, enabled: bool) -> None:
+        """Toggle the frame-grab poster fallback at runtime.
+
+        Enabling lazily creates the FrameGrabber (cheap — no work until a
+        visible tile misses every provider); disabling shuts its pool down."""
+        if enabled and self.framegrab is None:
+            self.framegrab = FrameGrabber(self.artwork)
+        elif not enabled and self.framegrab is not None:
+            try:
+                self.framegrab.shutdown()
+            except Exception:
+                pass
+            self.framegrab = None
 
     def active_source(self) -> Optional[PlaylistSource]:
         with self._lock:
@@ -292,10 +325,11 @@ class IPTVManager:
         classify.populate_years(pl)
         _rebuild_categories(pl)
 
-        # A per-source EPG URL (entered in settings) wins over / fills in for
-        # the playlist's own url-tvg declaration.
-        if source.epg_url and source.epg_url != pl.url_tvg:
-            pl.url_tvg = source.epg_url
+        # EPG URL precedence: per-source setting > global setting > the
+        # playlist's own url-tvg declaration.
+        epg_url = source.epg_url or self.epg_url or pl.url_tvg
+        if epg_url and epg_url != pl.url_tvg:
+            pl.url_tvg = epg_url
 
         # Persist to cache.
         self.cache.save_playlist(source.id, _playlist_to_cache(pl), url_tvg=pl.url_tvg)
@@ -307,8 +341,8 @@ class IPTVManager:
             self._playlists[source.id] = pl
             self._active_source_id = self._active_source_id or source.id
 
-        # Kick off EPG if the playlist declares an XMLTV url.
-        if pl.url_tvg:
+        # Kick off EPG if a guide URL resolved for this source.
+        if pl.url_tvg and self.enable_epg:
             self.epg.update_async(pl.url_tvg, headers=headers)
 
         return pl
@@ -766,8 +800,86 @@ class IPTVManager:
         # back synchronously) before queueing the network lookup.
         self.artwork.submit_task(_work)
 
-    def epg_now_next(self, tvg_id: str) -> Dict[str, str]:
+    def epg_now_next(self, tvg_id: str) -> Dict[str, Any]:
         return self.epg.now_next(tvg_id)
+
+    # -- EPG channel-id resolution -------------------------------------------
+    def _epg_name_map(self) -> Dict[str, str]:
+        """normalized display name -> guide channel id (rebuilt per guide save)."""
+        v = self.epg.channels_version
+        if self._epg_map_version != v:
+            from .metadata import IptvOrgLogos
+            m: Dict[str, str] = {}
+            for cid, disp in self.cache.epg_channels():
+                key, _country = IptvOrgLogos._split_country(disp)
+                if key:
+                    m.setdefault(key, cid)
+            self._epg_map = m
+            self._epg_map_version = v
+            self._epg_id_cache.clear()
+        return self._epg_map
+
+    def epg_channel_id(self, tvg_id: str, name: str = "") -> str:
+        """Resolve a playlist channel to a guide channel id.
+
+        The tvg-id wins when the guide actually carries it; otherwise the
+        channel name is normalized (country prefixes, quality tags and
+        decorations stripped — the same matcher as channel logos) and matched
+        against the guide's own display names, so playlists without usable
+        tvg-ids still get EPG. Results are memoized; '' means no match.
+        """
+        key = tvg_id or name
+        if not key:
+            return ""
+        cached = self._epg_id_cache.get(key)
+        if cached is not None:
+            return cached
+        cid = ""
+        if tvg_id and self.cache.epg_has_channel(tvg_id):
+            cid = tvg_id
+        elif name:
+            from .metadata import IptvOrgLogos
+            nkey, _country = IptvOrgLogos._split_country(name)
+            cid = self._epg_name_map().get(nkey, "")
+        self._epg_id_cache[key] = cid
+        return cid
+
+    def epg_now_next_for(self, tvg_id: str, name: str = "") -> Dict[str, Any]:
+        """now/next for a channel, resolving tvg-id or falling back to name."""
+        cid = self.epg_channel_id(tvg_id, name)
+        if not cid:
+            return {"now": "", "next": ""}
+        return self.cache.epg_now_next(cid)
+
+    def epg_guide_for(self, tvg_id: str, name: str = "", hours: int = 24,
+                      limit: int = 30) -> Dict[str, Any]:
+        """Now/next + the next ``hours`` of programmes — the detail-panel guide."""
+        cid = self.epg_channel_id(tvg_id, name)
+        if not cid:
+            return {"channel_id": "",
+                    "now_next": {"now": "", "next": ""}, "programmes": []}
+        now = time.time()
+        return {
+            "channel_id": cid,
+            "now_next": self.cache.epg_now_next(cid, now),
+            "programmes": self.cache.epg_programmes(cid, now, now + hours * 3600, limit),
+        }
+
+    def maybe_refresh_epg(self, max_age_hours: float = 6.0) -> None:
+        """Re-fetch stale guides: every loaded playlist's url_tvg + the global URL.
+
+        Guides otherwise only refresh with the playlist — a stale guide shows
+        yesterday's programmes forever."""
+        if not self.enable_epg:
+            return
+        urls = {self.epg_url} if self.epg_url else set()
+        with self._lock:
+            urls |= {pl.url_tvg for pl in self._playlists.values() if pl.url_tvg}
+        cutoff = time.time() - max_age_hours * 3600
+        for url in sorted(urls):
+            age = self.cache.epg_age(url)
+            if age is None or age < cutoff:
+                self.epg.update_async(url)
 
     # -- lifecycle -----------------------------------------------------------
     def shutdown(self) -> None:

@@ -1546,7 +1546,7 @@ def adult_clean_title(name: str) -> str:
 # Decorations playlists bolt onto channel names; they must not take part in
 # matching ("BBC One HD" and "BBC One FHD" are the same channel).
 _LOGO_NOISE_TOKENS = {
-    "hd", "hdtv", "fhd", "uhd", "sd", "4k", "8k", "hq", "lq", "raw",
+    "hd", "hdtv", "fhd", "uhd", "sd", "2k", "4k", "8k", "hq", "lq", "raw",
     "hevc", "h264", "h265", "1080p", "1080i", "1080", "720p", "720",
     "480p", "2160p", "2160", "vip", "backup", "alt", "multi",
 }

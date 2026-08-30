@@ -438,7 +438,10 @@
   files appear on reload. Verified against a real Plex-style library
   (tests: `test_iptv.py -k local_folder`).
 - Frame-grab poster fallback (`iptv/framegrab.py`, `iptv.framegrab_posters`,
-  default on): when NO provider matches, FFmpeg pulls a frame from the stream
+  default on; GUI checkbox: Play → Metadata & Cache → "Frame-grab poster
+  fallback", applied live via `IPTVManager.set_framegrab_enabled` which lazily
+  creates/shuts down the FrameGrabber): when NO provider matches, FFmpeg
+  pulls a frame from the stream
   itself — 100% coverage by construction. The frame is written straight into
   `ArtworkCache.full_path()` under a synthetic `framegrab:<sha1>` URL, so
   `fetch_async` serves it via `get_cached` and the existing thumbnail/decode
@@ -701,6 +704,40 @@
   `elem.clear()` `<title>`/`<desc>` elements — their end events fire before
   the parent `<programme>`'s, so clearing them wipes the text the programme
   extraction reads next (every title/desc came back empty).
+- Global EPG URL: `config.iptv.epg_url` (Play → Metadata & Cache, "EPG URL
+  (all sources)") applies to every source without its own per-source
+  `epg_url`. Precedence: per-source > global > playlist url-tvg; wired in
+  `_refresh_source_inner` and applied live via `IPTVManager.set_epg`
+  (fetches immediately when the URL changes). The `enable_epg` checkbox
+  gates the guide download (`enable_epg` was a dead setting before 3.2.8).
+  Timezones: `_parse_xmltv_date` honors XMLTV offsets → epoch, and
+  `epg_now_next` returns start/end epochs (`now_start`…); the Now Playing
+  column renders `HH:MM–HH:MM` via `time.localtime` — automatically the
+  system TZ, no setting needed. parse_xmltv tolerates two provider faults
+  (VERIFIED on epg.mybunny.tv, 2026-08): truncated chunked downloads
+  (ParseError "no element found" → keep the partial guide, 14.6k/22k
+  programmes) and latin-1 payloads with a UTF-8 declaration (expat reports
+  this as "invalid token" ParseError, NOT UnicodeDecodeError — retry through
+  a latin-1 text wrapper and keep the pass that got further). An empty parse
+  never overwrites a good cached guide (save_epg replaces per-url rows).
+  EPG downloads retry 4× with the 2s/5s/15s backoff (same flakiness as M3U
+  downloads — a bare reset used to kill the whole guide update).
+- EPG visibility (3.2.8): `epg_now_next` returns now/next + epoch times
+  (`now_start`…); surfaces are ContentList "Now Playing" column, grid live
+  tiles (`_EPG_ROLE` second text line, visible tiles only, 60s
+  `_update_epg_tiles` refresh + fill-missing on scroll), the channel detail
+  panel (Now + elapsed %, Next, 24h "Upcoming" guide — display-only rows,
+  `epg_guide_for`/`cache.epg_programmes`), and the player status line on
+  Play. Channels resolve via `IPTVManager.epg_channel_id`: tvg-id when the
+  guide carries it (`epg_has_channel`), else the name normalized through
+  `IptvOrgLogos._split_country` matched against the guide's OWN `<channel>`
+  display names (parsed by `parse_xmltv(with_channels=True)` into the
+  `epg_channels` table; name map rebuilt on `EPGManager.channels_version`).
+  VERIFIED on the user's playlist + epg.mybunny.tv: 96% of PT channels
+  resolve (tvg-id + name fallback); misses are feed coverage gaps (US/UK
+  channels in a PT guide). `maybe_refresh_epg` (hourly QTimer in IPTVTab)
+  re-fetches guides older than 6h. `ch.epg_now`/`epg_next` model attributes
+  are legacy — nothing populates them; always query the EPG store.
 - Menu bar layout: File (API Keys, file associations) | Browse (Browser
   Settings, Import Bookmarks) | Agent | Download (Add Magnet/Torrent,
   Jackett Settings, Downloads Settings, Sources, RSS Feeds) | Play (the four

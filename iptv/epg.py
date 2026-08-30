@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 import xml.etree.ElementTree as ET
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import requests
 
@@ -54,43 +54,110 @@ def parse_xmltv(
     path: str,
     on_progress: Optional[ProgressFn] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
-) -> List[dict]:
-    """Stream-parse an XMLTV file into a list of program dicts."""
+    with_channels: bool = False,
+):
+    """Stream-parse an XMLTV file into a list of program dicts.
+
+    With ``with_channels=True`` returns ``(programs, channels)`` where
+    channels is ``[(channel_id, display_name)]`` from the guide's own
+    ``<channel>`` directory — the surface for name-based tvg-id fallback
+    matching.
+
+    Two real-world provider faults are tolerated (verified against
+    epg.mybunny.tv, 2026-08):
+
+    * **Truncated downloads** — the server closes a chunked/gzipped response
+      mid-document, so iterparse dies with ``ParseError: no element found``.
+      A 100k-line partial guide beats none: keep every programme parsed so
+      far instead of failing the whole update.
+    * **Lying encoding declarations** — the header says UTF-8 but the payload
+      holds latin-1 bytes (mojibake in titles otherwise). On a decode error
+      we re-parse with an explicit latin-1 text wrapper; for text-mode input
+      ElementTree ignores the XML declaration's encoding.
+    """
+    channels: List[tuple] = []
+    programs, err = _parse_stream(ET.iterparse(path, events=("end",)),
+                                  on_progress, is_cancelled, path,
+                                  channels if with_channels else None)
+    # Expat reports bytes that are invalid for the DECLARED encoding as a
+    # generic ParseError "not well-formed (invalid token)" — not a
+    # UnicodeDecodeError. That means the provider lied about UTF-8 (the
+    # payload is latin-1), so retry through a latin-1 text wrapper (for
+    # text-mode input ElementTree ignores the declaration) and keep whichever
+    # pass got further. A truncation ("no element found") never retries.
+    if err is not None and (isinstance(err, UnicodeDecodeError)
+                            or "invalid token" in str(err)):
+        import io
+        logger.info("XMLTV payload is not valid for its declared encoding — "
+                    "re-parsing as latin-1: %s", path)
+        channels2: List[tuple] = []
+        with io.open(path, "r", encoding="latin-1") as f:
+            programs2, _err2 = _parse_stream(
+                ET.iterparse(f, events=("end",)), on_progress, is_cancelled,
+                path, channels2 if with_channels else None)
+        if len(programs2) > len(programs):
+            programs, channels = programs2, channels2
+    if with_channels:
+        return programs, channels
+    return programs
+
+
+def _parse_stream(
+    events,
+    on_progress: Optional[ProgressFn],
+    is_cancelled: Optional[Callable[[], bool]],
+    path: str,
+    channels: Optional[List[tuple]] = None,
+) -> Tuple[List[dict], Optional[Exception]]:
     programs: List[dict] = []
     count = 0
-    # iterparse lets us drop cleared elements to keep memory bounded.
-    for _ev, elem in ET.iterparse(path, events=("end",)):
-        if is_cancelled and is_cancelled():
-            break
-        if elem.tag != "programme":
-            # Free elements we don't need to keep memory low — but NEVER
-            # clear <title>/<desc>: their end events fire before the parent
-            # <programme>'s, and clearing them would wipe the text the
-            # programme extraction below is about to read.
-            if elem.tag not in ("title", "desc"):
+    err: Optional[Exception] = None
+    try:
+        # iterparse lets us drop cleared elements to keep memory bounded.
+        for _ev, elem in events:
+            if is_cancelled and is_cancelled():
+                break
+            if elem.tag == "channel" and channels is not None:
+                cid = elem.get("id", "")
+                dn = elem.find("display-name")
+                if cid:
+                    channels.append((cid, (dn.text or "") if dn is not None else ""))
                 elem.clear()
-            continue
-        ch = elem.get("channel", "")
-        start = _parse_xmltv_date(elem.get("start", ""))
-        end = _parse_xmltv_date(elem.get("stop", ""))
-        title_el = elem.find("title")
-        desc_el = elem.find("desc")
-        programs.append(
-            {
-                "channel_id": ch,
-                "start": start,
-                "end": end,
-                "title": (title_el.text or "") if title_el is not None else "",
-                "desc": (desc_el.text or "") if desc_el is not None else "",
-            }
-        )
-        count += 1
-        if on_progress and count % 1000 == 0:
-            on_progress(count, None)
-        elem.clear()
+                continue
+            if elem.tag != "programme":
+                # Free elements we don't need to keep memory low — but NEVER
+                # clear <title>/<desc>/<display-name>: their end events fire
+                # before the parent <programme>/<channel>'s, and clearing them
+                # would wipe the text the extraction below is about to read.
+                if elem.tag not in ("title", "desc", "display-name"):
+                    elem.clear()
+                continue
+            ch = elem.get("channel", "")
+            start = _parse_xmltv_date(elem.get("start", ""))
+            end = _parse_xmltv_date(elem.get("stop", ""))
+            title_el = elem.find("title")
+            desc_el = elem.find("desc")
+            programs.append(
+                {
+                    "channel_id": ch,
+                    "start": start,
+                    "end": end,
+                    "title": (title_el.text or "") if title_el is not None else "",
+                    "desc": (desc_el.text or "") if desc_el is not None else "",
+                }
+            )
+            count += 1
+            if on_progress and count % 1000 == 0:
+                on_progress(count, None)
+            elem.clear()
+    except (ET.ParseError, UnicodeDecodeError) as exc:
+        # Truncated/malformed tail — keep the partial guide (see docstring).
+        err = exc
+        logger.warning("XMLTV parse stopped early in %s (%s) — keeping %d programmes",
+                       path, exc, len(programs))
     if on_progress:
         on_progress(count, None)
-    return programs
+    return programs, err
 
 
 class EPGManager:
@@ -98,6 +165,8 @@ class EPGManager:
 
     def __init__(self, cache: IPTVCache) -> None:
         self.cache = cache
+        # Bumped after every save — the manager's name->id map rebuilds on change.
+        self.channels_version = 0
 
     def update_async(
         self,
@@ -119,8 +188,22 @@ class EPGManager:
                 hdrs = {"User-Agent": "DeepFlux-IPTV/1.0"}
                 if headers:
                     hdrs.update(headers)
-                r = requests.get(url, headers=hdrs, timeout=60, stream=True)
-                r.raise_for_status()
+                # EPG servers are as flaky as playlist servers (connection
+                # resets mid-download) — same 4-attempt backoff as _download_m3u.
+                r = None
+                for attempt in range(4):
+                    try:
+                        r = requests.get(url, headers=hdrs, timeout=60, stream=True)
+                        r.raise_for_status()
+                        break
+                    except Exception as exc:
+                        logger.warning("EPG download failed for %s (attempt %d/4): %s",
+                                       url, attempt + 1, exc)
+                        r = None
+                        if attempt < 3:
+                            time.sleep((2, 5, 15)[attempt])
+                if r is None:
+                    raise ValueError("EPG download failed after 4 attempts")
                 fd, tmp_path = tempfile.mkstemp(suffix=".xmltv")
                 with os.fdopen(fd, "wb") as f:
                     for chunk in r.iter_content(65536):
@@ -137,8 +220,14 @@ class EPGManager:
                         dst.write(src.read())
                     os.remove(tmp_path)
                     tmp_path = gz_path
-                programs = parse_xmltv(tmp_path, on_progress=on_progress)
-                self.cache.save_epg(url, programs)
+                programs, channels = parse_xmltv(tmp_path, on_progress=on_progress,
+                                                 with_channels=True)
+                if not programs:
+                    # An empty parse (broken/foreign payload) must never wipe
+                    # a previously good guide — save_epg replaces per-url rows.
+                    raise ValueError("XMLTV parse produced no programmes")
+                self.cache.save_epg(url, programs, channels)
+                self.channels_version += 1
                 ok = True
                 count = len(programs)
             except Exception as exc:

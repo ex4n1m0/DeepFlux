@@ -1428,6 +1428,7 @@ _MAX_PLACEHOLDERS = 400
 _MAX_CACHED_PIXMAPS = 800
 _NEUTRAL: Optional[QPixmap] = None
 _ROW_ROLE = Qt.UserRole + 1
+_EPG_ROLE = Qt.UserRole + 2  # per-tile "now playing" text (live channels)
 
 # Tiles fetched ahead of/behind the viewport so scrolling rarely shows a
 # placeholder, and the ceiling on outstanding prefetch downloads that keeps a
@@ -1575,11 +1576,27 @@ class PosterDelegate(QStyledItemDelegate):
             painter.setPen(QColor(120, 130, 150))
             painter.drawText(icon_rect, Qt.AlignCenter, "—")
 
-        # Title text (wrapped, clipped to the text area).
+        # Title text (wrapped, clipped to the text area). Live tiles with EPG
+        # data get a fixed two-line layout instead: name on line 1, current
+        # programme (dimmed) on line 2 — one line each, elided.
         text = index.data(Qt.DisplayRole) or ""
+        epg = index.data(_EPG_ROLE) or ""
         painter.setPen(QColor(232, 236, 244) if selected else QColor(200, 211, 224))
-        painter.drawText(text_rect,
-                         Qt.AlignTop | Qt.AlignHCenter | Qt.TextWordWrap, text)
+        if epg:
+            fm = QFontMetrics(option.font)
+            line_h = fm.height()
+            title_rect = QRect(text_rect.left(), text_rect.top(),
+                               text_rect.width(), line_h)
+            epg_rect = QRect(text_rect.left(), text_rect.top() + line_h + 2,
+                             text_rect.width(), line_h)
+            painter.drawText(title_rect, Qt.AlignHCenter | Qt.AlignTop,
+                             fm.elidedText(text, Qt.ElideRight, text_rect.width()))
+            painter.setPen(QColor(138, 154, 176))
+            painter.drawText(epg_rect, Qt.AlignHCenter | Qt.AlignTop,
+                             fm.elidedText(epg, Qt.ElideRight, text_rect.width()))
+        else:
+            painter.drawText(text_rect,
+                             Qt.AlignTop | Qt.AlignHCenter | Qt.TextWordWrap, text)
 
         # Overlay buttons — always visible so a single click on Play starts
         # playback without first having to select the tile.
@@ -1740,6 +1757,13 @@ class ContentGrid(QListWidget):
         self._decode_timer = QTimer(self)
         self._decode_timer.setInterval(0)
         self._decode_timer.timeout.connect(self._decode_step)
+        # Live-tile "now playing" line: refreshed for visible tiles every
+        # minute (programmes roll over as time passes even if nothing else
+        # changes).
+        self._epg_timer = QTimer(self)
+        self._epg_timer.setInterval(60_000)
+        self._epg_timer.timeout.connect(lambda: self._update_epg_tiles(full=True))
+        self._epg_timer.start()
         # Loading pulse: repaints the loading tile's Play button so it blinks
         # orange/white while the stream is being opened.
         self._loading_id: Optional[int] = None
@@ -2024,6 +2048,39 @@ class ContentGrid(QListWidget):
             last = min(self.count() - 1, first + 60)
         return first, max(first, last)
 
+    def _update_epg_tiles(self, full: bool = False) -> None:
+        """Stamp the current programme onto visible live-channel tiles.
+
+        ``full=False`` (scroll path) only fills tiles missing EPG text; the
+        minute timer's full pass refreshes everything in view as programmes
+        roll over. Channel-id resolution is memoized in the manager; now/next
+        is two tiny SQLite reads per tile."""
+        if not self.count():
+            return
+        first, last = self._visible_range()
+        lo = max(0, first - 9)
+        hi = min(self.count() - 1, last + 9)
+        changed = False
+        for i in range(lo, hi + 1):
+            li = self.item(i)
+            if li is None:
+                continue
+            it = li.data(Qt.UserRole)
+            if not isinstance(it, Channel):
+                continue
+            if not full and li.data(_EPG_ROLE):
+                continue
+            nn = self._manager.epg_now_next_for(getattr(it, "tvg_id", ""),
+                                                getattr(it, "name", ""))
+            if not isinstance(nn, dict):
+                continue  # defensive: mocked/broken managers return junk
+            text = _fmt_now_title(nn)
+            if (li.data(_EPG_ROLE) or "") != text:
+                li.setData(_EPG_ROLE, text)
+                changed = True
+        if changed:
+            self.viewport().update()
+
     def _load_visible_artwork(self) -> None:
         if not self.isVisible() or not self.count():
             return
@@ -2033,6 +2090,7 @@ class ContentGrid(QListWidget):
         self._release_far_icons(lo, hi)
         for i in range(lo, hi + 1):
             self._request_tile_artwork(self.item(i), prefetch=not (first <= i <= last))
+        self._update_epg_tiles(full=False)
 
     def _release_far_icons(self, lo: int, hi: int) -> None:
         """Drop icons well outside the window so RAM tracks the window size.
@@ -2268,6 +2326,28 @@ class ContentGrid(QListWidget):
             self.viewport().update()
 
 
+def _fmt_prog(title: str, start: int, end: int) -> str:
+    """'14:30–16:00 Title' — programme times in the SYSTEM local timezone.
+
+    The XMLTV offsets are baked into the stored epochs at parse time, so
+    ``time.localtime`` renders whatever the user's clock says — no timezone
+    setting to manage."""
+    if not title:
+        return ""
+    if start and end:
+        return (f"{time.strftime('%H:%M', time.localtime(start))}–"
+                f"{time.strftime('%H:%M', time.localtime(end))}  {title}")
+    return title
+
+
+def _fmt_now_title(epg: Dict[str, Any]) -> str:
+    """Format the "now" programme of an :meth:`IPTVCache.epg_now_next` dict."""
+    if not isinstance(epg, dict):
+        return ""  # defensive: mocked/broken managers return junk
+    return _fmt_prog(epg.get("now") or "",
+                     epg.get("now_start") or 0, epg.get("now_end") or 0)
+
+
 class ContentList(QTableWidget):
     """List view alternative with columns: name, category, EPG now-playing."""
 
@@ -2302,8 +2382,8 @@ class ContentList(QTableWidget):
             self.setItem(r, 0, QTableWidgetItem(name))
             self.setItem(r, 1, QTableWidgetItem(getattr(it, "group", "")))
             now = ""
-            if isinstance(it, Channel) and it.tvg_id:
-                now = self._manager.epg_now_next(it.tvg_id).get("now", "")
+            if isinstance(it, Channel) and (it.tvg_id or it.name):
+                now = _fmt_now_title(self._manager.epg_now_next_for(it.tvg_id, it.name))
             self.setItem(r, 2, QTableWidgetItem(now))
             self.item(r, 0).setData(Qt.UserRole, it)
 
@@ -2321,8 +2401,8 @@ class ContentList(QTableWidget):
             if name_item is None or now_item is None:
                 continue
             it = name_item.data(Qt.UserRole)
-            if isinstance(it, Channel) and it.tvg_id:
-                now = self._manager.epg_now_next(it.tvg_id).get("now", "")
+            if isinstance(it, Channel) and (it.tvg_id or it.name):
+                now = _fmt_now_title(self._manager.epg_now_next_for(it.tvg_id, it.name))
                 if now and now != now_item.text():
                     now_item.setText(now)
 
@@ -2477,18 +2557,51 @@ class DetailPanel(QScrollArea):
         self._manager.resolve_metadata(section, getattr(item, "name", ""), year, self._on_metadata)
 
     def _show_channel(self, ch: Any) -> None:
-        """Detail panel for a live TV channel: logo, group, EPG now/next.
-        No TMDb lookup — channels aren't movies."""
+        """Detail panel for a live TV channel: logo, group, full EPG guide.
+
+        No TMDb lookup — channels aren't movies. The EPG store is queried
+        directly (ch.epg_now/epg_next were designed as item attributes but
+        nothing ever populated them — the read was blank forever before the
+        fix). Shows Now (with elapsed %), Next, and the next 24 h schedule."""
         self.title.setText(ch.display_name)
-        epg = ""
-        if ch.epg_now:
-            epg = f"Now: {ch.epg_now}"
-            if ch.epg_next:
-                epg += f"  •  Next: {ch.epg_next}"
+        guide = self._manager.epg_guide_for(getattr(ch, "tvg_id", ""),
+                                            getattr(ch, "name", ""))
+        if not isinstance(guide, dict):
+            guide = {"now_next": {}, "programmes": []}  # defensive (mocked mgr)
+        nn = guide["now_next"]
+        parts = []
+        if nn.get("now"):
+            line = "Now: " + _fmt_prog(nn["now"],
+                                       nn.get("now_start") or 0,
+                                       nn.get("now_end") or 0)
+            ns, ne = nn.get("now_start") or 0, nn.get("now_end") or 0
+            if ns and ne > ns:
+                pct = min(100, max(0, int((time.time() - ns) / (ne - ns) * 100)))
+                line += f"  ({pct}%)"
+            parts.append(line)
+        if nn.get("next"):
+            parts.append("Next: " + _fmt_prog(nn["next"],
+                                              nn.get("next_start") or 0,
+                                              nn.get("next_end") or 0))
         self.meta_lbl.setText(ch.group or "Live TV")
-        self.synopsis.setText(epg)
-        self.episodes_label.hide()
-        self.episodes.hide()
+        self.synopsis.setText("\n".join(parts))
+        rows = guide["programmes"]
+        self.episodes.clear()
+        self._episodes = []
+        if rows:
+            self.episodes_label.setText("Upcoming — next 24 h")
+            for r in rows:
+                li = QListWidgetItem(
+                    f"{time.strftime('%H:%M', time.localtime(r['start']))}  {r['title']}")
+                # Guide rows are display-only — clicking must not "play" them.
+                li.setFlags(li.flags() & ~Qt.ItemIsSelectable)
+                li.setData(Qt.UserRole, None)
+                self.episodes.addItem(li)
+            self.episodes_label.show()
+            self.episodes.show()
+        else:
+            self.episodes_label.hide()
+            self.episodes.hide()
         self._expected_meta_key = ""  # drop any in-flight movie/series metadata
         self._expected_artwork_url = ch.logo
         if ch.logo:
@@ -2642,7 +2755,16 @@ class IPTVTab(QWidget):
             enable_fanza=config.iptv.enable_fanza,
             enable_wikipedia=config.iptv.enable_wikipedia,
             cache_limit_mb=config.iptv.cache_limit_mb,
+            epg_url=config.iptv.epg_url,
+            enable_epg=config.iptv.enable_epg,
         )
+        # Guides go stale independently of playlist refreshes — re-fetch any
+        # guide older than 6h, checked hourly.
+        self._epg_refresh_timer = QTimer(self)
+        self._epg_refresh_timer.setInterval(3600_000)
+        self._epg_refresh_timer.timeout.connect(
+            lambda: self._manager.maybe_refresh_epg())
+        self._epg_refresh_timer.start()
         self._current_section = SECTION_LIVE
         self._current_category = ""
         self._current_year = ""  # set when a year node is selected
@@ -3341,7 +3463,14 @@ class IPTVTab(QWidget):
         # content starts playing it gets out of the way so video is unobstructed.
         self._detail.hide()
         name = getattr(item, "name", "") or getattr(item, "display_name", "")
-        self._set_status(f"Loading {name}…" if name else "Loading stream…")
+        status = f"Loading {name}…" if name else "Loading stream…"
+        if isinstance(item, Channel):
+            # Show what's actually on: "Loading CNN… — 18:30–19:00  News Hour".
+            now_line = _fmt_now_title(self._manager.epg_now_next_for(
+                getattr(item, "tvg_id", ""), name))
+            if now_line:
+                status += f"  —  {now_line}"
+        self._set_status(status)
         self._grid.set_loading_item(item)  # pulse the Play button while opening
         self._player.play(item)
 
@@ -3416,6 +3545,8 @@ class IPTVTab(QWidget):
         self._manager.cache_seconds = config.iptv.cache_seconds
         self._manager.hwdec = config.iptv.hwdec
         self._manager.cache_limit_mb = config.iptv.cache_limit_mb
+        self._manager.set_framegrab_enabled(config.iptv.framegrab_posters)
+        self._manager.set_epg(config.iptv.epg_url, config.iptv.enable_epg)
         # Apply buffer/hwdec changes to the running player immediately.
         self._player.apply_config()
         self._populate_source_dropdown()
