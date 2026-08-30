@@ -75,6 +75,14 @@ class IRCClientCore:
         # net_id -> runtime dict (only touched by the network thread,
         # except manual_disconnect which is set under _lock before queueing)
         self._nets: Dict[str, Dict[str, Any]] = {}
+        # ServerConnection -> net_id. The irc library's `add_global_handler`
+        # registers on the REACTOR, whose handlers fire for EVERY connection's
+        # events — so per-connection handlers baked with a fixed net_id would
+        # cross-contaminate networks (a JOIN on libera would also be recorded
+        # under iptorrents). Instead we install one set of reactor-global
+        # handlers and resolve the owning network from the connection object.
+        self._conn_to_net: Dict[Any, str] = {}
+        self._handlers_installed = False
 
     # ------------------------------------------------------------------
     # lifecycle
@@ -195,6 +203,7 @@ class IRCClientCore:
             self._drain_commands()
             self._flush_outboxes()
             self._check_reconnects()
+            self._check_pending_lists()
             try:
                 self._reactor.process_once(timeout=0.2)
             except Exception:
@@ -272,7 +281,14 @@ class IRCClientCore:
 
         try:
             conn = self._reactor.server()
-            self._attach_handlers(conn, net.id)
+            # Map this connection to its network BEFORE we connect so events
+            # (processed later by the reactor loop) resolve to the right net.
+            # Drop any stale mapping for a previous connection of this net.
+            old = rt.get("conn") if rt else None
+            if old is not None:
+                self._conn_to_net.pop(old, None)
+            self._conn_to_net[conn] = net.id
+            self._install_handlers()
             sasl_login = net.sasl_account or None
             sasl_password = net.sasl_password if sasl_login else None
             conn.connect(
@@ -302,6 +318,11 @@ class IRCClientCore:
             "manual_disconnect": rt.get("manual_disconnect", False) if rt else False,
             "welcomed": False,
             "nick_try": 0,
+            # Auto-/LIST retry: channelless networks request the channel
+            # directory on connect and retry every 10s until it arrives
+            # (some servers throttle LIST for ~60s after connect).
+            "auto_list_pending": False,
+            "auto_list_at": None,
         }
 
     def _do_disconnect(self, net_id: str, message: str) -> None:
@@ -341,11 +362,29 @@ class IRCClientCore:
             rt["reconnect_at"] = None
             self._do_connect(rt["cfg"])
 
+    def _check_pending_lists(self) -> None:
+        """Retry /LIST for channelless networks that haven't received a list yet."""
+        now = time.monotonic()
+        for net_id, rt in list(self._nets.items()):
+            if not rt.get("auto_list_pending"):
+                continue
+            at = rt.get("auto_list_at")
+            if at is None or now < at:
+                continue
+            conn = rt.get("conn")
+            if not conn or not conn.is_connected():
+                rt["auto_list_pending"] = False
+                continue
+            conn.send_raw("LIST")
+            rt["auto_list_at"] = now + 10.0  # retry interval
+
     def _on_conn_down(self, net_id: str) -> None:
         self.state.set_connected(net_id, False)
         rt = self._nets.get(net_id)
         if rt:
             rt["welcomed"] = False
+            rt["auto_list_pending"] = False
+            rt["auto_list_at"] = None
         self._emit({"type": "state", "network": net_id, "state": "disconnected"})
 
     # -- outgoing pacing ----------------------------------------------------
@@ -415,7 +454,16 @@ class IRCClientCore:
     # event handlers (network thread)
     # ------------------------------------------------------------------
 
-    def _attach_handlers(self, conn: "irc.client.ServerConnection", net_id: str) -> None:
+    def _install_handlers(self) -> None:
+        """Register one set of reactor-global handlers (once).
+
+        The irc library fires global handlers for every connection's events,
+        so we register them a single time and resolve the owning network from
+        the connection object inside ``_dispatch`` (see ``_conn_to_net``).
+        """
+        if self._handlers_installed or self._reactor is None:
+            return
+        self._handlers_installed = True
         for name in ("welcome", "nicknameinuse", "pubmsg", "privmsg", "action",
                      "pubnotice", "privnotice", "join", "part", "quit", "kick",
                      "nick", "topic", "currenttopic", "namreply", "endofnames",
@@ -424,11 +472,14 @@ class IRCClientCore:
                      "bannedfromchan", "inviteonlychan",
                      "badchannelkey", "channelisfull", "nosuchchannel",
                      "nosuchnick", "cannotsendtochan", "ctcp", "ctcpreply"):
-            conn.add_global_handler(
-                name, functools.partial(self._dispatch, net_id, name))
+            self._reactor.add_global_handler(
+                name, functools.partial(self._dispatch, name))
 
-    def _dispatch(self, net_id: str, name: str,
+    def _dispatch(self, name: str,
                   conn: "irc.client.ServerConnection", event: "irc.client.Event") -> None:
+        net_id = self._conn_to_net.get(conn)
+        if net_id is None:
+            return  # event from an unknown/unmapped connection — ignore
         try:
             handler = getattr(self, f"_on_{name}", None)
             if handler:
@@ -461,6 +512,14 @@ class IRCClientCore:
             cfg = rt["cfg"]
             for ch in list(cfg.channels):
                 conn.join(ch)
+            # No configured channels → auto-request /LIST so the user can
+            # browse and pick channels. Retried every 10s until it arrives
+            # (some servers throttle LIST for ~60s after connect).
+            if not cfg.channels:
+                rt["auto_list_pending"] = True
+                rt["auto_list_at"] = time.monotonic()
+                self._record(net_id, KIND_SERVER,
+                             "Requesting channel list (retrying every 10s until it arrives)…")
         self.state.set_connected(net_id, True, nick=nick)
         self._record(net_id, KIND_SERVER, f"Connected as {nick}")
         self._emit({"type": "state", "network": net_id, "state": "connected",
@@ -647,6 +706,10 @@ class IRCClientCore:
         rows = rt.pop("pending_list", []) if rt else []
         rows.sort(key=lambda r: -r["users"])
         self.state.set_chanlist(net_id, rows)
+        # Auto-/LIST retry complete — stop retrying.
+        if rt:
+            rt["auto_list_pending"] = False
+            rt["auto_list_at"] = None
         self._record(net_id, KIND_SERVER,
                      f"Channel list received: {len(rows)} channels")
         self._emit({"type": "chanlist", "network": net_id, "channels": rows})

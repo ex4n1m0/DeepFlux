@@ -4,20 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DeepFlux — LLM-Powered Browser, Downloader, File Manager & Player</title>
-<meta name="description" content="One app for the whole media path: browse the web, grab videos, manage files, and play them. DeepFlux is an LLM-powered internet browser, video downloader, file manager, and video player.">
-<link rel="icon" type="image/webp" href="DeepFlux3.webp">
+<meta name="description" content="DeepFlux — LLM-Powered Browser, Downloader, File Manager & Player.">
+<link rel="icon" type="image/webp" href="DeepFlux4.webp">
 <!-- Open Graph -->
 <meta property="og:title" content="DeepFlux — LLM-Powered Browser, Downloader, File Manager & Player">
-<meta property="og:description" content="One app for the whole media path: browse the web, grab videos, manage files, and play them. DeepFlux is an LLM-powered internet browser, video downloader, file manager, and video player.">
-<meta property="og:image" content="https://deepflux.space/deepflux/DeepFlux3.webp">
+<meta property="og:description" content="DeepFlux — LLM-Powered Browser, Downloader, File Manager & Player.">
+<meta property="og:image" content="https://deepflux.space/deepflux/DeepFlux4.webp">
 <meta property="og:url" content="https://deepflux.space/deepflux/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="DeepFlux">
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="DeepFlux — LLM-Powered Browser, Downloader, File Manager & Player">
-<meta name="twitter:description" content="One app for the whole media path: browse the web, grab videos, manage files, and play them. DeepFlux is an LLM-powered internet browser, video downloader, file manager, and video player.">
-<meta name="twitter:image" content="https://deepflux.space/deepflux/DeepFlux3.webp">
+<meta name="twitter:description" content="DeepFlux — LLM-Powered Browser, Downloader, File Manager & Player.">
+<meta name="twitter:image" content="https://deepflux.space/deepflux/DeepFlux4.webp">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -32,8 +32,7 @@
   main {
     display: flex;
     justify-content: center;
-    /* No title above it any more — the logo is the top of the page. */
-    padding: 32px 16px 16px;
+    padding: 64px 16px 16px;
     flex-shrink: 0;
   }
   main img {
@@ -43,7 +42,7 @@
   }
   section.dl-wrap {
     text-align: center;
-    padding: 0 24px 24px;
+    padding: 0 24px 0;
     flex-shrink: 0;
   }
   a.dl {
@@ -77,61 +76,70 @@
     color: rgba(255, 255, 255, 0.85);
     line-height: 1.6;
   }
-  p.desc {
-    margin-top: 10px;
-    font-size: clamp(0.8rem, 2vw, 0.9rem);
-    color: rgba(255, 255, 255, 0.55);
-    line-height: 1.7;
+  header.search {
+    width: 100%;
+    max-width: 768px;
+    padding: 16px 24px 48px;
+    margin: 0 auto;
   }
-  footer.support {
-    text-align: center;
-    padding: 0 24px 48px;
+  header.search form {
+    display: flex;
+    gap: 8px;
+    width: 100%;
   }
-  /* White plate behind the QR — a black-on-black code will not scan. */
-  a.qr {
-    display: inline-block;
-    background: #fff;
-    border-radius: 12px;
-    padding: 10px;
-    line-height: 0;
+  header.search input[type="search"] {
+    flex: 1;
+    background: #000;
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 999px;
+    padding: 12px 20px;
+    font-size: 0.95rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.25s;
   }
-  a.qr img {
-    width: min(10vmin, 45px);
-    height: auto;
-    display: block;
-  }
-  a.bmc {
-    display: inline-block;
-    margin-top: 12px;
-    font-size: 0.78rem;
+  header.search input[type="search"]::placeholder { color: rgba(255, 255, 255, 0.4); }
+  header.search input[type="search"]:focus { border-color: rgba(255, 255, 255, 0.7); }
+  header.search button {
+    background: #000;
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: 999px;
+    padding: 12px 24px;
+    font-size: 0.95rem;
+    font-family: inherit;
     letter-spacing: 0.08em;
-    color: rgba(255, 255, 255, 0.5);
-    text-decoration: none;
-    word-break: break-all;
-    transition: color 0.25s;
+    cursor: pointer;
+    transition: background 0.25s, color 0.25s;
   }
-  a.bmc:hover, a.bmc:focus-visible { color: #fff; }
+  header.search button:hover,
+  header.search button:focus-visible { background: #fff; color: #000; }
 </style>
 </head>
 <body>
   <main>
-    <img src="DeepFlux3.webp" alt="DeepFlux logo">
+    <img src="DeepFlux4.webp" alt="DeepFlux logo">
   </main>
   <section class="dl-wrap">
-    <a class="dl" href="DeepFlux3.0.6Setup.exe" download>Download</a>
-    <p class="meta">DeepFlux 3.0.6 · Windows 10/11 64-bit · posted 2026-08-28</p>
+    <a class="dl" href="DeepFlux3.2.7Setup.exe" download>Download</a>
+    <p class="meta">DeepFlux 3.2.7 · Windows 10/11 64-bit · posted 2026-08-30</p>
   </section>
   <section class="info">
     <p class="tagline">DeepFlux — LLM-Powered Browser, Downloader, File Manager &amp; Player</p>
-    <p class="desc">One app for the whole media path: browse the web, grab videos, manage files, and play them. DeepFlux is an LLM-powered internet browser, video downloader, file manager, and video player.</p>
   </section>
-  <footer class="support">
-    <a class="qr" href="https://buymeacoffee.com/ex4n1m0" target="_blank" rel="noopener">
-      <img src="bmc-qr.png" alt="Buy me a coffee — QR code" width="45" height="45">
-    </a>
-    <br>
-    <a class="bmc" href="https://buymeacoffee.com/ex4n1m0" target="_blank" rel="noopener">https://buymeacoffee.com/ex4n1m0</a>
-  </footer>
+  <header class="search">
+    <form action="https://www.google.com/search" method="get" target="_blank">
+      <input
+        type="search"
+        name="q"
+        placeholder="Search the web…"
+        aria-label="Search the web"
+        required
+      />
+      <button type="submit">Search</button>
+    </form>
+  </header>
   <script>
     window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
   </script>

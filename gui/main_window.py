@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage, QWebEngineSettings
+from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage, QWebEngineSettings, QWebEngineUrlSchemeHandler
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import QUrl, QByteArray
@@ -69,8 +69,9 @@ from gui.help_dialog import HelpDialog, AboutDialog
 from gui.downloads_tab import DownloadsTab
 from gui.commander_tab import CommanderTab
 from gui.browser_bridge import BrowserBridge
+from gui.browser_channel import create_channel, channel_injection_script
 from gui.iptv_tab import AgentIPTVBridge, IPTVTab
-from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES
+from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog
 from gui.irc_tab import IRCTab
 from gui.voice_input import MIN_SECONDS, SAMPLE_RATE as VOICE_SAMPLE_RATE, VoiceRecorder, VoiceTranscriber, pcm_to_whisper_audio
 from ircmgr.client import IRCClientCore
@@ -99,7 +100,6 @@ class _PlaySignals(QObject):
 class _RefreshSignals(QObject):
     """Cross-thread marshalling for the torrent table refresh worker."""
     torrents = Signal(list)
-    files = Signal(object)
     # (info_hash, status) for torrents waiting to stream (buffer threshold).
     stream_status = Signal(str, object)
 
@@ -442,9 +442,85 @@ def _fmt_eta(eta: Optional[int]) -> str:
     return f"{s}s"
 
 
+# ---------------------------------------------------------------------------
+# Custom deepflux:// URL scheme — serves internal pages (start page, etc.)
+# without the about:blank / data: URL hacks. The scheme must be registered
+# BEFORE any QWebEngineProfile is created (Chromium locks the scheme list at
+# profile-init time), so register_deepflux_scheme() is called at the top of
+# run_gui().
+# ---------------------------------------------------------------------------
+_DEEPFLUX_SCHEME = "deepflux"
+_deepflux_scheme_registered = False
+
+
+def register_deepflux_scheme() -> None:
+    """Register the deepflux:// URL scheme with Chromium (idempotent).
+
+    Must be called before the first QWebEngineProfile is created."""
+    global _deepflux_scheme_registered
+    if _deepflux_scheme_registered:
+        return
+    from PySide6.QtWebEngineCore import QWebEngineUrlScheme
+    scheme = QWebEngineUrlScheme(QByteArray(_DEEPFLUX_SCHEME.encode()))
+    scheme.setFlags(QWebEngineUrlScheme.Flag.SecureScheme
+                    | QWebEngineUrlScheme.Flag.LocalScheme
+                    | QWebEngineUrlScheme.Flag.LocalAccessAllowed
+                    | QWebEngineUrlScheme.Flag.ContentSecurityPolicyIgnored
+                    | QWebEngineUrlScheme.Flag.CorsEnabled)
+    QWebEngineUrlScheme.registerScheme(scheme)
+    _deepflux_scheme_registered = True
+
+
+class _DeepFluxSchemeHandler(QWebEngineUrlSchemeHandler):  # noqa: N801
+    """Serves deepflux:// internal pages.
+
+    Currently serves:
+    - deepflux://start/  → the built-in start page (logo + clock)
+    - deepflux://start   → same
+    Any other path returns a simple 404 page.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._start_html = ""
+
+    def set_start_page_html(self, html: str) -> None:
+        """Provide the start-page HTML (built by MainWindow)."""
+        self._start_html = html
+
+    def requestStarted(self, request) -> None:  # noqa: N802
+        from PySide6.QtCore import QBuffer, QIODevice
+        path = request.requestUrl().path().strip("/")
+        if path in ("start", ""):
+            body = self._start_html or "<html><body><h1>DeepFlux</h1></body></html>"
+            mime = "text/html; charset=utf-8"
+        else:
+            body = (f"<html><body style='background:#000;color:#8a9ab0;font-family:sans-serif;"
+                    f"display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
+                    f"<h2>404 — deepflux://{path} not found</h2></body></html>")
+            mime = "text/html; charset=utf-8"
+        buf = QBuffer(self)
+        buf.setData(body.encode("utf-8"))
+        buf.open(QIODevice.OpenModeFlag.ReadOnly)
+        request.respond(buf, mime)
+
+
 class _BrowserPage(QWebEnginePage):
     """Custom QWebEnginePage that opens new windows/tabs in the internal
-    browser instead of the external system browser.
+    browser instead of the external system browser, and enforces a
+    navigation/permission/certificate policy consistent with a real
+    browser:
+
+    - ``magnet:`` links are intercepted and handed to the torrent engine
+      (the page never navigates to them).
+    - ``javascript:``/``vbscript:`` navigations from untrusted origins are
+      blocked (XSS hardening).
+    - TLS certificate errors surface a dialog so the user can decide
+      whether to ignore them (default: reject).
+    - ``window.alert()``/``confirm()``/``prompt()`` show native Qt dialogs
+      instead of silently no-op'ing.
+    - Geolocation/notifications/clipboard/media-capture permission
+      requests show a dialog (default: deny).
 
     When a page calls window.open() or a link with target="_blank" is
     clicked, Chromium calls createWindow(). We emit a signal so the
@@ -452,6 +528,27 @@ class _BrowserPage(QWebEnginePage):
 
     # Emitted when a new window/tab should be created. Carries the URL.
     newTabRequested = Signal(QUrl)
+    # Emitted when a magnet: (or other torrent) link is clicked. Carries
+    # the full magnet URI so the MainWindow can add it to the engine.
+    magnetRequested = Signal(str)
+    # Emitted when a TLS certificate error needs a user decision. Carries
+    # the QWebEngineCertificateError so the receiver can accept/reject it.
+    certificateErrorRequested = Signal(object)
+    # Emitted with a short status message for the browser status bar
+    # (e.g. "Blocked javascript: navigation", "Magnet sent to engine").
+    statusMessage = Signal(str)
+
+    # Schemes that are handed off to the OS / app instead of the browser.
+    _INTERCEPT_SCHEMES = ("magnet",)
+    # Schemes blocked from navigation entirely (anti-XSS).
+    _BLOCKED_SCHEMES = ("javascript", "vbscript", "file")
+
+    def __init__(self, profile, parent=None) -> None:
+        super().__init__(profile, parent)
+        # Hold live references to certificate-error objects pending a
+        # user decision so they aren't garbage-collected before the
+        # dialog resolves.
+        self._pending_cert_errors: List[Any] = []
 
     def createWindow(self, _type):  # noqa: N802
         # Return a dummy page — we'll intercept the URL via urlChanged
@@ -467,6 +564,122 @@ class _BrowserPage(QWebEnginePage):
             sender.deleteLater()
         if url and not url.isEmpty():
             self.newTabRequested.emit(url)
+
+    # -- navigation policy ----------------------------------------------------
+    def acceptNavigationRequest(self, url: QUrl, nav_type, _is_main):  # noqa: N802
+        """Intercept magnet: links and block dangerous schemes.
+
+        Returning False cancels the navigation; the scheme handler is
+        responsible for routing the URL to the right subsystem."""
+        scheme = url.scheme().lower()
+        if scheme in self._INTERCEPT_SCHEMES:
+            self.magnetRequested.emit(url.toString())
+            self.statusMessage.emit(f"Sent {scheme}: link to DeepFlux")
+            return False
+        if scheme in self._BLOCKED_SCHEMES and nav_type != QWebEnginePage.NavigationType.NavigationTypeTyped:
+            # Allow typed file:// for local dev, block link/script-driven
+            # javascript:/vbscript: and link-driven file:// (XSS/LFI).
+            if scheme in ("javascript", "vbscript"):
+                self.statusMessage.emit(f"Blocked {scheme}: navigation")
+                return False
+        return True
+
+    # -- TLS certificate errors ----------------------------------------------
+    def certificateError(self, error) -> bool:  # noqa: N802
+        """Surface certificate errors to the user instead of silently
+        rejecting. Non-overridable errors are always rejected; overridable
+        ones emit a signal so the MainWindow can show a dialog."""
+        if not error.isOverridable():
+            self.statusMessage.emit(f"TLS error (not overridable): {error.description()}")
+            return False
+        # Keep the error alive until the dialog resolves it.
+        self._pending_cert_errors.append(error)
+        error.defer()
+        self.certificateErrorRequested.emit(error)
+        return False  # deferred — the dialog accepts/rejects later
+
+    # -- JavaScript dialogs ---------------------------------------------------
+    def javaScriptAlert(self, _frame, msg):  # noqa: N802
+        """Show window.alert() as a native Qt message box."""
+        title = self._safe_dialog_title()
+        QMessageBox.information(self.view() if self.view() else None,
+                                title, msg)
+
+    def javaScriptConfirm(self, _frame, msg):  # noqa: N802
+        """Show window.confirm() as a native Qt question dialog."""
+        title = self._safe_dialog_title()
+        r = QMessageBox.question(
+            self.view() if self.view() else None, title, msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        return r == QMessageBox.StandardButton.Yes
+
+    def javaScriptPrompt(self, _frame, msg, default):  # noqa: N802
+        """Show window.prompt() as a native Qt input dialog."""
+        title = self._safe_dialog_title()
+        parent = self.view() if self.view() else None
+        text, ok = QInputDialog.getText(parent, title, msg, text=default)
+        return (ok, text) if ok else (False, "")
+
+    # -- permissions ----------------------------------------------------------
+    def permissionRequest(self, feature):  # noqa: N802
+        """Ask the user before granting geolocation/notifications/etc.
+
+        Defaults to deny for sensitive capture features (camera/mic/
+        screen) since this is a download-focused browser, not a general
+        one; geolocation/notifications/clipboard get a prompt."""
+        return self._decide_permission(feature, prompt=True)
+
+    def featurePermissionRequest(self, _security_origin, feature):  # noqa: N802
+        """Same policy as permissionRequest (Qt emits both for some
+        features depending on version)."""
+        return self._decide_permission(feature, prompt=True)
+
+    def _decide_permission(self, feature, prompt: bool) -> "QWebEnginePage.PermissionPolicy":
+        """Resolve a permission request with a user dialog or a safe default."""
+        # Sensitive capture features: deny without prompting (no UI to
+        # meaningfully grant camera/mic/screen access in this app).
+        sensitive = (
+            QWebEnginePage.Feature.MediaAudioCapture,
+            QWebEnginePage.Feature.MediaVideoCapture,
+            QWebEnginePage.Feature.MediaAudioVideoCapture,
+            QWebEnginePage.Feature.DesktopAudioVideoCapture,
+            QWebEnginePage.Feature.DesktopVideoCapture,
+            QWebEnginePage.Feature.MouseLock,
+        )
+        if feature in sensitive:
+            return QWebEnginePage.PermissionPolicy.PermissionDeniedByUser
+        if not prompt:
+            return QWebEnginePage.PermissionPolicy.PermissionDeniedByUser
+        name = self._permission_name(feature)
+        parent = self.view() if self.view() else None
+        r = QMessageBox.question(
+            parent, "Permission Request",
+            f"This page wants to use: {name}.\nAllow?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        return (QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
+                if r == QMessageBox.StandardButton.Yes
+                else QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
+
+    @staticmethod
+    def _permission_name(feature) -> str:
+        return {
+            QWebEnginePage.Feature.Geolocation: "Location",
+            QWebEnginePage.Feature.Notifications: "Notifications",
+            QWebEnginePage.Feature.ClipboardReadWrite: "Clipboard read",
+            QWebEnginePage.Feature.LocalFontsAccess: "Local fonts",
+        }.get(feature, f"Feature {feature}")
+
+    # -- helpers --------------------------------------------------------------
+    def _safe_dialog_title(self) -> str:
+        """Title for JS dialogs — the page title or the host, never empty."""
+        title = self.title() or ""
+        if title:
+            return title[:80]
+        try:
+            host = self.url().host()
+            return host or "JavaScript"
+        except Exception:
+            return "JavaScript"
 
 
 class _TabMenuBar(QMenuBar):
@@ -682,12 +895,9 @@ class MainWindow(QMainWindow):
         self._busy_timer.timeout.connect(self._tick_busy)
         self._refresh_signals = _RefreshSignals()
         self._refresh_signals.torrents.connect(self._render_torrents)
-        self._refresh_signals.files.connect(self._render_files)
         self._refresh_signals.stream_status.connect(self._on_stream_status)
         self._refresh_inflight = False
         self._selected_hash: Optional[str] = None
-        self._files_hash: Optional[str] = None
-        self._files_last_fetch = 0.0
         # Stream-while-downloading: info_hash -> wait state (buffer threshold).
         self._stream_waits: Dict[str, Dict[str, Any]] = {}
         # Active torrent stream being playback-capped at the verified
@@ -741,7 +951,7 @@ class MainWindow(QMainWindow):
         self._jackett_timer.start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.0.6 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.2.7 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1034,11 +1244,11 @@ class MainWindow(QMainWindow):
 
     def _restore_splitters(self) -> None:
         """Restore user-adjusted splitter sizes from the previous session."""
-        # NOTE: versioned keys ("agent_v4", "browser_v4") — when a layout's
+        # NOTE: versioned keys ("agent_v5", "browser_v4") — when a layout's
         # default ratio changes, bump the key so stale saved states from the
         # old layout don't override the new default.
         for name, splitter in (
-            ("agent_v4", self.agent_splitter),
+            ("agent_v5", self.agent_splitter),
             ("commander_v1", self.commander_tab.splitter),
         ):
             state = self.config.ui_splitters.get(name, "")
@@ -1051,7 +1261,7 @@ class MainWindow(QMainWindow):
     def _save_splitters(self) -> None:
         """Persist splitter sizes so the layout survives restarts."""
         for name, splitter in (
-            ("agent_v4", self.agent_splitter),
+            ("agent_v5", self.agent_splitter),
             ("commander_v1", self.commander_tab.splitter),
         ):
             try:
@@ -1078,9 +1288,9 @@ class MainWindow(QMainWindow):
         """Find the logo PNG for the branding header."""
         candidates = [
             os.path.join(os.path.dirname(__file__), "..", "packaging", "logo_48.png"),
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux3.png"),
+            os.path.join(os.path.dirname(__file__), "..", "DeepFlux4.png"),
             os.path.join(sys._MEIPASS, "packaging", "logo_48.png") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(sys._MEIPASS, "DeepFlux3.png") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(sys._MEIPASS, "DeepFlux4.png") if hasattr(sys, "_MEIPASS") else "",
         ]
         for path in candidates:
             if path and os.path.isfile(path):
@@ -1090,8 +1300,8 @@ class MainWindow(QMainWindow):
     def _resolve_watermark_path(self) -> str:
         """Find the full-size logo PNG for the chat watermark (prefers high-res)."""
         candidates = [
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux3.png"),
-            os.path.join(sys._MEIPASS, "DeepFlux3.png") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(os.path.dirname(__file__), "..", "DeepFlux4.png"),
+            os.path.join(sys._MEIPASS, "DeepFlux4.png") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "packaging", "logo_48.png"),
             os.path.join(sys._MEIPASS, "packaging", "logo_48.png") if hasattr(sys, "_MEIPASS") else "",
         ]
@@ -1251,20 +1461,6 @@ class MainWindow(QMainWindow):
         self.torrent_table.verticalHeader().setDefaultSectionSize(20)
         torrents_tab_layout.addWidget(self.torrent_table)
 
-        # Details / file priorities
-        files_label = QLabel("◈ Files")
-        files_label.setObjectName("section_label")
-        torrents_tab_layout.addWidget(files_label)
-        self.file_table = QTableWidget()
-        self.file_table.setColumnCount(4)
-        self.file_table.setHorizontalHeaderLabels(["#", "Path", "Size", "Priority"])
-        self.file_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        self.file_table.setAlternatingRowColors(True)
-        self.file_table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.file_table.customContextMenuRequested.connect(self._file_context_menu)
-        self.file_table.verticalHeader().setDefaultSectionSize(20)
-        torrents_tab_layout.addWidget(self.file_table)
-
         # --- Downloads panel (bottom-right of the Agent tab) ---
         downloads_panel = QWidget()
         downloads_panel_layout = QVBoxLayout(downloads_panel)
@@ -1280,20 +1476,23 @@ class MainWindow(QMainWindow):
             lambda job: self._notify("Download complete", job.filename, path=job.save_path))
         downloads_panel_layout.addWidget(self.downloads_tab)
 
-        # Downloads tab: torrents on top / downloads below, full height —
-        # the merged deep-search window lives on the Agents tab.
-        self.agent_splitter = QSplitter(Qt.Vertical)
+        # Downloads tab: torrents on the left / direct downloads on the right,
+        # full width — the merged deep-search window lives on the Agents tab.
+        self.agent_splitter = QSplitter(Qt.Horizontal)
         self.agent_splitter.addWidget(torrents_tab)
         self.agent_splitter.addWidget(downloads_panel)
         self.agent_splitter.setStretchFactor(0, 1)
         self.agent_splitter.setStretchFactor(1, 1)
         self.agent_splitter.setChildrenCollapsible(True)
         # setSizes() before the window is shown gets overridden by widget size
-        # hints; enforce the 50/50 split once the real height is known.
+        # hints; enforce the 50/50 split once the real width is known.
         self._agent_ratio_applied = False
         self.main_tabs.addTab(self.agent_splitter, "Download")
         # Drag & drop and other flows surface this tab to show the torrent list.
         self._torrents_tab = self.agent_splitter
+        # Enforce 50/50 when the Download tab becomes visible (it's not the
+        # default tab, so the splitter has no width at startup).
+        self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
 
         # --- Browser panel (the whole Browser tab) ---
         browser_tab = QWidget()
@@ -1309,12 +1508,98 @@ class MainWindow(QMainWindow):
         self.browser_profile = QWebEngineProfile("deeptorrent", self)
         self.browser_profile.setPersistentStoragePath(browser_storage)
         self.browser_profile.setCachePath(os.path.join(browser_storage, "cache"))
+        # --- Engine-level profile tuning (standards-aligned defaults) -----
+        # UA: strip the "QtWebEngine/x.y" token so sites don't fingerprint us
+        # as an embedded browser and serve degraded content. The Chrome
+        # version token stays accurate (matches the bundled Chromium).
+        _ua = self.browser_profile.httpUserAgent()
+        _ua = re.sub(r"\s*QtWebEngine/[\d.]+", "", _ua)
+        self.browser_profile.setHttpUserAgent(_ua)
+        # Accept-Language: derive from the system locale, fall back to the
+        # universal en-US,en so sites don't detect a bot / serve wrong lang.
+        try:
+            import locale as _locale
+            loc = _locale.getlocale()[0]
+            lang = "-".join(loc.split("_")) if loc else "en-US"
+            # Normalize the Macao/SAR-style names to a clean tag.
+            lang = lang.replace(" ", "")
+            self.browser_profile.setHttpAcceptLanguage(f"{lang},{lang.split('-')[0]};q=0.9,en;q=0.8")
+        except Exception:
+            self.browser_profile.setHttpAcceptLanguage("en-US,en;q=0.9")
+        # Persistent cookies (default is already AllowPersistentCookies when
+        # a storage path is set, but make it explicit).
+        from PySide6.QtWebEngineCore import QWebEngineProfile as _Prof
+        self.browser_profile.setPersistentCookiesPolicy(
+            _Prof.PersistentCookiesPolicy.AllowPersistentCookies)
+        # HTTP cache: 100 MB on disk — the default is small enough that
+        # heavy browsing re-downloads assets; 100MB is the Chrome default.
+        self.browser_profile.setHttpCacheMaximumSize(100 * 1024 * 1024)
+        self.browser_profile.setHttpCacheType(_Prof.HttpCacheType.DiskHttpCache)
+        # Spell check on, using the system language (best-effort; Qt ships
+        # a handful of dictionaries).
+        self.browser_profile.setSpellCheckEnabled(True)
+        try:
+            import locale as _locale
+            sc_lang = "-".join((_locale.getlocale()[0] or "en_US").split("_"))
+            self.browser_profile.setSpellCheckLanguages([sc_lang])
+        except Exception:
+            pass
+        # --- Page-level settings applied to every page in the profile -----
+        _ps = self.browser_profile.settings()
+        # DNS prefetch: resolve cross-origin hosts ahead of navigation.
+        _ps.setAttribute(QWebEngineSettings.DnsPrefetchEnabled, True)
+        # Smooth scrolling like modern browsers.
+        _ps.setAttribute(QWebEngineSettings.ScrollAnimatorEnabled, True)
+        # Back-forward cache: keep pages alive for instant back/forward
+        # instead of reloading (Qt 6.7+).
+        _ps.setAttribute(QWebEngineSettings.BackForwardCacheEnabled, True)
+        # Allow local HTML to fetch remote resources (used by the start
+        # page if it ever loads remote assets; harmless otherwise).
+        _ps.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
+        # Icons: load favicons for the tab strip / bookmarks.
+        _ps.setAttribute(QWebEngineSettings.AutoLoadIconsForPage, True)
+        _ps.setAttribute(QWebEngineSettings.TouchIconsEnabled, True)
+        # PDF: use Chromium's built-in viewer instead of downloading.
+        _ps.setAttribute(QWebEngineSettings.PdfViewerEnabled, True)
+        # WebGL + accelerated 2D canvas (default on, but be explicit).
+        _ps.setAttribute(QWebEngineSettings.WebGLEnabled, True)
+        _ps.setAttribute(QWebEngineSettings.Accelerated2dCanvasEnabled, True)
+        # Hyperlink auditing (ping=) — off for privacy, matches most
+        # privacy-conscious browsers.
+        _ps.setAttribute(QWebEngineSettings.HyperlinkAuditingEnabled, False)
+        # Custom deepflux:// scheme handler — serves internal pages (start
+        # page) without the about:blank / data: URL hacks. The scheme was
+        # registered with Chromium in run_gui() before this profile was
+        # created.
+        self._deepflux_handler = _DeepFluxSchemeHandler(self)
+        self.browser_profile.installUrlSchemeHandler(
+            QByteArray(_DEEPFLUX_SCHEME.encode()), self._deepflux_handler)
         from dlmgr.browser_extension import inject_into_profile
-        inject_into_profile(self.browser_profile)
+        # Video grabber extension — inject only if enabled in config.
+        # The script is stored so it can be removed/re-inserted at runtime
+        # via the toolbar toggle button.
+        self._extension_script = inject_into_profile(self.browser_profile)
+        if not self.config.browser.extension_enabled:
+            self.browser_profile.scripts().remove(self._extension_script)
         from dlmgr.adblock import AdBlockInterceptor
         self.adblock_interceptor = AdBlockInterceptor()
         self.adblock_interceptor.set_enabled(self.config.browser.adblock_enabled)
         self.browser_profile.setUrlRequestInterceptor(self.adblock_interceptor)
+        # QWebChannel: direct JS ↔ Python bridge (window.deepflux). The
+        # existing browser extension keeps using the control-API XHR path;
+        # this channel is the idiomatic Qt way for new page-side code to
+        # call the app without HTTP loopback.
+        self._web_channel, self._channel_bridge = create_channel(self)
+        # Inject the qwebchannel.js + bootstrap before the extension so
+        # window.deepflux is ready by the time the extension's IIFE runs.
+        from PySide6.QtWebEngineCore import QWebEngineScript
+        _ch_script = QWebEngineScript()
+        _ch_script.setName("deepflux_webchannel")
+        _ch_script.setSourceCode(channel_injection_script())
+        _ch_script.setInjectionPoint(QWebEngineScript.DocumentCreation)
+        _ch_script.setWorldId(QWebEngineScript.MainWorld)
+        _ch_script.setRunsOnSubFrames(True)
+        self.browser_profile.scripts().insert(_ch_script)
         # Keep a live cache of the browser session's cookies so file
         # downloads handed to the internal download manager carry the same
         # login session the browser has (private sites gate files on it).
@@ -1398,6 +1683,24 @@ class MainWindow(QMainWindow):
         self.browser_adblock_btn.clicked.connect(self._toggle_adblock)
         nav_layout.addWidget(self.browser_adblock_btn)
 
+        # Video grabber toggle button — the injected extension monitors for
+        # downloadable videos on every page. Its MutationObserver +
+        # PerformanceObserver + CSS pulse animation cause continuous
+        # repaints (visible as flashing during video playback on YouTube
+        # etc.). This button lets the user turn it off when watching.
+        self.browser_extension_btn = QPushButton()
+        self.browser_extension_btn.setObjectName("btn_secondary")
+        self.browser_extension_btn.setCheckable(True)
+        self.browser_extension_btn.setChecked(self.config.browser.extension_enabled)
+        self.browser_extension_btn.setIcon(self._load_browser_icon("adblock"))
+        self.browser_extension_btn.setToolTip(
+            "Toggle video grabber (off by default — turn on to detect "
+            "downloadable videos; may cause flashing during video playback)")
+        self.browser_extension_btn.setFixedWidth(34)
+        self._update_extension_button_style()
+        self.browser_extension_btn.clicked.connect(self._toggle_extension)
+        nav_layout.addWidget(self.browser_extension_btn)
+
         browser_tab_layout.addLayout(nav_layout)
 
         # Tabbed browser — each tab holds a QWebEngineView sharing the profile.
@@ -1420,18 +1723,23 @@ class MainWindow(QMainWindow):
         _bc_layout.setSpacing(0)
         _bc_layout.addWidget(self.browser_tabs)
 
-        # Overlay strip: bookmarks + tab name, semi-transparent, on top.
+        # Overlay strip: tab chips, opaque, on top. Opaque (not translucent)
+        # because a WA_TranslucentBackground widget floating over the web view
+        # forces the compositor to alpha-blend on every frame — visible as a
+        # flash during video playback (YouTube etc.). An opaque background
+        # eliminates the per-frame blend. The overlay auto-hides when the
+        # cursor leaves the top edge so it only covers content briefly.
         self._browser_overlay = QWidget(self._browser_content)
         self._browser_overlay.setObjectName("browser_overlay")
-        self._browser_overlay.setAttribute(Qt.WA_TranslucentBackground)
         self._browser_overlay.setAttribute(Qt.WA_AlwaysStackOnTop)
+        self._browser_overlay.setStyleSheet("background: #0d1117;")
         _ov = QVBoxLayout(self._browser_overlay)
         _ov.setContentsMargins(0, 0, 0, 0)
         _ov.setSpacing(0)
 
         # Tab strip: one chip per open tab, floats over web content.
         self._tab_strip_container = QWidget()
-        self._tab_strip_container.setAttribute(Qt.WA_TranslucentBackground)
+        self._tab_strip_container.setStyleSheet("background: transparent;")
         self._tab_strip_layout = QHBoxLayout(self._tab_strip_container)
         self._tab_strip_layout.setContentsMargins(4, 0, 0, 2)
         self._tab_strip_layout.setSpacing(2)
@@ -1443,16 +1751,24 @@ class MainWindow(QMainWindow):
         # Reposition the overlay whenever the content area resizes.
         self._browser_content.installEventFilter(self)
 
-        # Auto-hide: poll mouse position — show the overlay when the cursor
-        # is near the top edge, hide it when the cursor moves into the page.
-        # This avoids fighting with fixed-position page elements (YouTube's
-        # search bar etc.) that ignore document padding.
+        # Auto-hide: the overlay shows when the cursor enters the top edge
+        # zone and hides (after a short delay) when it leaves. This is
+        # event-driven (mouse-move on the content widget) — no polling
+        # timer, so no per-frame overhead on top of the web view.
         self._overlay_hide_timer = QTimer(self)
         self._overlay_hide_timer.setSingleShot(True)
-        self._overlay_hide_timer.timeout.connect(self._browser_overlay.hide)
+        self._overlay_hide_timer.timeout.connect(self._hide_browser_overlay)
+        # Event-driven hover detection: a 120ms poll checks the cursor
+        # position. QWebEngineView consumes mouse events (separate Chromium
+        # compositor), so we can't use event-filter-based mouse tracking —
+        # the poll is the only reliable way. 120ms is light enough that it
+        # doesn't cause per-frame overhead, and the overlay is now opaque
+        # (no alpha blending) so there's no flash even when it's visible.
         self._overlay_poll = QTimer(self)
         self._overlay_poll.timeout.connect(self._poll_overlay_hover)
-        self._overlay_poll.start(80)
+        self._overlay_poll.start(120)
+        # Start with the overlay hidden — it only appears on mouse hover.
+        self._browser_overlay.hide()
 
         # Create the first tab (after the overlay so tab_changed can
         # update the label).
@@ -1728,10 +2044,27 @@ class MainWindow(QMainWindow):
         view.setZoomFactor(max(0.5, min(3.0, view.zoomFactor() + delta)))
 
     def _poll_overlay_hover(self) -> None:
-        """Show the browser overlay when the cursor is near the top edge,
-        hide it (with a short delay) when the cursor moves into the page."""
+        """Check cursor position and show/hide the browser overlay.
+
+        Called by a 120ms timer (QWebEngineView consumes mouse events so
+        event-filter tracking doesn't work). The overlay is opaque, so
+        even when visible it doesn't cause alpha-blending flashes over
+        video content."""
         from PySide6.QtGui import QCursor
+        # Skip when the Browse tab isn't active — no point polling.
+        if self.main_tabs.currentWidget() is not self._browser_tab:
+            if self._browser_overlay.isVisible():
+                self._browser_overlay.hide()
+            return
+        # Skip during DOM fullscreen — the view is detached and the
+        # overlay isn't shown over the fullscreen window.
+        if self._browser_fs_state is not None:
+            return
         pos = self._browser_content.mapFromGlobal(QCursor.pos())
+        self._check_overlay_hover(pos)
+
+    def _check_overlay_hover(self, pos) -> None:
+        """Show/hide the browser overlay based on cursor position."""
         overlay_h = self._browser_overlay.sizeHint().height()
         in_zone = (0 <= pos.x() <= self._browser_content.width()
                    and pos.y() < overlay_h + 6)
@@ -1743,6 +2076,11 @@ class MainWindow(QMainWindow):
         elif self._browser_overlay.isVisible() and not self._browser_overlay.underMouse():
             if not self._overlay_hide_timer.isActive():
                 self._overlay_hide_timer.start(400)
+
+    def _hide_browser_overlay(self) -> None:
+        """Hide the browser overlay (fired by the hide timer)."""
+        if not self._browser_overlay.underMouse():
+            self._browser_overlay.hide()
 
     def _setup_input_history(self) -> None:
         """Terminal-style Up/Down recall for the merged Agents input."""
@@ -1763,7 +2101,9 @@ class MainWindow(QMainWindow):
             obj.page().triggerAction(QWebEnginePage.ExitFullScreen)
             return True
         # Browser overlay: keep it pinned to the top of the content area
-        # and re-raise it above the native web-view window.
+        # and re-raise it above the native web-view window. (Mouse tracking
+        # is handled by the 120ms poll timer — QWebEngineView consumes
+        # mouse events so event-filter tracking doesn't work here.)
         if obj is self._browser_content and event.type() == QEvent.Resize:
             self._browser_overlay.setGeometry(
                 0, 0, self._browser_content.width(),
@@ -2072,6 +2412,9 @@ class MainWindow(QMainWindow):
         view = QWebEngineView()
         page = _BrowserPage(self.browser_profile, view)
         view.setPage(page)
+        # QWebChannel: each page must have the channel set so
+        # qt.webChannelTransport is available to the injected bootstrap.
+        page.setWebChannel(self._web_channel)
         view.urlChanged.connect(self._browser_url_changed)
         view.titleChanged.connect(self._browser_title_changed)
         # Loading feedback in the tab title.
@@ -2088,6 +2431,13 @@ class MainWindow(QMainWindow):
             lambda url: self._hover_label.setText(url if url else ""))
         # When the page requests a new window/tab, create one internally.
         page.newTabRequested.connect(lambda u: self._browser_new_tab(url=u))
+        # magnet: links clicked in a page → torrent engine (the page never
+        # navigates to them; acceptNavigationRequest returns False).
+        page.magnetRequested.connect(self._browser_magnet_clicked)
+        # TLS certificate errors → user dialog (deferred accept/reject).
+        page.certificateErrorRequested.connect(self._browser_cert_error)
+        # Short status messages from the page policy (blocked schemes etc.)
+        page.statusMessage.connect(self._browser_status_message)
         # DOM fullscreen (YouTube ⛶): Chromium only emits the request — the
         # app must accept it and give the view the screen, otherwise the
         # player's fullscreen button silently does nothing.
@@ -2154,6 +2504,52 @@ class MainWindow(QMainWindow):
         if w:
             w.deleteLater()
         self._rebuild_browser_tab_strip()
+
+    def _browser_magnet_clicked(self, uri: str) -> None:
+        """A magnet: link was clicked in a web page — add it to the engine."""
+        try:
+            result = self.tools.call("add_magnet", {
+                "uri": uri,
+                "save_path": self.config.default_save_path,
+                "category": "Other",
+            })
+            self._append_event(f"🧲 Magnet added from browser: {uri[:80]}")
+            if not result.get("success"):
+                self._append_error(f"Magnet failed: {result.get('error', 'unknown')}")
+        except Exception as exc:
+            logger.warning("Browser magnet click failed: %s", exc)
+            self._append_error(f"Failed to add magnet: {exc}")
+
+    def _browser_cert_error(self, error) -> None:
+        """Show a dialog for an overridable TLS certificate error."""
+        try:
+            host = error.url().host() or error.url().toString()
+            desc = error.description() or "The site's certificate is invalid."
+            r = QMessageBox.warning(
+                self, "Certificate Error",
+                f"Secure connection to {host} failed:\n\n{desc}\n\n"
+                "Proceed anyway? (not recommended)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if r == QMessageBox.StandardButton.Yes:
+                error.acceptCertificate()
+            else:
+                error.rejectCertificate()
+        except Exception:
+            # If anything goes wrong, reject to stay safe.
+            try:
+                error.rejectCertificate()
+            except Exception:
+                pass
+        finally:
+            page = self.sender()
+            if page is not None and error in getattr(page, "_pending_cert_errors", []):
+                page._pending_cert_errors.remove(error)
+
+    def _browser_status_message(self, msg: str) -> None:
+        """Show a short browser-engine status message (blocked schemes,
+        magnet handoff, TLS notices) in the browser status bar."""
+        if msg:
+            self._hover_label.setText(msg)
 
     def _rebuild_browser_tab_strip(self) -> None:
         """Rebuild the floating tab chips — one per open browser tab."""
@@ -2242,8 +2638,12 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _display_url(url_str: str) -> str:
         """Address-bar text for a page URL — blank for internal pages
-        (about:blank, or the data: URL that setHtml generates)."""
-        return "" if url_str in ("about:blank", "") or url_str.startswith("data:") else url_str
+        (deepflux://, about:blank, or data: URLs)."""
+        if not url_str or url_str in ("about:blank",):
+            return ""
+        if url_str.startswith(("data:", f"{_DEEPFLUX_SCHEME}://")):
+            return ""
+        return url_str
 
     def _browser_url_changed(self, url) -> None:
         """Update the address bar when the page URL changes (current tab only)."""
@@ -2263,9 +2663,11 @@ class MainWindow(QMainWindow):
 
     def _browser_show_start_page(self, view) -> None:
         """Render the built-in start page: DeepFlux logo centered on black,
-        no network load. The about:blank base URL keeps the giant data: URL
-        out of the page's address (and thus the address bar)."""
-        view.setHtml(self._start_page_html(), QUrl("about:blank"))
+        no network load. Served via the deepflux:// scheme so the page has
+        a real, addressable origin (no about:blank / data: URL hacks)."""
+        html = self._start_page_html()
+        self._deepflux_handler.set_start_page_html(html)
+        view.setUrl(QUrl(f"{_DEEPFLUX_SCHEME}://start/"))
 
     def _start_page_html(self) -> str:
         """Start page HTML with the logo embedded as a data URI (cached)."""
@@ -2359,6 +2761,35 @@ class MainWindow(QMainWindow):
             )
         else:
             self.browser_adblock_btn.setStyleSheet("")
+
+    def _toggle_extension(self) -> None:
+        """Toggle the video grabber extension on/off.
+
+        When off, the extension script is removed from the profile so it
+        no longer injects into new page loads. Existing pages need a
+        reload to clear the already-injected script."""
+        enabled = self.browser_extension_btn.isChecked()
+        self.config.browser.extension_enabled = enabled
+        self._save_config()
+        if enabled:
+            self.browser_profile.scripts().insert(self._extension_script)
+        else:
+            self.browser_profile.scripts().remove(self._extension_script)
+        self._update_extension_button_style()
+        # Reload all open tabs so the change takes effect immediately.
+        for i in range(self.browser_tabs.count()):
+            view = self.browser_tabs.widget(i)
+            if isinstance(view, QWebEngineView):
+                view.reload()
+
+    def _update_extension_button_style(self) -> None:
+        """Update the video grabber button appearance based on its state."""
+        if self.browser_extension_btn.isChecked():
+            self.browser_extension_btn.setStyleSheet(
+                "QPushButton { background: #2a7abf; color: #ffffff; font-weight: 600; }"
+            )
+        else:
+            self.browser_extension_btn.setStyleSheet("")
 
     def _browser_remove_bookmark(self, url: str) -> None:
         """Remove a bookmark."""
@@ -3055,10 +3486,21 @@ class MainWindow(QMainWindow):
         # dimensions — pre-show setSizes() gets overridden by content size hints.
         if not self._agent_ratio_applied:
             self._agent_ratio_applied = True
-            # Downloads tab: 50% torrents / 50% downloads.
-            h = self.agent_splitter.height()
-            if h > 0:
-                self.agent_splitter.setSizes([h // 2, h - h // 2])
+            # Downloads tab: 50% torrents / 50% downloads (side by side).
+            # Defer to the next event-loop tick so the splitter has its real
+            # width (the Download tab may not be the current tab at startup).
+            QTimer.singleShot(0, self._enforce_agent_split)
+
+    def _enforce_agent_split(self) -> None:
+        """Set the Download tab splitter to 50/50 if no saved state restored it."""
+        w = self.agent_splitter.width()
+        if w > 0:
+            self.agent_splitter.setSizes([w // 2, w - w // 2])
+
+    def _on_main_tab_changed(self, index: int) -> None:
+        """Enforce the 50/50 Download split when that tab becomes visible."""
+        if self.main_tabs.widget(index) is self._torrents_tab:
+            QTimer.singleShot(0, self._enforce_agent_split)
 
     def open_target(self, target: str) -> None:
         """Open a file or URI passed via file association / second instance.
@@ -3372,14 +3814,6 @@ class MainWindow(QMainWindow):
         if self._refresh_inflight:
             return
         self._refresh_inflight = True
-        selected = self._selected_hash
-        # Only re-fetch the files list when the selection changed, or every
-        # few seconds while it stays selected — rebuilding that table every
-        # second resets scroll/selection constantly.
-        fetch_files = False
-        if selected:
-            if selected != self._files_hash or time.time() - self._files_last_fetch > 5:
-                fetch_files = True
 
         def _worker() -> None:
             try:
@@ -3388,12 +3822,6 @@ class MainWindow(QMainWindow):
                 self._refresh_inflight = False
                 return
             self._refresh_signals.torrents.emit(torrents)
-            if fetch_files and selected:
-                try:
-                    status = self.engine.get_torrent_status(selected)
-                    self._refresh_signals.files.emit(status)
-                except Exception:
-                    pass
             # Stream waits need per-file progress + the verified contiguous
             # prefix to know when the buffer threshold is reached.
             for h in list(self._stream_waits):
@@ -3416,24 +3844,6 @@ class MainWindow(QMainWindow):
     def _on_torrent_selection_changed(self) -> None:
         selected = self.torrent_table.selectedItems()
         self._selected_hash = selected[0].data(Qt.UserRole) if selected else None
-        if not self._selected_hash:
-            # Selection lost (e.g. the torrent was removed) — clear the files
-            # panel so it doesn't keep showing a deleted torrent's contents.
-            self.file_table.setRowCount(0)
-            self._files_hash = None
-            return
-        if self._selected_hash != self._files_hash:
-            # Fetch off the GUI thread — the engine's command queue can block
-            # for seconds while libtorrent is busy, freezing the whole UI.
-            info_hash = self._selected_hash
-
-            def _worker() -> None:
-                try:
-                    self._refresh_signals.files.emit(self.engine.get_torrent_status(info_hash))
-                except Exception:
-                    pass
-
-            threading.Thread(target=_worker, daemon=True).start()
 
     VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
                   ".m4v", ".mpg", ".mpeg", ".ts", ".m2ts", ".vob", ".3gp", ".ogv")
@@ -3468,13 +3878,11 @@ class MainWindow(QMainWindow):
             self.torrent_table.item(i, 0).setData(Qt.UserRole, t.get("info_hash"))
         self.torrent_table.setSortingEnabled(True)
         # If the selected torrent disappeared (removed/completed-and-cleared),
-        # drop the stale files panel — itemSelectionChanged doesn't always
+        # drop the stale selection — itemSelectionChanged doesn't always
         # fire when the rebuild wipes the selection.
         if self._selected_hash and not any(
                 t.get("info_hash") == self._selected_hash for t in torrents):
             self._selected_hash = None
-            self._files_hash = None
-            self.file_table.setRowCount(0)
         self._update_status_bar(torrents)
         self._notify_completed_torrents(torrents)
 
@@ -3491,60 +3899,6 @@ class MainWindow(QMainWindow):
                 self._known_complete.add(h)
                 self._notify("Torrent complete", t.get("name", h),
                              path=self._torrent_primary_file(h) or "")
-
-    def _render_files(self, status: Dict[str, Any]) -> None:
-        """Paint the files panel for a torrent status dict (GUI thread)."""
-        self._files_hash = status.get("info_hash")
-        self._files_last_fetch = time.time()
-        files = status.get("files", [])
-        self.file_table.setRowCount(len(files))
-        for i, f in enumerate(files):
-            self.file_table.setItem(i, 0, QTableWidgetItem(str(f["file_id"])))
-            self.file_table.setItem(i, 1, QTableWidgetItem(f["path"]))
-            self.file_table.setItem(i, 2, QTableWidgetItem(format_size(f["size"])))
-            self.file_table.setItem(i, 3, QTableWidgetItem(f["priority_name"]))
-
-    def _show_files(self, info_hash: str) -> None:
-        try:
-            self._render_files(self.engine.get_torrent_status(info_hash))
-        except Exception:
-            return
-
-    def _file_context_menu(self, position) -> None:
-        """Right-click context menu on the file table — open a single file."""
-        info_hash = self._get_selected_info_hash()
-        if not info_hash:
-            return
-        row = self.file_table.rowAt(position.y())
-        if row < 0:
-            return
-        path_item = self.file_table.item(row, 1)
-        if not path_item:
-            return
-        rel_path = path_item.text()
-        try:
-            status = self.engine.get_torrent_status(info_hash)
-        except Exception as exc:
-            self._append_error(f"Error locating torrent: {exc}")
-            return
-        save_path = status.get("save_path", "") or self.config.default_save_path
-        full_path = os.path.join(save_path, rel_path)
-        menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
-        act_open = menu.addAction("Open File")
-        act_reveal = menu.addAction("Reveal in Folder")
-        action = menu.exec(self.file_table.mapToGlobal(position))
-        if action == act_open:
-            if os.path.isfile(full_path):
-                self._reveal_path(full_path)
-            else:
-                QMessageBox.warning(self, "Open File", f"File not found:\n{full_path}\n\nIt may not be fully downloaded yet.")
-        elif action == act_reveal:
-            folder = os.path.dirname(full_path) or save_path
-            if os.path.isdir(folder):
-                self._reveal_path(folder)
-            else:
-                QMessageBox.warning(self, "Reveal in Folder", f"Folder not found:\n{folder}")
 
     def _add_magnet_dialog(self) -> None:
         uri, ok = QInputDialog.getText(self, "Add Magnet", "Paste a magnet link:")
@@ -4335,7 +4689,14 @@ class MainWindow(QMainWindow):
 
     def _open_iptv_page(self, dialog_cls) -> None:
         """Open one IPTV settings page and persist on OK."""
-        dialog = dialog_cls(self.config, self)
+        if dialog_cls is IPTVMetadataDialog:
+            # The cache page needs the live manager for disk stats + the
+            # delete-all button, and the grid must drop its in-memory artwork
+            # memos when a clear lands.
+            dialog = dialog_cls(self.config, self, manager=self.iptv_tab.manager)
+            dialog.cache_cleared.connect(self.iptv_tab.reset_artwork_state)
+        else:
+            dialog = dialog_cls(self.config, self)
         if dialog.exec() == QDialog.Accepted:
             self.config.to_file(self.config_path)
             # Re-apply config to the running IPTV tab (sources, TMDb key, etc.).
@@ -4715,6 +5076,9 @@ class MainWindow(QMainWindow):
 
 
 def run_gui(config_path: Optional[str] = None, open_targets: Optional[List[str]] = None) -> int:
+    # Register the deepflux:// custom URL scheme BEFORE any QWebEngineProfile
+    # is created (Chromium locks the scheme list at profile-init time).
+    register_deepflux_scheme()
     app = QApplication(sys.argv)
     app.setApplicationName("Deeptorrent")
     from gui.fonts import load_app_fonts

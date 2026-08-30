@@ -31,12 +31,14 @@ import zlib
 from collections import OrderedDict, deque
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, QPoint, QTimer, QUrl, Signal, QObject, QSize
-from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QPainter,
-                           QPixmap, QIcon)
+from PySide6.QtCore import (Qt, QPoint, QTimer, QUrl, Signal, QObject, QSize,
+                            QRect, QEvent)
+from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QFontMetrics,
+                           QPainter, QPen, QPixmap, QIcon)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDoubleSpinBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -55,8 +57,11 @@ from PySide6.QtWidgets import (
     QSlider,
     QSplitter,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
+    QToolTip,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -80,6 +85,13 @@ from iptv.models import (
 from iptv.player import PlayerBackend, create_backend
 
 logger = logging.getLogger(__name__)
+
+# Maximum items shown per sidebar leaf node. When a category or year bucket
+# has more than this, the sidebar adds numbered bulk children (1–500, 501–1000,
+# …) so the metadata scraper never processes tens of thousands of entries at
+# once. Parent nodes with bulk children expand/collapse instead of showing all
+# items directly.
+BULK_SIZE = 500
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +129,8 @@ class PlayerWidget(QWidget):
     sig_position = Signal(float, float)
     sig_tracks = Signal()
     sig_error = Signal(str)
+    sig_retry = Signal(int, int)  # (attempt, max_retries) — auto-retry fired
+    sig_playback_started = Signal()  # real playback detected (not just loadfile)
 
     # Seconds the rewind/forward buttons (and ←/→ keys) jump.
     SKIP_SECONDS = 10
@@ -143,6 +157,8 @@ class PlayerWidget(QWidget):
         self._backend_recreate_on_play = False  # SVP toggle pending (see apply_config)
         self._milkdrop: Optional[Any] = None            # Butterchurn (audio)
         self._current_item: Any = None
+        self._retry_count = 0  # auto-retry counter (see _update_loading)
+        self._error_retry_pending = False  # error retry scheduled (see _on_error)
         self._build_ui()
         self._aspect_modes = ["auto", "16:9", "4:3", "2.35:1"]
         self._aspect_idx = 0
@@ -256,37 +272,62 @@ class PlayerWidget(QWidget):
 
         # Error overlay (hidden by default).
         self.error_overlay = QWidget(self.surface)
-        self.error_overlay.setStyleSheet("background-color: rgba(10,10,15,0.9);")
+        self.error_overlay.setStyleSheet("background-color: rgba(10,10,15,0.95);")
         el = QVBoxLayout(self.error_overlay)
-        self.error_lbl = QLabel("Stream unavailable")
-        self.error_lbl.setStyleSheet("color: #ff6b6b; font-size: 14px;")
+        el.setSpacing(12)
+        self.error_icon = QLabel("⚠")
+        self.error_icon.setStyleSheet("color: #e67e22; font-size: 48px; font-weight: bold;")
+        self.error_icon.setAlignment(Qt.AlignCenter)
+        el.addWidget(self.error_icon)
+        self.error_title = QLabel("Stream Unavailable")
+        self.error_title.setStyleSheet("color: #ff6b6b; font-size: 18px; font-weight: bold;")
+        self.error_title.setAlignment(Qt.AlignCenter)
+        el.addWidget(self.error_title)
+        self.error_lbl = QLabel("")
+        self.error_lbl.setStyleSheet("color: #c8d3e0; font-size: 13px;")
         self.error_lbl.setAlignment(Qt.AlignCenter)
+        self.error_lbl.setWordWrap(True)
         el.addWidget(self.error_lbl)
-        self.retry_btn = QPushButton("Retry")
+        self.error_hint = QLabel("")
+        self.error_hint.setStyleSheet("color: #8a9ab0; font-size: 12px;")
+        self.error_hint.setAlignment(Qt.AlignCenter)
+        self.error_hint.setWordWrap(True)
+        el.addWidget(self.error_hint)
+        self.retry_btn = QPushButton("↻ Retry")
+        self.retry_btn.setStyleSheet(
+            "QPushButton { background-color: #2a7abf; color: white; "
+            "border: none; border-radius: 6px; padding: 8px 24px; "
+            "font-size: 14px; font-weight: bold; }\n"
+            "QPushButton:hover { background-color: #e67e22; }"
+        )
         self.retry_btn.clicked.connect(self._retry)
         el.addWidget(self.retry_btn, 0, Qt.AlignCenter)
         self.error_overlay.hide()
 
         # Loading / buffering overlay (shown until the first frame is ready).
+        # raise_() is called on show so it sits above the native mpv/VLC HWND.
         self.loading_overlay = QWidget(self.surface)
-        self.loading_overlay.setStyleSheet("background-color: rgba(10,10,15,0.9);")
+        self.loading_overlay.setStyleSheet("background-color: rgba(10,10,15,0.94);")
         ll = QVBoxLayout(self.loading_overlay)
         self.loading_lbl = QLabel("Opening stream…")
-        self.loading_lbl.setStyleSheet("color: #c8d3e0; font-size: 14px; font-weight: bold;")
+        self.loading_lbl.setStyleSheet(
+            "color: #2a7abf; font-size: 20px; font-weight: bold;")
         self.loading_lbl.setAlignment(Qt.AlignCenter)
         ll.addWidget(self.loading_lbl)
         self.loading_progress = QProgressBar()
-        self.loading_progress.setMaximumWidth(260)
+        self.loading_progress.setMaximumWidth(320)
+        self.loading_progress.setMinimumHeight(22)
         self.loading_progress.setTextVisible(True)
         self.loading_progress.setAlignment(Qt.AlignCenter)
         self.loading_progress.setStyleSheet(
             "QProgressBar { color: #c8d3e0; background-color: #1a2a4a; "
-            "border: 1px solid #2a7abf; border-radius: 4px; text-align: center; }\n"
-            "QProgressBar::chunk { background-color: #2a7abf; border-radius: 3px; }"
+            "border: 1px solid #2a7abf; border-radius: 6px; text-align: center; "
+            "font-size: 12px; }\n"
+            "QProgressBar::chunk { background-color: #2a7abf; border-radius: 5px; }"
         )
         ll.addWidget(self.loading_progress, 0, Qt.AlignCenter)
         self.loading_detail = QLabel("")
-        self.loading_detail.setStyleSheet("color: #8a9ab0; font-size: 11px;")
+        self.loading_detail.setStyleSheet("color: #8a9ab0; font-size: 13px;")
         self.loading_detail.setAlignment(Qt.AlignCenter)
         ll.addWidget(self.loading_detail)
         self.loading_overlay.hide()
@@ -317,6 +358,7 @@ class PlayerWidget(QWidget):
             mb.set_cache(self._config.iptv.cache_seconds)
             mb.set_overscan(self._config.iptv.overscan_pct)
             mb.set_interpolation(self._config.iptv.interpolation)
+            mb.set_audio_delay(self._config.iptv.audio_delay)
             self._media_backend = mb
         if self._backend is None:
             self._backend = self._media_backend
@@ -535,6 +577,14 @@ class PlayerWidget(QWidget):
         threading.Thread(target=_work, daemon=True).start()
 
     # -- playback ------------------------------------------------------------
+    # Auto-retry: re-hit the server every _RETRY_INTERVAL seconds if the stream
+    # hasn't started, up to _MAX_RETRIES times. IPTV servers often need several
+    # connection attempts (load balancing, connection limits, transient drops)
+    # — this automates the "click Play a few times until it works" pattern.
+    _RETRY_INTERVAL = 10  # seconds between stuck-loading retry attempts
+    _ERROR_RETRY_INTERVAL = 1.0  # seconds between error retry attempts
+    _MAX_RETRIES = 5      # total attempts before giving up
+
     def play(self, item: Any, allow_milkdrop: bool = True) -> None:
         if self._backend_recreate_on_play:
             self._backend_recreate_on_play = False
@@ -542,8 +592,22 @@ class PlayerWidget(QWidget):
         if not self._ensure_backend():
             return
         self._throttle_torrents()
+        # Explicitly stop the previous stream before opening a new one.
+        # Without this, mpv/VLC replaces the file internally but the old
+        # HTTP/TCP connection to the IPTV provider lingers — providers
+        # count these as concurrent connections and reject new ones with
+        # "connection limit reached" after a few rapid channel switches.
+        # The stop must happen BEFORE the new URL is loaded so the old
+        # socket is torn down first.
+        if self._current_item is not None and self._backend is not None:
+            try:
+                self._backend.stop()
+            except Exception:
+                logger.debug("stop before new play failed", exc_info=True)
         self._current_item = item
         self._langs_applied_url = ""  # new file — re-apply preferred languages
+        self._retry_count = 0  # reset auto-retry counter for the new item
+        self._error_retry_pending = False  # cancel any pending error retry
         self.error_overlay.hide()
         if allow_milkdrop and self._play_with_milkdrop(item):
             return
@@ -553,6 +617,19 @@ class PlayerWidget(QWidget):
         # (+interpolation) assumes a seekable, steadily-timestamped source,
         # and on live streams it makes playback stall and restart.
         self._backend.set_smooth_video(getattr(item, "section", "") != SECTION_LIVE)
+        self._start_playback()
+        self._manager.record_recent(item)
+        self.play_btn.setText("⏸")
+        # VLC has no track-list observer — poll once shortly after load.
+        QTimer.singleShot(2500, self._apply_preferred_languages)
+
+    def _start_playback(self) -> None:
+        """Send the play command to the backend with the current item's URL +
+        resolved headers. Called on first play AND on every auto-retry —
+        re-hitting the server is exactly what a manual second click does."""
+        item = self._current_item
+        if item is None or self._backend is None:
+            return
         headers = {}
         src = self._manager.active_source()
         if src and src.user_agent:
@@ -576,10 +653,6 @@ class PlayerWidget(QWidget):
         if isinstance(extra_headers, dict):
             headers.update({str(k): str(v) for k, v in extra_headers.items() if v})
         self._backend.play(getattr(item, "url", ""), headers=headers)
-        self._manager.record_recent(item)
-        self.play_btn.setText("⏸")
-        # VLC has no track-list observer — poll once shortly after load.
-        QTimer.singleShot(2500, self._apply_preferred_languages)
 
     def _retry(self) -> None:
         if self._current_item:
@@ -596,6 +669,7 @@ class PlayerWidget(QWidget):
             self.play_btn.setText("⏸")
 
     def stop(self) -> None:
+        self._error_retry_pending = False  # cancel any pending error retry
         if self._backend is not None:
             self._backend.stop()
         self._hide_loading()
@@ -660,12 +734,84 @@ class PlayerWidget(QWidget):
             act.setCheckable(True)
             act.setChecked(str(current) == str(tid))
             act.triggered.connect(lambda _checked=False, t=tid, k=kind: self._set_track(k, t))
+        if kind == "audio":
+            menu.addSeparator()
+            self._add_audio_sync_submenu(menu)
         if kind == "sub":
             menu.addSeparator()
             find_act = menu.addAction("Find subtitles online…")
             find_act.setEnabled(self._current_item is not None)
             find_act.triggered.connect(self._find_subtitles_online)
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    # -- audio sync (offset) -------------------------------------------------
+    # SVP 4 motion interpolation adds latency to the video path (frames are
+    # synthesized behind the audio clock), so the audio runs ahead of the
+    # picture. A positive audio-delay shifts the audio later to realign it.
+    _AUDIO_DELAY_STEP = 0.05   # seconds per +/- key nudge
+    _AUDIO_DELAY_RANGE = 1.0   # clamp to +/- 1s
+    _AUDIO_DELAY_PRESETS = (-0.500, -0.300, -0.200, -0.100, 0.0,
+                            0.100, 0.200, 0.300, 0.500)
+
+    @staticmethod
+    def _fmt_delay(seconds: float) -> str:
+        return f"{seconds:+.2f}s"
+
+    def _current_audio_delay(self) -> float:
+        """The effective audio delay: the live backend value if a backend
+        exists, otherwise the persisted config default."""
+        if self._backend is not None:
+            try:
+                return self._backend.audio_delay()
+            except Exception:
+                pass
+        return float(self._config.iptv.audio_delay)
+
+    def _add_audio_sync_submenu(self, parent_menu: QMenu) -> None:
+        sub = QMenu("Audio sync", parent_menu)
+        sub.setToolTip(
+            "Shift audio timing to compensate for video-path latency (e.g.\n"
+            "SVP 4 motion interpolation, which renders frames behind the\n"
+            "audio clock). Positive = audio plays later. Also: +/- keys."
+        )
+        cur = self._current_audio_delay()
+        for secs in self._AUDIO_DELAY_PRESETS:
+            act = sub.addAction(self._fmt_delay(secs))
+            act.setCheckable(True)
+            act.setChecked(abs(cur - secs) < 0.005)
+            act.triggered.connect(lambda _c=False, s=secs: self._apply_audio_delay(s))
+        sub.addSeparator()
+        back_act = sub.addAction("− 0.05s")
+        back_act.triggered.connect(lambda: self._nudge_audio_delay(-self._AUDIO_DELAY_STEP))
+        fwd_act = sub.addAction("+ 0.05s")
+        fwd_act.triggered.connect(lambda: self._nudge_audio_delay(self._AUDIO_DELAY_STEP))
+        sub.addSeparator()
+        reset_act = sub.addAction("Reset (0.00s)")
+        reset_act.triggered.connect(lambda: self._apply_audio_delay(0.0))
+        parent_menu.addMenu(sub)
+
+    def _nudge_audio_delay(self, delta: float) -> None:
+        if self._backend is None:
+            return
+        new = max(-self._AUDIO_DELAY_RANGE, min(self._AUDIO_DELAY_RANGE,
+                self._current_audio_delay() + delta))
+        self._apply_audio_delay(new)
+
+    def _apply_audio_delay(self, seconds: float) -> None:
+        if self._backend is None:
+            return
+        seconds = max(-self._AUDIO_DELAY_RANGE, min(self._AUDIO_DELAY_RANGE, float(seconds)))
+        self._backend.set_audio_delay(seconds)
+        # Persist so the offset survives restarts and applies to the next file.
+        self._config.iptv.audio_delay = seconds
+        self._show_audio_delay_osd(seconds)
+
+    def _show_audio_delay_osd(self, seconds: float) -> None:
+        QToolTip.showText(
+            self.audio_btn.mapToGlobal(self.audio_btn.rect().topLeft()),
+            f"Audio delay: {self._fmt_delay(seconds)}",
+            self.audio_btn,
+        )
 
     def _find_subtitles_online(self) -> None:
         """Open the OpenSubtitles search dialog for the current video."""
@@ -782,10 +928,18 @@ class PlayerWidget(QWidget):
     # -- backend callbacks (delivered on the GUI thread via the signals) ----
     def _on_state(self, state: str) -> None:
         if state == "stopped":
-            self._hide_loading()
-            self.play_btn.setText("▶")
-            self._restore_torrent_rates()
+            # Skip teardown if an error-retry is pending — the failed attempt
+            # emits "stopped", but _error_retry will re-show loading and
+            # re-hit the server in a moment.
+            if not self._error_retry_pending:
+                self._hide_loading()
+                self.play_btn.setText("▶")
+                self._restore_torrent_rates()
         elif state == "playing":
+            # NOTE: mpv emits "playing" on loadfile, before the stream is
+            # actually open. Do NOT reset _retry_count here — that would kill
+            # the auto-retry loop. The counter is reset in _update_loading
+            # when real playback (time-pos advancing) is confirmed.
             self.play_btn.setText("⏸")
         elif state == "buffering":
             # The overlay is already shown by play(); keep the pause icon so
@@ -812,13 +966,68 @@ class PlayerWidget(QWidget):
         self.time_lbl.setText(f"{_fmt_time(pos)} / {_fmt_time(dur)}")
 
     def _on_error(self, msg: str) -> None:
+        # Auto-retry: IPTV servers often reject the first connection attempt
+        # but succeed on retry (load balancing, connection limits, transient
+        # drops). Re-hit the server up to _MAX_RETRIES times at 1-second
+        # intervals before showing the error overlay — this automates the
+        # "click Play a few times until it works" pattern.
+        if (self._current_item is not None
+                and self._retry_count < self._MAX_RETRIES):
+            self._retry_count += 1
+            self._error_retry_pending = True
+            logger.info("Auto-retry on error %d/%d for %s: %s",
+                        self._retry_count, self._MAX_RETRIES,
+                        getattr(self._current_item, "url", ""), msg)
+            self.sig_retry.emit(self._retry_count, self._MAX_RETRIES)
+            QTimer.singleShot(int(self._ERROR_RETRY_INTERVAL * 1000),
+                              self._error_retry)
+            return
+        # All retries exhausted — show the error overlay.
+        self._error_retry_pending = False
+        self._retry_count = 0
         self._show_error(msg)
+
+    def _error_retry(self) -> None:
+        """Re-hit the server after an error. Scheduled by _on_error via
+        QTimer.singleShot. Re-shows the loading overlay (the 'stopped' state
+        from the failed attempt may have hidden it) and calls _start_playback
+        — exactly what a manual second click on Play does."""
+        self._error_retry_pending = False
+        if self._current_item is None or self._backend is None:
+            return
+        self._show_loading()
+        self._start_playback()
 
     def _show_error(self, msg: str) -> None:
         self._hide_loading()
-        self.error_lbl.setText(msg or "Stream unavailable")
+        # Classify the error so the overlay can show a helpful hint.
+        msg_lower = (msg or "").lower()
+        if any(k in msg_lower for k in ("timeout", "timed out", "not responding")):
+            title, hint = "Server Not Responding", \
+                "The stream didn't respond in time. The server may be overloaded or down. Try again in a moment."
+        elif any(k in msg_lower for k in ("404", "not found", "no such")):
+            title, hint = "Stream Not Found", \
+                "This channel or movie may have been removed from the provider. Try refreshing the playlist."
+        elif any(k in msg_lower for k in ("403", "forbidden", "unauthorized", "auth", "denied")):
+            title, hint = "Access Denied", \
+                "The server refused the connection. Your subscription may have expired or the source needs new credentials."
+        elif any(k in msg_lower for k in ("dns", "resolve", "host")):
+            title, hint = "Connection Failed", \
+                "Couldn't reach the server. Check your internet connection or the source URL in Settings."
+        elif any(k in msg_lower for k in ("network", "connection", "reset", "refused", "unreachable")):
+            title, hint = "Network Error", \
+                "The connection was interrupted. This is usually temporary — retry, or try another source."
+        else:
+            title, hint = "Playback Error", \
+                msg or "The stream could not be opened. Try again or pick another item."
+        self.error_title.setText(title)
+        self.error_lbl.setText(hint)
+        item_name = getattr(self._current_item, "name", "") or \
+            getattr(self._current_item, "display_name", "") if self._current_item else ""
+        self.error_hint.setText(f"Item: {item_name}" if item_name else "")
         self.error_overlay.resize(self.surface.size())
         self.error_overlay.show()
+        self.error_overlay.raise_()  # above the native mpv/VLC window
 
     # -- loading / buffering overlay ----------------------------------------
     def _show_loading(self) -> None:
@@ -829,6 +1038,7 @@ class PlayerWidget(QWidget):
         self.loading_progress.setTextVisible(False)
         self.loading_overlay.resize(self.surface.size())
         self.loading_overlay.show()
+        self.loading_overlay.raise_()  # above the native mpv/VLC window
         self._loading_started = time.monotonic()
         self._loading_timer.start()
 
@@ -841,7 +1051,13 @@ class PlayerWidget(QWidget):
         """Poll the backend and update the overlay text/progress.
 
         Tries to show realistic stages: stream open / network handshake /
-        cache fill, then hides once playback has actually started.
+        cache fill, then hides once playback has actually started. The label
+        colour shifts blue → yellow → red as time passes with no progress so
+        the user can tell a stuck stream from a slow one.
+
+        Auto-retry: if no cache progress has been made after _RETRY_INTERVAL
+        seconds, re-hit the server (call backend.play again). This repeats up
+        to _MAX_RETRIES times — IPTV servers often need several attempts.
         """
         if self._backend is None:
             self._hide_loading()
@@ -856,17 +1072,46 @@ class PlayerWidget(QWidget):
         core_idle = bool(status.get("core_idle"))
 
         # Once we have actual playback time and the player isn't stalled for
-        # cache, the stream is really playing.
+        # cache, the stream is really playing. This is the reliable check —
+        # the backend's "playing" state fires on loadfile, before the stream
+        # is actually open, so we can't use sig_state for this.
         if (tpos > 0.0 or state == "playing") and not pfc and not core_idle:
+            self._retry_count = 0  # real playback — reset for next item
             self._hide_loading()
+            self.sig_playback_started.emit()
             return
 
         # Live streams sometimes report time-pos == 0 for a few moments even
         # though the cache is full and playing. Give up after a short grace.
         if (pct == 100 and not pfc and not core_idle and dcd > 0.0
                 and elapsed > 5.0):
+            self._retry_count = 0
             self._hide_loading()
+            self.sig_playback_started.emit()
             return
+
+        no_progress = (pct == 0 or pct < 0) and not dcd
+
+        # Auto-retry: re-hit the server every _RETRY_INTERVAL seconds if there
+        # has been zero cache progress. This is the automated equivalent of
+        # the user clicking Play again — many IPTV servers need 2-3 attempts.
+        if no_progress and elapsed > self._RETRY_INTERVAL * (self._retry_count + 1):
+            self._retry_count += 1
+            if self._retry_count <= self._MAX_RETRIES:
+                logger.info("Auto-retry %d/%d for %s",
+                            self._retry_count, self._MAX_RETRIES,
+                            getattr(self._current_item, "url", ""))
+                self.sig_retry.emit(self._retry_count, self._MAX_RETRIES)
+                self._start_playback()
+                # Reset the elapsed clock so the stage colours start fresh and
+                # the next retry fires _RETRY_INTERVAL after this attempt.
+                self._loading_started = time.monotonic()
+                elapsed = 0.0
+            else:
+                # All retries exhausted — show the error.
+                self._show_error("timeout: stream not responding after "
+                                 f"{self._MAX_RETRIES} attempts")
+                return
 
         if pct >= 0:
             self.loading_progress.setRange(0, 100)
@@ -877,32 +1122,40 @@ class PlayerWidget(QWidget):
             self.loading_progress.setRange(0, 0)
             self.loading_progress.setTextVisible(False)
 
+        # Colour cue: blue (normal) → yellow (slow, >8s) → red (stuck, >20s).
+        if elapsed > 20 and no_progress:
+            colour = "#ff6b6b"  # red — likely stuck
+        elif elapsed > 8 and no_progress:
+            colour = "#e67e22"  # orange — slow
+        else:
+            colour = "#2a7abf"  # blue — normal
+
         # Choose a stage label that matches what's actually happening.
-        if state == "stopped" or core_idle:
-            self.loading_lbl.setText("Opening stream…")
-            self.loading_detail.setText("")
+        if self._retry_count > 0 and no_progress:
+            label = f"Retrying… attempt {self._retry_count}/{self._MAX_RETRIES}"
+            detail = "reconnecting to server"
+        elif state == "stopped" or core_idle:
+            label = "Opening stream…"
+            detail = ""
         elif pct == 0 or (pct < 0 and not dcd):
-            self.loading_lbl.setText("Handshaking…")
-            self.loading_detail.setText("negotiating stream")
+            label = "Handshaking…"
+            detail = "negotiating stream"
         elif pfc or (0 < pct < 100):
             if pfc:
-                self.loading_lbl.setText("Buffering…")
-                if dcd:
-                    self.loading_detail.setText(f"{dcd:.1f}s buffered")
-                else:
-                    self.loading_detail.setText("")
+                label = "Buffering…"
+                detail = f"{dcd:.1f}s buffered" if dcd else ""
             else:
-                self.loading_lbl.setText("Buffering…")
-                self.loading_detail.setText(f"{pct}%")
+                label = "Buffering…"
+                detail = f"{pct}%"
         else:
             # mpv reports full cache but hasn't produced a frame yet.
-            self.loading_lbl.setText("Starting playback…")
-            self.loading_detail.setText("")
+            label = "Starting playback…"
+            detail = ""
 
-        # Safety valve: if nothing has happened for a very long time, stop
-        # trying to entertain the user and let the error overlay take over.
-        if elapsed > 45 and (pct == 0 or pct < 0) and not dcd:
-            self._hide_loading()
+        self.loading_lbl.setStyleSheet(
+            f"color: {colour}; font-size: 20px; font-weight: bold;")
+        self.loading_lbl.setText(f"{label}  {int(elapsed)}s")
+        self.loading_detail.setText(detail)
 
     # -- settings live-apply -------------------------------------------------
     def apply_config(self) -> None:
@@ -916,6 +1169,7 @@ class PlayerWidget(QWidget):
             self._media_backend.set_hwdec(self._config.iptv.hwdec)
             self._media_backend.set_overscan(self._config.iptv.overscan_pct)
             self._media_backend.set_interpolation(self._config.iptv.interpolation)
+            self._media_backend.set_audio_delay(self._config.iptv.audio_delay)
         if self._milkdrop is not None:
             self._milkdrop.set_preset(self._selected_preset())
         if self._backend is not None:
@@ -928,11 +1182,14 @@ class PlayerWidget(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        # Keep the overlays covering the video surface after resizes.
+        # Keep the overlays covering the video surface after resizes, and on
+        # top of the native mpv/VLC window (raise_ — native HWND z-order).
         if self.error_overlay.isVisible():
             self.error_overlay.resize(self.surface.size())
+            self.error_overlay.raise_()
         if self.loading_overlay.isVisible():
             self.loading_overlay.resize(self.surface.size())
+            self.loading_overlay.raise_()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         # Any key press in fullscreen reveals the controls briefly.
@@ -958,6 +1215,12 @@ class PlayerWidget(QWidget):
         elif k == Qt.Key_NumberSign:
             if self._backend is not None:
                 self._backend.cycle_audio_track()
+        elif k in (Qt.Key_Plus, Qt.Key_Equal):
+            # "+" nudges audio delay later; "=" shares the physical key on
+            # US layouts (no shift) so it works without Shift too.
+            self._nudge_audio_delay(self._AUDIO_DELAY_STEP)
+        elif k == Qt.Key_Minus:
+            self._nudge_audio_delay(-self._AUDIO_DELAY_STEP)
         elif k == Qt.Key_Escape and self.window().isFullScreen():
             self._set_fullscreen(False)
         else:
@@ -1234,6 +1497,175 @@ def _placeholder_pixmap(name: str = "") -> QPixmap:
     return pm
 
 
+# ---------------------------------------------------------------------------
+# Poster delegate — paints the artwork, title, and Select/Play buttons that
+# overlay the top of every tile. Select highlights when the tile is selected;
+# Play triggers activation. Both are hit-tested in ContentGrid.mousePressEvent.
+# ---------------------------------------------------------------------------
+
+_BTN_MARGIN = 6
+_BTN_GAP = 6
+_TEXT_LINES = 2
+
+
+class PosterDelegate(QStyledItemDelegate):
+    """Custom icon-mode painter with overlaid Select/Play buttons."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+
+    # -- geometry helpers (shared with ContentGrid for hit-testing) ----------
+    @staticmethod
+    def tile_layout(rect: QRect, icon_sz: QSize) -> tuple:
+        """(icon_rect, text_rect) within an item ``rect`` for icon ``icon_sz``."""
+        icon_rect = QRect(rect.left(), rect.top(),
+                          min(icon_sz.width(), rect.width()), icon_sz.height())
+        text_rect = QRect(rect.left(), icon_rect.bottom() + 2,
+                          rect.width(), rect.height() - icon_rect.height() - 2)
+        return icon_rect, text_rect
+
+    @staticmethod
+    def button_rects(icon_rect: QRect) -> tuple:
+        """(select_rect, play_rect) overlaid at the top of the poster."""
+        btn_h = max(20, min(30, icon_rect.height() // 6))
+        w = (icon_rect.width() - 2 * _BTN_MARGIN - _BTN_GAP) // 2
+        if w < 24:
+            # Very narrow tiles: stack the two buttons vertically instead.
+            w = icon_rect.width() - 2 * _BTN_MARGIN
+            y = icon_rect.top() + _BTN_MARGIN
+            select = QRect(icon_rect.left() + _BTN_MARGIN, y, w, btn_h)
+            play = QRect(icon_rect.left() + _BTN_MARGIN,
+                         select.bottom() + _BTN_GAP, w, btn_h)
+            return select, play
+        y = icon_rect.top() + _BTN_MARGIN
+        select = QRect(icon_rect.left() + _BTN_MARGIN, y, w, btn_h)
+        play = QRect(select.right() + _BTN_GAP, y, w, btn_h)
+        return select, play
+
+    def sizeHint(self, option, index) -> QSize:  # noqa: N802
+        icon_sz = option.decorationSize
+        fm = QFontMetrics(option.font)
+        text_h = fm.height() * _TEXT_LINES + 4
+        return QSize(icon_sz.width(), icon_sz.height() + text_h)
+
+    # -- painting -----------------------------------------------------------
+    def paint(self, painter: QPainter, option, index) -> None:  # noqa: N802
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        rect = option.rect
+        icon_sz = option.decorationSize
+        icon_rect, text_rect = self.tile_layout(rect, icon_sz)
+
+        selected = bool(option.state & QStyle.State_Selected)
+        hovered = bool(option.state & QStyle.State_MouseOver)
+
+        # Selection background behind the whole tile.
+        if selected:
+            painter.fillRect(rect, QColor(42, 122, 191, 60))
+        elif hovered:
+            painter.fillRect(rect, QColor(255, 255, 255, 18))
+
+        # Poster / logo artwork, aspect-kept and centred in the icon rect.
+        icon = index.data(Qt.DecorationRole)
+        if icon is not None and not icon.isNull():
+            mode = QIcon.Selected if selected else QIcon.Normal
+            icon.paint(painter, icon_rect, Qt.AlignCenter, mode, QIcon.Off)
+        else:
+            painter.fillRect(icon_rect, QColor(24, 26, 34))
+            painter.setPen(QColor(120, 130, 150))
+            painter.drawText(icon_rect, Qt.AlignCenter, "—")
+
+        # Title text (wrapped, clipped to the text area).
+        text = index.data(Qt.DisplayRole) or ""
+        painter.setPen(QColor(232, 236, 244) if selected else QColor(200, 211, 224))
+        painter.drawText(text_rect,
+                         Qt.AlignTop | Qt.AlignHCenter | Qt.TextWordWrap, text)
+
+        # Overlay buttons — always visible so a single click on Play starts
+        # playback without first having to select the tile.
+        playing = self._is_playing(index)
+        loading = self._is_loading(index)
+        self._paint_buttons(painter, icon_rect, selected, hovered, playing,
+                            loading)
+        painter.restore()
+
+    def _is_playing(self, index) -> bool:
+        """True if the item at ``index`` is the one currently playing."""
+        grid = self.parent()
+        if grid is not None:
+            it = index.data(Qt.UserRole)
+            return it is not None and id(it) == getattr(grid, "_playing_id", None)
+        return False
+
+    def _is_loading(self, index) -> bool:
+        """True if the item at ``index`` is currently loading (stream opening)."""
+        grid = self.parent()
+        if grid is not None:
+            it = index.data(Qt.UserRole)
+            return it is not None and id(it) == getattr(grid, "_loading_id", None)
+        return False
+
+    def _paint_buttons(self, painter: QPainter, icon_rect: QRect,
+                       selected: bool, hovered: bool, playing: bool,
+                       loading: bool = False) -> None:
+        select_rect, play_rect = self.button_rects(icon_rect)
+        # Select: filled accent when selected, otherwise a translucent chip that
+        # becomes opaque on hover. Hover always brightens it.
+        if selected:
+            bg = QColor(42, 122, 191, 255 if hovered else 220)
+            self._round_rect(painter, select_rect, bg, QColor(255, 255, 255),
+                             "Select")
+        else:
+            bg = QColor(10, 10, 15, 220 if hovered else 160)
+            self._round_rect(painter, select_rect, bg, QColor(220, 228, 240),
+                             "Select")
+        # Play button states (priority: loading > playing > hover > normal):
+        #   loading  → pulsing orange/white with "Loading…" or "Retry 2/5" text
+        #   playing  → solid orange with "▶ Playing"
+        #   hovered  → accent blue with "▶ Play"
+        #   normal   → dark translucent chip with "▶ Play"
+        if loading:
+            grid = self.parent()
+            pulse = getattr(grid, "_pulse_on", False) if grid is not None else False
+            retries = getattr(grid, "_retry_count", 0) if grid is not None else 0
+            max_retries = getattr(grid, "_MAX_RETRIES", 5) if grid is not None else 5
+            if pulse:
+                bg = QColor(230, 126, 34, 255)
+                fg = QColor(255, 255, 255)
+            else:
+                bg = QColor(230, 126, 34, 140)
+                fg = QColor(255, 235, 200)
+            if retries > 0:
+                label = f"⟳ Retry {retries}/{max_retries}"
+            else:
+                label = "⟳ Loading…"
+            self._round_rect(painter, play_rect, bg, fg, label)
+        elif playing:
+            bg = QColor(230, 126, 34, 240 if hovered else 210)
+            self._round_rect(painter, play_rect, bg, QColor(255, 255, 255),
+                             "▶ Playing")
+        elif hovered:
+            self._round_rect(painter, play_rect, QColor(42, 122, 191, 240),
+                             QColor(255, 255, 255), "▶ Play")
+        else:
+            bg = QColor(10, 10, 15, 200 if selected else 160)
+            self._round_rect(painter, play_rect, bg, QColor(220, 228, 240),
+                             "▶ Play")
+
+    @staticmethod
+    def _round_rect(painter: QPainter, r: QRect, bg: QColor,
+                    fg: QColor, label: str) -> None:
+        painter.setPen(QPen(QColor(0, 0, 0, 90), 1))
+        painter.setBrush(bg)
+        painter.drawRoundedRect(r, 5, 5)
+        painter.setPen(fg)
+        f = painter.font()
+        f.setBold(True)
+        f.setPointSize(max(8, r.height() // 3))
+        painter.setFont(f)
+        painter.drawText(r, Qt.AlignCenter, label)
+
+
 class ContentGrid(QListWidget):
     """Virtualized icon-mode grid with lazy artwork loading.
 
@@ -1253,7 +1685,11 @@ class ContentGrid(QListWidget):
         super().__init__(parent)
         self._manager = manager
         self.setViewMode(QListWidget.IconMode)
-        self.setIconSize(QSize(240, 320))
+        # Tile size is recomputed from the viewport (3 rows visible, columns
+        # fill the width) — see _recompute_tile_size. Start from a sane default
+        # so sizeHint is valid before the first resize.
+        self._tile_size = QSize(240, 320)
+        self.setIconSize(self._tile_size)
         self.setResizeMode(QListWidget.Adjust)
         self.setMovement(QListWidget.Static)
         self.setUniformItemSizes(True)
@@ -1261,6 +1697,11 @@ class ContentGrid(QListWidget):
         self.setTextElideMode(Qt.ElideRight)
         self.setSpacing(8)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Custom delegate paints the poster + overlaid Select/Play buttons.
+        self.setItemDelegate(PosterDelegate(self))
+        # Hover tracking drives the button overlay (State_MouseOver in paint).
+        self.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
         self.itemDoubleClicked.connect(self._on_activate)
         self.itemClicked.connect(self._on_select)
         self.sig_artwork.connect(self._apply_artwork)
@@ -1268,6 +1709,7 @@ class ContentGrid(QListWidget):
         self.sig_logo.connect(self._apply_logo)
         self.verticalScrollBar().valueChanged.connect(lambda _v: self._scan_timer.start())
         self._items: List[Any] = []
+        self._playing_id: Optional[int] = None  # id(item) currently playing
         self._artwork_requests: Dict[str, List[QListWidgetItem]] = {}
         self._requested_urls: set = set()
         # Loaded artwork, kept per URL: hundreds of channels share a single
@@ -1298,6 +1740,17 @@ class ContentGrid(QListWidget):
         self._decode_timer = QTimer(self)
         self._decode_timer.setInterval(0)
         self._decode_timer.timeout.connect(self._decode_step)
+        # Loading pulse: repaints the loading tile's Play button so it blinks
+        # orange/white while the stream is being opened.
+        self._loading_id: Optional[int] = None
+        self._pulse_on = False
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.setInterval(500)
+        self._pulse_timer.timeout.connect(self._pulse_step)
+        # Retry count is pushed here by IPTVTab (via sig_retry) so the
+        # PosterDelegate can show "Retry 2/5" on the tile's Play button.
+        self._retry_count = 0
+        self._MAX_RETRIES = 5
 
     def set_items(self, items: List[Any]) -> None:
         self._items = items
@@ -1336,6 +1789,104 @@ class ContentGrid(QListWidget):
         QTimer.singleShot(80, self._load_visible_artwork)
         if self._sweep_queue:
             self._sweep_timer.start()
+
+    def reset_artwork_state(self) -> None:
+        """Forget every in-memory artwork memo after an external cache clear.
+
+        Without this the grid keeps serving pixmaps decoded from files that no
+        longer exist, and its "already tried" sets stop tiles from ever
+        re-resolving. Items keep their artwork URLs (still valid — they just
+        re-download); entries with none go back on the sweep queue."""
+        self._sweep_timer.stop()
+        self._decode_timer.stop()
+        self._decode_queue.clear()
+        self._artwork_requests.clear()
+        self._requested_urls.clear()
+        self._pixmaps.clear()
+        self._failed_urls.clear()
+        self._fail_counts.clear()
+        self._logo_pending.clear()
+        self._logo_tried.clear()
+        self._decorated.clear()
+        neutral = QIcon(_neutral_pixmap())
+        self._sweep_queue.clear()
+        for row in range(self.count()):
+            li = self.item(row)
+            if li is None:
+                continue
+            li.setIcon(neutral)
+            it = li.data(Qt.UserRole)
+            if it is not None and not (getattr(it, "logo", "") or getattr(it, "poster", "")):
+                self._sweep_queue.append(li)
+        self._sweep_total = len(self._sweep_queue)
+        self._sweep_done = 0
+        if self._sweep_queue:
+            self.sweep_progress.emit(0, self._sweep_total)
+            self._sweep_timer.start()
+        QTimer.singleShot(0, self._load_visible_artwork)
+
+    def set_playing_item(self, item: Any) -> None:
+        """Mark ``item`` as the one currently playing so its Play button turns
+        orange. Repaints the old + new tiles. Also stops the loading pulse —
+        playback has started (or failed), the blink is no longer needed."""
+        self.set_loading_item(None)
+        old_id = self._playing_id
+        new_id = id(item) if item is not None else None
+        if old_id == new_id:
+            return
+        self._playing_id = new_id
+        # Repaint the tile that was playing (revert to normal) and the new one.
+        for tid in (old_id, new_id):
+            if tid is None:
+                continue
+            li = self._tiles_by_item.get(tid)
+            if li is not None:
+                self.update(self.indexFromItem(li))
+
+    def set_loading_item(self, item: Any) -> None:
+        """Mark ``item`` as loading — its Play button pulses orange/white so
+        the user sees the tile is active while the stream opens. Pass None to
+        stop the pulse (playback started, errored, or was cancelled)."""
+        new_id = id(item) if item is not None else None
+        old_id = self._loading_id
+        if new_id == old_id:
+            return
+        self._loading_id = new_id
+        if new_id is not None:
+            self._pulse_on = True
+            self._pulse_timer.start()
+        else:
+            self._pulse_timer.stop()
+            self._pulse_on = False
+            self._retry_count = 0  # reset for next item
+        # Repaint old + new tiles.
+        for tid in (old_id, new_id):
+            if tid is None:
+                continue
+            li = self._tiles_by_item.get(tid)
+            if li is not None:
+                self.update(self.indexFromItem(li))
+
+    def set_retry_count(self, attempt: int, max_retries: int) -> None:
+        """Update the retry count shown on the loading tile's Play button
+        (e.g. ``Retry 2/5``). Repaints the loading tile so the new count is
+        visible immediately, not on the next pulse tick."""
+        self._retry_count = attempt
+        self._MAX_RETRIES = max_retries
+        if self._loading_id is not None:
+            li = self._tiles_by_item.get(self._loading_id)
+            if li is not None:
+                self.update(self.indexFromItem(li))
+
+    def _pulse_step(self) -> None:
+        """Toggle the pulse state and repaint the loading tile."""
+        if self._loading_id is None:
+            self._pulse_timer.stop()
+            return
+        self._pulse_on = not self._pulse_on
+        li = self._tiles_by_item.get(self._loading_id)
+        if li is not None:
+            self.update(self.indexFromItem(li))
 
     # -- background artwork sweep -------------------------------------------
     def _sweep_step(self) -> None:
@@ -1397,8 +1948,52 @@ class ContentGrid(QListWidget):
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
-        # Geometry is only valid once visible — (re)load the visible batch.
+        # Geometry is only valid once visible — size the tiles then load artwork.
+        # The synchronous pass handles the common case; the deferred pass catches
+        # the post-layout geometry (a child widget's viewport can still be empty
+        # when showEvent first fires inside a not-yet-laid-out parent).
+        self._recompute_tile_size()
+        QTimer.singleShot(0, self._recompute_tile_size)
         QTimer.singleShot(0, self._load_visible_artwork)
+
+    # -- dynamic tile sizing -------------------------------------------------
+    _TARGET_COLS = 3
+    _TARGET_ROWS = 3
+
+    def _recompute_tile_size(self) -> None:
+        """Fit posters to a 3×3 grid: 3 columns × 3 rows always visible, tiles
+        stretch to fill the available width and height so there's no right-edge
+        or bottom gap. Posters shrink when the window shrinks to keep the 3×3
+        invariant; a floor keeps them from becoming unusably tiny.
+
+        icon_w is ALWAYS the 3-column width — never shrunk below it — so
+        QListWidget packs exactly 3 columns. When the viewport is short, icon_h
+        is capped and the portrait poster is centred inside the wider tile
+        (the delegate paints it aspect-kept with AlignCenter)."""
+        vp = self.viewport().rect()
+        if vp.isEmpty():
+            return
+        spacing = self.spacing()
+        fm = self.fontMetrics()
+        text_h = fm.height() * _TEXT_LINES + 6
+        # 3 columns fill the width exactly — this width is FIXED so QListWidget
+        # never packs a 4th column.
+        icon_w = (vp.width() - (self._TARGET_COLS + 1) * spacing) // self._TARGET_COLS
+        icon_w = max(80, icon_w)
+        # Height at perfect portrait aspect (240x320) from this width.
+        icon_h_from_w = int(icon_w * 320 / 240)
+        # Height available for 3 rows.
+        row_h = (vp.height() - (self._TARGET_ROWS + 1) * spacing) // self._TARGET_ROWS
+        icon_h_max = max(96, row_h - text_h)
+        # Cap the icon height so 3 rows always fit; the poster stays portrait
+        # and is centred by the delegate inside the wider tile.
+        icon_h = min(icon_h_from_w, icon_h_max)
+        new_size = QSize(icon_w, icon_h)
+        if new_size != self._tile_size:
+            self._tile_size = new_size
+            self.setIconSize(new_size)
+            # setIconSize + uniform sizes + Adjust resize mode relayout the
+            # grid from the delegate sizeHint automatically.
 
     def _row_at(self, y: int) -> int:
         """Row index at viewport height ``y``, or -1.
@@ -1565,9 +2160,14 @@ class ContentGrid(QListWidget):
             self._on_artwork_failed(url, items)
             return
         if pm.width() > _TILE_SIZE.width() or pm.height() > _TILE_SIZE.height():
-            # Tiles draw at 120x160; keeping the 200x300 cache image costs 3x
-            # the RAM for no visible difference.
-            pm = pm.scaled(_TILE_SIZE, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            # Cache at the larger of the fixed tile size and the current
+            # dynamic tile so posters stay sharp when the grid shows big tiles,
+            # without keeping oversized pixmaps for tiny ones.
+            cache_sz = _TILE_SIZE
+            if (self._tile_size.width() > _TILE_SIZE.width()
+                    or self._tile_size.height() > _TILE_SIZE.height()):
+                cache_sz = self._tile_size
+            pm = pm.scaled(cache_sz, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self._remember_pixmap(url, pm)
         for li in items:
             self._set_tile_icon(li, pm)
@@ -1602,8 +2202,43 @@ class ContentGrid(QListWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
-        # Resizing can reveal more tiles — load their artwork too.
+        # Re-fit posters to the new viewport, then load any newly visible tiles.
+        self._recompute_tile_size()
         QTimer.singleShot(0, self._load_visible_artwork)
+
+    # -- overlaid Select/Play buttons ----------------------------------------
+    def _hit_button(self, pos: QPoint):
+        """Return (item, 'select'|'play') if ``pos`` lands on an overlay button."""
+        idx = self.indexAt(pos)
+        if not idx.isValid():
+            return None, None
+        li = self.item(idx.row())
+        if li is None:
+            return None, None
+        rect = self.visualItemRect(li)
+        icon_rect, _ = PosterDelegate.tile_layout(rect, self.iconSize())
+        select_rect, play_rect = PosterDelegate.button_rects(icon_rect)
+        if select_rect.contains(pos):
+            return li, "select"
+        if play_rect.contains(pos):
+            return li, "play"
+        return None, None
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            li, which = self._hit_button(event.position().toPoint() if hasattr(event, "position") else event.pos())
+            if li is not None and which is not None:
+                # Select the tile so the Select button reflects state, then
+                # route the action — Play starts playback, Select opens info.
+                self.setCurrentItem(li)
+                it = li.data(Qt.UserRole)
+                if it is not None:
+                    if which == "play":
+                        self.itemActivated.emit(it)
+                    else:
+                        self.itemSelected.emit(it)
+                return  # swallow — don't fall through to default click handling
+        super().mousePressEvent(event)
 
     def _on_activate(self, li: QListWidgetItem) -> None:
         it = li.data(Qt.UserRole)
@@ -1709,6 +2344,7 @@ class DetailPanel(QScrollArea):
     sig_artwork = Signal(str, object)    # (url, path) — marshals worker -> GUI
     sig_artwork_failed = Signal(str)     # (url) — fetch gave up, worker -> GUI
     sig_metadata = Signal(str, dict)     # (key, metadata) — marshals worker -> GUI
+    closed = Signal()                    # user clicked the close button
 
     def __init__(self, manager: IPTVManager, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -1717,16 +2353,37 @@ class DetailPanel(QScrollArea):
         self.sig_artwork_failed.connect(self._on_artwork_gone)
         self.sig_metadata.connect(self._apply_metadata)
         self.setWidgetResizable(True)
-        self.setStyleSheet("QScrollArea { background-color: #0a0a0f; border: none; }")
+        self.setStyleSheet(
+            "QScrollArea { background-color: rgba(10,10,15,0.96); "
+            "border: 1px solid #1a2a4a; border-radius: 6px; }"
+        )
         inner = QWidget()
         self._layout = QVBoxLayout(inner)
         self._layout.setContentsMargins(12, 12, 12, 12)
         self.setWidget(inner)
 
+        # Header row: title on the left, close button on the right.
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
         self.title = QLabel("")
         self.title.setStyleSheet("color: #2a7abf; font-size: 18px; font-weight: 700;")
         self.title.setWordWrap(True)
-        self._layout.addWidget(self.title)
+        header.addWidget(self.title, 1)
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setToolTip("Hide details")
+        self.close_btn.setFixedSize(28, 28)
+        self.close_btn.setCursor(Qt.PointingHandCursor)
+        self.close_btn.setStyleSheet(
+            "QPushButton { background-color: rgba(42,122,191,0.25); "
+            "border: 1px solid #2a7abf; border-radius: 4px; "
+            "color: #c8d3e0; font-size: 14px; font-weight: bold; }\n"
+            "QPushButton:hover { background-color: rgba(230,126,34,0.85); "
+            "border-color: #e67e22; color: white; }"
+        )
+        self.close_btn.clicked.connect(self._on_close)
+        header.addWidget(self.close_btn, 0, Qt.AlignTop)
+        self._layout.addLayout(header)
 
         self.meta_lbl = QLabel("")
         self.meta_lbl.setStyleSheet("color: #8a9ab0; font-size: 12px;")
@@ -1734,9 +2391,13 @@ class DetailPanel(QScrollArea):
         self._layout.addWidget(self.meta_lbl)
 
         self.backdrop = QLabel("")
-        self.backdrop.setFixedHeight(360)
+        self.backdrop.setMinimumHeight(220)
         self.backdrop.setStyleSheet("background-color: #111827; border: 1px solid #1a2a4a; border-radius: 6px;")
         self.backdrop.setAlignment(Qt.AlignCenter)
+        self.backdrop.setScaledContents(False)
+        # Preferred height (not Fixed) so the label grows to fit the scaled
+        # image — a Fixed policy crops portrait posters scaled to full width.
+        self.backdrop.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._layout.addWidget(self.backdrop)
 
         self.synopsis = QLabel("")
@@ -1750,12 +2411,17 @@ class DetailPanel(QScrollArea):
         self.episodes_label.hide()
 
         self.episodes = QListWidget()
+        # Single-click plays an episode — the user is already in the series
+        # detail panel, so requiring a double-click is unintuitive. Keep
+        # double-click too for habit's sake.
+        self.episodes.itemClicked.connect(self._on_episode)
         self.episodes.itemDoubleClicked.connect(self._on_episode)
         self._layout.addWidget(self.episodes)
         self.episodes.hide()
 
         self._current: Any = None
         self._episodes: List[Any] = []
+        self._artwork_pm: Optional[QPixmap] = None
         # Guards against stale async results: fast browsing must not apply the
         # previous item's metadata/artwork to the newly shown one.
         self._expected_meta_key = ""
@@ -1763,6 +2429,7 @@ class DetailPanel(QScrollArea):
 
     def show_item(self, item: Any) -> None:
         self._current = item
+        self._artwork_pm = None
         self.show()  # panel starts hidden until something is actually selected
         if isinstance(item, Channel):
             self._show_channel(item)
@@ -1855,7 +2522,42 @@ class DetailPanel(QScrollArea):
             return
         pm = QPixmap(path)
         if not pm.isNull():
-            self.backdrop.setPixmap(pm.scaled(self.backdrop.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self._artwork_pm = pm  # keep the full-res for rescaling on resize
+            self._scale_backdrop()
+
+    def _scale_backdrop(self) -> None:
+        """Rescale the stored artwork to fit the panel, preserving aspect ratio.
+
+        Scales to the viewport width (minus margins) but caps the height at
+        60% of the viewport height — portrait posters scaled to full width
+        would be taller than the panel and got cropped under the old Fixed
+        height policy. When the width-based scale would exceed the height cap,
+        the image is scaled to height instead so it always fits."""
+        pm = getattr(self, "_artwork_pm", None)
+        if pm is None or pm.isNull():
+            return
+        # viewport width is the reliable inner width (accounts for scrollbar).
+        vw = max(200, self.viewport().width() - 24)  # 24 = left+right margins
+        vh = self.viewport().height()
+        max_h = max(220, int(vh * 0.6))  # cap at 60% of viewport, min 220px
+        iw, ih = pm.width(), pm.height()
+        if iw <= 0 or ih <= 0:
+            return
+        # Scale to width first; check if the resulting height fits.
+        scaled_h = int(ih * vw / iw)
+        if scaled_h <= max_h:
+            # Width-driven: fits within the height cap.
+            scaled = pm.scaledToWidth(vw, Qt.SmoothTransformation)
+        else:
+            # Height-driven: would exceed the cap, so scale to height instead.
+            scaled = pm.scaledToHeight(max_h, Qt.SmoothTransformation)
+        self.backdrop.setPixmap(scaled)
+        # Grow the label to match the scaled image so it doesn't crop.
+        self.backdrop.setMinimumHeight(scaled.height())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._scale_backdrop()
 
     def _on_metadata(self, key: str, meta: Dict[str, Any]) -> None:
         if not meta or self._current is None:
@@ -1898,6 +2600,11 @@ class DetailPanel(QScrollArea):
         if ep is not None:
             self.play_requested.emit(ep)
 
+    def _on_close(self) -> None:
+        """Hide the panel — the host tab also clears the grid selection."""
+        self.hide()
+        self.closed.emit()
+
 
 # ---------------------------------------------------------------------------
 # Main IPTV tab
@@ -1927,6 +2634,14 @@ class IPTVTab(QWidget):
             hwdec=config.iptv.hwdec,
             tpdb_api_key=config.iptv.tpdb_api_key,
             framegrab_posters=config.iptv.framegrab_posters,
+            stashdb_api_key=config.iptv.stashdb_api_key,
+            omdb_api_key=config.iptv.omdb_api_key,
+            fanarttv_api_key=config.iptv.fanarttv_api_key,
+            enable_javbus=config.iptv.enable_javbus,
+            enable_javlibrary=config.iptv.enable_javlibrary,
+            enable_fanza=config.iptv.enable_fanza,
+            enable_wikipedia=config.iptv.enable_wikipedia,
+            cache_limit_mb=config.iptv.cache_limit_mb,
         )
         self._current_section = SECTION_LIVE
         self._current_category = ""
@@ -2024,26 +2739,24 @@ class IPTVTab(QWidget):
         splitter.addWidget(sidebar)
         self._sidebar = sidebar
 
-        # Content area: stacked grid/list + detail panel.
-        content = QSplitter(Qt.Vertical)
+        # Content area: just the stacked grid/list. The detail/metadata panel
+        # is no longer wedged under the grid (which used to squeeze the other
+        # posters) — it now floats as a separate zone over the player pane and
+        # hides as soon as playback starts (see _play_item / _layout_detail).
+        content = QWidget()
+        cl_layout = QVBoxLayout(content)
+        cl_layout.setContentsMargins(0, 0, 0, 0)
         self._grid = ContentGrid(self._manager)
         self._list = ContentList(self._manager)
         self._stack = QStackedWidget()
         self._stack.addWidget(self._grid)
         self._stack.addWidget(self._list)
         self._stack.setCurrentWidget(self._grid)
-        content.addWidget(self._stack)
-
-        self._grid.sweep_progress.connect(self._on_artwork_progress)
-
-        self._detail = DetailPanel(self._manager)
-        self._detail.play_requested.connect(self._play_item)
-        self._detail.artwork_found.connect(self._grid.apply_external_artwork)
-        self._detail.hide()  # stays hidden until an item is selected
-        content.addWidget(self._detail)
-        content.setSizes([400, 200])
+        cl_layout.addWidget(self._stack)
         splitter.addWidget(content)
         self._content = content
+
+        self._grid.sweep_progress.connect(self._on_artwork_progress)
 
         # Player pane.
         player_col = QWidget()
@@ -2051,13 +2764,31 @@ class IPTVTab(QWidget):
         pl_layout.setContentsMargins(0, 0, 0, 0)
         self._player = PlayerWidget(self._manager, self._config)
         self._player.sig_fullscreen.connect(self._on_player_fullscreen)
+        self._player.sig_retry.connect(self._grid.set_retry_count)
+        # Player state → IPTVTab so it can stop the loading pulse / set the
+        # playing marker on the grid. (_signals.player_state is the agent
+        # bridge path; this is the direct GUI path that actually fires.)
+        self._player.sig_state.connect(self._on_player_state)
+        self._player.sig_error.connect(self._on_player_error)
+        self._player.sig_playback_started.connect(self._on_playback_started)
         pl_layout.addWidget(self._player)
         splitter.addWidget(player_col)
-        # Player gets ~2/3 of the width; sidebar + content share the rest.
+
+        # Detail/metadata panel — a separate zone overlaid on the player's video
+        # area. It shows on selection and disappears when content starts playing.
+        self._detail = DetailPanel(self._manager)
+        self._detail.play_requested.connect(self._play_item)
+        self._detail.artwork_found.connect(self._grid.apply_external_artwork)
+        self._detail.closed.connect(self._on_detail_closed)
+        self._detail.setParent(self._player)
+        self._detail.hide()
+        self._player.installEventFilter(self)
+        # Content needs enough width for a 3×3 poster grid; the player pane
+        # gets the remainder. Sidebar stays narrow (tree only).
         splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        splitter.setStretchFactor(2, 6)
-        splitter.setSizes([170, 280, 990])
+        splitter.setStretchFactor(1, 4)
+        splitter.setStretchFactor(2, 5)
+        splitter.setSizes([160, 560, 720])
 
         layout.addWidget(splitter, 1)
 
@@ -2224,12 +2955,28 @@ class IPTVTab(QWidget):
 
     def _on_player_state(self, state: str) -> None:
         self._set_status(f"Player: {state}")
+        # NOTE: the backend emits "playing" immediately on loadfile, before the
+        # stream is actually open — so we do NOT clear loading here. Real
+        # playback-start is detected by _update_loading (buffer_status poll)
+        # and signalled via sig_playback_started → _on_playback_started.
+        if state in ("stopped", "ended", "idle"):
+            # Clear both the loading pulse and the orange "Playing" marker.
+            self._grid.set_loading_item(None)
+            self._grid.set_playing_item(None)
+
+    def _on_playback_started(self) -> None:
+        """Real playback detected (buffer_status confirms time-pos advancing).
+        Stop the loading pulse and mark the tile as playing."""
+        self._grid.set_loading_item(None)
+        if self._player._current_item is not None:
+            self._grid.set_playing_item(self._player._current_item)
 
     def _on_player_position(self, pos: float, dur: float) -> None:
         pass
 
     def _on_player_error(self, msg: str) -> None:
         self._set_status(f"Player error: {msg}")
+        self._grid.set_loading_item(None)
 
     def sync_fullscreen_chrome(self, on: bool) -> None:
         """Force the chrome to match the window's real fullscreen state.
@@ -2249,6 +2996,16 @@ class IPTVTab(QWidget):
         main-window chrome collapse around it."""
         for w in (self._toolbar_w, self._sidebar, self._content, self._status_w):
             w.setVisible(not on)
+        # The metadata overlay is part of the player pane — collapse it too so
+        # fullscreen is video-only, but remember whether it was open so it can
+        # come back when fullscreen exits (it hides on play anyway).
+        if on:
+            self._detail_was_visible = self._detail.isVisible()
+            self._detail.hide()
+        elif getattr(self, "_detail_was_visible", False):
+            self._detail.show()
+            self._layout_detail_overlay()
+            self._detail_was_visible = False
         # Also hide the main window's menu bar (best-effort). The main tab
         # bar is NOT touched: it is permanently hidden (navigation lives in
         # the menus), and un-hiding it on the way out of fullscreen left an
@@ -2266,6 +3023,28 @@ class IPTVTab(QWidget):
                 chrome(on)
         except Exception:
             pass
+
+    # -- detail/metadata overlay --------------------------------------------
+    def eventFilter(self, obj, event):  # noqa: N802
+        """Reposition the metadata overlay when the player pane resizes."""
+        if obj is self._player and event.type() == QEvent.Resize:
+            self._layout_detail_overlay()
+        return super().eventFilter(obj, event)
+
+    def _layout_detail_overlay(self) -> None:
+        """Float the detail panel over the player's video area (left portion).
+
+        It never covers the control bar, and it hides on play so it never sits
+        on top of active video."""
+        vs = self._player.video_stack
+        if vs is None:
+            return
+        # Position relative to the PlayerWidget (the detail's parent).
+        origin = vs.mapTo(self._player, QPoint(0, 0))
+        # Wider panel so the backdrop image fits comfortably with margins.
+        w = min(560, max(360, vs.width() * 2 // 5))
+        self._detail.setGeometry(origin.x(), origin.y(), w, vs.height())
+        self._detail.raise_()
 
     # -- sidebar -------------------------------------------------------------
     _SECTIONS = [
@@ -2362,17 +3141,51 @@ class IPTVTab(QWidget):
                         sec.addChild(child)
                         if by_year:
                             for yc in year_map.get(cat.name, []):
-                                ynode = QTreeWidgetItem([f"{yc.name} ({yc.count})"])
-                                ynode.setData(0, Qt.UserRole,
-                                              (src.id, sid, cat.name, yc.name))
-                                child.addChild(ynode)
+                                self._add_year_or_bulk_node(
+                                    child, src.id, sid, cat.name, yc, expanded)
                             child.setExpanded((src.id, sid, cat.name) in expanded)
+                        else:
+                            # Category mode: if the category itself is too
+                            # large, add bulk children directly under it.
+                            self._add_bulk_nodes_if_needed(
+                                child, src.id, sid, cat.name, "",
+                                cat.count, expanded)
                 sec.setExpanded(sec_key in expanded)
             top.setExpanded(only_one or key in expanded
                             or src.id == self._current_source_id)
 
         if selected is not None:
             self._select_tree_node(selected)
+
+    def _add_year_or_bulk_node(self, parent: QTreeWidgetItem, src_id: str,
+                               sid: str, cat_name: str, yc, expanded: set) -> None:
+        """Add a year node under a category. If the year bucket has more than
+        BULK_SIZE items, add numbered bulk children instead of making the year
+        node a clickable leaf."""
+        ynode = QTreeWidgetItem([f"{yc.name} ({yc.count})"])
+        ynode.setData(0, Qt.UserRole, (src_id, sid, cat_name, yc.name))
+        parent.addChild(ynode)
+        self._add_bulk_nodes_if_needed(
+            ynode, src_id, sid, cat_name, yc.name, yc.count, expanded)
+
+    def _add_bulk_nodes_if_needed(self, parent: QTreeWidgetItem, src_id: str,
+                                  sid: str, cat_name: str, year: str,
+                                  count: int, expanded: set) -> None:
+        """If ``count`` exceeds BULK_SIZE, add numbered bulk children under
+        ``parent``. Each bulk node is a 5-tuple key
+        (src, section, category, year, bulk_index) — 1-based."""
+        if count <= BULK_SIZE:
+            return
+        n_bulks = (count + BULK_SIZE - 1) // BULK_SIZE
+        for i in range(n_bulks):
+            start = i * BULK_SIZE + 1
+            end = min((i + 1) * BULK_SIZE, count)
+            label = f"{start}\u2013{end}"  # en-dash
+            bnode = QTreeWidgetItem([label])
+            bnode.setData(0, Qt.UserRole,
+                          (src_id, sid, cat_name, year, i + 1))
+            parent.addChild(bnode)
+        parent.setExpanded(tuple(parent.data(0, Qt.UserRole)) in expanded)
 
     def _select_tree_node(self, key: tuple) -> None:
         """Restore selection after a rebuild (no-op if the node is gone)."""
@@ -2402,11 +3215,13 @@ class IPTVTab(QWidget):
         data = item.data(0, Qt.UserRole)
         if data is None:
             return
-        # Keys are 3-tuples (source/section/category nodes) or 4-tuples
-        # (year nodes under a category). Pad so both unpack the same way.
+        # Keys are 3-tuples (source/section/category nodes), 4-tuples
+        # (year nodes under a category), or 5-tuples (bulk nodes under a
+        # year or category). Pad so all unpack the same way.
         key = tuple(data)
         source_id, section, category = (key + ("", "", ""))[:3]
         year = key[3] if len(key) > 3 else ""
+        bulk = key[4] if len(key) > 4 else 0
         if source_id and source_id != self._current_source_id:
             self._current_source_id = source_id
             self._manager.set_active_source(source_id)
@@ -2415,14 +3230,31 @@ class IPTVTab(QWidget):
             # Clicked the source itself — show its default section.
             item.setExpanded(not item.isExpanded())
             section, category, year = self._current_section, "", ""
+            bulk = 0
+        elif bulk == 0 and self._has_bulk_children(item):
+            # Parent node with bulk children (category or year with >500
+            # items) — expand/collapse instead of showing all items, so the
+            # metadata scraper never processes tens of thousands of entries.
+            item.setExpanded(not item.isExpanded())
+            return
         self._current_section = section
         self._current_category = category
         self._current_year = year
-        self._show_section(section, category, source_id, year=year)
+        self._show_section(section, category, source_id, year=year, bulk=bulk)
+
+    @staticmethod
+    def _has_bulk_children(item: QTreeWidgetItem) -> bool:
+        """True if any child of ``item`` is a bulk node (5-tuple key)."""
+        for i in range(item.childCount()):
+            child_key = tuple(item.child(i).data(0, Qt.UserRole) or ())
+            if len(child_key) >= 5:
+                return True
+        return False
 
     # -- content display -----------------------------------------------------
     def _show_section(self, section: str, category: str = "",
-                      source_id: Optional[str] = None, year: str = "") -> None:
+                      source_id: Optional[str] = None, year: str = "",
+                      bulk: int = 0) -> None:
         source_id = source_id or self._current_source_id or None
         if section == SECTION_FAVORITES:
             items = self._manager.favorites(source_id)
@@ -2436,6 +3268,10 @@ class IPTVTab(QWidget):
         else:
             items = self._manager.items_for(section, category, source_id=source_id,
                                             year=year)
+        # Slice to the requested bulk (1-based index) when specified.
+        if bulk > 0:
+            start = (bulk - 1) * BULK_SIZE
+            items = items[start:start + BULK_SIZE]
         self._set_content_items(items)
 
     def _set_content_items(self, items: List[Any]) -> None:
@@ -2480,18 +3316,33 @@ class IPTVTab(QWidget):
         self._set_content_items(items)
 
     def _on_item_selected(self, item: Any) -> None:
-        """Single click: info only, never playback."""
+        """Single click (or Select button): info only, never playback."""
         self._detail.show_item(item)
+        self._layout_detail_overlay()
+
+    def _on_detail_closed(self) -> None:
+        """User clicked the panel's ✕ — clear the grid selection too so the
+        Select button de-highlights and the poster looks unselected again."""
+        self._grid.clearSelection()
+        self._grid.setCurrentItem(None)
 
     def _on_item_activated(self, item: Any) -> None:
-        # Double click plays. Series are the exception: their url is empty
-        # (the user picks an episode from the detail panel), so there is
-        # nothing to play yet.
-        self._detail.show_item(item)
-        if not isinstance(item, Series):
+        # Play button (or double click) plays. Series are the exception: their
+        # url is empty (the user picks an episode from the detail panel), so
+        # there is nothing to play yet — open the metadata overlay instead.
+        if isinstance(item, Series):
+            self._detail.show_item(item)
+            self._layout_detail_overlay()
+        else:
             self._play_item(item)
 
     def _play_item(self, item: Any) -> None:
+        # Metadata overlay is a separate zone over the idle player — once
+        # content starts playing it gets out of the way so video is unobstructed.
+        self._detail.hide()
+        name = getattr(item, "name", "") or getattr(item, "display_name", "")
+        self._set_status(f"Loading {name}…" if name else "Loading stream…")
+        self._grid.set_loading_item(item)  # pulse the Play button while opening
         self._player.play(item)
 
     # -- local file playback (generic player) --------------------------------
@@ -2536,6 +3387,16 @@ class IPTVTab(QWidget):
         self._set_status(f"Playing {name}")
 
     # -- settings hook (wired by MainWindow) ---------------------------------
+    @property
+    def manager(self) -> IPTVManager:
+        """The live IPTVManager — settings pages use it for cache stats/clear."""
+        return self._manager
+
+    def reset_artwork_state(self) -> None:
+        """An external cache clear wiped artwork/metadata: drop in-memory
+        memos so tiles re-resolve instead of showing dead pixmaps."""
+        self._grid.reset_artwork_state()
+
     def set_settings_callback(self, cb) -> None:
         self._settings_btn.clicked.connect(cb)
 
@@ -2549,8 +3410,12 @@ class IPTVTab(QWidget):
         self._manager.set_sources([_source_from_config(s) for s in config.iptv.sources])
         self._manager.set_tmdb_key(config.iptv.tmdb_api_key)
         self._manager.set_tpdb_key(config.iptv.tpdb_api_key)
+        self._manager.set_stashdb_key(config.iptv.stashdb_api_key)
+        self._manager.set_omdb_key(config.iptv.omdb_api_key)
+        self._manager.set_fanarttv_key(config.iptv.fanarttv_api_key)
         self._manager.cache_seconds = config.iptv.cache_seconds
         self._manager.hwdec = config.iptv.hwdec
+        self._manager.cache_limit_mb = config.iptv.cache_limit_mb
         # Apply buffer/hwdec changes to the running player immediately.
         self._player.apply_config()
         self._populate_source_dropdown()

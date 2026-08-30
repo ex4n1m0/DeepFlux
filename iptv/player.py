@@ -111,6 +111,16 @@ class PlayerBackend:
         raise NotImplementedError
     def set_overscan(self, pct: float) -> None:
         raise NotImplementedError
+    def set_audio_delay(self, seconds: float) -> None:
+        """Shift audio timing relative to video (seconds).
+
+        Positive values delay the audio (play it later), negative values play
+        it earlier. Used to compensate for video-path latency such as SVP 4
+        motion interpolation, which renders frames behind the audio clock."""
+        pass
+    def audio_delay(self) -> float:
+        """Current audio delay in seconds (0.0 if unsupported/unknown)."""
+        return 0.0
     def set_interpolation(self, on: bool) -> None:
         pass
     def set_smooth_video(self, on: bool) -> None:
@@ -398,6 +408,24 @@ class MpvBackend(PlayerBackend):
         effect in smooth mode (see :meth:`set_smooth_video`)."""
         self._want_interpolation = bool(on)
         self._apply_sync()
+
+    def set_audio_delay(self, seconds: float) -> None:
+        # mpv's "audio-delay": positive = audio plays later. SVP's frame
+        # synthesis adds video-path latency, so a positive offset realigns
+        # the audio with the delayed frames.
+        if self._mpv is not None:
+            try:
+                self._mpv["audio-delay"] = float(seconds)
+            except Exception:
+                pass
+
+    def audio_delay(self) -> float:
+        if self._mpv is None:
+            return 0.0
+        try:
+            return float(self._mpv["audio-delay"] or 0.0)
+        except Exception:
+            return 0.0
 
     def set_smooth_video(self, on: bool) -> None:
         """Frame-perfect presentation vs mpv's default audio-clock sync.
@@ -793,6 +821,22 @@ class LibVLCBackend(PlayerBackend):
 
     def set_overscan(self, pct: float) -> None:
         pass
+
+    def set_audio_delay(self, seconds: float) -> None:
+        # libVLC: audio_set_delay takes microseconds; positive delays audio.
+        if self._player is not None:
+            try:
+                self._player.audio_set_delay(int(float(seconds) * 1_000_000))
+            except Exception:
+                pass
+
+    def audio_delay(self) -> float:
+        if self._player is None:
+            return 0.0
+        try:
+            return float(self._player.audio_get_delay()) / 1_000_000.0
+        except Exception:
+            return 0.0
 
     def set_interpolation(self, on: bool) -> None:
         pass

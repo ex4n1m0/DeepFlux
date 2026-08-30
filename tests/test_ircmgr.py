@@ -317,6 +317,90 @@ class TestIRCClientCore:
         assert rows[0]["topic"] == "busy place with codes"
         assert client.state.chanlist_ts("test") > 0
 
+    def test_auto_list_on_connect_channelless(self):
+        """A network with no configured channels auto-requests /LIST on connect
+        and the chanlist arrives without any manual command."""
+        server = FakeIRCServer()
+        port = server.start()
+        cfg = IRCConfig(buffer_lines=100, flood_delay=0.5)
+        net = IRCNetworkConfig(id="channellless", host="127.0.0.1", port=port,
+                               tls=False, nick="tester")  # no channels
+        client = IRCClientCore(cfg)
+        try:
+            client.connect_network(net)
+            assert _wait_for(lambda: client.status()["networks"][0]["connected"])
+            # The client should have auto-sent LIST — wait for the chanlist.
+            assert _wait_for(lambda: client.state.chanlist_of("channellless"))
+            rows = client.state.chanlist_of("channellless")
+            assert len(rows) == 2  # #big + #small from FakeIRCServer
+            # Auto-list retry should have stopped after listend.
+            rt = client._nets.get("channellless")
+            assert rt and not rt.get("auto_list_pending")
+        finally:
+            client.shutdown()
+            server.stop()
+
+    def test_no_auto_list_when_channels_configured(self):
+        """A network WITH configured channels joins them and does NOT auto-LIST."""
+        server = FakeIRCServer()
+        port = server.start()
+        cfg = IRCConfig(buffer_lines=100, flood_delay=0.5)
+        net = IRCNetworkConfig(id="withchans", host="127.0.0.1", port=port,
+                               tls=False, nick="tester", channels=["#test"])
+        client = IRCClientCore(cfg)
+        try:
+            client.connect_network(net)
+            assert _wait_for(lambda: client.status()["networks"][0]["connected"])
+            # Channel should be joined (nick list populated).
+            assert _wait_for(lambda: "tester" in client.state.nicks_of("withchans", "#test"))
+            # No auto-LIST — chanlist stays empty (give a moment to be sure).
+            time.sleep(0.5)
+            assert not client.state.chanlist_of("withchans")
+            rt = client._nets.get("withchans")
+            assert rt and not rt.get("auto_list_pending")
+        finally:
+            client.shutdown()
+            server.stop()
+
+    def test_multi_network_isolation(self):
+        """Two networks on one client must not cross-contaminate channels,
+        nicks, or messages. Regression test for the bug where the irc
+        library's reactor-global handlers fired every network's per-connection
+        handler for every event, so a JOIN on libera was also recorded under
+        iptorrents (both networks showed both channels)."""
+        s1, s2 = FakeIRCServer(), FakeIRCServer()
+        p1, p2 = s1.start(), s2.start()
+        cfg = IRCConfig(buffer_lines=100, flood_delay=0.5, reconnect_max_seconds=60)
+        n1 = IRCNetworkConfig(id="libera", host="127.0.0.1", port=p1, tls=False,
+                              nick="me", channels=["#DeepFlux"])
+        n2 = IRCNetworkConfig(id="iptorrents", host="127.0.0.1", port=p2, tls=False,
+                              nick="me", channels=["#iptorrents"])
+        client = IRCClientCore(cfg)
+        try:
+            client.connect_network(n1)
+            client.connect_network(n2)
+            assert _wait_for(lambda: [x["connected"] for x in client.status()["networks"]]
+                             == [True, True], timeout=10)
+            snap = {n["id"]: n for n in client.status()["networks"]}
+            # Each network only owns the channel it joined — no mirroring.
+            assert [c["name"] for c in snap["libera"]["channels"]] == ["#DeepFlux"]
+            assert [c["name"] for c in snap["iptorrents"]["channels"]] == ["#iptorrents"]
+            # A message pushed on one network must not appear in the other.
+            s1.send(":stranger!s@host PRIVMSG #DeepFlux :only on libera")
+            s2.send(":stranger!s@host PRIVMSG #iptorrents :only on iptorrents")
+            assert _wait_for(lambda: any("only on libera" in m["text"]
+                                         for m in client.get_messages("libera", "#DeepFlux", limit=10)))
+            assert _wait_for(lambda: any("only on iptorrents" in m["text"]
+                                         for m in client.get_messages("iptorrents", "#iptorrents", limit=10)))
+            lib_msgs = [m["text"] for m in client.get_messages("libera", "#DeepFlux", limit=10)]
+            ipt_msgs = [m["text"] for m in client.get_messages("iptorrents", "#iptorrents", limit=10)]
+            assert "only on libera" in lib_msgs and "only on iptorrents" not in lib_msgs
+            assert "only on iptorrents" in ipt_msgs and "only on libera" not in ipt_msgs
+        finally:
+            client.shutdown()
+            s1.stop()
+            s2.stop()
+
 
 # ---------------------------------------------------------------------------
 # agent tools (irc_*)

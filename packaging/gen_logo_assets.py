@@ -1,6 +1,6 @@
-"""Regenerate every logo-derived asset from the root DeepFlux3.png.
+"""Regenerate every logo-derived asset from the root DeepFlux4.png.
 
-Run from the repo root after updating DeepFlux3.png:
+Run from the repo root after updating DeepFlux4.png:
 
     python packaging/gen_logo_assets.py
 
@@ -10,9 +10,9 @@ Outputs:
   packaging/wizard_image.png         — Inno wizard left panel (164x314, black bg)
   packaging/wizard_small.png         — Inno wizard top-right (55x55, black bg)
   chrome_extension/icons/*.png       — browser extension icons (16/48/128)
-  website/deepflux/DeepFlux3.webp    — website logo (512px, keeps alpha)
+  website/deepflux/DeepFlux4.webp    — website logo (512px, keeps alpha)
 
-DeepFlux3.png has a black background baked in — it matches the installer's
+DeepFlux4.png has a black background baked in — it matches the installer's
 WizardBackColor (#000000) exactly, and wizard images are pasted onto black.
 Supersedes gen_wizard_images.py.
 """
@@ -20,7 +20,7 @@ from PIL import Image
 
 BG = (0, 0, 0)  # installer wizard pages are pure black (WizardBackColor)
 
-logo = Image.open("DeepFlux3.png").convert("RGBA")
+logo = Image.open("DeepFlux4.png").convert("RGBA")
 
 
 def resized(side: int) -> Image.Image:
@@ -57,5 +57,5 @@ print("wrote chrome_extension/icons/16.png, 48.png, 128.png")
 
 # --- Website logo (displayed at max 512px; keep transparency) ---
 # Version-stamped so a new release can't be served from a stale CDN cache.
-resized(512).save("website/deepflux/DeepFlux3.webp", format="WEBP", quality=90)
-print("wrote website/deepflux/DeepFlux3.webp")
+resized(512).save("website/deepflux/DeepFlux4.webp", format="WEBP", quality=90)
+print("wrote website/deepflux/DeepFlux4.webp")

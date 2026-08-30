@@ -59,13 +59,29 @@ class IPTVManager:
         hwdec: str = "auto-safe",
         tpdb_api_key: str = "",
         framegrab_posters: bool = True,
+        stashdb_api_key: str = "",
+        omdb_api_key: str = "",
+        fanarttv_api_key: str = "",
+        enable_javbus: bool = True,
+        enable_javlibrary: bool = True,
+        enable_fanza: bool = True,
+        enable_wikipedia: bool = True,
+        cache_limit_mb: int = 10240,
     ) -> None:
         self.sources: List[PlaylistSource] = list(sources)
         self.data_dir = data_dir or default_data_dir()
+        self.cache_limit_mb = cache_limit_mb
         self.cache = IPTVCache(self.data_dir)
         self.artwork = ArtworkCache(os.path.join(self.data_dir, "artwork"))
         self.metadata = MetadataPipeline(self.cache, tmdb_api_key=tmdb_api_key,
-                                         tpdb_api_key=tpdb_api_key)
+                                         tpdb_api_key=tpdb_api_key,
+                                         stashdb_api_key=stashdb_api_key,
+                                         omdb_api_key=omdb_api_key,
+                                         fanarttv_api_key=fanarttv_api_key,
+                                         enable_javbus=enable_javbus,
+                                         enable_javlibrary=enable_javlibrary,
+                                         enable_fanza=enable_fanza,
+                                         enable_wikipedia=enable_wikipedia)
         # Last-resort poster source when no provider matches (see framegrab.py).
         self.framegrab = FrameGrabber(self.artwork) if framegrab_posters else None
         self.epg = EPGManager(self.cache)
@@ -98,6 +114,15 @@ class IPTVManager:
 
     def set_tpdb_key(self, key: str) -> None:
         self.metadata.set_tpdb_key(key)
+
+    def set_stashdb_key(self, key: str) -> None:
+        self.metadata.set_stashdb_key(key)
+
+    def set_omdb_key(self, key: str) -> None:
+        self.metadata.set_omdb_key(key)
+
+    def set_fanarttv_key(self, key: str) -> None:
+        self.metadata.set_fanarttv_key(key)
 
     def active_source(self) -> Optional[PlaylistSource]:
         with self._lock:
@@ -367,6 +392,9 @@ class IPTVManager:
                         logger.exception("load failed for source %s", src.name)
                         if on_done:
                             on_done(False, Playlist(source_id=src.id))
+                # A finished sweep means a burst of fresh artwork on disk —
+                # the right moment to keep the cache inside its size cap.
+                self.enforce_cache_limit_async()
                 with self._lock:
                     if not self._reload_requested:
                         break
@@ -563,7 +591,13 @@ class IPTVManager:
             pl = self.current_playlist()
             sid = pl.source_id if pl else ""
         if sid:
-            self.cache.add_recent(sid, item.id, getattr(item, "section", SECTION_LIVE), item.name, getattr(item, "url", ""))
+            # Episode objects have no `id` or `section` — use getattr so
+            # local-folder series episodes don't crash the play path.
+            iid = getattr(item, "id", "") or getattr(item, "name", "")
+            self.cache.add_recent(sid, iid,
+                                  getattr(item, "section", SECTION_LIVE),
+                                  getattr(item, "name", ""),
+                                  getattr(item, "url", ""))
 
     def recent(self, source_id: Optional[str] = None) -> List[Dict[str, Any]]:
         if source_id:
@@ -572,6 +606,74 @@ class IPTVManager:
         if pl is None:
             return []
         return self.cache.recent(pl.source_id)
+
+    # -- cache maintenance ---------------------------------------------------
+    def cache_stats(self) -> Dict[str, Any]:
+        """On-disk footprint of the artwork cache + metadata database.
+
+        Walks ~25k files, so call it off the GUI thread."""
+        s: Dict[str, Any] = self.artwork.stats()
+        db_bytes = 0
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                db_bytes += os.path.getsize(self.cache.db_path + suffix)
+            except OSError:
+                pass
+        s["db_bytes"] = db_bytes
+        s["metadata_rows"] = self.cache.metadata_count()
+        s["total_bytes"] += db_bytes
+        return s
+
+    def clear_caches_async(
+        self, on_done: Optional[Callable[[Dict[str, Any]], None]] = None
+    ) -> threading.Thread:
+        """Wipe the artwork cache (files) + metadata table (SQLite), off-thread.
+
+        Playlists, EPG, favorites and watch history deliberately survive — the
+        clear is scoped to derived data that re-downloads on demand.
+        ``on_done(summary)`` runs on the worker thread; the caller marshals to
+        the GUI thread. In-flight downloads may re-add a file after the wipe —
+        harmless, it's just re-cached."""
+        def _work() -> None:
+            summary: Dict[str, Any] = {}
+            try:
+                art_files, art_bytes = self.artwork.clear()
+                meta_rows = self.cache.clear_metadata()
+                self.cache.vacuum()
+                if self.framegrab:
+                    self.framegrab.reset()
+                summary = {"artwork_files": art_files, "artwork_bytes": art_bytes,
+                           "metadata_rows": meta_rows}
+            except Exception:
+                logger.exception("cache clear failed")
+            if on_done:
+                try:
+                    on_done(summary)
+                except Exception:
+                    logger.exception("clear_caches on_done raised")
+
+        t = threading.Thread(target=_work, daemon=True)
+        t.start()
+        return t
+
+    def enforce_cache_limit_async(self) -> threading.Thread:
+        """Evict LRU artwork until the disk cache fits ``cache_limit_mb``.
+
+        Runs off-thread (a full stat() walk of the cache); a no-op when the
+        cache is already under the limit. Called once per load sweep and when
+        the settings dialog changes the limit."""
+        def _work() -> None:
+            try:
+                freed = self.artwork.enforce_size_limit(self.cache_limit_mb * 1024 * 1024)
+                if freed:
+                    logger.info("Artwork cache over %d MB — evicted %.1f MB (LRU)",
+                                self.cache_limit_mb, freed / 1e6)
+            except Exception:
+                logger.exception("artwork size-limit enforcement failed")
+
+        t = threading.Thread(target=_work, daemon=True)
+        t.start()
+        return t
 
     # -- metadata / artwork delegation --------------------------------------
     def resolve_metadata(self, section: str, name: str, year: str, on_done,
@@ -728,6 +830,7 @@ def _playlist_from_cache(source_id: str, data: Dict[str, Any]) -> Playlist:
     # Playlists cached before years were populated get them backfilled from
     # names here — no cache invalidation needed for the upgrade.
     classify.populate_years(pl)
+    _rebuild_categories(pl)
     return pl
 
 

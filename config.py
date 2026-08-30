@@ -142,6 +142,7 @@ class BrowserConfig:
     homepage: str = DEFAULT_BROWSER_HOMEPAGE  # empty migrates to the default on load
     bookmarks: List[Bookmark] = field(default_factory=list)
     adblock_enabled: bool = False  # Ad-block off by default
+    extension_enabled: bool = False  # Video grabber (browser extension JS injection) — off by default
 
 
 @dataclass
@@ -276,10 +277,28 @@ class IPTVConfig:
     """Configuration for the IPTV tab."""
     sources: List[IPTVSourceConfig] = field(default_factory=list)
     tmdb_api_key: str = ""  # user enters their own in IPTV Settings; empty = TVmaze/Wikipedia fallback
+    # OMDb — free key from omdbapi.com/apikey.aspx. Fallback when TMDb has
+    # no key or misses (older/obscure/non-English titles).
+    omdb_api_key: str = ""
+    # Fanart.tv — free personal key from fanart.tv/get-an-api-key. Backdrop
+    # supplement: enriches backdrops after TMDb/TVMaze resolve a poster.
+    fanarttv_api_key: str = ""
+    # Provider enable/disable flags. Default: all enabled. When a provider's
+    # key is empty, it's automatically skipped regardless of this flag. These
+    # flags let the user disable a provider even when a key is present (e.g.
+    # disable StashDB if its responses are too slow).
+    enable_javbus: bool = True
+    enable_javlibrary: bool = True
+    enable_fanza: bool = True
+    enable_wikipedia: bool = True
     # ThePornDB — metadata/posters for adult VOD, which TMDb filters out of
     # its search results entirely. Empty = adult entries just fall through to
     # TMDb (and usually stay artwork-less).
     tpdb_api_key: str = ""
+    # StashDB — community-driven adult metadata DB (GraphQL API). Second
+    # source for western adult VOD alongside TPDB; needs a free key from
+    # stashdb.org. Empty = adult chain uses TPDB only.
+    stashdb_api_key: str = ""
     # Last-resort poster: grab a frame from the stream with FFmpeg when no
     # metadata provider matched. Only ever runs for tiles on screen.
     framegrab_posters: bool = True
@@ -293,7 +312,10 @@ class IPTVConfig:
     preferred_audio_lang: str = ""
     preferred_sub_lang: str = ""
     cache_dir: str = ""             # empty = default (~/.deeptorrent/iptv)
-    cache_limit_mb: int = 500       # artwork/metadata disk cache cap
+    # Artwork disk cache cap, enforced by LRU eviction (ArtworkCache.
+    # enforce_size_limit). 10 GB default: posters are small and re-downloading
+    # evicted art is cheap, but a big playlist cache is worth keeping.
+    cache_limit_mb: int = 10240
     cache_seconds: int = 15         # network stream buffer (seconds)
     hwdec: str = "auto-safe"        # mpv hardware decoding mode
     interpolation: bool = True      # mpv smoothmotion frame blending (GPU cost)
@@ -319,6 +341,11 @@ class IPTVConfig:
     # Video overscan (% linear scale-up) — pushes dirty broadcast edge
     # rows/columns off-screen so they don't show as a faint bright line.
     overscan_pct: float = 0.5
+    # Audio sync offset in seconds (audio-delay). Positive delays the audio
+    # to compensate for video-path latency such as SVP 4 motion interpolation,
+    # whose frame synthesis renders behind the audio clock. Adjusted live from
+    # the player's audio menu / +/- keys and persisted for the next playback.
+    audio_delay: float = 0.0
     # Movies/Series sidebar grouping: "year" (release year under each
     # category, yearless entries under "Others") or "category" (flat
     # provider groups).
@@ -343,7 +370,6 @@ class IRCNetworkConfig:
     sasl_account: str = ""           # optional SASL PLAIN auth
     sasl_password: str = ""
     channels: List[str] = field(default_factory=list)
-    auto_connect: bool = False
 
 
 @dataclass
@@ -356,8 +382,12 @@ class IRCConfig:
 
 
 # Built-in default IRC networks — merged into user configs by `from_file`
-# (match by `id`, Jackett-style). New users get Libera auto-connect + #DeepFlux
-# without having to configure anything.
+# (match by `id`, Jackett-style). A curated set of popular public networks plus
+# private-tracker support networks so the user can connect with one click from
+# the IRC tab. All start disconnected (the user connects manually). Public
+# networks have no pre-joined channels — on connect the client auto-requests
+# /LIST (retried every 10s until it arrives) so the user can browse channels.
+# The private-tracker networks pre-join their support/disabled channels.
 DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
     IRCNetworkConfig(
         id="libera",
@@ -365,8 +395,159 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
         port=6697,
         tls=True,
         nick="DeepFluxUser",
-        channels=["#DeepFlux"],
-        auto_connect=True,
+    ),
+    IRCNetworkConfig(
+        id="oftc",
+        host="irc.oftc.net",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+    ),
+    IRCNetworkConfig(
+        id="rizon",
+        host="irc.rizon.net",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+    ),
+    IRCNetworkConfig(
+        id="dalnet",
+        host="irc.dal.net",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+    ),
+    IRCNetworkConfig(
+        id="undernet",
+        host="irc.undernet.org",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+    ),
+    IRCNetworkConfig(
+        id="efnet",
+        host="efnet.deic.eu",
+        port=6667,
+        tls=False,
+        nick="DeepFluxUser",
+    ),
+    IRCNetworkConfig(
+        id="quakenet",
+        host="irc.quakenet.org",
+        port=6667,
+        tls=False,
+        nick="DeepFluxUser",
+    ),
+    IRCNetworkConfig(
+        id="ircnet",
+        host="open.ircnet.net",
+        port=6667,
+        tls=False,
+        nick="DeepFluxUser",
+    ),
+    IRCNetworkConfig(
+        id="geekshed",
+        host="irc.geekshed.net",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+    ),
+    # --- Private-tracker support networks (TLS) ---
+    IRCNetworkConfig(
+        id="animebytes",
+        host="irc.animebytes.tv",
+        port=7000,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#support"],
+    ),
+    IRCNetworkConfig(
+        id="p2p-network",
+        host="irc.p2p-network.net",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#bibliotik-help", "#BitSpyder"],
+    ),
+    IRCNetworkConfig(
+        id="digitalirc",
+        host="irc.digitalirc.org",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#empornium-help"],
+    ),
+    IRCNetworkConfig(
+        id="gazellegames",
+        host="irc.gazellegames.net",
+        port=7000,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#GGn-Help"],
+    ),
+    IRCNetworkConfig(
+        id="synirc",
+        host="irc.synirc.net",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#jpopsuki-support"],
+    ),
+    IRCNetworkConfig(
+        id="brokensphere",
+        host="irc.brokensphere.net",
+        port=6697,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#KG-Help"],
+    ),
+    IRCNetworkConfig(
+        id="morethantv",
+        host="irc.morethan.tv",
+        port=6669,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#help", "#morethan.tv-disabled"],
+    ),
+    IRCNetworkConfig(
+        id="orpheus",
+        host="irc.orpheus.network",
+        port=7000,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#help", "#disabled"],
+    ),
+    IRCNetworkConfig(
+        id="passthepopcorn",
+        host="irc.passthepopcorn.me",
+        port=7000,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#ptp-help", "#ptp-disabled"],
+    ),
+    IRCNetworkConfig(
+        id="scratch-network",
+        host="irc.scratch-network.net",
+        port=7000,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#red-help", "#red-disabled"],
+    ),
+    IRCNetworkConfig(
+        id="torrentleech",
+        host="irc.torrentleech.org",
+        port=7021,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#tlhelp"],
+    ),
+    IRCNetworkConfig(
+        id="iptorrents",
+        host="irc.iptorrents.com",
+        port=7000,
+        tls=True,
+        nick="DeepFluxUser",
+        channels=["#iptorrents"],
     ),
 ]
 
@@ -439,6 +620,12 @@ class DeeptorrentConfig:
             data.setdefault("iptv", {})["opensubtitles_api_key"] = os.environ["OPENSUBTITLES_API_KEY"]
         if not data.get("iptv", {}).get("tpdb_api_key") and os.environ.get("TPDB_API_KEY"):
             data.setdefault("iptv", {})["tpdb_api_key"] = os.environ["TPDB_API_KEY"]
+        if not data.get("iptv", {}).get("stashdb_api_key") and os.environ.get("STASHDB_API_KEY"):
+            data.setdefault("iptv", {})["stashdb_api_key"] = os.environ["STASHDB_API_KEY"]
+        if not data.get("iptv", {}).get("omdb_api_key") and os.environ.get("OMDB_API_KEY"):
+            data.setdefault("iptv", {})["omdb_api_key"] = os.environ["OMDB_API_KEY"]
+        if not data.get("iptv", {}).get("fanarttv_api_key") and os.environ.get("FANARTTV_API_KEY"):
+            data.setdefault("iptv", {})["fanarttv_api_key"] = os.environ["FANARTTV_API_KEY"]
 
         # No built-in API keys: anything still empty here stays empty. The
         # GUI/CLI notice the missing LLM key and run the agent in offline
@@ -507,16 +694,19 @@ class DeeptorrentConfig:
             merged_irc_nets = list(DEFAULT_IRC_NETWORKS)
 
         # Migration: the merge above never touches existing ids, so entries
-        # created by the old test-era default keep "#deepflux-test" +
-        # auto_connect=False forever. Upgrade those in place: swap the test
-        # channel for #DeepFlux and turn auto-connect on. Entries the user
-        # actually customized (no test channel) are left untouched.
+        # created by the old test-era default keep "#deepflux-test" forever.
+        # Upgrade those in place: just drop the test channel (we no longer
+        # auto-join #DeepFlux — channelless networks auto-request /LIST instead).
         for n in merged_irc_nets:
             if any(c.lower() == "#deepflux-test" for c in n.channels):
                 n.channels = [c for c in n.channels if c.lower() != "#deepflux-test"]
-                if not any(c.lower() == "#deepflux" for c in n.channels):
-                    n.channels.append("#DeepFlux")
-                n.auto_connect = True
+
+        # Migration: #DeepFlux is no longer auto-joined anywhere (the IRC tab
+        # now auto-requests /LIST for networks without configured channels).
+        # Strip #DeepFlux from every network where it was the shipped default;
+        # user-added channels (private-tracker support channels, etc.) survive.
+        for n in merged_irc_nets:
+            n.channels = [c for c in n.channels if c.lower() != "#deepflux"]
 
         # Drop stale keys from older configs (e.g. the removed `local_only`)
         # so LLMConfig(**...) never fails on an unknown field.
@@ -533,6 +723,13 @@ class DeeptorrentConfig:
         if llm_clean.get("provider") == "openrouter" and llm_clean.get("fast_model") in LLM_PROVIDER_PRESETS["deepseek"]["models"]:
             llm_clean["fast_model"] = ""
 
+        # Migration: the artwork cache cap was 500 MB and never enforced; the
+        # default is now 10 GB (actually enforced via LRU eviction). Configs
+        # still carrying the old default move up with it.
+        iptv_cache_limit = data.get("iptv", {}).get("cache_limit_mb", 10240)
+        if iptv_cache_limit == 500:
+            iptv_cache_limit = 10240
+
         return cls(
             llm=LLMConfig(**llm_clean),
             indexer=IndexerConfig(**data.get("indexer", {})),
@@ -548,6 +745,7 @@ class DeeptorrentConfig:
                 homepage=(data.get("browser", {}).get("homepage") or "").strip() or DEFAULT_BROWSER_HOMEPAGE,
                 bookmarks=[Bookmark(**b) for b in data.get("browser", {}).get("bookmarks", [])],
                 adblock_enabled=data.get("browser", {}).get("adblock_enabled", False),
+                extension_enabled=data.get("browser", {}).get("extension_enabled", False),
             ),
             download=DownloadConfig(
                 max_concurrent=data.get("download", {}).get("max_concurrent", 3),
@@ -569,6 +767,13 @@ class DeeptorrentConfig:
                          for s in data.get("iptv", {}).get("sources", [])],
                 tmdb_api_key=data.get("iptv", {}).get("tmdb_api_key", ""),
                 tpdb_api_key=data.get("iptv", {}).get("tpdb_api_key", ""),
+                stashdb_api_key=data.get("iptv", {}).get("stashdb_api_key", ""),
+                omdb_api_key=data.get("iptv", {}).get("omdb_api_key", ""),
+                fanarttv_api_key=data.get("iptv", {}).get("fanarttv_api_key", ""),
+                enable_javbus=bool(data.get("iptv", {}).get("enable_javbus", True)),
+                enable_javlibrary=bool(data.get("iptv", {}).get("enable_javlibrary", True)),
+                enable_fanza=bool(data.get("iptv", {}).get("enable_fanza", True)),
+                enable_wikipedia=bool(data.get("iptv", {}).get("enable_wikipedia", True)),
                 framegrab_posters=bool(data.get("iptv", {}).get("framegrab_posters", True)),
                 opensubtitles_api_key=data.get("iptv", {}).get("opensubtitles_api_key", ""),
                 opensubtitles_username=data.get("iptv", {}).get("opensubtitles_username", ""),
@@ -576,7 +781,7 @@ class DeeptorrentConfig:
                 preferred_audio_lang=data.get("iptv", {}).get("preferred_audio_lang", ""),
                 preferred_sub_lang=data.get("iptv", {}).get("preferred_sub_lang", ""),
                 cache_dir=data.get("iptv", {}).get("cache_dir", ""),
-                cache_limit_mb=data.get("iptv", {}).get("cache_limit_mb", 500),
+                cache_limit_mb=iptv_cache_limit,
                 cache_seconds=data.get("iptv", {}).get("cache_seconds", 15),
                 hwdec=data.get("iptv", {}).get("hwdec", "auto-safe"),
                 interpolation=bool(data.get("iptv", {}).get("interpolation", True)),
@@ -592,6 +797,7 @@ class DeeptorrentConfig:
                 volume=int(data.get("iptv", {}).get("volume", 100)),
                 muted=bool(data.get("iptv", {}).get("muted", False)),
                 overscan_pct=float(data.get("iptv", {}).get("overscan_pct", 0.5)),
+                audio_delay=float(data.get("iptv", {}).get("audio_delay", 0.0)),
                 vod_group_mode=data.get("iptv", {}).get("vod_group_mode", "year"),
             ),
             irc=IRCConfig(

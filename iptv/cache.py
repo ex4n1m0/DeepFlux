@@ -159,6 +159,27 @@ class IPTVCache:
         except Exception:
             return None
 
+    def metadata_count(self) -> int:
+        row = self._conn().execute("SELECT COUNT(*) AS n FROM metadata").fetchone()
+        return int(row["n"]) if row else 0
+
+    def clear_metadata(self) -> int:
+        """Delete every metadata row (lookups AND negative-cache entries).
+
+        Scoped to the metadata table only — playlists, EPG, favorites and
+        watch history are user data and survive a cache clear."""
+        cur = self._conn().execute("DELETE FROM metadata")
+        self._conn().commit()
+        return cur.rowcount
+
+    def vacuum(self) -> None:
+        """Reclaim freed pages. Big deletes (clear_metadata) otherwise leave
+        the .sqlite3 file at its high-water mark forever."""
+        try:
+            self._conn().execute("VACUUM")
+        except sqlite3.Error as exc:
+            logger.debug("VACUUM failed: %s", exc)
+
     # -- EPG -----------------------------------------------------------------
     def save_epg(self, url: str, programs: List[Dict[str, Any]]) -> None:
         conn = self._conn()

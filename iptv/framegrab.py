@@ -233,5 +233,11 @@ class FrameGrabber:
 
         self._executor.submit(_work)
 
+    def reset(self) -> None:
+        """Forget recorded failures — called when the artwork cache is cleared
+        so previously-failing streams get one fresh attempt."""
+        with self._lock:
+            self._failed.clear()
+
     def shutdown(self) -> None:
         self._executor.shutdown()

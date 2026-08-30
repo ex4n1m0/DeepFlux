@@ -135,6 +135,30 @@ def test_in_process_mpv_buffer_status_maps_properties():
     assert st["time_pos"] == 3.0
 
 
+def test_in_process_mpv_set_audio_delay_writes_property():
+    """SVP-style video latency is compensated via mpv's audio-delay option."""
+    be = MpvBackend(None)
+    sets = {}
+
+    class _Mpv:
+        def __setitem__(self, key, value):
+            sets[key] = value
+
+    be._mpv = _Mpv()
+    be.set_audio_delay(0.25)
+    assert sets == {"audio-delay": 0.25}
+
+
+def test_in_process_mpv_audio_delay_reads_back():
+    be = MpvBackend(None)
+    be._mpv = {"audio-delay": -0.1}
+    assert be.audio_delay() == -0.1
+
+
+def test_in_process_mpv_audio_delay_none_when_uninit():
+    assert MpvBackend(None).audio_delay() == 0.0
+
+
 # -- out-of-process backend (SVP path) -----------------------------------------
 
 def _wired_backend():
@@ -201,6 +225,26 @@ def test_process_backend_mpv_interpolation_is_noop():
     be.set_interpolation(True)
     be.set_smooth_video(True)
     assert be._pipe.write.call_count == 0
+
+
+def test_process_backend_set_audio_delay_sends_ipc():
+    """The SVP (out-of-process) backend must forward audio-delay over IPC."""
+    be = _wired_backend()
+    be.set_audio_delay(0.35)
+    sent = [json.loads(c.args[0].decode()) for c in be._pipe.write.call_args_list]
+    assert {"command": ["set_property", "audio-delay", 0.35]} in sent
+
+
+def test_process_backend_audio_delay_reads_back():
+    be = _wired_backend()
+    be._get = lambda name: 0.42 if name == "audio-delay" else None
+    assert be.audio_delay() == 0.42
+
+
+def test_process_backend_audio_delay_handles_missing():
+    be = _wired_backend()
+    be._get = lambda name: None
+    assert be.audio_delay() == 0.0
 
 
 def test_process_backend_observes_duration():

@@ -105,8 +105,6 @@ class NetworkDialog(QDialog):
         self.sasl_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.channels_edit = QLineEdit(", ".join(net.channels) if net else "")
         self.channels_edit.setPlaceholderText("#channel1, #channel2")
-        self.auto_check = QCheckBox("Connect on startup")
-        self.auto_check.setChecked(net.auto_connect if net else False)
 
         form.addRow("Server", self.host_edit)
         form.addRow("Port", self.port_edit)
@@ -117,7 +115,6 @@ class NetworkDialog(QDialog):
         form.addRow("SASL account", self.sasl_account_edit)
         form.addRow("SASL password", self.sasl_password_edit)
         form.addRow("Channels", self.channels_edit)
-        form.addRow("", self.auto_check)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
                                    | QDialogButtonBox.StandardButton.Cancel)
@@ -151,7 +148,6 @@ class NetworkDialog(QDialog):
         net.sasl_account = self.sasl_account_edit.text().strip()
         net.sasl_password = self.sasl_password_edit.text()
         net.channels = channels
-        net.auto_connect = self.auto_check.isChecked()
         return net
 
 
@@ -175,10 +171,9 @@ class IRCTab(QWidget):
 
         self._build_ui()
         self._reload_network_combo()
+        # Start disconnected — the user connects manually from the toolbar.
         for net in self._config.irc.networks:
             self._add_network_tree_item(net.id, net.host)
-            if net.auto_connect:
-                self._client.connect_network(net)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -580,7 +575,7 @@ class IRCTab(QWidget):
             if etype in ("join", "part", "kick", "quit") and self._current == (net_id, channel):
                 self._refresh_nicks(net_id, channel)
             # First time we land in a channel, focus it so the user opens the
-            # tab on #DeepFlux instead of the bare server window. Once the
+            # tab on the channel instead of the bare server window. Once the
             # user clicks the tree themselves, we never steal focus again.
             if etype == "join" and event.get("own") and not self._user_picked:
                 item = self._channel_item(net_id, channel)
@@ -625,6 +620,17 @@ class IRCTab(QWidget):
                      "connecting": "connecting…", "disconnected": "offline",
                      "error": f"error: {event.get('detail', '')}"}.get(state, state)
             self.status_label.setText(label)
+        if state == "connected":
+            # Channelless networks auto-request /LIST on connect — auto-select
+            # the server node so the channel list is visible when it arrives.
+            # Once the user clicks the tree themselves, we never steal focus.
+            net = self._find_net_cfg(net_id)
+            if net and not net.channels and not self._user_picked:
+                item = self._network_item(net_id)
+                if item:
+                    self._auto_selecting = True
+                    self.tree.setCurrentItem(item)
+                    self._auto_selecting = False
         if state in ("disconnected", "error"):
             self._append_line(net_id, None, "server", "",
                               event.get("detail") or state)

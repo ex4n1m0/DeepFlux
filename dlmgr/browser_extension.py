@@ -1047,16 +1047,19 @@ def get_extension_js() -> str:
     return BROWSER_EXTENSION_JS
 
 
-def inject_into_profile(profile, script_name: str = "deeptorrent_extension") -> None:
+def inject_into_profile(profile, script_name: str = "deeptorrent_extension"):
     """Inject the extension script into a QWebEngineProfile.
 
-    The script runs on every page load at document idle, providing
-    video detection and download overlay functionality — always on,
-    no installation required.
+    The script runs on every page load at document ready, providing
+    video detection and download overlay functionality.
 
     Args:
         profile: A QWebEngineProfile instance.
         script_name: Unique name for the script (for management).
+
+    Returns:
+        The QWebEngineScript (so the caller can remove/re-insert it for
+        toggling the extension on/off at runtime).
     """
     from PySide6.QtWebEngineCore import QWebEngineScript
 
@@ -1068,4 +1071,5 @@ def inject_into_profile(profile, script_name: str = "deeptorrent_extension") -> 
     script.setRunsOnSubFrames(True)
 
     profile.scripts().insert(script)
-    logger.info("DeepFlux browser extension injected into profile (always on)")
+    logger.info("DeepFlux browser extension injected into profile")
+    return script

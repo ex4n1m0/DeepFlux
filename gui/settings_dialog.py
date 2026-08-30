@@ -398,6 +398,14 @@ class BrowserSettingsDialog(QDialog):
         adblock_hint.setWordWrap(True)
         browser_layout.addRow("", adblock_hint)
 
+        self.browser_extension_check = QCheckBox("Enable video grabber (detects downloadable videos on web pages)")
+        browser_layout.addRow("", self.browser_extension_check)
+
+        extension_hint = QLabel("When enabled, a script scans every page for downloadable videos (<video>, HLS, DASH, YouTube, etc.) and shows a status badge. Its monitoring can cause flashing during video playback — turn off if you experience that. Off by default. You can also toggle this from the toolbar button next to AdBlock.")
+        extension_hint.setObjectName("hint")
+        extension_hint.setWordWrap(True)
+        browser_layout.addRow("", extension_hint)
+
         self.import_bookmarks_btn = QPushButton("Import Bookmarks from Other Browsers...")
         self.import_bookmarks_btn.setObjectName("btn_secondary")
         self.import_bookmarks_btn.clicked.connect(self._on_import_bookmarks)
@@ -413,10 +421,12 @@ class BrowserSettingsDialog(QDialog):
     def _load_values(self) -> None:
         self.browser_homepage.setText(self.config.browser.homepage)
         self.browser_adblock_check.setChecked(self.config.browser.adblock_enabled)
+        self.browser_extension_check.setChecked(self.config.browser.extension_enabled)
 
     def _save_and_accept(self) -> None:
         self.config.browser.homepage = self.browser_homepage.text().strip()
         self.config.browser.adblock_enabled = self.browser_adblock_check.isChecked()
+        self.config.browser.extension_enabled = self.browser_extension_check.isChecked()
         self.accept()
 
     def _on_import_bookmarks(self) -> None:
@@ -541,6 +551,30 @@ class APIKeysDialog(QDialog):
             "fallback for series."))
         layout.addWidget(tmdb_group)
 
+        # --- OMDb ---
+        omdb_group = QGroupBox("OMDb (Movie/Series Fallback)")
+        fl = QFormLayout(omdb_group)
+        self.omdb_key = QLineEdit()
+        self.omdb_key.setEchoMode(QLineEdit.Password)
+        self.omdb_key.setPlaceholderText("Free key from omdbapi.com/apikey.aspx (optional)")
+        fl.addRow("API Key:", self.omdb_key)
+        fl.addRow("", _api_hint(
+            "Optional — free key from omdbapi.com. Fallback when TMDb "
+            "misses or has no key; covers older/obscure titles."))
+        layout.addWidget(omdb_group)
+
+        # --- Fanart.tv ---
+        fanart_group = QGroupBox("Fanart.tv (Backdrop Supplement)")
+        fl = QFormLayout(fanart_group)
+        self.fanarttv_key = QLineEdit()
+        self.fanarttv_key.setEchoMode(QLineEdit.Password)
+        self.fanarttv_key.setPlaceholderText("Free key from fanart.tv (optional)")
+        fl.addRow("API Key:", self.fanarttv_key)
+        fl.addRow("", _api_hint(
+            "Optional — free personal key from fanart.tv/get-an-api-key. "
+            "Enriches backdrops with community fan art after a poster is found."))
+        layout.addWidget(fanart_group)
+
         # --- ThePornDB ---
         tpdb_group = QGroupBox("ThePornDB (Adult VOD Metadata & Artwork)")
         fl = QFormLayout(tpdb_group)
@@ -553,6 +587,19 @@ class APIKeysDialog(QDialog):
             "so adult VOD entries stay artwork-less without this. Only used "
             "for entries whose group-title marks them as adult."))
         layout.addWidget(tpdb_group)
+
+        # --- StashDB ---
+        stash_group = QGroupBox("StashDB (Adult VOD — Second Source)")
+        fl = QFormLayout(stash_group)
+        self.stashdb_key = QLineEdit()
+        self.stashdb_key.setEchoMode(QLineEdit.Password)
+        self.stashdb_key.setPlaceholderText("API key from stashdb.org (optional)")
+        fl.addRow("API Key:", self.stashdb_key)
+        fl.addRow("", _api_hint(
+            "Optional — community-driven adult metadata DB. Complements "
+            "ThePornDB for western web scenes; tried when TPDB misses. "
+            "Register at stashdb.org for a free key."))
+        layout.addWidget(stash_group)
 
         # --- OpenSubtitles ---
         ost_group = QGroupBox("OpenSubtitles (Subtitle Downloads)")
@@ -700,7 +747,10 @@ class APIKeysDialog(QDialog):
         self.brave_key.setText(self.config.web_search.brave_api_key)
         self.pplx_key.setText(self.config.web_search.api_key)
         self.tmdb_key.setText(self.config.iptv.tmdb_api_key)
+        self.omdb_key.setText(self.config.iptv.omdb_api_key)
+        self.fanarttv_key.setText(self.config.iptv.fanarttv_api_key)
         self.tpdb_key.setText(self.config.iptv.tpdb_api_key)
+        self.stashdb_key.setText(self.config.iptv.stashdb_api_key)
         self.ost_key.setText(self.config.iptv.opensubtitles_api_key)
         self.ost_user.setText(self.config.iptv.opensubtitles_username)
         self.ost_pass.setText(self.config.iptv.opensubtitles_password)
@@ -713,7 +763,10 @@ class APIKeysDialog(QDialog):
         self.config.web_search.brave_api_key = self.brave_key.text().strip()
         self.config.web_search.api_key = self.pplx_key.text().strip()
         self.config.iptv.tmdb_api_key = self.tmdb_key.text().strip()
+        self.config.iptv.omdb_api_key = self.omdb_key.text().strip()
+        self.config.iptv.fanarttv_api_key = self.fanarttv_key.text().strip()
         self.config.iptv.tpdb_api_key = self.tpdb_key.text().strip()
+        self.config.iptv.stashdb_api_key = self.stashdb_key.text().strip()
         self.config.iptv.opensubtitles_api_key = self.ost_key.text().strip()
         self.config.iptv.opensubtitles_username = self.ost_user.text().strip()
         self.config.iptv.opensubtitles_password = self.ost_pass.text()

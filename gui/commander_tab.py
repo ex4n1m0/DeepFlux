@@ -248,9 +248,11 @@ class CommanderTab(QWidget):
         layout.setSpacing(4)
 
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
-        left_start = config.default_save_path if os.path.isdir(config.default_save_path) else str(Path.home())
-        self.left_pane = FilePane(left_start)
-        self.right_pane = FilePane(str(Path.home()))
+        root = self._fs_root()
+        # Left pane opens at the default save path so the user lands on their
+        # downloads; right pane starts at the filesystem root.
+        self.left_pane = FilePane(self._config.default_save_path or root)
+        self.right_pane = FilePane(root)
         self.splitter.addWidget(self.left_pane)
         self.splitter.addWidget(self.right_pane)
         self.splitter.setStretchFactor(0, 1)
@@ -302,6 +304,14 @@ class CommanderTab(QWidget):
         self.op_finished.connect(self._on_op_finished)
 
     # -- pane coordination -----------------------------------------------------
+    @staticmethod
+    def _fs_root() -> str:
+        """Filesystem root: system drive root on Windows, '/' elsewhere."""
+        if sys.platform == "win32":
+            drive = os.path.splitdrive(str(Path.home()))[0]
+            return (drive + os.sep) if drive else "C:\\"
+        return os.sep
+
     def _set_active(self, pane: FilePane) -> None:
         self._active = pane
         self.left_pane.set_active(pane is self.left_pane)

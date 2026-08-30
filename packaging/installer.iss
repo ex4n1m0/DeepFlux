@@ -3,7 +3,7 @@
 ; Then open this script in Inno Setup and Compile.
 
 #define MyAppName "DeepFlux"
-#define MyAppVersion "3.0.6"
+#define MyAppVersion "3.2.7"
 #define MyAppPublisher "DeepFlux"
 #define MyAppExeName "DeepFlux.exe"
 ; PyInstaller onedir output, relative to this script (packaging/..\dist).
@@ -18,11 +18,11 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir={#BuildDir}
-OutputBaseFilename=DeepFlux3.0.6Setup
+OutputBaseFilename=DeepFlux3.2.7Setup
 SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
-; Pure black theme — DeepFlux3.png has a black background, so the
+; Pure black theme — DeepFlux4.png has a black background, so the
 ; wizard pages match it exactly and the logo blends in seamlessly.
 WizardStyle=modern dark polar hidebevels
 WizardBackColor=#000000
@@ -148,7 +148,7 @@ begin
     '    "sources": [],' + #13#10 +
     '    "tmdb_api_key": "",' + #13#10 +
     '    "cache_dir": "",' + #13#10 +
-    '    "cache_limit_mb": 500,' + #13#10 +
+    '    "cache_limit_mb": 10240,' + #13#10 +
     '    "cache_seconds": 8,' + #13#10 +
     '    "hwdec": "auto-safe",' + #13#10 +
     '    "preferred_player": "mpv",' + #13#10 +

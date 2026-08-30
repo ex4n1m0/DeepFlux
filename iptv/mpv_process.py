@@ -363,6 +363,18 @@ class MpvProcessBackend(PlayerBackend):
         import math
         self._set("video-zoom", math.log2(1 + max(0.0, pct) / 100.0))
 
+    def set_audio_delay(self, seconds: float) -> None:
+        # Same mpv property as the in-process backend; SVP's frame synthesis
+        # is exactly the video-path latency this is meant to compensate for.
+        self._set("audio-delay", float(seconds))
+
+    def audio_delay(self) -> float:
+        val = self._get("audio-delay")
+        try:
+            return float(val or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+
     def set_interpolation(self, on: bool) -> None:
         # No-op by design: SVP is doing real frame synthesis here, so mpv's
         # own blending would only add cost (and fight SVP's cadence).

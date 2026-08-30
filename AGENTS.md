@@ -29,7 +29,7 @@
   frozen build), irc (codes.txt).
 - Installer: `"$LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging/installer.iss`
   (Inno 7.0.2 also installed at `C:\Program Files\Inno Setup 7\`). Reads
-  `dist/DeepFlux/*` and writes `dist/DeepFlux3.0.6Setup.exe` — `BuildDir` in
+  `dist/DeepFlux/*` and writes `dist/DeepFlux<version>Setup.exe` — `BuildDir` in
   installer.iss is relative to the script. The old `Documents\DeePFlux`
   output folder is no longer used.
 - Logo: every derived asset (icon.ico, logo_48, wizard images, extension
@@ -294,6 +294,15 @@
   source's native 24 fps cadence — true motion interpolation (SVP /
   VapourSynth MVTools / ffmpeg `minterpolate`) is not bundled (1080p→120 is
   far from realtime on CPU).
+- Audio sync offset (`PlayerBackend.set_audio_delay`/`audio_delay`,
+  `iptv.audio_delay` config, default 0.0s): SVP's frame synthesis adds
+  video-path latency, so the audio runs AHEAD of the picture. A positive
+  `audio-delay` (mpv property / VLC `audio_set_delay` microseconds) shifts
+  the audio later to realign it. Adjusted live from the 🎧 audio menu's
+  "Audio sync" submenu (presets ±0.1..0.5s, ±0.05s nudge, reset) or the
+  `+`/`-` keys (0.05s steps, clamped to ±1s, tooltip OSD), persisted to
+  config and re-applied on every playback + `apply_config`. Works on all
+  three backends (in-process mpv, out-of-process SVP mpv, VLC).
 - Channel logos (grey-tile bugs live here): `iptv/artwork.py` fetches through
   a per-thread `requests.Session` — logo CDNs (logo.m3uassets.com) reset
   connections when each image opens a fresh one (measured 45% loss at 6
@@ -464,6 +473,59 @@
   slow ON PURPOSE (rate limited); `ContentGrid.sweep_progress` drives the
   "Finding artwork n/N" bar in the status row so that's visible — prefer
   showing progress over adding pressure to the API limits.
+- Artwork cache maintenance (2026-08: the cache had silently grown to 2.6 GB
+  against a dead 500 MB setting — `cache_limit_mb` was never read anywhere):
+  * Thumbnails are lossy WebP q85 (`<sha1>_300x450.webp`, ~5-10x smaller than
+    the old PNGs, keeps alpha for logos); legacy `.png` thumbs stay readable
+    via `_legacy_thumb_path`/`_thumb_candidates`. Qt + Pillow both do WebP.
+  * `ArtworkCache._touch` bumps atime on every cache hit — Windows disables
+    NTFS last-access updates by default, and `enforce_size_limit` is LRU by
+    max(atime, mtime), evicting full+thumbs(+.meta) as one URL-keyed group.
+    Never drop the touch or eviction degrades to oldest-first FIFO.
+  * `cache_limit_mb` (default 10240 = 10 GB; a saved 500 migrates up in
+    `from_file`) is enforced by `IPTVManager.enforce_cache_limit_async()`
+    after every load sweep and when the Metadata & Cache page is saved.
+  * Play → Metadata & Cache shows live disk usage (`cache_stats`, computed
+    off-thread) and "Delete All Cached Artwork & Metadata" → confirm →
+    `IPTVManager.clear_caches_async`: artwork files + the metadata table
+    (incl. negative rows — the sanctioned way to purge them after a lookup
+    fix) + VACUUM + `FrameGrabber.reset()`. Playlists/EPG/favorites/recent
+    deliberately survive (user data / instant startup). The dialog emits
+    `cache_cleared` → `ContentGrid.reset_artwork_state()` drops ALL in-memory
+    memos (`_pixmaps`, `_failed_urls`, `_logo_tried`, `_logo_pending`…) and
+    restarts the sweep — skip that and the grid serves dead pixmaps forever.
+- Wikipedia provider (last-resort poster): `/api/rest_v1/page/summary/{key}`
+  returns the infobox image as structured `originalimage`/`thumbnail` (plus
+  `extract` as a free synopsis) — never regex page HTML again. Disambiguation
+  pages are rejected; candidates are ranked media-suffix-first
+  (`_MEDIA_TITLE_RE` — "(1984 film)" / "(TV series)") because Wikipedia's
+  primary topic is often not the film ("Dune" → the landform). The known year
+  goes IN the Wikipedia query ("Dune 1984" → "Dune (1984 film)" first) — the
+  exact OPPOSITE of TMDb, where a bare year in the query returns zero hits.
+  TMDb itself now prefers the result whose year matches the requested one
+  (remakes outrank the right film by popularity otherwise).
+- IPTV grid layout (gui/iptv_tab.py): posters are DYNAMIC, not fixed 240x320.
+  `ContentGrid._recompute_tile_size` fits the viewport — 3 rows always visible
+  (height-driven), columns fill the width exactly (visible count is a multiple
+  of 3: 3, 6, 9, 12… as the pane widens); posters shrink when the window
+  shrinks to keep the 3-row invariant (capped at 460px so huge windows don't
+  make giant tiles). It runs on show/resize (showEvent also defers one pass for
+  post-layout geometry). `PosterDelegate` (a QStyledItemDelegate) paints each
+  tile: poster aspect-kept, title wrapped, and two overlaid buttons at the top
+  — Select (filled accent #2a7abf when the tile is selected) and Play. Buttons
+  show while hovered or selected. Hit-testing is in `ContentGrid.mousePressEvent`
+  via `PosterDelegate.tile_layout`/`button_rects` (shared with paint so geometry
+  matches); Play emits `itemActivated`, Select emits `itemSelected`. The delegate
+  reads the icon size from `option.decorationSize` (NOT `option.iconSize` — that
+  attr doesn't exist on QStyleOptionViewItem in PySide6 and crashes sizeHint).
+- The metadata `DetailPanel` is NO LONGER in the content splitter under the grid
+  (that used to squeeze the other posters). It's now a separate zone: a child of
+  `PlayerWidget` floating over the `video_stack` (left ~40%, never covering the
+  control bar), positioned by `IPTVTab._layout_detail_overlay` on player resize
+  (eventFilter on `self._player`). It shows on selection and HIDES on play
+  (`_play_item` calls `self._detail.hide()`) so it never sits on active video;
+  fullscreen saves/restores its visibility. Series are the exception — Play on a
+  Series opens the overlay (episode list) instead of playing.
 - Three non-obvious perf constraints in that grid, each found by measuring;
   don't undo them:
   1. `ArtworkCache` runs `_MAX_WORKERS = 12`. Measured on real playlists:
@@ -521,7 +583,7 @@
   NOTE: python-mpv's `m["x"]` is an OPTION, `m.x` is a PROPERTY — a test
   reading `m["width"]` fails with "property does not exist".
 - OpenSubtitles (`iptv/opensubtitles.py`): REST v1 client
-  (api.opensubtitles.com/api/v1) — `Api-Key` + UA "DeepFlux v3.0.6" headers;
+  (api.opensubtitles.com/api/v1) — `Api-Key` + UA "DeepFlux v<version>" headers;
   hash search (classic size + 64KiB head/tail sum) first for local files,
   title query fallback; download is two-step (POST /download {file_id} →
   short-lived link → GET). 406 = daily quota (suggest account creds);
@@ -581,18 +643,37 @@
   VERSION/PING/TIME auto-answered; DCC offers surfaced as events, never
   auto-accepted. LIST replies (321/322/323) are collected into
   `state.chanlist` (sorted by users desc).
+- Multi-network routing: the jaraco `Reactor.add_global_handler` registers
+  handlers on the REACTOR, which fires them for EVERY connection's events —
+  so per-connection handlers baked with a fixed `net_id` cross-contaminate
+  networks (a JOIN on libera was also recorded under iptorrents, so both
+  networks showed both channels and messages mirrored). Fix:
+  `_install_handlers` registers ONE set of reactor-global handlers and
+  `_dispatch` resolves the owning `net_id` from a `ServerConnection -> net_id`
+  map (`_conn_to_net`, populated in `_do_connect` before `conn.connect()`).
+  Never go back to `conn.add_global_handler(partial(..., net_id, ...))`.
 - `ircmgr/state.py` — thread-safe `IRCState`: per-network nick lists, topics,
   and per-channel ring buffers (`irc.buffer_lines`, default 500) — this buffer
   is what the agent's `irc_*` tools read.
 - GUI: `IRCTab` gets events via a single queued Qt signal (`_IRCSignals.event`),
   like `_IPTVSignals`. Joined channels persist to config on shutdown
   (`IRCTab.shutdown` in `closeEvent`).
-- Defaults: `DEFAULT_IRC_NETWORKS` (config.py) = Libera + `#DeepFlux` with
-  `auto_connect=True`, merged into user configs by `id`. The merge never
-  touches existing ids, so `from_file` additionally migrates test-era entries
-  in place: any saved network still carrying `#deepflux-test` gets the test
-  channel swapped for `#DeepFlux` and `auto_connect` forced on; customized
-  entries (no test channel) are untouched.
+- Defaults: `DEFAULT_IRC_NETWORKS` (config.py) = a curated set of popular
+  public IRC networks (Libera, OFTC, Rizon, DALnet, Undernet, EFnet, QuakeNet,
+  IRCnet, GeekShed) plus private-tracker support networks (AnimeBytes,
+  p2p-network/Bibliotik/BitSpyder, DigitalIRC/Empornium, GazelleGames,
+  synIRC/JPopSuki, BrokenSphere/Karagarga, MoreThanTV, Orpheus, PassThePopcorn,
+  Scratch/RED, TorrentLeech), merged into user configs by `id`. Public networks
+  have NO pre-joined channels — on connect the client auto-requests `/LIST`
+  (retried every 10s via `_check_pending_lists` until `listend` arrives, since
+  some servers throttle LIST for ~60s after connect) so the user can browse and
+  pick channels from the server view. The private-tracker networks pre-join
+  their support/disabled channels. The IRC tab starts DISCONNECTED (3.2.1+) —
+  the `auto_connect` field was removed; the user connects manually from the
+  toolbar. The merge never touches existing ids, so `from_file` migrates:
+  test-era `#deepflux-test` channels are dropped (no longer swapped for
+  `#DeepFlux`), and `#DeepFlux` is stripped from the libera entry (it was the
+  shipped default, now removed — user-added channels on any network survive).
 - Agent tools: `irc_status` / `irc_list_messages` / `irc_search_messages` are
   READ_ONLY; `irc_send_message` / `irc_join` / `irc_part` require confirmation.
   ToolRegistry takes `irc_client=` (GUI injects the shared core; CLI lazily
@@ -710,3 +791,49 @@
   (private-tracker cookies) and are auto-added to the torrent engine on
   completion. dlmgr note: `segment.py` must NOT use `with http_client.get()`
   — curl_cffi's Response isn't a context manager; close it explicitly.
+- Browser engine capabilities (`_BrowserPage` + profile setup in
+  `MainWindow.__init__`):
+  - **Navigation policy**: `acceptNavigationRequest` intercepts `magnet:`
+    links → `magnetRequested` signal → torrent engine (the page never
+    navigates to them). `javascript:`/`vbscript:` navigations from links
+    are blocked (XSS hardening); typed `file://` is allowed for local dev.
+  - **TLS certificate errors**: `certificateError` defers overridable
+    errors and emits `certificateErrorRequested` → `_browser_cert_error`
+    shows a Yes/No dialog (default: reject). Non-overridable errors are
+    always rejected. Pending error objects are kept alive on
+    `_pending_cert_errors` until the dialog resolves.
+  - **JavaScript dialogs**: `javaScriptAlert`/`Confirm`/`Prompt` show
+    native Qt dialogs (`QMessageBox`/`QInputDialog`) instead of silently
+    no-op'ing. The dialog title is the page title or host, never empty.
+  - **Permission requests**: `permissionRequest`/`featurePermissionRequest`
+    → `_decide_permission`: sensitive capture (camera/mic/screen/mouselock)
+    is denied without prompting; geolocation/notifications/clipboard/fonts
+    get a Yes/No dialog (default: deny).
+  - **Profile tuning**: UA string has the `QtWebEngine/x.y` token stripped
+    (vanilla Chrome UA, accurate Chrome version); `Accept-Language` derived
+    from system locale (fallback `en-US,en;q=0.9`); persistent cookies
+    explicit; 100MB disk HTTP cache; spell check on (system language);
+    DNS prefetch, scroll animator, back-forward cache, local-content-
+    remote-access, favicons, PDF viewer, WebGL, accelerated 2D canvas all
+    enabled; hyperlink auditing (ping=) off for privacy.
+  - **Custom `deepflux://` scheme**: registered via `QWebEngineUrlScheme`
+    in `register_deepflux_scheme()` (called at the top of `run_gui()`
+    BEFORE any profile is created — Chromium locks the scheme list at
+    profile-init). `_DeepFluxSchemeHandler` serves `deepflux://start/`
+    (the built-in start page) and a 404 for unknown paths. The start page
+    now loads via `setUrl(QUrl("deepflux://start/"))` instead of the old
+    `setHtml(..., about:blank)` hack — the page has a real, addressable
+    origin. `_display_url` hides `deepflux://` from the address bar.
+  - **QWebChannel** (`gui/browser_channel.py`): a direct JS↔Python bridge
+    exposed as `window.deepflux` on every page. `qwebchannel.js` (minimal
+    embedded copy) + a bootstrap script are injected at `DocumentCreation`
+    (before the extension). The existing browser extension still uses the
+    control-API XHR path (tested, works); the channel is the idiomatic Qt
+    way for new page-side code. Slots: `ping`, `sendDownload`, `sendPlay`,
+    `addMagnet`, `getVersion`. Each page gets `page.setWebChannel(channel)`.
+  - **H.264/AAC codecs**: stock PySide6 QtWebEngine lacks proprietary
+    codecs → in-page `<video>` on most streaming sites won't decode. This
+    is a build-time limitation (needs a custom Qt build with
+    `-proprietary-codecs`); the app works around it by handing stream URLs
+    to the embedded mpv (full FFmpeg codec support) via the extension's
+    "Play in DeepFlux" action. Do NOT try to fix this in code.

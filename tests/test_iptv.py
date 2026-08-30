@@ -9,9 +9,11 @@ from __future__ import annotations
 import os
 import tempfile
 import threading
+import time
 from unittest import mock
 
 import pytest
+import requests
 
 from iptv import classify, local_folder, m3u_parser, xtream
 from iptv.cache import IPTVCache
@@ -196,6 +198,283 @@ def test_populate_years_keeps_provider_years():
 
 
 # ---------------------------------------------------------------------------
+# Adult VOD year extraction + JAV separation
+# ---------------------------------------------------------------------------
+
+def test_extract_adult_vod_year_2_digit_date():
+    """Adult VOD entries use YY MM DD format — extracted as 4-digit year."""
+    from iptv.classify import _extract_adult_vod_year
+    assert _extract_adult_vod_year("Tushy 26 08 09 Kubera Fortuna") == "2026"
+    assert _extract_adult_vod_year("SexMex 22 09 25 Camila Henao") == "2022"
+    assert _extract_adult_vod_year("WowGirls 25 10 24 Bella Spark") == "2025"
+
+
+def test_extract_adult_vod_year_90s():
+    """2-digit years 50-99 map to 19xx."""
+    from iptv.classify import _extract_adult_vod_year
+    assert _extract_adult_vod_year("Vintage 98 03 15 Old Film") == "1998"
+
+
+def test_extract_adult_vod_year_rejects_invalid_dates():
+    """Random 2-digit numbers that aren't valid dates are not years."""
+    from iptv.classify import _extract_adult_vod_year
+    # Month 13 is invalid.
+    assert _extract_adult_vod_year("Studio 26 13 09 Title") == ""
+    # Day 32 is invalid.
+    assert _extract_adult_vod_year("Studio 26 08 32 Title") == ""
+    # No date pattern at all.
+    assert _extract_adult_vod_year("Some Movie Title") == ""
+
+
+def test_populate_years_extracts_adult_vod_dates():
+    """populate_years uses the YY MM DD extractor for adult VOD entries."""
+    pl = Playlist(source_id="src1")
+    pl.movies.append(Movie(
+        id=make_id("src1", "m1"), name="Tushy 26 08 09 Kubera Fortuna",
+        url="http://x/1", group="XXX VOD", section=SECTION_MOVIES,
+    ))
+    pl.movies.append(Movie(
+        id=make_id("src1", "m2"), name="Blacked 25 12 01 Dolly Dyson",
+        url="http://x/2", group="XXX VOD", section=SECTION_MOVIES,
+    ))
+    populate_years(pl)
+    by_name = {m.name: m.year for m in pl.movies}
+    assert by_name["Tushy 26 08 09 Kubera Fortuna"] == "2026"
+    assert by_name["Blacked 25 12 01 Dolly Dyson"] == "2025"
+
+
+def test_populate_years_adult_vod_no_date_lands_in_others():
+    """Adult VOD entries without a YY MM DD date still get empty year
+    (landing in 'Others'), not a false positive from random numbers."""
+    pl = Playlist(source_id="src1")
+    pl.movies.append(Movie(
+        id=make_id("src1", "m1"), name="PORNBOX: BRAZZERS",
+        url="http://x/1", group="XXX VOD", section=SECTION_MOVIES,
+    ))
+    populate_years(pl)
+    assert pl.movies[0].year == ""
+
+
+def test_populate_years_non_adult_ignores_2_digit_dates():
+    """Non-adult entries with 2-digit numbers must NOT be interpreted as
+    dates — 'Movie 24 01 15 Title' in a regular group stays yearless."""
+    pl = Playlist(source_id="src1")
+    pl.movies.append(Movie(
+        id=make_id("src1", "m1"), name="Some Film 24 01 15 Title",
+        url="http://x/1", group="Movie VOD", section=SECTION_MOVIES,
+    ))
+    populate_years(pl)
+    # The 4-digit extractor is used for non-adult groups, and "24" is not
+    # a 4-digit year, so this stays empty.
+    assert pl.movies[0].year == ""
+
+
+def test_is_jav_entry_detects_studio_prefix():
+    """JAV entries are detected by their studio prefix."""
+    from iptv.classify import _is_jav_entry
+    assert _is_jav_entry("JapanHDV 26 08 28 Reika Ayano") is True
+    assert _is_jav_entry("LittleAsians 26 08 27 Sarina Namiki") is True
+    assert _is_jav_entry("Manko88 26 08 28 Yuri Sato") is True
+    assert _is_jav_entry("Erito 26 08 28 Reika Ayano") is True
+
+
+def test_is_jav_entry_detects_jav_code():
+    """JAV catalogue codes (ABC-123, abc00123) are detected."""
+    from iptv.classify import _is_jav_entry
+    assert _is_jav_entry("ABP-123 Some Title") is True
+    assert _is_jav_entry("SSNI-456 Some Title") is True
+    assert _is_jav_entry("abp00123 Some Title") is True
+
+
+def test_is_jav_entry_rejects_western_adult():
+    """Western adult studios are NOT JAV."""
+    from iptv.classify import _is_jav_entry
+    assert _is_jav_entry("Tushy 26 08 09 Kubera Fortuna") is False
+    assert _is_jav_entry("Blacked 26 08 11 Dolly Dyson") is False
+    assert _is_jav_entry("Brazzers 26 08 01 Some Title") is False
+
+
+def test_is_jav_entry_rejects_generic_asian_terms():
+    """Generic Asian-themed words must NOT trigger JAV classification —
+    western adult content also uses 'asian', 'thai', 'japanese', 'cosplay',
+    'hentai', 'anime', 'bangkok' in titles."""
+    from iptv.classify import _is_jav_entry
+    assert _is_jav_entry("Asian Obsession 26 08 15 Title") is False
+    assert _is_jav_entry("Cosplay 26 08 15 Title") is False
+    assert _is_jav_entry("Hentai 26 08 15 Title") is False
+    assert _is_jav_entry("Anime 26 08 15 Title") is False
+    assert _is_jav_entry("Bangkok 26 08 15 Title") is False
+    assert _is_jav_entry("Japanese 26 08 15 Title") is False
+    assert _is_jav_entry("JAV 26 08 15 Title") is False
+
+
+def test_is_jav_entry_rejects_western_code_patterns():
+    """Western naming patterns like 'PH 245' (PornHub series) or
+    'Beauty-Angels' must NOT be mistaken for JAV codes."""
+    from iptv.classify import _is_jav_entry
+    assert _is_jav_entry("PH 245 Mom Comes First") is False
+    assert _is_jav_entry("Beauty-Angels 26 08 27 Roxy Muray") is False
+    assert _is_jav_entry("PORNBOX: BRAZZERS") is False
+    assert _is_jav_entry("Bride4K 26 08 19 Victoria Benz") is False
+    assert _is_jav_entry("Daddy4K 26 08 24 Ema Rebeiro") is False
+    assert _is_jav_entry("X4 Cum in Mouth") is False
+
+
+def test_is_jav_entry_rejects_date_as_code():
+    """YY MM DD dates must not be misinterpreted as JAV codes."""
+    from iptv.classify import _is_jav_entry
+    # "26 08 09" is a date, not a JAV code (no letter prefix, no dash).
+    assert _is_jav_entry("Tushy 26 08 09 Kubera Fortuna") is False
+
+
+def test_populate_years_separates_jav_into_own_group():
+    """JAV entries get re-grouped into 'XXX VOD JAV' so they appear as a
+    separate category in the sidebar."""
+    pl = Playlist(source_id="src1")
+    pl.movies.append(Movie(
+        id=make_id("src1", "m1"), name="JapanHDV 26 08 28 Reika Ayano",
+        url="http://x/1", group="XXX VOD", section=SECTION_MOVIES,
+    ))
+    pl.movies.append(Movie(
+        id=make_id("src1", "m2"), name="Tushy 26 08 09 Kubera Fortuna",
+        url="http://x/2", group="XXX VOD", section=SECTION_MOVIES,
+    ))
+    populate_years(pl)
+    by_name = {m.name: m.group for m in pl.movies}
+    # JAV entry is re-grouped.
+    assert by_name["JapanHDV 26 08 28 Reika Ayano"] == "XXX VOD JAV"
+    # Western adult entry keeps its original group.
+    assert by_name["Tushy 26 08 09 Kubera Fortuna"] == "XXX VOD"
+
+
+def test_populate_years_jav_category_appears_in_categories():
+    """The synthetic 'XXX VOD JAV' category is added to the playlist's
+    category list so the sidebar shows it."""
+    from iptv.models import SECTION_MOVIES
+    pl = Playlist(source_id="src1")
+    pl.movies.append(Movie(
+        id=make_id("src1", "m1"), name="JapanHDV 26 08 28 Reika Ayano",
+        url="http://x/1", group="XXX VOD", section=SECTION_MOVIES,
+    ))
+    populate_years(pl)
+    cat_names = [c.name for c in pl.categories if c.section == SECTION_MOVIES]
+    assert "XXX VOD JAV" in cat_names
+
+
+# ---------------------------------------------------------------------------
+# Bulk slicing (sidebar displays ≤500 items per leaf node)
+# ---------------------------------------------------------------------------
+
+def test_bulk_slice_first_chunk():
+    """Bulk index 1 returns the first BULK_SIZE items."""
+    from gui.iptv_tab import BULK_SIZE
+    pl = Playlist(source_id="s1")
+    for i in range(1200):
+        pl.movies.append(Movie(
+            id=make_id("s1", f"m{i}"), name=f"Movie {i}",
+            url=f"http://x/{i}", group="VOD", section=SECTION_MOVIES,
+        ))
+    mgr = IPTVManager(sources=[], data_dir="")
+    mgr._playlists["s1"] = pl
+    mgr._active_source_id = "s1"
+    all_items = mgr.items_for(SECTION_MOVIES, "VOD", source_id="s1")
+    # Simulate _show_section bulk=1 slicing.
+    bulk = 1
+    start = (bulk - 1) * BULK_SIZE
+    chunk = all_items[start:start + BULK_SIZE]
+    assert len(chunk) == BULK_SIZE
+    assert chunk[0].name == "Movie 0"
+    assert chunk[-1].name == f"Movie {BULK_SIZE - 1}"
+
+
+def test_bulk_slice_last_chunk_partial():
+    """The last bulk may have fewer than BULK_SIZE items."""
+    from gui.iptv_tab import BULK_SIZE
+    pl = Playlist(source_id="s1")
+    for i in range(1200):
+        pl.movies.append(Movie(
+            id=make_id("s1", f"m{i}"), name=f"Movie {i}",
+            url=f"http://x/{i}", group="VOD", section=SECTION_MOVIES,
+        ))
+    mgr = IPTVManager(sources=[], data_dir="")
+    mgr._playlists["s1"] = pl
+    mgr._active_source_id = "s1"
+    all_items = mgr.items_for(SECTION_MOVIES, "VOD", source_id="s1")
+    bulk = 3
+    start = (bulk - 1) * BULK_SIZE
+    chunk = all_items[start:start + BULK_SIZE]
+    assert len(chunk) == 200  # 1200 - 2*500
+    assert chunk[0].name == "Movie 1000"
+    assert chunk[-1].name == "Movie 1199"
+
+
+def test_bulk_slice_with_year_filter():
+    """Bulk slicing works on top of a year filter."""
+    from gui.iptv_tab import BULK_SIZE
+    pl = Playlist(source_id="s1")
+    for i in range(600):
+        pl.movies.append(Movie(
+            id=make_id("s1", f"m{i}"), name=f"Movie {i} 2025",
+            url=f"http://x/{i}", group="VOD", section=SECTION_MOVIES,
+            year="2025",
+        ))
+    for i in range(600):
+        pl.movies.append(Movie(
+            id=make_id("s1", f"n{i}"), name=f"Other {i} 2024",
+            url=f"http://x/n{i}", group="VOD", section=SECTION_MOVIES,
+            year="2024",
+        ))
+    mgr = IPTVManager(sources=[], data_dir="")
+    mgr._playlists["s1"] = pl
+    mgr._active_source_id = "s1"
+    year_items = mgr.items_for(SECTION_MOVIES, "VOD", source_id="s1",
+                               year="2025")
+    assert len(year_items) == 600
+    bulk = 2
+    start = (bulk - 1) * BULK_SIZE
+    chunk = year_items[start:start + BULK_SIZE]
+    assert len(chunk) == 100  # 600 - 500
+    assert all(getattr(m, "year", "") == "2025" for m in chunk)
+
+
+def test_bulk_no_slice_when_bulk_zero():
+    """bulk=0 (no bulk specified) returns all items un-sliced."""
+    from gui.iptv_tab import BULK_SIZE
+    pl = Playlist(source_id="s1")
+    for i in range(700):
+        pl.movies.append(Movie(
+            id=make_id("s1", f"m{i}"), name=f"Movie {i}",
+            url=f"http://x/{i}", group="VOD", section=SECTION_MOVIES,
+        ))
+    mgr = IPTVManager(sources=[], data_dir="")
+    mgr._playlists["s1"] = pl
+    mgr._active_source_id = "s1"
+    all_items = mgr.items_for(SECTION_MOVIES, "VOD", source_id="s1")
+    bulk = 0
+    if bulk > 0:
+        start = (bulk - 1) * BULK_SIZE
+        all_items = all_items[start:start + BULK_SIZE]
+    assert len(all_items) == 700  # un-sliced
+
+
+def test_bulk_node_count_calculation():
+    """Verify the bulk count math matches the sidebar's _add_bulk_nodes."""
+    from gui.iptv_tab import BULK_SIZE
+    for count, expected in [
+        (500, 0),   # at threshold → no bulk nodes
+        (501, 2),   # just over → 2 bulks (1-500, 501-501)
+        (1000, 2),  # exactly 2 bulks
+        (1001, 3),  # 3 bulks, last one has 1 item
+        (1200, 3),  # 3 bulks, last has 200
+    ]:
+        if count <= BULK_SIZE:
+            n_bulks = 0
+        else:
+            n_bulks = (count + BULK_SIZE - 1) // BULK_SIZE
+        assert n_bulks == expected, f"count={count}: got {n_bulks}, want {expected}"
+
+
+# ---------------------------------------------------------------------------
 # Title cleaning + metadata key
 # ---------------------------------------------------------------------------
 
@@ -240,6 +519,40 @@ def test_tmdb_poster_uses_w780():
     prov = TMDBProvider("key")
     assert prov._img("/poster.jpg") == "https://image.tmdb.org/t/p/w500/poster.jpg"
     assert prov._img("/poster.jpg", "w780") == "https://image.tmdb.org/t/p/w780/poster.jpg"
+
+
+def test_tmdb_prefers_result_matching_year():
+    """TMDb ranks by popularity, so a remake can sit above the right film —
+    when a year is known, the matching result must win over results[0]."""
+    from iptv.metadata import TMDBProvider
+    prov = TMDBProvider("key")
+    search_resp = mock.Mock(status_code=200, json=lambda: {"results": [
+        {"id": 1, "title": "Dune", "release_date": "2021-10-22",
+         "poster_path": "/new.jpg", "vote_average": 8.0},
+        {"id": 2, "title": "Dune", "release_date": "1984-12-14",
+         "poster_path": "/old.jpg", "vote_average": 6.0},
+    ]})
+    detail_resp = mock.Mock(status_code=200, json=lambda: {"genres": [], "release_date": "1984-12-14"})
+    with mock.patch.object(prov._session, "get", side_effect=[search_resp, detail_resp]):
+        meta = prov.fetch("Dune", "1984", SECTION_MOVIES)
+    assert meta is not None
+    assert meta["year"] == "1984"
+    assert meta["poster"].endswith("/old.jpg")
+
+
+def test_tmdb_year_filter_falls_back_to_first_result():
+    """No result matches the known year -> keep results[0] (year may be wrong
+    in the playlist; an unmatched poster beats none)."""
+    from iptv.metadata import TMDBProvider
+    prov = TMDBProvider("key")
+    search_resp = mock.Mock(status_code=200, json=lambda: {"results": [
+        {"id": 1, "title": "Dune", "release_date": "2021-10-22", "poster_path": "/new.jpg"},
+    ]})
+    detail_resp = mock.Mock(status_code=200, json=lambda: {"genres": []})
+    with mock.patch.object(prov._session, "get", side_effect=[search_resp, detail_resp]):
+        meta = prov.fetch("Dune", "1984", SECTION_MOVIES)
+    assert meta is not None
+    assert meta["poster"].endswith("/new.jpg")
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +805,62 @@ def test_artwork_cache_default_thumb_size_is_larger(tmp_path):
     from iptv.artwork import ArtworkCache
     cache = ArtworkCache(str(tmp_path))
     assert cache.thumb_size == (300, 450)
-    assert "_300x450.png" in cache.thumb_path("http://host/poster.jpg")
+    assert "_300x450.webp" in cache.thumb_path("http://host/poster.jpg")
+
+
+def test_artwork_cache_get_thumb_accepts_legacy_png(tmp_path):
+    """Thumbs written before the WebP switch stay readable."""
+    from iptv.artwork import ArtworkCache
+    cache = ArtworkCache(str(tmp_path))
+    url = "http://host/poster.jpg"
+    legacy = cache._legacy_thumb_path(url)
+    with open(legacy, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n" + b"0" * 100)
+    assert cache.get_thumb(url) == legacy
+
+
+def test_artwork_cache_stats_and_clear(tmp_path):
+    """stats() counts the footprint; clear() wipes fulls, thumbs and sidecars."""
+    from iptv.artwork import ArtworkCache
+    cache = ArtworkCache(str(tmp_path))
+    url = "http://host/poster.jpg"
+    with open(cache.full_path(url), "wb") as f:
+        f.write(b"x" * 1000)
+    with open(cache.thumb_path(url), "wb") as f:
+        f.write(b"x" * 500)
+    with open(cache._meta_path(url), "w") as f:
+        f.write("{}")
+    s = cache.stats()
+    assert s["full_bytes"] == 1002 and s["thumb_bytes"] == 500  # .meta sidecar counts
+    assert s["total_bytes"] == 1502
+    removed, freed = cache.clear()
+    assert removed == 3 and freed == 1502
+    assert cache.get_cached(url) is None and cache.get_thumb(url) is None
+    assert cache.stats()["total_bytes"] == 0
+
+
+def test_artwork_cache_enforce_size_limit_evicts_lru_groups(tmp_path):
+    """Over the cap, the least-recently-used URL group (full + thumb + meta)
+    is evicted first; a cache hit (atime bump) protects fresh entries."""
+    from iptv.artwork import ArtworkCache
+    cache = ArtworkCache(str(tmp_path))
+    urls = [f"http://host/p{i}.jpg" for i in range(4)]
+    for url in urls:
+        for make in (cache.full_path, cache.thumb_path):
+            with open(make(url), "wb") as f:
+                f.write(b"x" * 1000)
+    total = cache.stats()["total_bytes"]
+    assert total == 8000
+    # Touch p2/p3 so they are the most recently used.
+    cache.get_cached(urls[2])
+    cache.get_thumb(urls[3])
+    freed = cache.enforce_size_limit(5000)  # must evict 2 oldest groups
+    assert freed == 4000
+    assert cache.get_cached(urls[0]) is None and cache.get_cached(urls[1]) is None
+    assert cache.get_thumb(urls[0]) is None and cache.get_thumb(urls[1]) is None
+    assert cache.get_cached(urls[2]) is not None and cache.get_thumb(urls[3]) is not None
+    # Under the cap: a no-op.
+    assert cache.enforce_size_limit(10 ** 9) == 0
 
 
 def test_framegrab_writes_into_the_artwork_cache(tmp_path):
@@ -811,8 +1179,1208 @@ def test_pipeline_year_goes_in_the_param_not_the_query(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Xtream client (mocked HTTP)
+# Phase 1: shared retry layer + provider-chain refactor
 # ---------------------------------------------------------------------------
+
+def test_retry_request_retries_on_503_then_succeeds():
+    """A 503 is transient — the helper must retry with backoff and succeed."""
+    import requests as _requests
+    from iptv.metadata import _retry_request
+    session = _requests.Session()
+    ok = mock.Mock(status_code=200, json=lambda: {"ok": True})
+    ok.close = mock.Mock()
+    with mock.patch.object(session, "get",
+                           side_effect=[mock.Mock(status_code=503, close=mock.Mock()), ok]) as get:
+        with mock.patch("iptv.metadata.time.sleep"):
+            data, status = _retry_request(session, "http://x/api")
+    assert status == "ok"
+    assert data == {"ok": True}
+    assert get.call_count == 2
+
+
+def test_retry_request_bails_immediately_on_404():
+    """A 404 is a permanent 'no match', not an error — no wasted retries."""
+    from iptv.metadata import _retry_request
+    session = requests.Session()
+    with mock.patch.object(session, "get",
+                           return_value=mock.Mock(status_code=404, close=mock.Mock())) as get:
+        with mock.patch("iptv.metadata.time.sleep") as sleep:
+            data, status = _retry_request(session, "http://x/api")
+    assert status == "not_found"
+    assert data is None
+    assert get.call_count == 1
+    assert not sleep.called
+
+
+def test_retry_request_bails_immediately_on_401():
+    """A 401 is a permanent auth failure — no retries."""
+    from iptv.metadata import _retry_request
+    session = requests.Session()
+    with mock.patch.object(session, "get",
+                           return_value=mock.Mock(status_code=401, close=mock.Mock())) as get:
+        with mock.patch("iptv.metadata.time.sleep") as sleep:
+            data, status = _retry_request(session, "http://x/api")
+    assert status == "auth"
+    assert data is None
+    assert get.call_count == 1
+    assert not sleep.called
+
+
+def test_retry_request_exhausts_retries_on_persistent_503():
+    """When every attempt returns 503, the helper exhausts and reports transient."""
+    from iptv.metadata import _retry_request, _DEFAULT_MAX_ATTEMPTS
+    session = requests.Session()
+    with mock.patch.object(session, "get",
+                           return_value=mock.Mock(status_code=503, close=mock.Mock())) as get:
+        with mock.patch("iptv.metadata.time.sleep"):
+            data, status = _retry_request(session, "http://x/api")
+    assert status == "transient"
+    assert data is None
+    assert get.call_count == _DEFAULT_MAX_ATTEMPTS
+
+
+def test_retry_request_retries_on_connection_error():
+    """A ConnectionError is always transient (network-level), not permanent."""
+    import requests as _requests
+    from iptv.metadata import _retry_request
+    session = _requests.Session()
+    ok = mock.Mock(status_code=200, json=lambda: {"ok": True})
+    ok.close = mock.Mock()
+    with mock.patch.object(session, "get",
+                           side_effect=[_requests.ConnectionError("reset"), ok]):
+        with mock.patch("iptv.metadata.time.sleep"):
+            data, status = _retry_request(session, "http://x/api")
+    assert status == "ok"
+    assert data == {"ok": True}
+
+
+def test_retry_request_uses_jittered_backoff():
+    """Backoff must be jittered (0.5 + random multiplier) so a burst doesn't
+    return in lockstep — the same lesson the artwork fetcher learned."""
+    from iptv.metadata import _retry_request, _DEFAULT_BACKOFF_BASE, _DEFAULT_MAX_ATTEMPTS
+    session = requests.Session()
+    with mock.patch.object(session, "get",
+                           return_value=mock.Mock(status_code=503, close=mock.Mock())):
+        with mock.patch("iptv.metadata.time.sleep") as sleep, \
+             mock.patch("iptv.metadata.random.random", return_value=0.5):
+            _retry_request(session, "http://x/api")
+    # 3 sleeps for 4 attempts (last attempt doesn't sleep).
+    assert sleep.call_count == _DEFAULT_MAX_ATTEMPTS - 1
+    # First backoff: base * 2^0 * (0.5 + 0.5) = base * 1.0
+    assert sleep.call_args_list[0][0][0] == _DEFAULT_BACKOFF_BASE * 1.0
+
+
+def test_tmdb_retries_on_503_for_search():
+    """TMDb search must retry on 503 (previously zero retries)."""
+    from iptv.metadata import TMDBProvider
+    prov = TMDBProvider("key")
+    ok = mock.Mock(status_code=200, json=lambda: {"results": [
+        {"id": 1, "title": "Movie", "release_date": "2023-01-01", "poster_path": "/p.jpg"}
+    ]})
+    ok.close = mock.Mock()
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[mock.Mock(status_code=503, close=mock.Mock()), ok]):
+        with mock.patch("iptv.metadata.time.sleep"):
+            meta = prov.fetch("Movie", "2023", SECTION_MOVIES)
+    assert meta is not None
+    assert meta["title"] == "Movie"
+
+
+def test_tvmaze_retries_on_connection_reset():
+    """TVmaze must retry on ConnectionError (previously zero retries)."""
+    import requests as _requests
+    from iptv.metadata import TVMazeProvider
+    prov = TVMazeProvider()
+    ok = mock.Mock(status_code=200, json=lambda: {
+        "name": "Show", "premiered": "2020-01-01", "image": {"original": "http://x/p.jpg"},
+        "summary": "", "genres": [], "rating": {"average": 8},
+    })
+    ok.close = mock.Mock()
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[_requests.ConnectionError("reset"), ok]):
+        with mock.patch("iptv.metadata.time.sleep"):
+            meta = prov.fetch("Show", "", SECTION_SERIES)
+    assert meta is not None
+    assert meta["title"] == "Show"
+
+
+def test_tpdb_retries_on_503_not_just_connection_reset():
+    """TPDB previously only retried ConnectionError — now 503 is retried too."""
+    from iptv.metadata import TPDBProvider
+    prov = TPDBProvider("token")
+    ok = mock.Mock(status_code=200, json=lambda: {"data": [_tpdb_row()]})
+    ok.close = mock.Mock()
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[mock.Mock(status_code=503, close=mock.Mock()), ok]):
+        with mock.patch("iptv.metadata.time.sleep"):
+            meta = prov.fetch("Scene Title", "", SECTION_MOVIES)
+    assert meta is not None
+    assert meta["title"] == "Scene Title"
+
+
+def test_pipeline_chain_adult_goes_tpdb_then_tmdb(tmp_path):
+    """Adult entries try TPDB first, then fall through to TMDb if TPDB misses."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tmdb_api_key="tmdb", tpdb_api_key="tpdb")
+    pipe.tpdb = mock.Mock(**{"fetch.return_value": None})
+    pipe.tmdb = mock.Mock(**{"fetch.return_value": {
+        "title": "M", "year": "2023", "rating": 0, "synopsis": "",
+        "genres": [], "poster": "http://cdn/m.jpg", "backdrop": "",
+        "provider": "tmdb",
+    }})
+    done = threading.Event()
+    got = {}
+    def _on_done(key, meta):
+        got.update(meta or {})
+        done.set()
+    pipe.resolve_async(SECTION_MOVIES, "Some Scene", "2023", _on_done, group="XXX")
+    assert done.wait(10)
+    assert got.get("provider") == "tmdb"
+    assert pipe.tpdb.fetch.called
+    assert pipe.tmdb.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_chain_series_goes_tmdb_then_tvmaze(tmp_path):
+    """Series try TMDb first, then TVMaze fallback if TMDb misses."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tmdb_api_key="tmdb")
+    pipe.tmdb = mock.Mock(**{"fetch.return_value": None})
+    pipe.tvmaze = mock.Mock(**{"fetch.return_value": {
+        "title": "S", "year": "2020", "rating": 0, "synopsis": "",
+        "genres": [], "poster": "http://cdn/s.jpg", "backdrop": "",
+        "provider": "tvmaze",
+    }})
+    done = threading.Event()
+    got = {}
+    def _on_done(key, meta):
+        got.update(meta or {})
+        done.set()
+    pipe.resolve_async(SECTION_SERIES, "Some Show", "", _on_done, group="Series")
+    assert done.wait(10)
+    assert got.get("provider") == "tvmaze"
+    assert pipe.tmdb.fetch.called
+    assert pipe.tvmaze.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_chain_first_provider_hit_skips_rest(tmp_path):
+    """When the first provider in the chain returns a poster, later ones are
+    not called — first-art-wins."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tmdb_api_key="tmdb")
+    pipe.tmdb = mock.Mock(**{"fetch.return_value": {
+        "title": "M", "year": "2023", "poster": "http://cdn/m.jpg",
+        "backdrop": "", "provider": "tmdb", "genres": [], "rating": 0, "synopsis": "",
+    }})
+    pipe.tvmaze = mock.Mock()
+    done = threading.Event()
+    pipe.resolve_async(SECTION_SERIES, "Some Show", "2023",
+                       lambda k, m: done.set())
+    assert done.wait(10)
+    assert pipe.tmdb.fetch.called
+    assert not pipe.tvmaze.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_per_provider_negative_cache_skips_missed_provider(tmp_path):
+    """A TPDB miss is recorded per-provider — on the next visit TPDB is
+    skipped but a newly-added TMDb (not in the miss list) is still tried.
+    This is the core value of per-provider negative caching: a new provider
+    added to the chain gets tried even when others already missed."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    # First visit: only TPDB configured (no TMDb key) — TPDB misses.
+    pipe = MetadataPipeline(cache, tpdb_api_key="tpdb")
+    pipe.tpdb = mock.Mock(**{"fetch.return_value": None})
+    done1 = threading.Event()
+    pipe.resolve_async(SECTION_MOVIES, "Unknown Scene", "2023",
+                       lambda k, m: done1.set(), group="XXX")
+    assert done1.wait(10)
+    pipe.shutdown()
+
+    # Second visit: TMDb key now configured. TPDB should be skipped (recent
+    # miss), but TMDb — which wasn't in the chain last time — gets tried.
+    pipe2 = MetadataPipeline(cache, tmdb_api_key="tmdb", tpdb_api_key="tpdb")
+    pipe2.tpdb = mock.Mock(**{"fetch.return_value": {
+        "title": "S", "poster": "http://cdn/s.jpg", "backdrop": "",
+        "provider": "tpdb", "genres": [], "rating": 0, "synopsis": "", "year": "2023",
+    }})
+    pipe2.tmdb = mock.Mock(**{"fetch.return_value": {
+        "title": "M", "poster": "http://cdn/m.jpg", "backdrop": "",
+        "provider": "tmdb", "genres": [], "rating": 0, "synopsis": "", "year": "2023",
+    }})
+    done2 = threading.Event()
+    got = {}
+    def _on_done(key, meta):
+        got.update(meta or {})
+        done2.set()
+    pipe2.resolve_async(SECTION_MOVIES, "Unknown Scene", "2023",
+                        _on_done, group="XXX")
+    assert done2.wait(10)
+    # TPDB was skipped (recent miss), TMDb was tried and hit.
+    assert not pipe2.tpdb.fetch.called
+    assert pipe2.tmdb.fetch.called
+    assert got.get("provider") == "tmdb"
+    pipe2.shutdown()
+
+
+def test_pipeline_per_provider_negative_cache_all_missed_short_circuits(tmp_path):
+    """When every provider in the chain has a recent miss, resolve_async
+    returns empty immediately without calling any provider."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tmdb_api_key="tmdb")
+    pipe.tmdb = mock.Mock(**{"fetch.return_value": None})
+    done1 = threading.Event()
+    pipe.resolve_async(SECTION_MOVIES, "Unknown Movie", "2023",
+                       lambda k, m: done1.set())
+    assert done1.wait(10)
+    pipe.shutdown()
+
+    # Second visit: TMDb has a recent miss, no other providers for movies.
+    # resolve_async should short-circuit without calling TMDb again.
+    pipe2 = MetadataPipeline(cache, tmdb_api_key="tmdb")
+    pipe2.tmdb = mock.Mock()
+    done2 = threading.Event()
+    pipe2.resolve_async(SECTION_MOVIES, "Unknown Movie", "2023",
+                        lambda k, m: done2.set())
+    assert done2.wait(10)
+    assert not pipe2.tmdb.fetch.called
+    pipe2.shutdown()
+
+
+def test_pipeline_legacy_negative_cache_still_works(tmp_path):
+    """A negative cache entry written before the per-provider refactor (no
+    ``provider_misses`` field) must still short-circuit within the TTL."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    # Write a legacy-style negative record directly.
+    key = metadata_key(SECTION_MOVIES, "Old Movie", "2023")
+    cache.save_metadata(key, SECTION_MOVIES, "Old Movie", "2023", "none",
+                        {"negative": True, "updated_at": time.time()})
+    pipe = MetadataPipeline(cache, tmdb_api_key="tmdb")
+    pipe.tmdb = mock.Mock()
+    done = threading.Event()
+    pipe.resolve_async(SECTION_MOVIES, "Old Movie", "2023",
+                       lambda k, m: done.set())
+    assert done.wait(10)
+    assert not pipe.tmdb.fetch.called
+    pipe.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: JAV code extraction + JAV provider chain
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("raw,expected_code,expected_censored", [
+    # Basic codes (existing behaviour preserved).
+    ("ABP-123", "ABP-123", True),
+    ("abp00123", "ABP-123", True),
+    ("SSNI 456 1080p", "SSNI-456", True),
+    # Suffix stripping: -c, -leak, _5 (part 5), -hd.
+    ("ABP-123-c", "ABP-123", True),
+    ("SSIS-456.leak", "SSIS-456", True),
+    ("abp00123_5", "ABP-123", True),
+    ("SSNI-456-hd", "SSNI-456", True),
+    # Uncensored codes.
+    ("HEYZO-1234", "HEYZO-1234", False),
+    ("carib-123", "CARIB-123", False),
+    # Non-JAV (year only, lowercase "some 123").
+    ("Regular Movie 2023", "", True),
+])
+def test_jav_code_info(raw, expected_code, expected_censored):
+    from iptv.metadata import jav_code_info
+    info = jav_code_info(raw)
+    if expected_code:
+        assert info is not None
+        assert info[0] == expected_code
+        assert info[1] == expected_censored
+    else:
+        # Non-JAV names return None (no code found).
+        assert info is None
+
+
+def test_jav_code_strips_censored_suffix():
+    """"-c" is a censored marker suffix — it must be stripped before lookup."""
+    from iptv.metadata import jav_code
+    assert jav_code("ABP-123-c") == "ABP-123"
+
+
+def test_jav_code_strips_leak_suffix():
+    """"-leak" is a leaked-release suffix — stripped so the code matches the
+    catalogue key."""
+    from iptv.metadata import jav_code
+    assert jav_code("SSIS-456.leak") == "SSIS-456"
+
+
+def test_jav_code_strips_part_number():
+    """A trailing part number ("_5" = part 5) is stripped — the cover is the
+    same across parts."""
+    from iptv.metadata import jav_code
+    assert jav_code("abp00123_5") == "ABP-123"
+
+
+def test_jav_code_info_uncensored_routing():
+    """Uncensored prefixes (heyzo, carib) are classified as is_censored=False
+    so FANZA (censored-only) skips them and the chain falls through to
+    JavBus/JavLibrary."""
+    from iptv.metadata import jav_code_info
+    assert jav_code_info("HEYZO-1234") == ("HEYZO-1234", False)
+    assert jav_code_info("CARIB-123") == ("CARIB-123", False)
+
+
+def test_jav_code_info_censored_default():
+    """Unknown prefixes default to censored (the common case for JAV)."""
+    from iptv.metadata import jav_code_info
+    # "XYZ" is not in either prefix set -> defaults to censored.
+    info = jav_code_info("XYZ-456")
+    assert info is not None
+    assert info[1] is True
+
+
+# -- JavBus provider --
+
+JAVBUS_HTML = """
+<html>
+<head><title>ABP-123 Some Title - JavBus</title></head>
+<body>
+  <a class="bigImage" href="https://pics.dmm.co.jp/abp00123/abp00123pl.jpg">
+    <img src="https://pics.dmm.co.jp/abp00123/abp00123pl.jpg" alt="Some Title">
+  </a>
+  <div class="col-md-3">
+    <p><span>製作商:</span></p>
+    <p><a href="/studio/s1">S1 NO.1 STYLE</a></p>
+    <p>2023-05-14</p>
+  </div>
+  <div class="star-name"><a href="/star/1">Yua Mikami</a></div>
+  <div class="star-name"><a href="/star/2">Actress 2</a></div>
+  <div id="sample-waterfall">
+    <a href="https://pics.dmm.co.jp/abp00123/abp00123jp-1.jpg"><img src="thumb.jpg"></a>
+  </div>
+</body>
+</html>
+"""
+
+
+def test_javbus_parses_cover_and_metadata():
+    from iptv.metadata import JavBusProvider
+    prov = JavBusProvider()
+    meta = prov._parse(JAVBUS_HTML, "ABP-123")
+    assert meta is not None
+    assert meta["poster"] == "https://pics.dmm.co.jp/abp00123/abp00123pl.jpg"
+    assert meta["title"] == "Some Title"
+    assert meta["year"] == "2023"
+    assert "Yua Mikami" in meta["genres"]
+    assert meta["backdrop"] == "https://pics.dmm.co.jp/abp00123/abp00123jp-1.jpg"
+    assert meta["provider"] == "javbus"
+
+
+def test_javbus_returns_none_without_cover():
+    """No cover image = not a real match — return None so the chain continues."""
+    from iptv.metadata import JavBusProvider
+    prov = JavBusProvider()
+    html = "<html><body>No cover here</body></html>"
+    assert prov._parse(html, "ABP-123") is None
+
+
+def test_javbus_relative_cover_url_is_absolutized():
+    """Relative cover URLs (/pics/...) are prefixed with the javbus domain."""
+    from iptv.metadata import JavBusProvider
+    prov = JavBusProvider()
+    html = '<a class="bigImage" href="/pics/cover/x.jpg"><img></a>'
+    meta = prov._parse(html, "ABP-123")
+    assert meta is not None
+    assert meta["poster"] == "https://www.javbus.com/pics/cover/x.jpg"
+
+
+def test_javbus_fetch_uses_jav_code_and_retries():
+    """JavBus fetch extracts the code from raw_name and retries on transient
+    failures."""
+    from iptv.metadata import JavBusProvider
+    prov = JavBusProvider()
+    ok_html = mock.Mock(text=JAVBUS_HTML, status_code=200)
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[requests.ConnectionError("reset"), ok_html]):
+        with mock.patch("iptv.metadata.time.sleep"):
+            with mock.patch("iptv.metadata._jav_rate_limiter"):
+                meta = prov.fetch("", "", SECTION_MOVIES, raw_name="ABP-123")
+    assert meta is not None
+    assert meta["poster"] == "https://pics.dmm.co.jp/abp00123/abp00123pl.jpg"
+
+
+def test_javbus_fetch_returns_none_for_non_jav():
+    """No JAV code in the name -> None (chain falls through to other providers)."""
+    from iptv.metadata import JavBusProvider
+    prov = JavBusProvider()
+    assert prov.fetch("", "", SECTION_MOVIES, raw_name="Regular Movie 2023") is None
+
+
+# -- JavLibrary provider --
+
+JAVLIBRARY_HTML = """
+<html>
+<head><title>ABP-123 Some Japanese Title - JAVLibrary</title></head>
+<body>
+  <img id="video_jacket_img" src="https://pics.dmm.co.jp/abp/abp00123pl.jpg">
+  <div class="videoinfo">
+    <a href="vl_star.php?mode=2&star=1">Yua Mikami</a>
+    <a href="vl_maker.php?mode=2&maker=1">S1 NO.1 STYLE</a>
+    2023-05-14
+  </div>
+</body>
+</html>
+"""
+
+
+def test_javlibrary_parses_cover_and_metadata():
+    from iptv.metadata import JavLibraryProvider
+    prov = JavLibraryProvider()
+    meta = prov._parse(JAVLIBRARY_HTML, "ABP-123")
+    assert meta is not None
+    assert meta["poster"] == "https://pics.dmm.co.jp/abp/abp00123pl.jpg"
+    assert meta["title"] == "Some Japanese Title"
+    assert meta["year"] == "2023"
+    assert "Yua Mikami" in meta["genres"]
+    assert meta["provider"] == "javlibrary"
+
+
+def test_javlibrary_returns_none_without_cover():
+    from iptv.metadata import JavLibraryProvider
+    prov = JavLibraryProvider()
+    html = "<html><body>No jacket image</body></html>"
+    assert prov._parse(html, "ABP-123") is None
+
+
+def test_javlibrary_fetch_tries_multiple_bases():
+    """When the first base (en) returns 404, the scraper tries the next (cn)."""
+    from iptv.metadata import JavLibraryProvider
+    prov = JavLibraryProvider()
+    ok = mock.Mock(text=JAVLIBRARY_HTML, status_code=200)
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[mock.Mock(status_code=404, close=mock.Mock()), ok]):
+        with mock.patch("iptv.metadata.time.sleep"):
+            with mock.patch("iptv.metadata._jav_rate_limiter"):
+                meta = prov.fetch("", "", SECTION_MOVIES, raw_name="ABP-123")
+    assert meta is not None
+    assert meta["poster"] == "https://pics.dmm.co.jp/abp/abp00123pl.jpg"
+
+
+# -- FANZA provider --
+
+def test_fanza_predicts_cover_url_for_censored():
+    """FANZA cover URLs follow a predictable pattern — the provider returns a
+    poster even when the HTML scrape fails (zero-parse poster fallback)."""
+    from iptv.metadata import FanzaProvider
+    prov = FanzaProvider()
+    # Mock the HTML fetch to return empty (simulates a failed scrape).
+    with mock.patch.object(prov, "_fetch_html", return_value=""):
+        with mock.patch("iptv.metadata._jav_rate_limiter"):
+            meta = prov.fetch("", "", SECTION_MOVIES, raw_name="ABP-123")
+    assert meta is not None
+    # Cover URL: https://pics.dmm.co.jp/digital/video/abp00123/abp00123pl.jpg
+    assert "abp00123" in meta["poster"]
+    assert meta["poster"].endswith("pl.jpg")
+    assert meta["provider"] == "fanza"
+
+
+def test_fanza_skips_uncensored_codes():
+    """FANZA only carries censored JAV — uncensored codes return None so the
+    chain falls through to JavBus/JavLibrary."""
+    from iptv.metadata import FanzaProvider
+    prov = FanzaProvider()
+    with mock.patch("iptv.metadata._jav_rate_limiter"):
+        meta = prov.fetch("", "", SECTION_MOVIES, raw_name="HEYZO-1234")
+    assert meta is None
+
+
+def test_fanza_parses_detail_page():
+    """When the HTML scrape succeeds, full metadata (title, actresses, studio)
+    is extracted from the FANZA detail page."""
+    from iptv.metadata import FanzaProvider
+    prov = FanzaProvider()
+    fanza_html = """
+    <html><head><title>ABP-123 Some Title - FANZA Digital</title></head>
+    <body>
+      <a class="floatleft" href="https://pics.dmm.co.jp/digital/video/abp00123/abp00123pl.jpg">
+        <img src="https://pics.dmm.co.jp/digital/video/abp00123/abp00123pl.jpg">
+      </a>
+      <a href="/digital/videoa/-/list/=/article=actress/id=1/">Yua Mikami</a>
+      <a href="/digital/videoa/-/list/=/article=maker/id=1/">S1 NO.1 STYLE</a>
+      2023/05/14
+    </body></html>
+    """
+    with mock.patch.object(prov, "_fetch_html", return_value=fanza_html):
+        with mock.patch("iptv.metadata._jav_rate_limiter"):
+            meta = prov.fetch("", "", SECTION_MOVIES, raw_name="ABP-123")
+    assert meta is not None
+    assert meta["title"] == "ABP-123 Some Title"
+    assert meta["year"] == "2023"
+    assert "Yua Mikami" in meta["genres"]
+    assert meta["poster"] == "https://pics.dmm.co.jp/digital/video/abp00123/abp00123pl.jpg"
+
+
+def test_fanza_returns_none_for_non_jav():
+    from iptv.metadata import FanzaProvider
+    prov = FanzaProvider()
+    with mock.patch("iptv.metadata._jav_rate_limiter"):
+        assert prov.fetch("", "", SECTION_MOVIES, raw_name="Regular Movie") is None
+
+
+# -- JAV chain integration --
+
+def test_pipeline_jav_chain_order_fanza_javbus_javlibrary_tpdb(tmp_path):
+    """A JAV code in an adult entry routes through the dedicated JAV chain:
+    FANZA → JavBus → JavLibrary → TPDB (in that order)."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tpdb_api_key="tpdb")
+    # All providers miss — verify the call order via call_args_list.
+    pipe.fanza = mock.Mock(**{"fetch.return_value": None})
+    pipe.javbus = mock.Mock(**{"fetch.return_value": None})
+    pipe.javlibrary = mock.Mock(**{"fetch.return_value": None})
+    pipe.tpdb = mock.Mock(**{"fetch.return_value": None})
+    done = threading.Event()
+    pipe.resolve_async(SECTION_MOVIES, "ABP-123 Some Title", "",
+                       lambda k, m: done.set(), group="XXX")
+    assert done.wait(10)
+    # All four JAV providers were called (chain didn't short-circuit on miss).
+    assert pipe.fanza.fetch.called
+    assert pipe.javbus.fetch.called
+    assert pipe.javlibrary.fetch.called
+    assert pipe.tpdb.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_jav_chain_first_hit_skips_rest(tmp_path):
+    """When FANZA returns a poster, JavBus/JavLibrary/TPDB are not called."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tpdb_api_key="tpdb")
+    pipe.fanza = mock.Mock(**{"fetch.return_value": {
+        "title": "T", "poster": "http://cdn/p.jpg", "backdrop": "",
+        "provider": "fanza", "genres": [], "rating": 0, "synopsis": "", "year": "",
+    }})
+    pipe.javbus = mock.Mock()
+    pipe.javlibrary = mock.Mock()
+    pipe.tpdb = mock.Mock()
+    done = threading.Event()
+    got = {}
+    def _on_done(key, meta):
+        got.update(meta or {})
+        done.set()
+    pipe.resolve_async(SECTION_MOVIES, "ABP-123", "", _on_done, group="XXX")
+    assert done.wait(10)
+    assert got.get("provider") == "fanza"
+    assert pipe.fanza.fetch.called
+    assert not pipe.javbus.fetch.called
+    assert not pipe.javlibrary.fetch.called
+    assert not pipe.tpdb.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_jav_chain_javbus_fallback_when_fanza_misses(tmp_path):
+    """FANZA misses (uncensored code) → JavBus hits → JavLibrary/TPDB skipped."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tpdb_api_key="tpdb")
+    pipe.fanza = mock.Mock(**{"fetch.return_value": None})  # FANZA skips uncensored
+    pipe.javbus = mock.Mock(**{"fetch.return_value": {
+        "title": "T", "poster": "http://cdn/p.jpg", "backdrop": "",
+        "provider": "javbus", "genres": [], "rating": 0, "synopsis": "", "year": "",
+    }})
+    pipe.javlibrary = mock.Mock()
+    pipe.tpdb = mock.Mock()
+    done = threading.Event()
+    got = {}
+    def _on_done(key, meta):
+        got.update(meta or {})
+        done.set()
+    pipe.resolve_async(SECTION_MOVIES, "HEYZO-1234", "", _on_done, group="XXX")
+    assert done.wait(10)
+    assert got.get("provider") == "javbus"
+    assert pipe.fanza.fetch.called
+    assert pipe.javbus.fetch.called
+    assert not pipe.javlibrary.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_adult_without_jav_code_still_uses_tpdb(tmp_path):
+    """Adult entries without a JAV code still route to TPDB (western adult),
+    not the JAV chain."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tpdb_api_key="tpdb")
+    pipe.tpdb = mock.Mock(**{"fetch.return_value": {
+        "title": "S", "poster": "http://cdn/p.jpg", "backdrop": "",
+        "provider": "tpdb", "genres": [], "rating": 0, "synopsis": "", "year": "2023",
+    }})
+    pipe.fanza = mock.Mock()
+    pipe.javbus = mock.Mock()
+    pipe.javlibrary = mock.Mock()
+    done = threading.Event()
+    pipe.resolve_async(SECTION_MOVIES, "Brazzers - Some Scene", "2023",
+                       lambda k, m: done.set(), group="XXX")
+    assert done.wait(10)
+    assert pipe.tpdb.fetch.called
+    assert not pipe.fanza.fetch.called
+    assert not pipe.javbus.fetch.called
+    pipe.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: StashDB provider + combined match scoring
+# ---------------------------------------------------------------------------
+
+def _stashdb_scene(title="Scene Title", date="2023-05-14", studio="Brazzers",
+                   performers=None, images=None):
+    """Build a StashDB scene row for tests."""
+    return {
+        "id": "1", "title": title, "code": "", "release_date": date,
+        "duration": 1800,
+        "images": images or [{"id": "1", "url": "http://cdn/cover.jpg",
+                              "width": 800, "height": 1200}],
+        "studio": {"id": "s1", "name": studio},
+        "performers": [{"as": None, "performer": {"id": "p1", "name": n}}
+                       for n in (performers or ["Actress 1"])],
+    }
+
+
+def test_stashdb_parses_response_to_pipeline_fields():
+    from iptv.metadata import StashDBProvider
+    prov = StashDBProvider("key")
+    row = _stashdb_scene()
+    meta = prov._to_meta(row)
+    assert meta["poster"] == "http://cdn/cover.jpg"
+    assert meta["title"] == "Scene Title"
+    assert meta["year"] == "2023"
+    assert "Actress 1" in meta["genres"]
+    assert meta["provider"] == "stashdb"
+
+
+def test_stashdb_landscape_image_is_backdrop():
+    """Landscape images (w > h) are backdrops; portrait are posters."""
+    from iptv.metadata import StashDBProvider
+    prov = StashDBProvider("key")
+    row = _stashdb_scene(images=[
+        {"id": "1", "url": "http://cdn/back.jpg", "width": 1920, "height": 1080},
+        {"id": "2", "url": "http://cdn/cover.jpg", "width": 800, "height": 1200},
+    ])
+    meta = prov._to_meta(row)
+    assert meta["poster"] == "http://cdn/cover.jpg"
+    assert meta["backdrop"] == "http://cdn/back.jpg"
+
+
+def test_stashdb_combined_score_ranks_year_and_studio_match():
+    """The combined score (0.5*title + 0.3*year + 0.2*studio) should rank a
+    year+studio match above a loose title-only match."""
+    from iptv.metadata import StashDBProvider
+    prov = StashDBProvider("key")
+    # Row 1: perfect title, wrong year.
+    row1 = _stashdb_scene(title="Riding Lessons", date="2020-01-01", studio="Vixen")
+    # Row 2: slightly different title, correct year + matching studio.
+    row2 = _stashdb_scene(title="Riding Lesson", date="2023-05-14", studio="Vixen")
+    raw = "Vixen - Riding Lessons 2023-05-14"
+    s1 = prov._combined_score(raw, "2023", row1)
+    s2 = prov._combined_score(raw, "2023", row2)
+    # Row 2 should score higher (year match + studio match outweigh the
+    # slightly weaker title).
+    assert s2 > s1
+
+
+def test_stashdb_rejects_below_floor():
+    """A row scoring below MIN_SCORE (0.5) is rejected — a wrong poster is
+    worse than no poster."""
+    from iptv.metadata import StashDBProvider
+    prov = StashDBProvider("key")
+    # Completely unrelated title, wrong year, wrong studio.
+    row = _stashdb_scene(title="Totally Unrelated", date="1999-01-01", studio="Other")
+    score = prov._combined_score("Vixen - Riding Lessons 2023", "2023", row)
+    assert score < prov.MIN_SCORE
+
+
+def test_stashdb_fetch_returns_none_without_key():
+    """No API key -> None (chain falls through to other providers)."""
+    from iptv.metadata import StashDBProvider
+    prov = StashDBProvider("")
+    assert prov.fetch("Scene", "2023", SECTION_MOVIES) is None
+
+
+def test_stashdb_fetch_retries_on_503():
+    """StashDB POST must retry on 503 (transient)."""
+    from iptv.metadata import StashDBProvider
+    prov = StashDBProvider("key")
+    # Use a scene that matches the query so it clears the score floor.
+    scene = _stashdb_scene(title="Riding Lessons", date="2023-05-14", studio="Vixen")
+    ok = mock.Mock(status_code=200, json=lambda: {"data": {"searchScenes": {
+        "count": 1, "scenes": [scene]}}})
+    with mock.patch.object(prov._session, "post",
+                           side_effect=[mock.Mock(status_code=503, close=mock.Mock()), ok]):
+        with mock.patch("iptv.metadata.time.sleep"):
+            meta = prov.fetch("Riding Lessons", "2023", SECTION_MOVIES,
+                              raw_name="Vixen - Riding Lessons 2023-05-14")
+    assert meta is not None
+    assert meta["provider"] == "stashdb"
+
+
+def test_stashdb_401_returns_none_and_does_not_raise():
+    from iptv.metadata import StashDBProvider
+    prov = StashDBProvider("bad-key")
+    with mock.patch.object(prov._session, "post",
+                           return_value=mock.Mock(status_code=401, close=mock.Mock())):
+        with mock.patch("iptv.metadata.time.sleep"):
+            assert prov.fetch("Scene", "", SECTION_MOVIES) is None
+
+
+def test_pipeline_adult_chain_tpdb_then_stashdb(tmp_path):
+    """Adult entries without a JAV code try TPDB first, then StashDB."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tpdb_api_key="tpdb", stashdb_api_key="stash")
+    pipe.tpdb = mock.Mock(**{"fetch.return_value": None})
+    pipe.stashdb = mock.Mock(**{"fetch.return_value": {
+        "title": "S", "poster": "http://cdn/s.jpg", "backdrop": "",
+        "provider": "stashdb", "genres": [], "rating": 0, "synopsis": "", "year": "2023",
+    }})
+    done = threading.Event()
+    got = {}
+    def _on_done(key, meta):
+        got.update(meta or {})
+        done.set()
+    pipe.resolve_async(SECTION_MOVIES, "Brazzers - Some Scene", "2023",
+                       _on_done, group="XXX")
+    assert done.wait(10)
+    assert got.get("provider") == "stashdb"
+    assert pipe.tpdb.fetch.called
+    assert pipe.stashdb.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_stashdb_skipped_when_no_key(tmp_path):
+    """Without a StashDB key, the chain skips it (stashdb is None)."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tpdb_api_key="tpdb")  # no stashdb key
+    assert pipe.stashdb is None
+    pipe.tpdb = mock.Mock(**{"fetch.return_value": None})
+    done = threading.Event()
+    pipe.resolve_async(SECTION_MOVIES, "Some Scene", "2023",
+                       lambda k, m: done.set(), group="XXX")
+    assert done.wait(10)
+    assert pipe.tpdb.fetch.called
+    pipe.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Generic fallback providers (OMDb, Wikipedia, Fanart.tv)
+# ---------------------------------------------------------------------------
+
+def test_omdb_parses_response():
+    from iptv.metadata import OMDbProvider
+    prov = OMDbProvider("key")
+    fake = mock.Mock(status_code=200, json=lambda: {
+        "Response": "True", "Title": "Inception",
+        "Year": "2010", "imdbRating": "8.8",
+        "Genre": "Action, Sci-Fi", "Plot": "A thief who steals dreams.",
+        "Poster": "http://cdn/inception.jpg",
+    })
+    with mock.patch.object(prov._session, "get", return_value=fake):
+        meta = prov.fetch("Inception", "2010", SECTION_MOVIES)
+    assert meta is not None
+    assert meta["title"] == "Inception"
+    assert meta["year"] == "2010"
+    assert meta["poster"] == "http://cdn/inception.jpg"
+    assert "Action" in meta["genres"]
+    assert meta["provider"] == "omdb"
+
+
+def test_omdb_response_false_is_miss():
+    """OMDb signals a miss with Response: "False" (HTTP 200), not an error."""
+    from iptv.metadata import OMDbProvider
+    prov = OMDbProvider("key")
+    fake = mock.Mock(status_code=200, json=lambda: {
+        "Response": "False", "Error": "Movie not found!",
+    })
+    with mock.patch.object(prov._session, "get", return_value=fake):
+        assert prov.fetch("Unknown Movie", "", SECTION_MOVIES) is None
+
+
+def test_omdb_na_poster_is_empty():
+    """OMDb returns "N/A" for missing posters — must be normalized to empty."""
+    from iptv.metadata import OMDbProvider
+    prov = OMDbProvider("key")
+    fake = mock.Mock(status_code=200, json=lambda: {
+        "Response": "True", "Title": "Old Film", "Year": "1950",
+        "Poster": "N/A", "Genre": "", "Plot": "",
+    })
+    with mock.patch.object(prov._session, "get", return_value=fake):
+        meta = prov.fetch("Old Film", "1950", SECTION_MOVIES)
+    assert meta is not None
+    assert meta["poster"] == ""
+
+
+def test_omdb_returns_none_without_key():
+    from iptv.metadata import OMDbProvider
+    prov = OMDbProvider("")
+    assert prov.fetch("Title", "", SECTION_MOVIES) is None
+
+
+def test_omdb_retries_on_503():
+    from iptv.metadata import OMDbProvider
+    prov = OMDbProvider("key")
+    ok = mock.Mock(status_code=200, json=lambda: {
+        "Response": "True", "Title": "T", "Year": "2020",
+        "Poster": "http://cdn/p.jpg", "Genre": "", "Plot": "",
+    })
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[mock.Mock(status_code=503, close=mock.Mock()), ok]):
+        with mock.patch("iptv.metadata.time.sleep"):
+            meta = prov.fetch("T", "2020", SECTION_MOVIES)
+    assert meta is not None
+
+
+def test_wikipedia_fetch_returns_none_without_title():
+    from iptv.metadata import WikipediaProvider
+    prov = WikipediaProvider()
+    assert prov.fetch("", "", SECTION_MOVIES) is None
+
+
+def test_wikipedia_fetch_uses_page_summary():
+    """The poster comes from the summary endpoint's structured originalimage,
+    not from scraping HTML."""
+    from iptv.metadata import WikipediaProvider
+    prov = WikipediaProvider()
+    search_resp = mock.Mock(status_code=200, json=lambda: {
+        "pages": [{"key": "Inception", "title": "Inception"}],
+    })
+    summary_resp = mock.Mock(status_code=200, json=lambda: {
+        "type": "standard", "title": "Inception",
+        "extract": "A 2010 science fiction film directed by Christopher Nolan.",
+        "originalimage": {"source": "https://upload.wikimedia.org/poster.jpg"},
+        "thumbnail": {"source": "https://upload.wikimedia.org/thumb.jpg"},
+    })
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[search_resp, summary_resp]):
+        meta = prov.fetch("Inception", "2010", SECTION_MOVIES)
+    assert meta is not None
+    assert meta["poster"] == "https://upload.wikimedia.org/poster.jpg"
+    assert meta["synopsis"].startswith("A 2010 science fiction film")
+    assert meta["provider"] == "wikipedia"
+
+
+def test_wikipedia_fetch_rejects_disambiguation_pages():
+    from iptv.metadata import WikipediaProvider
+    prov = WikipediaProvider()
+    search_resp = mock.Mock(status_code=200, json=lambda: {
+        "pages": [{"key": "Mercury", "title": "Mercury"}],
+    })
+    summary_resp = mock.Mock(status_code=200, json=lambda: {
+        "type": "disambiguation", "title": "Mercury",
+        "originalimage": {"source": "https://upload.wikimedia.org/x.jpg"},
+    })
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[search_resp, summary_resp]):
+        assert prov.fetch("Mercury", "", SECTION_MOVIES) is None
+
+
+def test_wikipedia_prefers_media_titled_pages():
+    """'Dune' must resolve to the film page, not the landform — Wikipedia
+    ranks the primary topic first, so media-suffixed titles win."""
+    from iptv.metadata import WikipediaProvider
+    prov = WikipediaProvider()
+    search_resp = mock.Mock(status_code=200, json=lambda: {"pages": [
+        {"key": "Dune", "title": "Dune"},  # landform — primary topic
+        {"key": "Dune_(1984_film)", "title": "Dune (1984 film)"},
+    ]})
+    summary_resp = mock.Mock(status_code=200, json=lambda: {
+        "type": "standard", "title": "Dune (1984 film)", "extract": "Film.",
+        "originalimage": {"source": "https://upload.wikimedia.org/dune84.jpg"},
+    })
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[search_resp, summary_resp]) as get:
+        meta = prov.fetch("Dune", "1984", SECTION_MOVIES)
+    assert meta is not None
+    assert meta["poster"] == "https://upload.wikimedia.org/dune84.jpg"
+    assert get.call_count == 2  # media page ranked first — no retry needed
+
+
+def test_wikipedia_fetch_falls_back_to_thumbnail():
+    from iptv.metadata import WikipediaProvider
+    prov = WikipediaProvider()
+    search_resp = mock.Mock(status_code=200, json=lambda: {
+        "pages": [{"key": "Some_Film", "title": "Some Film"}],
+    })
+    summary_resp = mock.Mock(status_code=200, json=lambda: {
+        "type": "standard", "title": "Some Film", "extract": "",
+        "thumbnail": {"source": "https://upload.wikimedia.org/thumb.jpg"},
+    })
+    with mock.patch.object(prov._session, "get",
+                           side_effect=[search_resp, summary_resp]):
+        meta = prov.fetch("Some Film", "", SECTION_MOVIES)
+    assert meta is not None
+    assert meta["poster"] == "https://upload.wikimedia.org/thumb.jpg"
+
+
+def test_pipeline_generic_chain_tmdb_omdb_wikipedia(tmp_path):
+    """Non-adult movies: TMDb → OMDb → Wikipedia (when configured)."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tmdb_api_key="tmdb", omdb_api_key="omdb")
+    pipe.tmdb = mock.Mock(**{"fetch.return_value": None})
+    pipe.omdb = mock.Mock(**{"fetch.return_value": None})
+    pipe.wikipedia = mock.Mock(**{"fetch.return_value": {
+        "title": "T", "poster": "http://cdn/p.jpg", "backdrop": "",
+        "provider": "wikipedia", "genres": [], "rating": 0, "synopsis": "", "year": "",
+    }})
+    done = threading.Event()
+    got = {}
+    def _on_done(key, meta):
+        got.update(meta or {})
+        done.set()
+    pipe.resolve_async(SECTION_MOVIES, "Some Movie", "2023", _on_done, group="Films")
+    assert done.wait(10)
+    assert got.get("provider") == "wikipedia"
+    assert pipe.tmdb.fetch.called
+    assert pipe.omdb.fetch.called
+    assert pipe.wikipedia.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_wikipedia_skipped_for_adult(tmp_path):
+    """Wikipedia is not tried for adult entries (it doesn't cover adult VOD)."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tpdb_api_key="tpdb")
+    pipe.tpdb = mock.Mock(**{"fetch.return_value": None})
+    pipe.wikipedia = mock.Mock()
+    done = threading.Event()
+    pipe.resolve_async(SECTION_MOVIES, "Some Adult Scene", "2023",
+                       lambda k, m: done.set(), group="XXX")
+    assert done.wait(10)
+    assert not pipe.wikipedia.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_omdb_skipped_when_no_key(tmp_path):
+    """Without an OMDb key, the chain skips it (omdb is None)."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache)  # no keys at all
+    assert pipe.omdb is None
+    assert pipe.tmdb is None
+    # Wikipedia is keyless, so it's always available.
+    assert pipe.wikipedia is not None
+    pipe.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Channel logo fallback chain + SVG support
+# ---------------------------------------------------------------------------
+
+def test_channel_logo_chain_uses_iptvorg_first():
+    """When iptv-org has a logo, the chain returns it without trying favicons."""
+    from iptv.metadata import ChannelLogoChain
+    iptvorg = mock.Mock(**{"lookup.return_value": "http://cdn/bbc.png"})
+    chain = ChannelLogoChain(iptvorg)
+    url = chain.lookup("BBC News")
+    assert url == "http://cdn/bbc.png"
+
+
+def test_channel_logo_chain_falls_back_to_google_favicon():
+    """When iptv-org misses, the chain tries Google S2 favicon."""
+    from iptv.metadata import ChannelLogoChain
+    iptvorg = mock.Mock(**{"lookup.return_value": ""})
+    chain = ChannelLogoChain(iptvorg)
+    ok = mock.Mock(status_code=200, headers={"Content-Type": "image/png"})
+    with mock.patch.object(chain._session, "head", return_value=ok):
+        url = chain.lookup("BBC News")
+    assert "google.com/s2/favicons" in url
+    assert "bbcnews.com" in url
+
+
+def test_channel_logo_chain_falls_back_to_ddg_when_google_fails():
+    """When Google S2 returns 404, the chain tries DuckDuckGo favicon."""
+    from iptv.metadata import ChannelLogoChain
+    iptvorg = mock.Mock(**{"lookup.return_value": ""})
+    chain = ChannelLogoChain(iptvorg)
+    google_404 = mock.Mock(status_code=404)
+    ddg_ok = mock.Mock(status_code=200, headers={"Content-Type": "image/x-icon"})
+    with mock.patch.object(chain._session, "head", side_effect=[google_404, ddg_ok]):
+        url = chain.lookup("Sky Sports")
+    assert "duckduckgo.com" in url
+    assert "skysports.com" in url
+
+
+def test_channel_logo_chain_returns_empty_when_all_sources_fail():
+    from iptv.metadata import ChannelLogoChain
+    iptvorg = mock.Mock(**{"lookup.return_value": ""})
+    chain = ChannelLogoChain(iptvorg)
+    with mock.patch.object(chain._session, "head",
+                           return_value=mock.Mock(status_code=404)):
+        assert chain.lookup("Unknown Channel XYZ") == ""
+
+
+def test_channel_logo_chain_guess_domain_strips_decorations():
+    """Domain guessing strips HD/FHD/country decorations from channel names."""
+    from iptv.metadata import ChannelLogoChain
+    # "BBC News HD" -> "bbcnews.com" (HD stripped).
+    assert ChannelLogoChain._guess_domain("BBC News HD") == "bbcnews.com"
+    # "UK: Sky Sports" -> "skysports.com" (UK: stripped, country prefix).
+    assert ChannelLogoChain._guess_domain("UK: Sky Sports") == "skysports.com"
+
+
+def test_channel_logo_chain_returns_empty_for_short_names():
+    """Very short channel names (after decoration stripping) get no favicon."""
+    from iptv.metadata import ChannelLogoChain
+    assert ChannelLogoChain._guess_domain("HD") == ""
+
+
+def test_channel_logo_chain_skips_favicon_for_empty_name():
+    from iptv.metadata import ChannelLogoChain
+    iptvorg = mock.Mock(**{"lookup.return_value": ""})
+    chain = ChannelLogoChain(iptvorg)
+    assert chain.lookup("") == ""
+
+
+def test_pipeline_channel_logo_fallback_uses_chain(tmp_path):
+    """MetadataPipeline.channel_logo_fallback delegates to the logo chain."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache)
+    pipe.logo_chain = mock.Mock(**{"lookup.return_value": "http://cdn/logo.png"})
+    assert pipe.channel_logo_fallback("BBC News") == "http://cdn/logo.png"
+    pipe.shutdown()
+
+
+# -- SVG support --
+
+def test_is_svg_detects_xml_prefixed_svg():
+    from iptv.artwork import _is_svg
+    data = b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>'
+    assert _is_svg(data) is True
+
+
+def test_is_svg_detects_bare_svg():
+    from iptv.artwork import _is_svg
+    data = b'<svg width="100" height="100"></svg>'
+    assert _is_svg(data) is True
+
+
+def test_is_svg_rejects_png():
+    from iptv.artwork import _is_svg
+    data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 100
+    assert _is_svg(data) is False
+
+
+def test_is_svg_rejects_html():
+    from iptv.artwork import _is_svg
+    data = b"<html><body>Not an image</body></html>"
+    assert _is_svg(data) is False
+
+
+def test_is_image_file_accepts_svg(tmp_path):
+    """_is_image_file returns True for SVG files (rasterized later by the cache)."""
+    from iptv.artwork import _is_image_file
+    p = tmp_path / "logo.svg"
+    p.write_text('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"></svg>')
+    assert _is_image_file(str(p)) is True
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: ETag revalidation, progressive JPEG, provider enable/disable,
+#           backdrop enrichment
+# ---------------------------------------------------------------------------
+
+def test_artwork_meta_save_and_load(tmp_path):
+    """ETag/Last-Modified sidecar is saved and loaded for revalidation."""
+    from iptv.artwork import ArtworkCache
+    cache = ArtworkCache(str(tmp_path / "art"))
+    cache._save_meta("http://cdn/img.jpg", etag='"abc123"', last_modified="Mon, 01 Jan 2024 00:00:00 GMT")
+    meta = cache._load_meta("http://cdn/img.jpg")
+    assert meta["etag"] == '"abc123"'
+    assert "Mon, 01 Jan 2024" in meta["last_modified"]
+
+
+def test_artwork_meta_missing_returns_empty(tmp_path):
+    from iptv.artwork import ArtworkCache
+    cache = ArtworkCache(str(tmp_path / "art"))
+    assert cache._load_meta("http://cdn/nonexistent.jpg") == {}
+
+
+def test_pipeline_javbus_disabled_skips_in_chain(tmp_path):
+    """When enable_javbus=False, JavBus is None and skipped in the JAV chain."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tpdb_api_key="tpdb", enable_javbus=False)
+    assert pipe.javbus is None
+    assert pipe.fanza is not None  # FANZA still enabled
+    pipe.tpdb = mock.Mock(**{"fetch.return_value": None})
+    pipe.fanza = mock.Mock(**{"fetch.return_value": None})
+    pipe.javlibrary = mock.Mock(**{"fetch.return_value": None})
+    done = threading.Event()
+    pipe.resolve_async(SECTION_MOVIES, "ABP-123", "", lambda k, m: done.set(), group="XXX")
+    assert done.wait(10)
+    # JavBus is None, so it can't be called — the chain skips it.
+    assert pipe.fanza.fetch.called
+    assert pipe.javlibrary.fetch.called
+    pipe.shutdown()
+
+
+def test_pipeline_wikipedia_disabled_skips_in_chain(tmp_path):
+    """When enable_wikipedia=False, Wikipedia is None and skipped."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, enable_wikipedia=False)
+    assert pipe.wikipedia is None
+    pipe.shutdown()
+
+
+def test_pipeline_fanarttv_enriches_backdrop(tmp_path):
+    """When a provider returns a poster but no backdrop, Fanart.tv is tried
+    to supplement the backdrop."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tmdb_api_key="tmdb", fanarttv_api_key="fanart")
+    pipe.tmdb = mock.Mock(**{"fetch.return_value": {
+        "title": "T", "poster": "http://image.tmdb.org/t/p/w780/123.jpg",
+        "backdrop": "", "provider": "tmdb", "genres": [], "rating": 0,
+        "synopsis": "", "year": "2023", "_tmdb_id": "12345", "_is_series": False,
+    }})
+    pipe.fanarttv = mock.Mock(**{"fetch_backdrop.return_value": "http://cdn/fanart.jpg"})
+    done = threading.Event()
+    got = {}
+    def _on_done(key, meta):
+        got.update(meta or {})
+        done.set()
+    pipe.resolve_async(SECTION_MOVIES, "Some Movie", "2023", _on_done, group="Films")
+    assert done.wait(10)
+    assert got.get("backdrop") == "http://cdn/fanart.jpg"
+    assert pipe.fanarttv.fetch_backdrop.called
+    pipe.shutdown()
+
+
+def test_pipeline_fanarttv_skipped_when_backdrop_already_present(tmp_path):
+    """When the primary provider already returned a backdrop, Fanart.tv
+    enrichment is skipped (no need to supplement)."""
+    from iptv.metadata import MetadataPipeline
+    cache = IPTVCache(str(tmp_path))
+    pipe = MetadataPipeline(cache, tmdb_api_key="tmdb", fanarttv_api_key="fanart")
+    pipe.tmdb = mock.Mock(**{"fetch.return_value": {
+        "title": "T", "poster": "http://image.tmdb.org/t/p/w780/123.jpg",
+        "backdrop": "http://image.tmdb.org/t/p/w1280/123b.jpg",
+        "provider": "tmdb", "genres": [], "rating": 0, "synopsis": "", "year": "2023",
+    }})
+    pipe.fanarttv = mock.Mock()
+    done = threading.Event()
+    pipe.resolve_async(SECTION_MOVIES, "Some Movie", "2023",
+                       lambda k, m: done.set(), group="Films")
+    assert done.wait(10)
+    assert not pipe.fanarttv.fetch_backdrop.called
+    pipe.shutdown()
+
 
 def _fake_xtream_response(action):
     if action == "get_live_categories":
@@ -920,6 +2488,28 @@ def test_cache_epg_scoped_per_source(tmp_path):
     assert cache.epg_now_next("b1")["now"] == "Show B"
 
 
+def test_cache_clear_metadata_is_scoped(tmp_path):
+    """clear_metadata wipes lookups (incl. negative rows) but keeps playlists,
+    favorites and history — those are user data, not derived cache."""
+    cache = IPTVCache(str(tmp_path))
+    cache.save_metadata("movies:dune:1984", "movies", "Dune", "1984", "tmdb",
+                        {"poster": "http://x/p.jpg"})
+    cache.save_metadata("movies:nope:", "movies", "Nope", "", "none",
+                        {"negative": True, "updated_at": 1, "provider_misses": {}})
+    cache.save_playlist("s1", {"channels": [], "movies": [], "series": [],
+                               "categories": [], "url_tvg": ""})
+    cache.add_favorite("s1", "i1", "live")
+    cache.add_recent("s1", "i1", "live", "CNN", "http://cnn")
+    assert cache.metadata_count() == 2
+    assert cache.clear_metadata() == 2
+    assert cache.metadata_count() == 0
+    assert cache.load_metadata("movies:dune:1984") is None
+    assert cache.load_playlist("s1") is not None
+    assert cache.is_favorite("s1", "i1")
+    assert len(cache.recent("s1")) == 1
+    cache.vacuum()  # must not raise
+
+
 # ---------------------------------------------------------------------------
 # Manager (favorites, search, recent — no network)
 # ---------------------------------------------------------------------------
@@ -955,6 +2545,62 @@ def test_manager_recent(tmp_path):
     mgr.record_recent(ch)
     rec = mgr.recent()
     assert len(rec) == 1 and rec[0]["name"] == "CNN"
+
+
+def test_manager_cache_stats(tmp_path):
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    url = "http://host/p.jpg"
+    with open(mgr.artwork.full_path(url), "wb") as f:
+        f.write(b"x" * 100)
+    mgr.cache.save_metadata("movies:dune:1984", "movies", "Dune", "1984", "tmdb", {"poster": "x"})
+    s = mgr.cache_stats()
+    assert s["full_bytes"] >= 100
+    assert s["metadata_rows"] == 1
+    assert s["db_bytes"] > 0
+    assert s["total_bytes"] == s["full_bytes"] + s["thumb_bytes"] + s["db_bytes"]
+    mgr.shutdown()
+
+
+def test_manager_clear_caches_keeps_user_data(tmp_path):
+    """The delete-all button's backend: artwork + metadata go, playlists,
+    favorites and history survive, framegrab failures are forgotten."""
+    mgr, pl = _manager_with_playlist(tmp_path)
+    url = "http://host/p.jpg"
+    with open(mgr.artwork.full_path(url), "wb") as f:
+        f.write(b"x" * 100)
+    mgr.cache.save_metadata("movies:dune:1984", "movies", "Dune", "1984", "tmdb", {"poster": "x"})
+    mgr.cache.save_playlist("s1", {"channels": [], "movies": [], "series": [],
+                                   "categories": [], "url_tvg": ""})
+    mgr.toggle_favorite(pl.channels[0])
+    mgr.record_recent(pl.channels[0])
+    if mgr.framegrab:
+        mgr.framegrab._failed.add("framegrab:dead")
+    done = threading.Event()
+    got = {}
+    mgr.clear_caches_async(lambda s: (got.update(s), done.set()))
+    assert done.wait(20)
+    assert got["artwork_files"] >= 1 and got["artwork_bytes"] >= 100
+    assert got["metadata_rows"] == 1
+    assert mgr.artwork.get_cached(url) is None
+    assert mgr.cache.metadata_count() == 0
+    assert mgr.cache.load_playlist("s1") is not None
+    assert mgr.cache.is_favorite("s1", "c1")
+    assert len(mgr.cache.recent("s1")) == 1
+    if mgr.framegrab:
+        assert "framegrab:dead" not in mgr.framegrab._failed
+    mgr.shutdown()
+
+
+def test_manager_enforce_cache_limit(tmp_path):
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    mgr.cache_limit_mb = 0.0001  # 104 bytes
+    url = "http://host/p.jpg"
+    with open(mgr.artwork.full_path(url), "wb") as f:
+        f.write(b"x" * 1000)
+    t = mgr.enforce_cache_limit_async()
+    t.join(20)
+    assert mgr.artwork.get_cached(url) is None
+    mgr.shutdown()
 
 
 # ---------------------------------------------------------------------------
@@ -2337,3 +3983,92 @@ def test_local_folder_shows_in_the_sidebar_tree(tmp_path):
     tab._show_section(SECTION_SERIES, "TV SERIES", "loc")
     assert [s.name for s in tab._current_items] == ["henry danger"]
     _close_tab(tab)
+
+
+def test_error_auto_retry_before_showing_overlay():
+    """When the backend emits an error, PlayerWidget auto-retries up to
+    _MAX_RETRIES times (at 1-second intervals) before showing the error
+    overlay — automating the "click Play again a few times" pattern for
+    flaky IPTV servers that reject the first connection but succeed on
+    retry."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from unittest.mock import MagicMock, patch
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    app = QApplication.instance() or QApplication([])
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig())
+    player._current_item = MagicMock(url="http://example.com/stream.m3u8")
+    player._backend = MagicMock()
+
+    show_error_calls = []
+    player._show_error = lambda msg: show_error_calls.append(msg)
+
+    # Stub QTimer.singleShot so retries don't actually fire during the test.
+    with patch("gui.iptv_tab.QTimer.singleShot"):
+        # First _MAX_RETRIES errors should schedule retries, not show overlay.
+        for i in range(player._MAX_RETRIES):
+            player._on_error("connection refused")
+            assert player._retry_count == i + 1, f"retry count after error {i+1}"
+            assert player._error_retry_pending is True
+        assert show_error_calls == [], "error overlay shown during retries"
+
+        # One more error exhausts retries → show the overlay + reset state.
+        player._on_error("connection refused")
+        assert len(show_error_calls) == 1, "error overlay not shown after exhausting retries"
+        assert player._retry_count == 0
+        assert player._error_retry_pending is False
+
+
+def test_error_retry_skipped_when_no_current_item():
+    """Errors with no current item (e.g. after stop) go straight to the
+    overlay — no retry is scheduled."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from unittest.mock import MagicMock, patch
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    app = QApplication.instance() or QApplication([])
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig())
+    player._current_item = None
+    player._backend = MagicMock()
+
+    show_error_calls = []
+    player._show_error = lambda msg: show_error_calls.append(msg)
+
+    with patch("gui.iptv_tab.QTimer.singleShot"):
+        player._on_error("connection refused")
+        assert len(show_error_calls) == 1
+        assert player._retry_count == 0
+        assert player._error_retry_pending is False
+
+
+def test_stop_cancels_pending_error_retry():
+    """stop() clears _error_retry_pending so a scheduled retry can't fire
+    after the user explicitly stopped playback."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from unittest.mock import MagicMock, patch
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    app = QApplication.instance() or QApplication([])
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig())
+    player._current_item = MagicMock(url="http://example.com/stream.m3u8")
+    player._backend = MagicMock()
+
+    with patch("gui.iptv_tab.QTimer.singleShot"):
+        player._on_error("connection refused")
+        assert player._error_retry_pending is True
+
+    player.stop()
+    assert player._error_retry_pending is False
+

@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import uuid
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -345,10 +346,21 @@ class IPTVSourcesDialog(_SettingsPage):
 
 
 class IPTVMetadataDialog(_SettingsPage):
-    """Disk cache, EPG toggle. TMDb key lives in File → API Keys."""
+    """Disk cache, EPG toggle. TMDb key lives in File → API Keys.
 
-    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+    When the running IPTVManager is passed in, the page also shows the live
+    disk usage and offers a "delete all" for the derived caches (artwork
+    files + metadata lookups). Playlists, EPG, favorites and watch history
+    are NOT touched — only data that re-downloads on demand."""
+
+    cache_cleared = Signal()        # a clear finished — grids must reset tiles
+    _stats_ready = Signal(dict)     # worker thread -> GUI
+    _clear_done = Signal(dict)      # worker thread -> GUI
+
+    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None,
+                 manager=None) -> None:
         super().__init__(config, "IPTV — Metadata & Cache", parent)
+        self._manager = manager
 
         cache_group = QGroupBox("Cache")
         cl = QFormLayout(cache_group)
@@ -359,16 +371,84 @@ class IPTVMetadataDialog(_SettingsPage):
         browse.clicked.connect(self._browse_cache_dir)
         cl.addRow("", browse)
         self.cache_limit = QSpinBox()
-        self.cache_limit.setRange(50, 10000)
+        self.cache_limit.setRange(50, 51200)
         self.cache_limit.setSuffix(" MB")
+        self.cache_limit.setToolTip(
+            "Disk cap for cached covers/artwork. When the cache grows past\n"
+            "this, the least-recently-viewed images are evicted first.")
         cl.addRow("Cache size limit:", self.cache_limit)
         self.enable_epg = QCheckBox("Enable EPG (XMLTV) when available")
         cl.addRow("", self.enable_epg)
         self.body.addWidget(cache_group)
 
+        if manager is not None:
+            usage_group = QGroupBox("Disk Usage")
+            ul = QVBoxLayout(usage_group)
+            self.usage_label = _make_hint("Calculating…")
+            ul.addWidget(self.usage_label)
+            self.clear_btn = QPushButton("Delete All Cached Artwork && Metadata…")
+            self.clear_btn.setToolTip(
+                "Deletes every cached cover, logo and metadata lookup.\n"
+                "Playlists, favorites and watch history are kept; artwork\n"
+                "and metadata simply re-download as you browse.")
+            self.clear_btn.clicked.connect(self._clear_caches)
+            ul.addWidget(self.clear_btn)
+            self.body.addWidget(usage_group)
+            self._stats_ready.connect(self._show_stats)
+            self._clear_done.connect(self._on_clear_done)
+            self._refresh_stats()
+
         self.cache_dir.setText(self.config.iptv.cache_dir)
         self.cache_limit.setValue(self.config.iptv.cache_limit_mb)
         self.enable_epg.setChecked(self.config.iptv.enable_epg)
+
+    @staticmethod
+    def _fmt_mb(n: float) -> str:
+        return f"{n / (1024 * 1024):,.1f} MB" if n < 1024 ** 3 else f"{n / 1024 ** 3:,.2f} GB"
+
+    def _refresh_stats(self) -> None:
+        def _work() -> None:
+            try:
+                self._stats_ready.emit(self._manager.cache_stats())
+            except Exception:
+                logger.exception("cache stats failed")
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _show_stats(self, s: dict) -> None:
+        self._last_stats = s
+        self.usage_label.setText(
+            f"Artwork: {self._fmt_mb(s.get('full_bytes', 0) + s.get('thumb_bytes', 0))} "
+            f"({s.get('full_files', 0):,} images)\n"
+            f"Metadata: {s.get('metadata_rows', 0):,} lookups "
+            f"(database {self._fmt_mb(s.get('db_bytes', 0))} incl. playlists/EPG)\n"
+            f"Total: {self._fmt_mb(s.get('total_bytes', 0))} "
+            f"(limit {self._fmt_mb(self.config.iptv.cache_limit_mb * 1024 * 1024)})")
+
+    def _clear_caches(self) -> None:
+        s = getattr(self, "_last_stats", None) or {}
+        total = self._fmt_mb(s.get("total_bytes", 0)) if s else "the cached data"
+        if QMessageBox.question(
+                self, "Delete caches",
+                f"Delete all cached artwork and metadata ({total})?\n\n"
+                "Covers, logos and metadata re-download as you browse.\n"
+                "Playlists, EPG, favorites and watch history are kept.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self.clear_btn.setEnabled(False)
+        self.clear_btn.setText("Deleting…")
+        self._manager.clear_caches_async(lambda summary: self._clear_done.emit(summary))
+
+    def _on_clear_done(self, summary: dict) -> None:
+        self.clear_btn.setEnabled(True)
+        self.clear_btn.setText("Delete All Cached Artwork && Metadata…")
+        freed = summary.get("artwork_bytes", 0)
+        QMessageBox.information(
+            self, "Caches deleted",
+            f"Freed {self._fmt_mb(freed)} of artwork "
+            f"({summary.get('artwork_files', 0):,} files) and "
+            f"{summary.get('metadata_rows', 0):,} metadata lookups.")
+        self.cache_cleared.emit()
+        self._refresh_stats()
 
     def _browse_cache_dir(self) -> None:
         d = QFileDialog.getExistingDirectory(self, "Choose cache directory")
@@ -393,6 +473,10 @@ class IPTVMetadataDialog(_SettingsPage):
         self.config.iptv.cache_dir = cache_dir
         self.config.iptv.cache_limit_mb = self.cache_limit.value()
         self.config.iptv.enable_epg = self.enable_epg.isChecked()
+        if self._manager is not None:
+            # Apply the (possibly lowered) cap to the running app right away.
+            self._manager.cache_limit_mb = self.cache_limit.value()
+            self._manager.enforce_cache_limit_async()
         super().accept()
 
 
@@ -459,6 +543,21 @@ class IPTVPlaybackDialog(_SettingsPage):
             "frame edge (0.5% ≈ 5 px per side at 1080p). mpv backend only."
         )
         pl.addRow("Video overscan:", self.overscan)
+
+        self.audio_delay = QDoubleSpinBox()
+        self.audio_delay.setRange(-1.0, 1.0)
+        self.audio_delay.setSingleStep(0.05)
+        self.audio_delay.setDecimals(2)
+        self.audio_delay.setSuffix(" s")
+        self.audio_delay.setToolTip(
+            "Audio sync offset — shifts the audio track relative to the\n"
+            "video. Positive values delay the audio (play it later) to\n"
+            "compensate for video-path latency such as SVP 4 motion\n"
+            "interpolation, whose frame synthesis renders behind the audio\n"
+            "clock. Adjusted live from the player's audio menu or the +/-\n"
+            "keys; this is the default applied on every playback."
+        )
+        pl.addRow("Audio sync offset:", self.audio_delay)
 
         self.interpolation = QCheckBox("Smooth motion (frame interpolation)")
         self.interpolation.setToolTip(
@@ -543,6 +642,7 @@ class IPTVPlaybackDialog(_SettingsPage):
         self.hwdec.setCurrentIndex(hidx if hidx >= 0 else 0)
         self.cache.setValue(self.config.iptv.cache_seconds)
         self.overscan.setValue(self.config.iptv.overscan_pct)
+        self.audio_delay.setValue(self.config.iptv.audio_delay)
         self.interpolation.setChecked(self.config.iptv.interpolation)
         self.svp.setChecked(self.config.iptv.svp_enabled and self.svp.isEnabled())
         self.milkdrop.setChecked(self.config.iptv.milkdrop_enabled)
@@ -558,6 +658,7 @@ class IPTVPlaybackDialog(_SettingsPage):
         self.config.iptv.hwdec = self.hwdec.currentData()
         self.config.iptv.cache_seconds = self.cache.value()
         self.config.iptv.overscan_pct = self.overscan.value()
+        self.config.iptv.audio_delay = self.audio_delay.value()
         self.config.iptv.interpolation = self.interpolation.isChecked()
         # A greyed-out (SVP missing) box can only stay off; a disabled box
         # still reports its checked state, so gate it explicitly.
