@@ -115,6 +115,28 @@
   }
   header.search button:hover,
   header.search button:focus-visible { background: #fff; color: #000; }
+  footer.social {
+    /* Mirror the tagline's distance above the search box (48 + 16 = 64px). */
+    padding: 16px 24px 64px;
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+  }
+  footer.social a {
+    display: block;
+    width: 72px;
+    height: 72px;
+    border-radius: 18px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    transition: transform 0.25s, border-color 0.25s;
+  }
+  footer.social a:hover,
+  footer.social a:focus-visible {
+    transform: translateY(-3px);
+    border-color: rgba(255, 255, 255, 0.6);
+  }
+  footer.social img { width: 100%; height: 100%; display: block; }
 </style>
 </head>
 <body>
@@ -140,6 +162,17 @@
       <button type="submit">Search</button>
     </form>
   </header>
+  <footer class="social">
+    <a href="https://www.linkedin.com/in/igorcarlier/" target="_blank" rel="noopener" aria-label="LinkedIn">
+      <img src="Linked.png" alt="LinkedIn">
+    </a>
+    <a href="mailto:igorcarlier@gmail.com" aria-label="Email">
+      <img src="Email.png" alt="Email">
+    </a>
+    <a href="https://x.com/igorcarlier" target="_blank" rel="noopener" aria-label="X">
+      <img src="X.png" alt="X">
+    </a>
+  </footer>
   <script>
     window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
   </script>
