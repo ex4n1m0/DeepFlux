@@ -234,4 +234,10 @@ DeepFlux/
 
 ## License
 
-MIT
+DeepFlux is released under the [MIT License](LICENSE) — you are free to use,
+modify, rebuild and redistribute it.
+
+Bundled third-party components keep their own licenses: libmpv and FFmpeg
+(LGPL — notices ship in the install directory under `_internal\licenses\`),
+Qt/PySide6 (LGPL), libtorrent-rasterbar (BSD), plus the Python packages
+listed in `pyproject.toml`.
