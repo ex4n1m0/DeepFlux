@@ -1,42 +1,58 @@
-# Deeptorrent
+# DeepFlux
 
-LLM-Assisted Torrent Download Manager (local-first, swarm-aware, Windows installer).
+LLM-Powered Browser, Downloader, File Manager & Player (Windows).
 
-Deeptorrent is a Python-based BitTorrent client where the download engine
-(libtorrent-rasterbar) is controlled by an LLM agent through structured
-function/tool calling. The LLM acts as an active participant: it diagnoses
-stalled swarms, searches self-hosted Torznab indexers for better sources,
-finds alternate trackers and releases, and organizes completed downloads.
+DeepFlux is a Python desktop app where an LLM agent drives the whole
+toolbox through structured tool calling: a Chromium browser, a BitTorrent
+engine (libtorrent-rasterbar), an IDM-style segmented download manager with
+HLS/DASH capture, an IPTV/media player, a dual-pane file manager and an IRC
+client. The agent searches indexers and the web, diagnoses stalled swarms,
+finds alternate trackers and releases, manages the download queue, drives the
+browser, and organizes completed downloads — asking for confirmation before
+anything destructive.
+
+Website and installer: **https://deepflux.space**
 
 ## Features
 
-- **Engine** (`engine/`): Queue-backed `libtorrent` wrapper running in its own
-  thread with a Future-based command interface.
-- **Tool-calling** (`agent/tools.py`): JSON-schema tool definitions compatible
-  with DeepSeek function calling.
-- **Swarm health**: `diagnose_swarm` returns healthy / stalled / dead with
-  likely cause.
-- **Discovery tools**:
-  - `refresh_tracker_list`: curated public tracker lists.
-  - `find_alt_trackers` & `find_alt_release`: web search fallbacks.
-  - `search_indexers`: Torznab queries against Jackett.
-- **ReAct agent loop** (`agent/loop.py`): Swappable LLM providers, built-in
-  confirmation for destructive actions, autonomous watchdog mode.
-- **Metadata organizer** (`agent/organizer.py`): Proposes clean filenames and
-  categories on completion.
-- **CLI REPL** (`main.py --cli`): Natural-language commands and live torrent table.
-- **GUI** (`main.py` or `gui/`): PySide6 — agent chat, torrents + IDM-style
-  download manager, built-in Chromium browser, IPTV/media player, dual-pane
-  file manager.
-- **IRC client** (`ircmgr/` + `gui/irc_tab.py`): Embedded multi-network IRC
-  client (TLS, SASL, flood-safe pacing, auto-reconnect). Open channels are
-  continuously buffered, and the agent can read/search them on demand
-  (`irc_status`, `irc_list_messages`, `irc_search_messages`) or — with user
-  confirmation — join/part channels and post messages.
+- **Agent** (`agent/`): ReAct loop with JSON-schema tools, OpenAI-compatible
+  providers (DeepSeek direct, OpenRouter, or any custom endpoint), streaming
+  with reasoning capture, persistent memory (`~/.deeptorrent/memory/`),
+  confirmation for destructive actions, a stalled-torrent watchdog, and
+  voice input (local whisper).
+- **Browse** (`gui/main_window.py`, `dlmgr/browser_extension.py`,
+  `dlmgr/adblock.py`): full Chromium browser (QtWebEngine) with ad blocking,
+  bookmarks/history, private tabs, an in-page video grabber, and the
+  **Site Grabber** — keyword search on any video site, results with
+  thumbnails, batch-queued downloads (streams are found by scanning the video
+  page, including obfuscated player scripts). Browser downloads route to the
+  download manager with the session's cookies.
+- **Download** (`engine/`, `dlmgr/`): queue-backed `libtorrent` wrapper on its
+  own thread; segmented multi-connection HTTP downloads with resume;
+  HLS/DASH stream capture remuxed by the bundled FFmpeg (LGPL);
+  stream-while-downloading; Jackett/Torznab search with automatic indexer
+  sync; RSS feeds with auto-download.
+- **Play** (`iptv/`, `gui/iptv_tab.py`): IPTV (M3U, Xtream Codes) and local
+  media library, EPG, artwork/metadata (TMDb), subtitles (OpenSubtitles),
+  mpv backend with HDR10 / Dolby Vision tone mapping (VLC backend optional).
+- **Command** (`gui/commander_tab.py`): dual-pane file manager
+  (Double Commander style) the agent can operate.
+- **IRC** (`ircmgr/`, `gui/irc_tab.py`): multi-network client (TLS, SASL,
+  flood-safe pacing, auto-reconnect); channels are buffered so the agent can
+  read/search them and — with confirmation — join, part and post.
+- **Chrome extension** (`chrome_extension/`, `native_messaging/`): sends
+  downloads from an external Chrome to DeepFlux via a native messaging host
+  the installer registers.
+- **Settings backup**: File → Export/Import Settings writes a
+  passphrase-encrypted `.dfc` with every setting and key.
 - **Windows installer** (`packaging/`): PyInstaller onedir build + Inno Setup
   wizard.
 
-## Quick start
+No API keys are bundled: every key field defaults to empty, and the app
+degrades gracefully without them (the agent runs in a placeholder mode,
+integrations that need a key are skipped).
+
+## Quick start (from source)
 
 ### 1. Install dependencies
 
@@ -46,18 +62,22 @@ python -m venv .venv
 pip install -e ".[dev]"
 ```
 
-`libtorrent` 2.0 Python wheels will be installed automatically on Windows.
+`libtorrent` 2.0 Python wheels are installed automatically on Windows.
+For the media player and stream capture, place `libmpv-2.dll` in
+`packaging/mpv/` (see `packaging/mpv/README.txt`) and `ffmpeg.exe` in
+`packaging/ffmpeg/`; they are not in the repository.
 
-### 2. Configure LLM
-
-Copy the default config file and edit it:
+### 2. Run
 
 ```powershell
-python -c "from config import DeeptorrentConfig; DeeptorrentConfig().to_file(DeeptorrentConfig.default_config_path())"
-notepad $env:USERPROFILE\.deeptorrent\config.json
+python main.py          # GUI (default)
+python main.py --cli    # legacy command-line REPL
 ```
 
-Example `config.json`:
+Enter your keys in **File → API Keys** (LLM endpoint/key, Jackett, Brave,
+Perplexity, TMDb, OpenSubtitles). Settings live in
+`%USERPROFILE%\.deeptorrent\config.json` (the folder keeps the project's
+original name for compatibility) and can also be edited by hand:
 
 ```json
 {
@@ -65,8 +85,9 @@ Example `config.json`:
     "provider": "deepseek",
     "api_key": "YOUR_DEEPSEEK_API_KEY",
     "base_url": "",
-    "model": "openai/gpt-3.5-turbo",
-    "local_only": false
+    "model": "deepseek-v4-pro",
+    "fast_model": "deepseek-v4-flash",
+    "reasoning_effort": "high"
   },
   "indexer": {
     "url": "http://localhost:9117",
@@ -75,8 +96,9 @@ Example `config.json`:
     "timeout": 30
   },
   "web_search": {
-    "provider": "duckduckgo",
+    "provider": "perplexity",
     "api_key": "",
+    "brave_api_key": "",
     "cx": "",
     "base_url": ""
   },
@@ -91,54 +113,31 @@ Example `config.json`:
 }
 ```
 
-The default cloud provider is DeepSeek. With no API key, the app runs in
-`dummy` / placeholder mode for development and basic command demos.
+Web search always uses DuckDuckGo (keyless); Brave and Perplexity are added in
+parallel when their keys are set. `DEEPSEEK_API_KEY`, `JACKETT_API_KEY` and
+`BRAVE_API_KEY` environment variables fill empty slots.
 
-### 3. Start the CLI REPL
+### 3. Indexers (Jackett)
 
-```powershell
-python main.py
-```
-
-Example session:
-
-```
-> add magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062ec9b3ee0 to Movies
-I need your confirmation before executing: add_magnet. Reply 'yes' to proceed.
-> yes
-- Executed call_add_magnet: {"success": true, "info_hash": "dd8255ecdc7ca55fb0bbf81323d87062ec9b3ee0", ...}
-Name  Hash          State                 Progress  Down   Up     Seeds  Peers  Size   Health
-----------------------------------------------------------------------------------------------
-      dd8255ecdc7c  downloading_metadata  0.0%      0 B/s  0 B/s  0      0      0.0 B  stalled
-> list torrents
-Here are the current torrents.
-Name  Hash          State                 Progress  Down   Up     Seeds  Peers  Size   Health
-----------------------------------------------------------------------------------------------
-      dd8255ecdc7c  downloading_metadata  0.0%      0 B/s  0 B/s  0      0      0.0 B  stalled
-> pause everything over 50GB
-Paused 0 torrent(s) over 50 GB: []
-No torrents.
-```
-
-### 4. Start the GUI
-
-```powershell
-python main.py --gui
-```
-
-### 5. Self-hosted indexer aggregator
-
-A Docker Compose service for Jackett is provided in `infra/docker-compose.yml`:
+Install Jackett locally (DeepFlux starts it when it is down and syncs the
+indexer list automatically) or run the provided Docker Compose service:
 
 ```powershell
 cd infra
 docker-compose up -d jackett
 ```
 
-Open http://localhost:9117, add public indexers, and copy the API key into
-`config.json` under `indexer.api_key`.
+Open http://localhost:9117, add indexers, and enter the API key in
+File → API Keys; **Test Connection** fetches your indexer list.
 
-### 6. Run tests
+### 4. Chrome extension (optional)
+
+Open `chrome://extensions`, enable Developer mode, **Load unpacked** and pick
+the `chrome_extension/` folder (in an installed build:
+`_internal\chrome_extension\`). The native messaging host is registered by the
+installer, or manually with `python main.py --register-native-host`.
+
+### 5. Run tests
 
 ```powershell
 python -m pytest tests/ -v
@@ -152,28 +151,31 @@ python -m pytest tests/ -v
 python -m PyInstaller packaging/app.spec --clean --noconfirm
 ```
 
-Output is written to `dist/DeepFlux/`.
+Output is written to `dist/DeepFlux/` (launcher `DeepFlux.exe` + `_internal/`).
 
 ### Inno Setup installer
 
-1. Download and install [Inno Setup](https://jrsoftware.org/isinfo.php).
-2. Open `packaging/installer.iss` in Inno Setup Compiler.
-3. Click **Compile**.
-4. The installer `dist/DeepFlux1.7Setup.exe` is produced.
+Install [Inno Setup](https://jrsoftware.org/isinfo.php), then:
 
-The installer:
-- Installs the PyInstaller output folder to `{app}`.
-- Creates Start Menu and optional Desktop shortcuts.
-- Writes a fresh config with all API-key fields empty (no keys are bundled;
-  you enter your own in the GUI settings dialogs).
-- Registers an uninstaller.
+```powershell
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging/installer.iss
+```
+
+The installer `dist/DeepFlux<version>Setup.exe`:
+- installs the PyInstaller output folder to `{app}` and creates Start Menu
+  and optional Desktop shortcuts;
+- registers file/protocol associations (`.torrent`, `magnet:`, media, html)
+  and the Chrome native messaging host;
+- writes a fresh config with every API-key field empty on each install (no
+  keys are bundled; you enter your own in the GUI);
+- registers an uninstaller that also removes the app's data directory.
 
 ## Stalled-torrent recovery example
 
-In this transcript the watchdog notices a torrent has made no progress for
-more than the threshold, escalates through tracker discovery, alternate
-trackers, indexer search, and finally an alternate release search. Each step
-is logged with the LLM's reasoning summary.
+The watchdog notices a torrent has made no progress for longer than the
+threshold and escalates through tracker discovery, alternate trackers,
+indexer search, and finally an alternate release search. Each step is logged
+with the LLM's reasoning summary.
 
 ```
 [WATCHDOG] stalled torrent aabbcc... (progress 0.0000 for 320s)
@@ -189,34 +191,43 @@ is logged with the LLM's reasoning summary.
 Added better-seeded magnet, removed stale torrent.
 ```
 
-If `watchdog.auto_heal` is `true`, the agent will add the new source and
-update trackers automatically; otherwise it pauses at each destructive step
-and asks for confirmation.
+If `watchdog.auto_heal` is `true`, the agent applies torrent-recovery actions
+(a narrow allowlist) automatically; otherwise it pauses at each step and asks
+for confirmation.
 
 ## Project structure
 
 ```
-Deeptorrent/
+DeepFlux/
+├── agent/               # tools, ReAct loop, LLM clients, memory, organizer, RSS
+├── chrome_extension/    # Chrome extension (sends downloads to DeepFlux)
+├── dlmgr/               # segmented download engine, HLS/DASH, extractors, site grabber, ad-block
 ├── engine/              # libtorrent wrapper
-├── agent/               # tools, ReAct loop, LLM clients, organizer
-├── dlmgr/               # IDM-style segmented download engine (+ HLS/DASH)
-├── ircmgr/              # embedded IRC client core (thread-safe, jaraco/irc)
-├── gui/                 # PySide6 main window and tabs
-├── infra/               # docker-compose for Jackett
-├── packaging/           # PyInstaller spec and Inno Setup script
+├── gui/                 # PySide6 main window, tabs and dialogs
+├── infra/               # Jackett service/sync, settings backup, file associations, docker-compose
+├── iptv/                # IPTV/media player backend (mpv), Xtream, EPG, subtitles
+├── ircmgr/              # embedded IRC client core
+├── native_messaging/    # Chrome native messaging host + registration
+├── packaging/           # PyInstaller spec, Inno Setup script, icons, bundled binaries
 ├── tests/               # pytest suite
-├── main.py              # CLI/GUI entry point
+├── website/             # deepflux.space (Vercel)
+├── main.py              # GUI/CLI entry point
 ├── config.py            # configuration dataclasses and loader
-├── pyproject.toml       # project metadata
-└── README.md
+├── AGENTS.md            # engineering notes for contributors and coding agents
+└── pyproject.toml       # project metadata
 ```
 
 ## Safety and notes
 
 - The LLM never implements BitTorrent piece-selection or peer-wire logic;
   that remains inside libtorrent.
-- All destructive actions (file removal, adding new torrent sources, tracker
-  changes, file moves) require confirmation unless auto-heal is enabled.
+- Destructive actions (file removal, adding new torrent sources, tracker
+  changes, file moves, cancelling downloads) require confirmation unless
+  the watchdog's auto-heal is enabled — and even then only its
+  torrent-recovery allowlist runs unattended.
+- Web fetches and downloads reject local/private network targets and
+  validate every redirect; tool arguments and results are redacted before
+  they reach logs or the debug UI.
 - Web-search and indexer queries are rate-limited and include retry logic.
 - Public tracker list URLs are configurable; no private tracker credentials
   are hardcoded.

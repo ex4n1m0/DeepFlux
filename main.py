@@ -342,7 +342,7 @@ def main() -> None:
         " --dns-over-https-templates=https://cloudflare-dns.com/dns-query"
     ).strip()
 
-    parser = argparse.ArgumentParser(description="Deeptorrent")
+    parser = argparse.ArgumentParser(description="DeepFlux")
     parser.add_argument("--config", help="Path to config.json")
     parser.add_argument("--log-level", default="INFO", help="Logging level")
     parser.add_argument(
