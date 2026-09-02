@@ -179,6 +179,8 @@ class BrowserConfig:
     extension_enabled: bool = False  # Video grabber (browser extension JS injection) — off by default
     grabber_auto_queue: bool = False  # Site Grabber: queue search results without a Download click
     grabber_auto_limit: int = 5  # max videos the Site Grabber auto-queues per search/page
+    grabber_last_site: str = ""  # Site Grabber: last site searched (prefill when no tab is open)
+    grabber_search_templates: Dict[str, str] = field(default_factory=dict)  # host -> search URL pattern that worked
     agent_content_permissions: Dict[str, str] = field(default_factory=dict)
     restore_tabs: bool = True
     open_tabs: List[str] = field(default_factory=list)
@@ -862,6 +864,9 @@ class DeeptorrentConfig:
                 extension_enabled=data.get("browser", {}).get("extension_enabled", False),
                 grabber_auto_queue=bool(data.get("browser", {}).get("grabber_auto_queue", False)),
                 grabber_auto_limit=max(1, int(data.get("browser", {}).get("grabber_auto_limit", 5) or 5)),
+                grabber_last_site=str(data.get("browser", {}).get("grabber_last_site", "") or ""),
+                grabber_search_templates=({str(k): str(v) for k, v in data.get("browser", {}).get("grabber_search_templates", {}).items()}
+                                          if isinstance(data.get("browser", {}).get("grabber_search_templates", {}), dict) else {}),
                 agent_content_permissions=(data.get("browser", {}).get("agent_content_permissions", {})
                                            if isinstance(data.get("browser", {}).get("agent_content_permissions", {}), dict) else {}),
                 restore_tabs=bool(data.get("browser", {}).get("restore_tabs", True)),

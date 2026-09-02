@@ -1,22 +1,24 @@
-"""Site Grabber dialog: keyword search → video list → download queue.
+"""Site Grabber dialog: keyword search on any video site → list → downloads.
 
-Searches a video site (MissAV) by keywords, lists the results with
-thumbnails, and queues selected videos as HLS downloads in the download
-manager. All network work (search, thumbnails, resolve + manifest parse)
-runs on daemon threads; engine calls stay serialized on a single worker
-so DownloadEngine state is never mutated concurrently.
+Point it at a site (prefilled with the site open in the browser), type
+keywords, and the results are listed with thumbnails; selected videos are
+resolved to their streams and queued in the download manager. All network
+work (search, thumbnails, resolve + manifest parse) runs on daemon
+threads; engine calls stay serialized on a single worker so DownloadEngine
+state is never mutated concurrently.
 """
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from typing import Any, List, Optional
+from urllib.parse import urlparse
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -29,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dlmgr.site_grabber import GrabberError, GrabberVideo, SITES
+from dlmgr.site_grabber import GrabberError, GrabberVideo, SiteGrabber
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +42,9 @@ _STYLE = """
     QLabel { color: #c8d3e0; }
     QListWidget { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a;
                   border-radius: 6px; selection-background-color: #1a2a4a; }
-    QLineEdit, QComboBox { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a;
-                           padding: 4px 8px; border-radius: 3px; }
-    QLineEdit:focus, QComboBox:focus { border: 1px solid #2a7abf; }
+    QLineEdit { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a;
+                padding: 4px 8px; border-radius: 3px; }
+    QLineEdit:focus { border: 1px solid #2a7abf; }
     QPushButton { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a;
                   padding: 4px 12px; border-radius: 3px; }
     QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #2a7abf; }
@@ -54,14 +56,15 @@ _STYLE = """
                padding: 2px 6px; border-radius: 3px; }
     QLabel#status { color: #7a8aa0; }
     QLabel#status_error { color: #ff3366; }
+    QLabel#hint { color: #5a6a80; font-size: 11px; }
 """
 
 
 class SiteGrabberDialog(QDialog):
-    """Keyword search on video sites; queue results as downloads."""
+    """Keyword search on any video site; queue results as downloads."""
 
-    _search_done = Signal(object)          # List[GrabberVideo] | Exception
-    _thumb_loaded = Signal(str, bytes)     # watch url, image bytes
+    _search_done = Signal(object)          # (videos, template) | Exception
+    _thumb_loaded = Signal(str, bytes)     # video url, image bytes
     _queue_progress = Signal(int, int, str)  # done, total, current code
     _queue_done = Signal(object)           # list[(GrabberVideo, job|Exception)]
 
@@ -69,13 +72,14 @@ class SiteGrabberDialog(QDialog):
         super().__init__(parent)
         self._config = config
         self._engine = engine
-        self._site = next(iter(SITES.values()))
+        browser = getattr(config, "browser", None)
+        self._grabber = SiteGrabber(getattr(browser, "grabber_search_templates", None) or {})
         self._videos: List[GrabberVideo] = []
         self._query = ""
         self._page = 1
         self._busy = False
         self.setWindowTitle("Site Grabber")
-        self.resize(780, 560)
+        self.resize(820, 580)
         self.setStyleSheet(_STYLE)
         self._build_ui()
         self._search_done.connect(self._on_search_done)
@@ -87,15 +91,18 @@ class SiteGrabberDialog(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        search_row = QHBoxLayout()
-        self.site_combo = QComboBox()
-        for site in SITES.values():
-            self.site_combo.addItem(site.label, site.key)
-        self.site_combo.setToolTip("Site to search (more adapters can be added)")
-        search_row.addWidget(self.site_combo)
+        site_row = QHBoxLayout()
+        site_row.addWidget(QLabel("Site"))
+        self.site_input = QLineEdit()
+        self.site_input.setPlaceholderText("Site address, e.g. https://example.com (any page on the site works)")
+        self.site_input.setToolTip("The video site to search — prefilled with the site open in the browser")
+        site_row.addWidget(self.site_input, 1)
+        layout.addLayout(site_row)
 
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Keywords"))
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search keywords, e.g. an id or actress…")
+        self.search_input.setPlaceholderText("Search keywords…")
         self.search_input.returnPressed.connect(self._search)
         search_row.addWidget(self.search_input, 1)
 
@@ -119,6 +126,18 @@ class SiteGrabberDialog(QDialog):
         self.auto_limit_spin.setToolTip("Max videos auto-queued per search/page")
         self.auto_limit_spin.valueChanged.connect(self._on_limit_changed)
         search_row.addWidget(self.auto_limit_spin)
+        layout.addLayout(search_row)
+
+        pattern_row = QHBoxLayout()
+        pattern_row.addWidget(QLabel("Search pattern"))
+        self.pattern_input = QLineEdit()
+        self.pattern_input.setPlaceholderText(
+            "auto-detected — or enter the site's search URL with {query}, e.g. https://example.com/search?q={query}")
+        self.pattern_input.setToolTip(
+            "How the site is searched. Left empty, the grabber detects it (search form or common "
+            "URL patterns) and shows what worked here. {page} is optional for paging.")
+        pattern_row.addWidget(self.pattern_input, 1)
+        layout.addLayout(pattern_row)
 
         browser = getattr(self._config, "browser", None)
         # blockSignals: the initial state must not fire the toggled handlers
@@ -133,8 +152,7 @@ class SiteGrabberDialog(QDialog):
             else:
                 widget.setValue(value)
             widget.blockSignals(False)
-
-        layout.addLayout(search_row)
+        self.site_input.setText(self._initial_site())
 
         self.status_label = QLabel("Enter keywords and press Search.")
         self.status_label.setObjectName("status")
@@ -184,6 +202,20 @@ class SiteGrabberDialog(QDialog):
         bottom_row.addWidget(close_btn)
         layout.addLayout(bottom_row)
 
+    def _initial_site(self) -> str:
+        """The site open in the active browser tab, else the last site used."""
+        current = ""
+        view_getter = getattr(self.parent(), "_current_browser_view", None)
+        if callable(view_getter):
+            try:
+                current = view_getter().url().toString()
+            except Exception:
+                current = ""
+        if current and urlparse(current).scheme in ("http", "https"):
+            return current
+        browser = getattr(self._config, "browser", None)
+        return str(getattr(browser, "grabber_last_site", "") or "")
+
     # ------------------------------------------------------------ searching
     def _search(self) -> None:
         query = self.search_input.text().strip()
@@ -200,19 +232,23 @@ class SiteGrabberDialog(QDialog):
         self._run_search()
 
     def _run_search(self) -> None:
-        site_key = self.site_combo.currentData()
-        self._site = SITES.get(site_key, self._site)
-        self._set_busy(True, f"Searching “{self._query}” on {self._site.label}…")
+        site = self.site_input.text().strip()
+        if not site:
+            self._status("Enter the site's address first.", error=True)
+            return
+        host = urlparse(site if "://" in site else "https://" + site).hostname or site
+        self._set_busy(True, f"Searching “{self._query}” on {host}…")
         self.results_list.clear()
-        query, page, site = self._query, self._page, self._site
+        query, page, grabber = self._query, self._page, self._grabber
+        template = self.pattern_input.text().strip()
 
         def worker() -> None:
             try:
-                videos = site.search(query, page)
+                outcome: object = grabber.search(site, query, page, template=template)
             except Exception as exc:  # GrabberError or anything network-ish
-                videos = exc
+                outcome = exc
             try:
-                self._search_done.emit(videos)
+                self._search_done.emit(outcome)
             except RuntimeError:
                 pass  # dialog closed mid-search
 
@@ -223,8 +259,12 @@ class SiteGrabberDialog(QDialog):
         if isinstance(outcome, Exception):
             self._status(str(outcome), error=True)
             return
-        videos = list(outcome or [])
+        videos, template = outcome  # type: ignore[misc]
+        videos = list(videos or [])
         self._videos = videos
+        if template and not self.pattern_input.text().strip():
+            self.pattern_input.setText(template)  # show what worked
+        self._persist_site_options()
         self._populate(videos)
         self._status(f"{len(videos)} results — page {self._page}")
         self.prev_btn.setEnabled(self._page > 1)
@@ -232,6 +272,46 @@ class SiteGrabberDialog(QDialog):
         self.page_label.setText(f"page {self._page}")
         self._load_thumbnails(videos)
         self._maybe_auto_queue()
+
+    def _populate(self, videos: List[GrabberVideo]) -> None:
+        self.results_list.clear()
+        for video in videos:
+            label = f"{video.code.upper()}  ·  {video.duration or '—'}  ·  {video.title}"
+            item = QListWidgetItem(label)
+            item.setCheckState(Qt.Checked)
+            item.setToolTip(f"{video.title}\n{video.url}")
+            item.setData(Qt.UserRole, video.url)
+            self.results_list.addItem(item)
+
+    def _load_thumbnails(self, videos: List[GrabberVideo]) -> None:
+        targets = [(v.url, v.thumbnail) for v in videos if v.thumbnail]
+
+        def worker() -> None:
+            from dlmgr import http_client
+            from dlmgr.http_client import BROWSER_HEADERS
+            for url, thumb in targets:  # sequential — CDN friendly
+                try:
+                    resp = http_client.get(
+                        thumb, headers={"User-Agent": BROWSER_HEADERS["User-Agent"], "Referer": url},
+                        timeout=15)
+                    if resp.status_code == 200 and resp.content:
+                        self._thumb_loaded.emit(url, resp.content)
+                except RuntimeError:
+                    return  # dialog closed — stop loading
+                except Exception:
+                    pass  # thumbnails are decorative — ignore failures
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_thumb_loaded(self, url: str, data: bytes) -> None:
+        for row in range(self.results_list.count()):
+            item = self.results_list.item(row)
+            if item.data(Qt.UserRole) == url:
+                pixmap = QPixmap()
+                if pixmap.loadFromData(data):
+                    item.setIcon(pixmap.scaled(
+                        _THUMB_W, _THUMB_H, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+                return
 
     # ------------------------------------------------------------ auto-queue
     def _on_auto_toggled(self, checked: bool) -> None:
@@ -251,6 +331,19 @@ class SiteGrabberDialog(QDialog):
                 browser.grabber_auto_limit = self.auto_limit_spin.value()
             except Exception:
                 pass
+        self._save_config()
+
+    def _persist_site_options(self) -> None:
+        browser = getattr(self._config, "browser", None)
+        if browser is not None:
+            try:
+                browser.grabber_last_site = self.site_input.text().strip()
+                browser.grabber_search_templates = dict(self._grabber.templates)
+            except Exception:
+                pass
+        self._save_config()
+
+    def _save_config(self) -> None:
         save = getattr(self.parent(), "_save_config", None)
         if callable(save):
             try:
@@ -284,47 +377,6 @@ class SiteGrabberDialog(QDialog):
         if candidates:
             self._download(candidates)
 
-    def _populate(self, videos: List[GrabberVideo]) -> None:
-        self.results_list.clear()
-        for video in videos:
-            label = f"{video.code.upper()}  ·  {video.duration or '—'}  ·  {video.title}"
-            item = QListWidgetItem(label)
-            item.setCheckState(Qt.Checked)
-            item.setToolTip(f"{video.title}\n{video.url}")
-            item.setData(Qt.UserRole, video.url)
-            self.results_list.addItem(item)
-
-    def _load_thumbnails(self, videos: List[GrabberVideo]) -> None:
-        targets = [(v.url, v.thumbnail) for v in videos if v.thumbnail]
-
-        def worker() -> None:
-            for url, thumb in targets:  # sequential — CDN friendly
-                try:
-                    from dlmgr import http_client
-                    from dlmgr.extractors.missav import BROWSER_HEADERS
-                    resp = http_client.get(
-                        thumb, headers={"User-Agent": BROWSER_HEADERS["User-Agent"],
-                                        "Referer": url},
-                        timeout=15)
-                    if resp.status_code == 200 and resp.content:
-                        self._thumb_loaded.emit(url, resp.content)
-                except RuntimeError:
-                    return  # dialog closed — stop loading
-                except Exception:
-                    pass  # thumbnails are decorative — ignore failures
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _on_thumb_loaded(self, url: str, data: bytes) -> None:
-        for row in range(self.results_list.count()):
-            item = self.results_list.item(row)
-            if item.data(Qt.UserRole) == url:
-                pixmap = QPixmap()
-                if pixmap.loadFromData(data):
-                    item.setIcon(pixmap.scaled(
-                        _THUMB_W, _THUMB_H, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-                return
-
     # ------------------------------------------------------------ queueing
     def _selected_videos(self) -> List[GrabberVideo]:
         checked = []
@@ -339,6 +391,21 @@ class SiteGrabberDialog(QDialog):
         for row in range(self.results_list.count()):
             self.results_list.item(row).setCheckState(state)
 
+    @staticmethod
+    def _queue_video(engine: Any, grabber: SiteGrabber, video: GrabberVideo) -> Any:
+        """Resolve one video page and hand its stream/file to the engine."""
+        info = grabber.resolve(video.url)
+        headers = info.get("headers") or {}
+        referer = info.get("page_url") or video.url
+        if info.get("type") in ("hls", "dash"):
+            return engine.add_stream_job(
+                url=info["manifest_url"], filename=f"{video.code}.mp4",
+                headers=headers, referrer=referer, source_url=video.url)
+        ext = os.path.splitext(urlparse(info["manifest_url"]).path)[1] or ".mp4"
+        return engine.add_job(
+            url=info["manifest_url"], filename=f"{video.code}{ext}",
+            headers=headers, referrer=referer, source_url=video.url)
+
     def _download(self, videos: List[GrabberVideo]) -> None:
         if self._busy or not videos:
             return
@@ -346,7 +413,7 @@ class SiteGrabberDialog(QDialog):
             self._status("Download engine is not available.", error=True)
             return
         self._set_busy(True, "")
-        engine, site = self._engine, self._site
+        engine, grabber = self._engine, self._grabber
 
         def worker() -> None:
             results = []
@@ -356,18 +423,9 @@ class SiteGrabberDialog(QDialog):
                 except RuntimeError:
                     return  # dialog closed — stop queueing
                 try:
-                    info = site.resolve(video.url)
-                    job = engine.add_stream_job(
-                        url=info["manifest_url"],
-                        filename=f"{video.code}.mp4",
-                        headers=info.get("headers") or {},
-                        referrer=video.url,
-                        source_url=video.url,
-                    )
-                    results.append((video, job))
+                    results.append((video, self._queue_video(engine, grabber, video)))
                 except Exception as exc:
-                    logger.warning("Site grabber: resolve failed for %s: %s",
-                                   video.url, exc)
+                    logger.warning("Site grabber: resolve failed for %s: %s", video.url, exc)
                     results.append((video, exc))
             try:
                 self._queue_done.emit(results)

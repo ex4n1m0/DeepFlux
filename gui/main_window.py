@@ -980,7 +980,7 @@ class MainWindow(QMainWindow):
         self._jackett_timer.start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.4.1 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.4.2 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).

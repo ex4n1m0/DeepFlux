@@ -210,26 +210,40 @@
   Jackett origin (when its key is configured). External tool results carry an
   untrusted-content marker; tool args/results are redacted before logs/debug UI.
 - Site Grabber (Browser toolbar magnifier → `gui/grabber_dialog.py`): keyword
-  search on a video site → checkable result list (thumbnails loaded async) →
-  batch "Download selected/this page". Backend is Qt-free in
-  `dlmgr/site_grabber.py` (site adapters: `search()` parses server-rendered
-  cards, `resolve()` delegates to the extractor); new sites plug into its
-  `SITES` dict. MissAV specifics live in `dlmgr/extractors/missav.py`
-  (first real `ExtractorRegistry` builtin — watch page → surrit.com
-  `{uuid}/playlist.m3u8`; the UUID sits 2 chars before "seek" in a script
-  tag, same trick as the in-page grabber in `browser_extension.py`; site
-  extractors MUST register before the always-matching generic fallback).
-  surrit is Cloudflare-fronted → all requests go through
-  `dlmgr/http_client.py` (curl_cffi); playlists/segments need only a
-  Referer, no cookies/EXT-X-TOKEN. The card's `setPreview` UUID is NOT the
-  stream UUID — resolving needs one watch-page fetch per video (the
-  "watch" is fully simulated server-side; no play/JS/cookies needed).
-  Dialog workers keep engine calls on ONE thread (serialized mutation);
-  failures stay checked in the list for retry. Opt-in Auto-queue
-  (`browser.grabber_auto_queue` + `grabber_auto_limit` in config): each
-  search/page auto-resolves and queues up to the limit, only still-checked
-  items are picked (no re-queue of done ones); toggling it on mid-session
-  immediately queues the current batch.
+  search on ANY video site → checkable result list (thumbnails loaded async)
+  → batch "Download selected/this page". Fully generic — no per-site code
+  or site names anywhere (the tool was developed against one adult site,
+  which must never be named in code/docs). Backend is Qt-free in
+  `dlmgr/site_grabber.py::SiteGrabber`: (1) search-URL discovery — a GET
+  search form on the site page wins, else `SEARCH_PATTERNS` are probed
+  (`/search?q=`, `/search/{q}`, `/?s=`, …, with the site's `/xx/` language
+  prefix taken from the URL the user gives — pass the CURRENT TAB URL, not
+  the bare origin, or you may get the site's default language); a pattern
+  "works" when the page yields video cards; winners persist per host in
+  `browser.grabber_search_templates`, and the dialog's "Search pattern"
+  box shows/overrides it (`{query}`, optional `{page}`; paging otherwise
+  appends `?page=N`). (2) `parse_cards` heuristic: same-site anchors that
+  contain a thumbnail `<img>`, grouped by href (sites split thumb / duration
+  badge / title into separate links), title from img alt → link text,
+  thumb from `data-src`/`src`, duration `h:mm:ss`, taxonomy paths
+  (`_SKIP_PATH_WORDS`) and text-only links dropped, `?v=id` URLs get
+  `slug-id` filenames. (3) `resolve` = `GenericExtractor.extract` →
+  `extract_from_page`: `dlmgr/extractors/page_scan.py` scans the HTML for
+  m3u8/mpd/media URLs, including inside `eval(function(p,a,c,k,e,d)…)`
+  packed scripts (recursive unpacker, radix ≤ 62) and `<video>/<source>`
+  srcs; ranks master playlists first, demotes preview/trailer URLs;
+  returns `headers={Referer: page, UA}` — CDNs want the page as Referer.
+  `NoStreamFound` → `GrabberError` (item stays checked for retry). HLS/DASH
+  go to `add_stream_job`, plain files to `add_job`. All page/CDN requests
+  use `dlmgr/http_client.py` (curl_cffi Chrome TLS) + `BROWSER_HEADERS`
+  (lives there). `ExtractorRegistry.extract` now always tries the
+  always-matching generic extractor LAST (user plugins can take
+  precedence). Dialog workers keep engine calls on ONE thread (serialized
+  mutation). Opt-in Auto-queue (`browser.grabber_auto_queue` +
+  `grabber_auto_limit`): each search/page auto-resolves and queues up to
+  the limit, only still-checked items are picked (no re-queue of done
+  ones); toggling it on mid-session immediately queues the current batch.
+  `grabber_last_site` prefills the Site box when no http tab is open.
 - Torrent session tools: `set_torrent_rate_limits` / `set_sequential_download`
   / `force_recheck` / `force_reannounce` (all plain — runtime, reversible).
   force_recheck/force_reannounce are engine methods added via the `_enqueue`

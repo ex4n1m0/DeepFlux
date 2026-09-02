@@ -56,16 +56,10 @@ class ExtractorRegistry:
         """Load built-in extractors from this package.
 
         Order matters: ``extract()`` tries extractors in list order and the
-        generic extractor matches EVERY URL, so site-specific extractors must
-        be registered before it."""
-        for module_name, class_name in (
-            ("missav", "MissAVExtractor"),
-        ):
-            try:
-                module = importlib.import_module(f".{module_name}", __package__)
-                self._extractors.append(getattr(module, class_name)())
-            except Exception as exc:
-                logger.warning("Failed to load %s extractor: %s", module_name, exc)
+        generic extractor matches EVERY URL, so any site-specific extractor
+        (user plugins included) must be registered before it. There are no
+        built-in site-specific extractors — the generic one resolves direct
+        media URLs, sniffed manifests, and streams embedded in web pages."""
         try:
             from .generic import GenericExtractor
             self._extractors.append(GenericExtractor())
@@ -110,8 +104,12 @@ class ExtractorRegistry:
     def extract(self, url: str, headers: Optional[Dict[str, str]] = None, cookies: str = "") -> Dict[str, Any]:
         """Try each extractor in order. Returns the first match's result.
 
-        Falls back to the generic extractor if no site-specific one matches."""
-        for ext in self._extractors:
+        Site-specific (user plugin) extractors are tried first; the generic
+        extractor — which matches every URL — always goes last regardless
+        of load order, so a plugin dropped into the user directory can
+        actually take precedence."""
+        ordered = sorted(self._extractors, key=lambda ext: ext.name == "generic")
+        for ext in ordered:
             try:
                 if ext.can_handle(url):
                     result = ext.extract(url, headers=headers, cookies=cookies)
