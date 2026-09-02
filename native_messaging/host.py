@@ -21,7 +21,9 @@ import threading
 import time
 from typing import Any, Dict, Optional
 from urllib.request import Request, urlopen
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
+
+from dlmgr.control_api import load_control_api_token
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +41,9 @@ class NativeMessagingHost:
     and writes responses back to stdout. Also streams periodic status
     updates so the extension can show real-time progress."""
 
-    def __init__(self, api_port: int = DEFAULT_API_PORT) -> None:
+    def __init__(self, api_port: int = DEFAULT_API_PORT, api_token: str = "") -> None:
         self._api_port = api_port
+        self._api_token = api_token or load_control_api_token()
         self._running = False
         self._status_thread: Optional[threading.Thread] = None
 
@@ -182,19 +185,31 @@ class NativeMessagingHost:
         """Make an HTTP request to the local control API.
 
         Returns the parsed JSON response, or an error dict."""
-        url = f"http://127.0.0.1:{self._api_port}{path}"
-        try:
-            data = json.dumps(payload).encode("utf-8") if payload else None
-            req = Request(url, data=data, method=method)
-            if data:
-                req.add_header("Content-Type", "application/json")
-            with urlopen(req, timeout=10) as resp:
-                body = resp.read().decode("utf-8")
-                return json.loads(body)
-        except URLError as exc:
-            return {"error": f"API connection failed: {exc}"}
-        except Exception as exc:
-            return {"error": str(exc)}
+        if not self._api_token:
+            return {"error": "DeepFlux control API token is unavailable"}
+        data = json.dumps(payload).encode("utf-8") if payload else None
+        last_error: Optional[Exception] = None
+        ports = [self._api_port] + [port for port in range(self._api_port + 1, self._api_port + 10)]
+        for port in ports:
+            url = f"http://127.0.0.1:{port}{path}"
+            try:
+                req = Request(url, data=data, method=method)
+                req.add_header("Authorization", f"Bearer {self._api_token}")
+                if data:
+                    req.add_header("Content-Type", "application/json")
+                with urlopen(req, timeout=10) as resp:
+                    body = resp.read().decode("utf-8")
+                    self._api_port = port
+                    return json.loads(body)
+            except HTTPError as exc:
+                last_error = exc
+                continue
+            except URLError as exc:
+                last_error = exc
+                continue
+            except Exception as exc:
+                return {"error": str(exc)}
+        return {"error": f"API connection failed: {last_error}"}
 
     def _status_loop(self) -> None:
         """Periodically stream job status updates to the extension.

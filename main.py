@@ -68,7 +68,7 @@ class Repl:
     def __init__(self, config_path: Optional[str] = None) -> None:
         self.config_path = config_path or DeeptorrentConfig.default_config_path()
         self.config = DeeptorrentConfig.from_file(self.config_path)
-        if self.config.llm.api_key:
+        if self.config.llm.api_key or self.config.llm.provider == "custom":
             # A persisted "dummy" (GUI wrote it on a no-key shutdown) heals
             # back to DeepSeek once a key exists again.
             if self.config.llm.provider not in LLM_PROVIDER_PRESETS:
@@ -82,6 +82,8 @@ class Repl:
             self.engine.start()
             self.tools = ToolRegistry(self.engine, self.config)
             self.agent = AgentLoop(self.engine, self.config, tools=self.tools, on_event=self._on_agent_event)
+            if self.config.watchdog.enabled:
+                self.agent.start_watchdog()
         except Exception as exc:
             # Fail cleanly with a readable message instead of a raw traceback.
             print(f"Failed to initialize Deeptorrent: {exc}")
@@ -235,7 +237,9 @@ class Repl:
         )
 
     def shutdown(self) -> None:
+        self.agent.cancel()
         self.agent.stop_watchdog()
+        self.tools.shutdown()
         self.engine.stop()
         print("Goodbye.")
 
@@ -291,11 +295,16 @@ def _forward_to_running_instance(targets: List[str]) -> bool:
     exit); False if no instance is running (start the GUI normally)."""
     import json as _json
     from urllib.request import Request, urlopen
+    from dlmgr.control_api import load_control_api_token
 
+    token = load_control_api_token()
+    if not token:
+        return False
+    auth = {"Authorization": f"Bearer {token}"}
     for port in range(53742, 53752):
         base = f"http://127.0.0.1:{port}"
         try:
-            with urlopen(f"{base}/api/health", timeout=0.5) as resp:
+            with urlopen(Request(f"{base}/api/health", headers=auth), timeout=0.5) as resp:
                 if resp.status != 200:
                     continue
         except Exception:
@@ -309,7 +318,7 @@ def _forward_to_running_instance(targets: List[str]) -> bool:
                 req = Request(
                     f"{base}/api/open",
                     data=_json.dumps({"target": t}).encode("utf-8"),
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": "application/json", **auth},
                     method="POST",
                 )
                 with urlopen(req, timeout=3) as resp:
@@ -395,7 +404,9 @@ def main() -> None:
     # --- Native messaging host mode (stdio, no GUI) ---
     if args.native_messaging:
         from native_messaging.host import NativeMessagingHost
-        host = NativeMessagingHost()
+        native_config = DeeptorrentConfig.from_file(
+            args.config or DeeptorrentConfig.default_config_path())
+        host = NativeMessagingHost(api_port=native_config.download.control_api_port)
         host.run()
         return
 

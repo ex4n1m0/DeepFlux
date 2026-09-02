@@ -97,3 +97,69 @@ def test_disabled_blocks_nothing(app):
     info = FakeInfo()
     ab.interceptRequest(info)
     assert not info.blocked
+
+
+def test_allowed_site_bypasses_blocking(app):
+    ab = AdBlockInterceptor()
+    ab.set_enabled(True)
+    ab.set_allowed_sites({"example.com"})
+
+    class Url:
+        def __init__(self, host, path="/"):
+            self._host, self._path = host, path
+
+        def host(self):
+            return self._host
+
+        def path(self):
+            return self._path
+
+    class Info:
+        blocked = False
+
+        def resourceType(self):
+            return QWebEngineUrlRequestInfo.ResourceType.ResourceTypeScript
+
+        def requestUrl(self):
+            return Url("doubleclick.net", "/api/ad.js")
+
+        def firstPartyUrl(self):
+            return Url("example.com")
+
+        def block(self, value):
+            self.blocked = value
+
+    info = Info()
+    ab.interceptRequest(info)
+    assert not info.blocked
+
+
+def test_blocklisted_api_path_no_longer_bypasses(app):
+    ab = AdBlockInterceptor()
+    ab.set_enabled(True)
+
+    class Url:
+        def host(self):
+            return "doubleclick.net"
+
+        def path(self):
+            return "/api/track"
+
+    class Info:
+        blocked = False
+
+        def resourceType(self):
+            return QWebEngineUrlRequestInfo.ResourceType.ResourceTypeScript
+
+        def requestUrl(self):
+            return Url()
+
+        def firstPartyUrl(self):
+            return type("First", (), {"host": lambda self: "example.com"})()
+
+        def block(self, value):
+            self.blocked = value
+
+    info = Info()
+    ab.interceptRequest(info)
+    assert info.blocked

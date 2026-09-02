@@ -105,10 +105,13 @@ class DownloadJob:
     cookies: str = ""
     referrer: str = ""
     supports_ranges: bool = False
+    etag: str = ""
+    last_modified: str = ""
     segments: List[SegmentState] = field(default_factory=list)
     error_message: str = ""
     created_at: float = field(default_factory=time.time)
     priority: int = 0
+    category: str = ""
 
     @property
     def progress(self) -> float:
@@ -144,10 +147,13 @@ class DownloadJob:
             "source_url": self.source_url,
             "job_type": self.job_type,
             "supports_ranges": self.supports_ranges,
+            "etag": self.etag,
+            "last_modified": self.last_modified,
             "segments": [s.to_dict() for s in self.segments],
             "error_message": self.error_message,
             "created_at": self.created_at,
             "priority": self.priority,
+            "category": self.category,
             "progress": self.progress,
         }
 
@@ -169,8 +175,11 @@ class DownloadJob:
             cookies=data.get("cookies", ""),
             referrer=data.get("referrer", ""),
             supports_ranges=data.get("supports_ranges", False),
+            etag=data.get("etag", ""),
+            last_modified=data.get("last_modified", ""),
             segments=[SegmentState.from_dict(s) for s in data.get("segments", [])],
             error_message=data.get("error_message", ""),
             created_at=data.get("created_at", time.time()),
             priority=data.get("priority", 0),
+            category=data.get("category", ""),
         )

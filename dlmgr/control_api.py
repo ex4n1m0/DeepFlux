@@ -17,10 +17,14 @@ Endpoints:
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
+import os
+import secrets
+import socket
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -29,12 +33,80 @@ from .engine import DownloadEngine
 logger = logging.getLogger(__name__)
 
 
+def control_api_token_path() -> str:
+    return os.path.join(os.path.expanduser("~"), ".deeptorrent", "control_api.token")
+
+
+def validate_control_url(url: str) -> str:
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Only public HTTP(S) URLs are accepted")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
+        raise ValueError("Local/private URLs are not accepted")
+    try:
+        addresses = [ipaddress.ip_address(hostname)]
+    except ValueError:
+        try:
+            addresses = {
+                ipaddress.ip_address(item[4][0].split("%", 1)[0])
+                for item in socket.getaddrinfo(
+                    hostname, parsed.port or (443 if parsed.scheme == "https" else 80),
+                    type=socket.SOCK_STREAM,
+                )
+            }
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Could not resolve URL host: {hostname}") from exc
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("Local/private URLs are not accepted")
+    return parsed.geturl()
+
+
+def load_control_api_token(create: bool = False) -> str:
+    path = control_api_token_path()
+    try:
+        with open(path, "r", encoding="ascii") as f:
+            token = f.read().strip()
+        if len(token) >= 32:
+            return token
+    except OSError:
+        pass
+    if not create:
+        return ""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    token = secrets.token_urlsafe(32)
+    temp = f"{path}.tmp"
+    with open(temp, "w", encoding="ascii") as f:
+        f.write(token)
+    os.replace(temp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return token
+
+
 class _ControlAPIHandler(BaseHTTPRequestHandler):
     """HTTP request handler for the control API."""
 
     # Suppress default logging to stderr.
     def log_message(self, format: str, *args: Any) -> None:
         pass
+
+    def setup(self) -> None:
+        super().setup()
+        self.connection.settimeout(5)
+
+    def _authorized(self) -> bool:
+        expected = getattr(self.server, "api_token", "")  # type: ignore[attr-defined]
+        supplied = self.headers.get("Authorization", "")
+        return bool(expected) and secrets.compare_digest(supplied, f"Bearer {expected}")
+
+    def _require_authorization(self) -> bool:
+        if self._authorized():
+            return True
+        self._send_json(401, {"error": "Unauthorized"})
+        return False
 
     def _send_json(self, code: int, data: Any) -> None:
         body = json.dumps(data).encode("utf-8")
@@ -51,11 +123,11 @@ class _ControlAPIHandler(BaseHTTPRequestHandler):
         The injected extension script runs in the origin of whatever page the
         user is browsing (e.g. https://www.youtube.com) and calls this API at
         http://127.0.0.1:53742. Without these headers Chromium blocks the
-        request/response entirely. This server only listens on loopback, so
-        an open origin policy is safe here."""
+        request/response entirely. Every non-preflight request also requires
+        the unguessable profile token."""
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
         # Required by Chromium's Private Network Access spec for requests from
         # public (HTTPS) pages to loopback addresses.
         self.send_header("Access-Control-Allow-Private-Network", "true")
@@ -69,15 +141,18 @@ class _ControlAPIHandler(BaseHTTPRequestHandler):
 
     def _read_body(self) -> dict:
         length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
+        if length == 0 or length > 1024 * 1024:
             return {}
         raw = self.rfile.read(length)
         try:
-            return json.loads(raw)
+            value = json.loads(raw)
+            return value if isinstance(value, dict) else {}
         except json.JSONDecodeError:
             return {}
 
     def do_GET(self) -> None:
+        if not self._require_authorization():
+            return
         engine = self.server.engine  # type: ignore[attr-defined]
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
@@ -100,6 +175,8 @@ class _ControlAPIHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Not found"})
 
     def do_POST(self) -> None:
+        if not self._require_authorization():
+            return
         engine = self.server.engine  # type: ignore[attr-defined]
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
@@ -129,6 +206,10 @@ class _ControlAPIHandler(BaseHTTPRequestHandler):
             url = body.get("url", "").strip()
             if not url:
                 return self._send_json(400, {"error": "Missing 'url'"})
+            try:
+                url = validate_control_url(url)
+            except ValueError as exc:
+                return self._send_json(400, {"error": str(exc)})
             handler = getattr(self.server, "play_handler", None)  # type: ignore[attr-defined]
             if handler is None:
                 return self._send_json(503, {"error": "No play handler registered"})
@@ -151,6 +232,10 @@ class _ControlAPIHandler(BaseHTTPRequestHandler):
             url = body.get("url", "").strip()
             if not url:
                 return self._send_json(400, {"error": "Missing 'url'"})
+            try:
+                url = validate_control_url(url)
+            except ValueError as exc:
+                return self._send_json(400, {"error": str(exc)})
             try:
                 job_type = body.get("type", "file")
                 if job_type == "youtube":
@@ -211,6 +296,8 @@ class _ControlAPIHandler(BaseHTTPRequestHandler):
         self._send_json(404, {"error": "Not found"})
 
     def do_DELETE(self) -> None:
+        if not self._require_authorization():
+            return
         engine = self.server.engine  # type: ignore[attr-defined]
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/") or "/"
@@ -231,10 +318,11 @@ class ControlAPI:
     Binds to 127.0.0.1 only (never exposes to the network). Runs in a
     daemon thread so it doesn't block app shutdown."""
 
-    def __init__(self, engine: DownloadEngine, port: int = 53742) -> None:
+    def __init__(self, engine: DownloadEngine, port: int = 53742, api_token: str = "") -> None:
         self._engine = engine
         self._port = port
-        self._server: Optional[HTTPServer] = None
+        self._api_token = api_token or load_control_api_token(create=True)
+        self._server: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
         self._open_handler = None
         self._play_handler = None
@@ -261,8 +349,9 @@ class ControlAPI:
         if self._server is not None:
             return
         try:
-            self._server = HTTPServer(("127.0.0.1", self._port), _ControlAPIHandler)
+            self._server = ThreadingHTTPServer(("127.0.0.1", self._port), _ControlAPIHandler)
             self._server.engine = self._engine  # type: ignore[attr-defined]
+            self._server.api_token = self._api_token  # type: ignore[attr-defined]
             self._server.open_handler = self._open_handler  # type: ignore[attr-defined]
             self._server.play_handler = self._play_handler  # type: ignore[attr-defined]
         except OSError as exc:
@@ -270,8 +359,9 @@ class ControlAPI:
             # Try a few alternative ports.
             for alt in range(self._port + 1, self._port + 10):
                 try:
-                    self._server = HTTPServer(("127.0.0.1", alt), _ControlAPIHandler)
+                    self._server = ThreadingHTTPServer(("127.0.0.1", alt), _ControlAPIHandler)
                     self._server.engine = self._engine  # type: ignore[attr-defined]
+                    self._server.api_token = self._api_token  # type: ignore[attr-defined]
                     self._server.open_handler = self._open_handler  # type: ignore[attr-defined]
                     self._server.play_handler = self._play_handler  # type: ignore[attr-defined]
                     self._port = alt
@@ -301,3 +391,7 @@ class ControlAPI:
     @property
     def port(self) -> int:
         return self._port
+
+    @property
+    def api_token(self) -> str:
+        return self._api_token

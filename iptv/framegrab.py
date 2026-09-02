@@ -54,14 +54,32 @@ _TIMEOUT_SECONDS = 25
 # FFmpeg's own I/O timeout (microseconds) so it can't hang before ours fires.
 _RW_TIMEOUT_US = 15_000_000
 
-# Stream CDNs reset connections under bursts — the same behaviour the logo
-# fetcher and TPDB client already work around. A reset says nothing about
-# whether the content exists, so these are retried and never negative-cached;
-# treating them as permanent blanks tiles that do have a grabbable frame.
+# Stream CDNs reset connections under bursts.  Keep those retryable, but do
+# not classify generic EOF/I/O failures as transient: a dead stream commonly
+# exits with only "End of file" and should be eligible for negative caching.
 _TRANSIENT_MARKERS = (
-    "handshake", "10054", "connection reset", "timed out", "timeout",
-    "end of file", "i/o error", "connection refused", "temporarily",
+    "handshake", "10054", "connection reset", "connection aborted",
+    "timed out", "timeout", "connection refused", "temporarily unavailable",
+    "resource temporarily unavailable", "http error 429", "server returned 5",
 )
+_PERMANENT_MARKERS = (
+    "end of file", "invalid data found", "404 not found", "http error 404",
+    "server returned 4", "no such file", "moov atom not found",
+    "could not find codec parameters", "does not contain any stream",
+)
+
+
+def _classify_ffmpeg_error(stderr: str) -> str:
+    """Classify FFmpeg diagnostics, preferring explicit transient signals."""
+    low = (stderr or "").lower()
+    if any(marker in low for marker in _TRANSIENT_MARKERS):
+        return "transient"
+    if any(marker in low for marker in _PERMANENT_MARKERS):
+        return "permanent"
+    # Unknown failures are deterministic until evidence says otherwise and can
+    # be negative-cached; this prevents repeatedly opening permanently dead
+    # provider streams while tiles remain visible.
+    return "permanent"
 _RETRY_PASSES = 2
 _RETRY_DELAY = 1.5
 
@@ -111,12 +129,16 @@ class FrameGrabber:
         ffmpeg = self._ffmpeg()
         if not ffmpeg:
             return "permanent"
-        cmd = [
+        base_cmd = [
             ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
             "-rw_timeout", str(_RW_TIMEOUT_US),
+        ]
+        reconnect_args = [
             # Ride out mid-transfer drops instead of failing the whole grab.
             "-reconnect", "1", "-reconnect_streamed", "1",
             "-reconnect_delay_max", "5",
+        ]
+        input_cmd = [
             # -ss BEFORE -i is an input seek: FFmpeg range-requests straight to
             # the offset instead of decoding the whole file up to it.
             "-ss", str(seek),
@@ -126,10 +148,18 @@ class FrameGrabber:
             "-q:v", "3",
             "-f", "image2", dest,
         ]
-        try:
-            proc = subprocess.run(cmd, capture_output=True,
+
+        def _invoke(args):
+            return subprocess.run(args, capture_output=True,
                                   timeout=_TIMEOUT_SECONDS,
                                   creationflags=_CREATION_FLAGS)
+
+        try:
+            proc = _invoke(base_cmd + reconnect_args + input_cmd)
+            err = proc.stderr.decode(errors="replace")
+            if proc.returncode and "option reconnect not found" in err.lower():
+                proc = _invoke(base_cmd + input_cmd)
+                err = proc.stderr.decode(errors="replace")
         except subprocess.TimeoutExpired:
             logger.debug("framegrab timed out at %ss", seek)
             return "transient"
@@ -138,10 +168,8 @@ class FrameGrabber:
             return "permanent"
         if proc.returncode == 0 and os.path.isfile(dest) and os.path.getsize(dest) > 0:
             return "ok"
-        err = proc.stderr.decode(errors="replace")
         logger.debug("framegrab ffmpeg rc=%s: %s", proc.returncode, err[:200])
-        low = err.lower()
-        return "transient" if any(m in low for m in _TRANSIENT_MARKERS) else "permanent"
+        return _classify_ffmpeg_error(err)
 
     # -- public API -----------------------------------------------------------
     def grab(self, stream_url: str) -> str:
@@ -168,6 +196,9 @@ class FrameGrabber:
         transient = False
         try:
             for attempt in range(_RETRY_PASSES):
+                # Recompute per pass.  A first-pass timeout followed by a
+                # definitive EOF should end as permanent and be cached.
+                transient = False
                 for seek in _SEEK_SECONDS:
                     status = self._run(stream_url, tmp, seek)
                     if status == "ok":
@@ -176,7 +207,8 @@ class FrameGrabber:
                     transient = transient or status == "transient"
                 if ok or not transient:
                     break
-                time.sleep(_RETRY_DELAY)
+                if attempt + 1 < _RETRY_PASSES:
+                    time.sleep(_RETRY_DELAY)
             if ok:
                 os.replace(tmp, dest)
         except OSError as exc:

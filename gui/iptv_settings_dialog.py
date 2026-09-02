@@ -16,6 +16,7 @@ import os
 import threading
 import uuid
 from typing import Optional
+from urllib.parse import urlsplit
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -52,6 +53,26 @@ _PREF_LANGS = [
     ("it", "Italian"), ("pt", "Portuguese"), ("ru", "Russian"), ("ar", "Arabic"),
     ("zh", "Chinese"), ("ja", "Japanese"), ("ko", "Korean"), ("hi", "Hindi"),
 ]
+
+
+def _epg_url_error(value: str) -> str:
+    """Return a user-facing validation error, or empty for a valid/blank URL."""
+    value = (value or "").strip()
+    if not value:
+        return ""
+    try:
+        parsed = urlsplit(value)
+        # Accessing port also catches malformed values such as host:abc.
+        _port = parsed.port
+    except ValueError:
+        return "EPG URL is malformed."
+    if parsed.scheme.lower() not in ("http", "https"):
+        return "EPG URL must start with http:// or https://."
+    if not parsed.hostname:
+        return "EPG URL must include a valid host name."
+    if any(ch.isspace() for ch in value):
+        return "EPG URL cannot contain spaces."
+    return ""
 
 
 def _parse_lang_text(text: str) -> str:
@@ -253,6 +274,15 @@ class _SourceEditDialog(QDialog):
         self.epg_url.setText(getattr(s, "epg_url", ""))
         self.enabled.setChecked(s.enabled)
 
+    def accept(self) -> None:
+        if self.kind.currentData() != "local_folder":
+            error = _epg_url_error(self.epg_url.text())
+            if error:
+                QMessageBox.warning(self, "Invalid EPG URL", error)
+                self.epg_url.setFocus()
+                return
+        super().accept()
+
     def to_source(self, existing: Optional[IPTVSourceConfig] = None) -> IPTVSourceConfig:
         sid = existing.id if existing else str(uuid.uuid4())
         return IPTVSourceConfig(
@@ -396,6 +426,12 @@ class IPTVMetadataDialog(_SettingsPage):
             "UTC offsets, so the guide always shows correctly in your\n"
             "system's timezone.")
         cl.addRow("EPG URL (all sources):", self.epg_url)
+        self.xtream_series_concurrency = QSpinBox()
+        self.xtream_series_concurrency.setRange(1, 6)
+        self.xtream_series_concurrency.setToolTip(
+            "Maximum simultaneous Xtream get_series_info requests. A low value\n"
+            "reduces provider rate limiting; changes apply on the next refresh.")
+        cl.addRow("Xtream series requests:", self.xtream_series_concurrency)
         self.body.addWidget(cache_group)
 
         if manager is not None:
@@ -420,6 +456,8 @@ class IPTVMetadataDialog(_SettingsPage):
         self.framegrab.setChecked(self.config.iptv.framegrab_posters)
         self.enable_epg.setChecked(self.config.iptv.enable_epg)
         self.epg_url.setText(self.config.iptv.epg_url)
+        self.xtream_series_concurrency.setValue(
+            self.config.iptv.xtream_series_concurrency)
 
     @staticmethod
     def _fmt_mb(n: float) -> str:
@@ -475,6 +513,11 @@ class IPTVMetadataDialog(_SettingsPage):
             self.cache_dir.setText(d)
 
     def accept(self) -> None:
+        epg_error = _epg_url_error(self.epg_url.text())
+        if epg_error:
+            QMessageBox.warning(self, "Invalid EPG URL", epg_error)
+            self.epg_url.setFocus()
+            return
         # Validate the cache directory before saving: it must be creatable
         # and writable, or the IPTV cache will fail at runtime.
         cache_dir = self.cache_dir.text().strip()
@@ -494,11 +537,15 @@ class IPTVMetadataDialog(_SettingsPage):
         self.config.iptv.framegrab_posters = self.framegrab.isChecked()
         self.config.iptv.enable_epg = self.enable_epg.isChecked()
         self.config.iptv.epg_url = self.epg_url.text().strip()
+        self.config.iptv.xtream_series_concurrency = \
+            self.xtream_series_concurrency.value()
         if self._manager is not None:
             # Apply the (possibly lowered) cap to the running app right away.
             self._manager.cache_limit_mb = self.cache_limit.value()
             self._manager.enforce_cache_limit_async()
             self._manager.set_framegrab_enabled(self.framegrab.isChecked())
+            self._manager.xtream_series_concurrency = \
+                self.xtream_series_concurrency.value()
             # Fetches the guide immediately when the URL changed.
             self._manager.set_epg(self.config.iptv.epg_url, self.enable_epg.isChecked())
         super().accept()
@@ -555,7 +602,30 @@ class IPTVPlaybackDialog(_SettingsPage):
         self.cache = QSpinBox()
         self.cache.setRange(1, 120)
         self.cache.setSuffix(" s")
-        pl.addRow("Stream buffer:", self.cache)
+        pl.addRow("Startup buffer:", self.cache)
+
+        self.live_pause_buffer = QSpinBox()
+        self.live_pause_buffer.setRange(0, 3600)
+        self.live_pause_buffer.setSingleStep(30)
+        self.live_pause_buffer.setSuffix(" s")
+        self.live_pause_buffer.setSpecialValueText("Disabled")
+        self.live_pause_buffer.setToolTip(
+            "mpv only: keeps a bounded volatile cache so a live channel can be\n"
+            "paused and briefly rewound. This is not durable timeshift; the\n"
+            "buffer is lost on stop and high-bitrate channels retain less time."
+        )
+        pl.addRow("Live bounded pause buffer:", self.live_pause_buffer)
+
+        self.recording_dir = QLineEdit()
+        self.recording_dir.setPlaceholderText("Default: ~/Videos/DeepFlux Recordings")
+        self.recording_dir.setToolTip(
+            "Folder for explicit live/network stream recordings. Recordings\n"
+            "use FFmpeg stream copy and unique, sanitized .mkv filenames."
+        )
+        pl.addRow("Recording folder:", self.recording_dir)
+        recording_browse = QPushButton("Browse…")
+        recording_browse.clicked.connect(self._browse_recording_dir)
+        pl.addRow("", recording_browse)
 
         self.overscan = QDoubleSpinBox()
         self.overscan.setRange(0.0, 5.0)
@@ -665,6 +735,8 @@ class IPTVPlaybackDialog(_SettingsPage):
         hidx = max(0, self.hwdec.findData(self.config.iptv.hwdec))
         self.hwdec.setCurrentIndex(hidx if hidx >= 0 else 0)
         self.cache.setValue(self.config.iptv.cache_seconds)
+        self.live_pause_buffer.setValue(self.config.iptv.live_pause_buffer_seconds)
+        self.recording_dir.setText(self.config.iptv.recording_dir)
         self.overscan.setValue(self.config.iptv.overscan_pct)
         self.audio_delay.setValue(self.config.iptv.audio_delay)
         self.interpolation.setChecked(self.config.iptv.interpolation)
@@ -677,10 +749,26 @@ class IPTVPlaybackDialog(_SettingsPage):
         self.throttle_dl.setValue(self.config.iptv.throttle_download_kb)
         self.throttle_ul.setValue(self.config.iptv.throttle_upload_kb)
 
+    def _browse_recording_dir(self) -> None:
+        directory = QFileDialog.getExistingDirectory(self, "Choose recording folder")
+        if directory:
+            self.recording_dir.setText(directory)
+
     def accept(self) -> None:
+        recording_dir = self.recording_dir.text().strip()
+        if recording_dir:
+            try:
+                os.makedirs(recording_dir, exist_ok=True)
+            except OSError as exc:
+                QMessageBox.warning(
+                    self, "Invalid recording folder",
+                    f"Cannot use this recording folder:\n{exc}")
+                return
         self.config.iptv.preferred_player = self.player.currentData()
         self.config.iptv.hwdec = self.hwdec.currentData()
         self.config.iptv.cache_seconds = self.cache.value()
+        self.config.iptv.live_pause_buffer_seconds = self.live_pause_buffer.value()
+        self.config.iptv.recording_dir = recording_dir
         self.config.iptv.overscan_pct = self.overscan.value()
         self.config.iptv.audio_delay = self.audio_delay.value()
         self.config.iptv.interpolation = self.interpolation.isChecked()

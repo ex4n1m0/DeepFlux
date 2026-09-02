@@ -13,10 +13,12 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from PySide6.QtCore import QTimer, Qt, QRectF, Signal, QObject, QEvent, QProcess
+from PySide6.QtCore import QTimer, Qt, QRectF, Signal, QObject, QEvent, QProcess, QStringListModel
 from PySide6.QtGui import QAction, QColor, QCursor, QFont, QIcon, QKeySequence, QLinearGradient, QPainter, QPen, QPixmap, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QCompleter,
     QDialog,
     QFileDialog,
     QFrame,
@@ -25,10 +27,13 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMenuBar,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QSystemTrayIcon,
@@ -63,12 +68,21 @@ from infra.config_backup import (
 from engine.state import TorrentStateManager
 from gui.rss_dialog import RSSDialog
 from gui.rss_viewer import RSSViewer
-from gui.settings_dialog import APIKeysDialog, IndexerSettingsDialog, DownloadsSettingsDialog, BrowserSettingsDialog
+from gui.settings_dialog import (
+    API_KEY_PAGES,
+    BROWSER_SETTINGS_PAGES,
+    DOWNLOAD_SETTINGS_PAGES,
+    APIKeysDialog,
+    BrowserSettingsDialog,
+    DownloadsSettingsDialog,
+    IndexerSettingsDialog,
+)
 from gui.sources_dialog import SourcesDialog
 from gui.help_dialog import HelpDialog, AboutDialog
 from gui.downloads_tab import DownloadsTab
 from gui.commander_tab import CommanderTab
-from gui.browser_bridge import BrowserBridge
+from gui.browser_bridge import BrowserBridge, normalize_browser_target
+from gui.browser_history import BrowserHistory
 from gui.browser_channel import create_channel, channel_injection_script
 from gui.iptv_tab import AgentIPTVBridge, IPTVTab
 from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog
@@ -79,6 +93,10 @@ from dlmgr.engine import DownloadEngine
 from dlmgr.control_api import ControlAPI
 
 logger = logging.getLogger(__name__)
+
+_DWMWA_WINDOW_CORNER_PREFERENCE = 33
+_DWMWCP_DEFAULT = 0
+_DWMWCP_DONOTROUND = 1
 
 
 class _AgentSignals(QObject):
@@ -463,10 +481,7 @@ def register_deepflux_scheme() -> None:
     from PySide6.QtWebEngineCore import QWebEngineUrlScheme
     scheme = QWebEngineUrlScheme(QByteArray(_DEEPFLUX_SCHEME.encode()))
     scheme.setFlags(QWebEngineUrlScheme.Flag.SecureScheme
-                    | QWebEngineUrlScheme.Flag.LocalScheme
-                    | QWebEngineUrlScheme.Flag.LocalAccessAllowed
-                    | QWebEngineUrlScheme.Flag.ContentSecurityPolicyIgnored
-                    | QWebEngineUrlScheme.Flag.CorsEnabled)
+                    | QWebEngineUrlScheme.Flag.LocalScheme)
     QWebEngineUrlScheme.registerScheme(scheme)
     _deepflux_scheme_registered = True
 
@@ -495,9 +510,11 @@ class _DeepFluxSchemeHandler(QWebEngineUrlSchemeHandler):  # noqa: N801
             body = self._start_html or "<html><body><h1>DeepFlux</h1></body></html>"
             mime = "text/html; charset=utf-8"
         else:
+            import html
+            safe_path = html.escape(path)
             body = (f"<html><body style='background:#000;color:#8a9ab0;font-family:sans-serif;"
                     f"display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
-                    f"<h2>404 — deepflux://{path} not found</h2></body></html>")
+                    f"<h2>404 — deepflux://{safe_path} not found</h2></body></html>")
             mime = "text/html; charset=utf-8"
         buf = QBuffer(self)
         buf.setData(body.encode("utf-8"))
@@ -540,8 +557,9 @@ class _BrowserPage(QWebEnginePage):
 
     # Schemes that are handed off to the OS / app instead of the browser.
     _INTERCEPT_SCHEMES = ("magnet",)
-    # Schemes blocked from navigation entirely (anti-XSS).
-    _BLOCKED_SCHEMES = ("javascript", "vbscript", "file")
+    # Schemes blocked from top-level navigation entirely (anti-XSS/LFI).
+    _BLOCKED_SCHEMES = ("javascript", "vbscript", "file", "data", "blob")
+    _ALLOWED_SCHEMES = ("http", "https", "about", _DEEPFLUX_SCHEME)
 
     def __init__(self, profile, parent=None) -> None:
         super().__init__(profile, parent)
@@ -576,12 +594,15 @@ class _BrowserPage(QWebEnginePage):
             self.magnetRequested.emit(url.toString())
             self.statusMessage.emit(f"Sent {scheme}: link to DeepFlux")
             return False
-        if scheme in self._BLOCKED_SCHEMES and nav_type != QWebEnginePage.NavigationType.NavigationTypeTyped:
-            # Allow typed file:// for local dev, block link/script-driven
-            # javascript:/vbscript: and link-driven file:// (XSS/LFI).
-            if scheme in ("javascript", "vbscript"):
-                self.statusMessage.emit(f"Blocked {scheme}: navigation")
-                return False
+        if scheme in self._BLOCKED_SCHEMES:
+            self.statusMessage.emit(f"Blocked {scheme}: navigation")
+            return False
+        if _is_main and scheme and scheme not in self._ALLOWED_SCHEMES:
+            self.statusMessage.emit(f"Blocked unsupported {scheme}: navigation")
+            return False
+        if scheme == "about" and url.toString() != "about:blank":
+            self.statusMessage.emit("Blocked unsupported about: navigation")
+            return False
         return True
 
     # -- TLS certificate errors ----------------------------------------------
@@ -610,7 +631,8 @@ class _BrowserPage(QWebEnginePage):
         title = self._safe_dialog_title()
         r = QMessageBox.question(
             self.view() if self.view() else None, title, msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
         return r == QMessageBox.StandardButton.Yes
 
     def javaScriptPrompt(self, _frame, msg, default):  # noqa: N802
@@ -627,14 +649,17 @@ class _BrowserPage(QWebEnginePage):
         Defaults to deny for sensitive capture features (camera/mic/
         screen) since this is a download-focused browser, not a general
         one; geolocation/notifications/clipboard get a prompt."""
-        return self._decide_permission(feature, prompt=True)
+        return self._decide_permission(feature, prompt=True, origin=self.url().toString())
 
-    def featurePermissionRequest(self, _security_origin, feature):  # noqa: N802
+    def featurePermissionRequest(self, security_origin, feature):  # noqa: N802
         """Same policy as permissionRequest (Qt emits both for some
         features depending on version)."""
-        return self._decide_permission(feature, prompt=True)
+        origin = security_origin.toString() if hasattr(security_origin, "toString") else str(security_origin)
+        return self._decide_permission(feature, prompt=True, origin=origin)
 
-    def _decide_permission(self, feature, prompt: bool) -> "QWebEnginePage.PermissionPolicy":
+    def _decide_permission(
+        self, feature, prompt: bool, origin: str = "",
+    ) -> "QWebEnginePage.PermissionPolicy":
         """Resolve a permission request with a user dialog or a safe default."""
         # Sensitive capture features: deny without prompting (no UI to
         # meaningfully grant camera/mic/screen access in this app).
@@ -654,8 +679,10 @@ class _BrowserPage(QWebEnginePage):
         parent = self.view() if self.view() else None
         r = QMessageBox.question(
             parent, "Permission Request",
+            f"Origin:\n{origin or self.url().toString() or '(unknown)'}\n\n"
             f"This page wants to use: {name}.\nAllow?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
         return (QWebEnginePage.PermissionPolicy.PermissionGrantedByUser
                 if r == QMessageBox.StandardButton.Yes
                 else QWebEnginePage.PermissionPolicy.PermissionDeniedByUser)
@@ -857,7 +884,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config_path = config_path or DeeptorrentConfig.default_config_path()
         self.config = DeeptorrentConfig.from_file(self.config_path)
-        if not self.config.llm.api_key:
+        if not self.config.llm.api_key and self.config.llm.provider != "custom":
             self.config.llm.provider = "dummy"
 
         self.engine = TorrentEngine(
@@ -936,6 +963,8 @@ class MainWindow(QMainWindow):
             self.engine, self.config, tools=self.tools,
             on_event=lambda evt: self._agent_signals.event.emit(evt),
         )
+        if self.config.watchdog.enabled:
+            self.agent.start_watchdog()
         self._rss_monitor = RSSMonitor(self.config.rss)
 
         # Jackett integration: auto-start the service when needed and keep the
@@ -951,7 +980,7 @@ class MainWindow(QMainWindow):
         self._jackett_timer.start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.2.8 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.4.1 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1105,6 +1134,10 @@ class MainWindow(QMainWindow):
                 background-color: #000000;
             }
             /* Main tab bar is hidden — navigation lives in the menus. */
+            QTabWidget#main_tabs::pane {
+                border: none;
+                background-color: #000000;
+            }
             QTabWidget#main_tabs::tab-bar {
                 height: 0;
                 border: none;
@@ -1235,10 +1268,17 @@ class MainWindow(QMainWindow):
                     logger.exception("failed to restore fullscreen chrome")
 
     def set_video_fullscreen_chrome(self, on: bool) -> None:
-        """Collapse the chrome that survives fullscreen mode: the tab pane's
-        1px frame + the 4px margins around the tab widget read as a faint
-        bright ring at the screen edges once the video owns the screen."""
-        self.main_tabs.setStyleSheet("QTabWidget::pane { border: none; }" if on else "")
+        """Collapse layout and native Windows chrome around fullscreen video."""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                preference = ctypes.c_uint32(
+                    _DWMWCP_DONOTROUND if on else _DWMWCP_DEFAULT)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    int(self.winId()), _DWMWA_WINDOW_CORNER_PREFERENCE,
+                    ctypes.byref(preference), ctypes.sizeof(preference))
+            except (AttributeError, OSError):
+                pass
         m = 0 if on else 4
         self._tabs_layout.setContentsMargins(m, m, m, m)
 
@@ -1401,6 +1441,12 @@ class MainWindow(QMainWindow):
         self.clear_btn = clear_btn
         agent_input_layout.addWidget(clear_btn)
 
+        status_btn = QPushButton("Status")
+        status_btn.setObjectName("btn_secondary")
+        status_btn.setToolTip("Show Agent capabilities, integrations, and execution limits")
+        status_btn.clicked.connect(self._show_agent_diagnostics)
+        agent_input_layout.addWidget(status_btn)
+
         search_btn = QPushButton("Search")
         search_btn.setObjectName("btn_accent")
         search_btn.setToolTip("Instant web sweep — no agent involved (Ctrl+Enter)")
@@ -1411,7 +1457,7 @@ class MainWindow(QMainWindow):
         send_btn = QPushButton("Agent")
         send_btn.setObjectName("btn_accent")
         send_btn.setToolTip("Ask the conversational torrent agent (Enter)")
-        send_btn.clicked.connect(self._on_send)
+        send_btn.clicked.connect(self._on_agent_button)
         self.send_btn = send_btn
         agent_input_layout.addWidget(send_btn)
         agents_tab_layout.addLayout(agent_input_layout)
@@ -1505,6 +1551,10 @@ class MainWindow(QMainWindow):
         # profile is off-the-record and forgets everything).
         browser_storage = str(Path.home() / ".deeptorrent" / "browser")
         os.makedirs(browser_storage, exist_ok=True)
+        self._browser_history = BrowserHistory(
+            os.path.join(browser_storage, "history.sqlite"),
+            self.config.browser.history_retention_days,
+        )
         self.browser_profile = QWebEngineProfile("deeptorrent", self)
         self.browser_profile.setPersistentStoragePath(browser_storage)
         self.browser_profile.setCachePath(os.path.join(browser_storage, "cache"))
@@ -1546,16 +1596,15 @@ class MainWindow(QMainWindow):
             pass
         # --- Page-level settings applied to every page in the profile -----
         _ps = self.browser_profile.settings()
-        # DNS prefetch: resolve cross-origin hosts ahead of navigation.
-        _ps.setAttribute(QWebEngineSettings.DnsPrefetchEnabled, True)
+        # Disable speculative cross-origin DNS lookups for browser privacy.
+        _ps.setAttribute(QWebEngineSettings.DnsPrefetchEnabled, False)
         # Smooth scrolling like modern browsers.
         _ps.setAttribute(QWebEngineSettings.ScrollAnimatorEnabled, True)
         # Back-forward cache: keep pages alive for instant back/forward
         # instead of reloading (Qt 6.7+).
         _ps.setAttribute(QWebEngineSettings.BackForwardCacheEnabled, True)
-        # Allow local HTML to fetch remote resources (used by the start
-        # page if it ever loads remote assets; harmless otherwise).
-        _ps.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, True)
+        # Local files must not become a bridge from disk content to remote origins.
+        _ps.setAttribute(QWebEngineSettings.LocalContentCanAccessRemoteUrls, False)
         # Icons: load favicons for the tab strip / bookmarks.
         _ps.setAttribute(QWebEngineSettings.AutoLoadIconsForPage, True)
         _ps.setAttribute(QWebEngineSettings.TouchIconsEnabled, True)
@@ -1578,12 +1627,16 @@ class MainWindow(QMainWindow):
         # Video grabber extension — inject only if enabled in config.
         # The script is stored so it can be removed/re-inserted at runtime
         # via the toolbar toggle button.
-        self._extension_script = inject_into_profile(self.browser_profile)
+        self._extension_script = inject_into_profile(
+            self.browser_profile, self._dl_api.port, self._dl_api.api_token)
         if not self.config.browser.extension_enabled:
             self.browser_profile.scripts().remove(self._extension_script)
         from dlmgr.adblock import AdBlockInterceptor
         self.adblock_interceptor = AdBlockInterceptor()
         self.adblock_interceptor.set_enabled(self.config.browser.adblock_enabled)
+        self.adblock_interceptor.set_allowed_sites(set(self.config.browser.adblock_disabled_sites))
+        self._adblock_blocked_count = 0
+        self.adblock_interceptor.blockedRequest.connect(self._on_adblock_blocked)
         self.browser_profile.setUrlRequestInterceptor(self.adblock_interceptor)
         # QWebChannel: direct JS ↔ Python bridge (window.deepflux). The
         # existing browser extension keeps using the control-API XHR path;
@@ -1597,14 +1650,16 @@ class MainWindow(QMainWindow):
         _ch_script.setName("deepflux_webchannel")
         _ch_script.setSourceCode(channel_injection_script())
         _ch_script.setInjectionPoint(QWebEngineScript.DocumentCreation)
-        _ch_script.setWorldId(QWebEngineScript.MainWorld)
-        _ch_script.setRunsOnSubFrames(True)
+        _ch_script.setWorldId(QWebEngineScript.ApplicationWorld)
+        _ch_script.setRunsOnSubFrames(False)
         self.browser_profile.scripts().insert(_ch_script)
         # Keep a live cache of the browser session's cookies so file
         # downloads handed to the internal download manager carry the same
         # login session the browser has (private sites gate files on it).
-        self._browser_cookies: Dict[str, Dict[str, str]] = {}
+        self._browser_cookies: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
         self.browser_profile.cookieStore().cookieAdded.connect(self._on_browser_cookie_added)
+        self.browser_profile.cookieStore().cookieRemoved.connect(self._on_browser_cookie_removed)
+        self.browser_profile.cookieStore().loadAllCookies()
         # Handle file downloads triggered inside the browser: .torrent files
         # are added to the torrent engine automatically; everything else is
         # routed to the internal segmented download manager (Downloads panel).
@@ -1653,15 +1708,45 @@ class MainWindow(QMainWindow):
         self.browser_new_tab_btn.clicked.connect(lambda: self._browser_new_tab())
         nav_layout.addWidget(self.browser_new_tab_btn)
 
+        self.browser_private_btn = QPushButton("Private")
+        self.browser_private_btn.setObjectName("btn_secondary")
+        self.browser_private_btn.setToolTip("Open an off-the-record tab")
+        self.browser_private_btn.clicked.connect(lambda: self._browser_new_tab(private=True))
+        nav_layout.addWidget(self.browser_private_btn)
+
+        self.browser_devtools_btn = QPushButton("DevTools")
+        self.browser_devtools_btn.setObjectName("btn_secondary")
+        self.browser_devtools_btn.setToolTip("Open Chromium developer tools for the current tab (F12)")
+        self.browser_devtools_btn.clicked.connect(self._browser_open_devtools)
+        nav_layout.addWidget(self.browser_devtools_btn)
+        self._browser_devtools_windows: List[QWebEngineView] = []
+
         self.browser_url_bar = QLineEdit()
         self.browser_url_bar.setPlaceholderText("Enter URL or search...")
         self.browser_url_bar.returnPressed.connect(self._browser_navigate)
+        self._browser_history_model = QStringListModel(self)
+        self._browser_history_completer = QCompleter(self._browser_history_model, self)
+        self._browser_history_completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self._browser_history_completer.setFilterMode(Qt.MatchContains)
+        self.browser_url_bar.setCompleter(self._browser_history_completer)
+        self.browser_url_bar.textEdited.connect(self._browser_update_history_suggestions)
         nav_layout.addWidget(self.browser_url_bar)
 
         self.browser_go_btn = QPushButton("Go")
         self.browser_go_btn.setObjectName("btn_accent")
         self.browser_go_btn.clicked.connect(self._browser_navigate)
         nav_layout.addWidget(self.browser_go_btn)
+
+        self.browser_zoom_label = QLabel("100%")
+        self.browser_zoom_label.setMinimumWidth(42)
+        self.browser_zoom_label.setAlignment(Qt.AlignCenter)
+        # The percentage badge is a control, not just a readout — the cursor
+        # + tooltip make that discoverable, click opens the zoom menu.
+        self.browser_zoom_label.setCursor(Qt.PointingHandCursor)
+        self.browser_zoom_label.setToolTip(
+            "Page zoom — click for controls (Ctrl+scroll wheel, Ctrl+= / Ctrl+-, Ctrl+0 reset)")
+        self.browser_zoom_label.mousePressEvent = lambda _e: self._browser_zoom_menu()
+        nav_layout.addWidget(self.browser_zoom_label)
 
         self.browser_bookmark_btn = QPushButton()
         self.browser_bookmark_btn.setObjectName("btn_secondary")
@@ -1677,10 +1762,12 @@ class MainWindow(QMainWindow):
         self.browser_adblock_btn.setCheckable(True)
         self.browser_adblock_btn.setChecked(self.config.browser.adblock_enabled)
         self.browser_adblock_btn.setIcon(self._load_browser_icon("adblock"))
-        self.browser_adblock_btn.setToolTip("Toggle ad blocking (off by default)")
+        self.browser_adblock_btn.setToolTip("Toggle ad blocking; right-click for site exceptions")
         self.browser_adblock_btn.setFixedWidth(34)
         self._update_adblock_button_style()
         self.browser_adblock_btn.clicked.connect(self._toggle_adblock)
+        self.browser_adblock_btn.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.browser_adblock_btn.customContextMenuRequested.connect(self._browser_adblock_menu)
         nav_layout.addWidget(self.browser_adblock_btn)
 
         # Video grabber toggle button — the injected extension monitors for
@@ -1701,7 +1788,70 @@ class MainWindow(QMainWindow):
         self.browser_extension_btn.clicked.connect(self._toggle_extension)
         nav_layout.addWidget(self.browser_extension_btn)
 
+        # Site Grabber — keyword search on video sites (see the SiteGrabberDialog);
+        # queues resolved streams in the download manager.
+        self.browser_grabber_btn = QPushButton()
+        self.browser_grabber_btn.setObjectName("btn_secondary")
+        self.browser_grabber_btn.setIcon(self._load_browser_icon("grabber"))
+        self.browser_grabber_btn.setToolTip(
+            "Site Grabber — search a video site by keywords and queue the "
+            "results as downloads")
+        self.browser_grabber_btn.setFixedWidth(34)
+        self.browser_grabber_btn.clicked.connect(self._open_site_grabber)
+        nav_layout.addWidget(self.browser_grabber_btn)
+
+        for widget, name in (
+            (self.browser_back_btn, "Browser back"),
+            (self.browser_fwd_btn, "Browser forward"),
+            (self.browser_reload_btn, "Reload page"),
+            (self.browser_home_btn, "Browser home"),
+            (self.browser_new_tab_btn, "New browser tab"),
+            (self.browser_private_btn, "New private tab"),
+            (self.browser_devtools_btn, "Open developer tools"),
+            (self.browser_url_bar, "Browser address and search"),
+            (self.browser_go_btn, "Go to address"),
+            (self.browser_bookmark_btn, "Bookmark current page"),
+            (self.browser_adblock_btn, "Toggle ad blocking"),
+            (self.browser_extension_btn, "Toggle video detection"),
+            (self.browser_grabber_btn, "Open site grabber"),
+        ):
+            widget.setAccessibleName(name)
+
         browser_tab_layout.addLayout(nav_layout)
+
+        self.browser_progress = QProgressBar()
+        self.browser_progress.setRange(0, 100)
+        self.browser_progress.setTextVisible(False)
+        self.browser_progress.setFixedHeight(3)
+        self.browser_progress.hide()
+        browser_tab_layout.addWidget(self.browser_progress)
+
+        self.browser_find_bar = QWidget()
+        find_layout = QHBoxLayout(self.browser_find_bar)
+        find_layout.setContentsMargins(4, 0, 4, 0)
+        self.browser_find_input = QLineEdit()
+        self.browser_find_input.setPlaceholderText("Find in page")
+        self.browser_find_input.setAccessibleName("Find text in current page")
+        self.browser_find_input.textChanged.connect(lambda: self._browser_find(False))
+        find_layout.addWidget(self.browser_find_input)
+        self.browser_find_result = QLabel("")
+        find_layout.addWidget(self.browser_find_result)
+        find_prev = QPushButton("Previous")
+        find_prev.clicked.connect(lambda: self._browser_find(True))
+        find_layout.addWidget(find_prev)
+        find_next = QPushButton("Next")
+        find_next.clicked.connect(lambda: self._browser_find(False))
+        find_layout.addWidget(find_next)
+        find_close = QPushButton("Close")
+        find_close.clicked.connect(self._browser_hide_find)
+        find_layout.addWidget(find_close)
+        self.browser_find_bar.hide()
+        browser_tab_layout.addWidget(self.browser_find_bar)
+
+        self._browser_session_timer = QTimer(self)
+        self._browser_session_timer.setSingleShot(True)
+        self._browser_session_timer.setInterval(1500)
+        self._browser_session_timer.timeout.connect(self._persist_browser_session)
 
         # Tabbed browser — each tab holds a QWebEngineView sharing the profile.
         self.browser_tabs = QTabWidget()
@@ -1750,6 +1900,11 @@ class MainWindow(QMainWindow):
         browser_tab_layout.addWidget(self._browser_content)
         # Reposition the overlay whenever the content area resizes.
         self._browser_content.installEventFilter(self)
+        # Ctrl+scroll zoom needs an APP-level filter: QWebEngineView wheel
+        # events target its internal render widget, so filters installed on
+        # the view or its ancestors never see them (same reason the overlay
+        # hover tracking uses a poll timer instead of mouse events).
+        QApplication.instance().installEventFilter(self)
 
         # Auto-hide: the overlay shows when the cursor enters the top edge
         # zone and hides (after a short delay) when it leaves. This is
@@ -1770,9 +1925,19 @@ class MainWindow(QMainWindow):
         # Start with the overlay hidden — it only appears on mouse hover.
         self._browser_overlay.hide()
 
-        # Create the first tab (after the overlay so tab_changed can
-        # update the label).
-        self._browser_new_tab(url=QUrl(self.config.browser.homepage))
+        # Restore persistent tabs after the overlay exists; private tabs never persist.
+        restore_urls = self.config.browser.open_tabs if self.config.browser.restore_tabs else []
+        restore_urls = [
+            url for url in restore_urls[:20]
+            if QUrl(url).scheme().lower() in ("http", "https")
+        ]
+        if restore_urls:
+            for saved_url in restore_urls:
+                self._browser_new_tab(url=QUrl(saved_url))
+            self.browser_tabs.setCurrentIndex(
+                min(self.config.browser.active_tab, self.browser_tabs.count() - 1))
+        else:
+            self._browser_new_tab(url=QUrl(self.config.browser.homepage))
 
         # Keep a reference to the first view for backward compatibility.
         self.browser_view = self._current_browser_view()
@@ -1821,9 +1986,12 @@ class MainWindow(QMainWindow):
         self.setMenuBar(menubar)
         file_menu = menubar.addMenu("File")
 
-        api_keys_action = QAction("API Keys...", self)
-        api_keys_action.triggered.connect(self._open_api_keys)
-        file_menu.addAction(api_keys_action)
+        self._api_keys_menu = file_menu.addMenu("API Keys")
+        for label, page in API_KEY_PAGES:
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda _checked=False, selected=page: self._open_api_keys(selected))
+            self._api_keys_menu.addAction(action)
 
         export_action = QAction("Export Settings...", self)
         export_action.triggered.connect(self._export_settings)
@@ -1848,15 +2016,32 @@ class MainWindow(QMainWindow):
         # Browse menu — title jumps to the tab; items below once there.
         browse_menu = menubar.addMenu("Browse")
 
-        browser_settings_action = QAction("Browser Settings...", self)
-        browser_settings_action.triggered.connect(self._open_browser_settings)
-        browse_menu.addAction(browser_settings_action)
+        self._browser_settings_menu = browse_menu.addMenu("Browser Settings")
+        for label, page in BROWSER_SETTINGS_PAGES:
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda _checked=False, selected=page: self._open_browser_settings(selected))
+            self._browser_settings_menu.addAction(action)
 
         browse_menu.addSeparator()
 
         import_bookmarks_action = QAction("Import Bookmarks...", self)
         import_bookmarks_action.triggered.connect(self._import_bookmarks)
         browse_menu.addAction(import_bookmarks_action)
+        export_bookmarks_action = QAction("Export Bookmarks...", self)
+        export_bookmarks_action.triggered.connect(self._export_bookmarks)
+        browse_menu.addAction(export_bookmarks_action)
+
+        browse_menu.addSeparator()
+        history_action = QAction("History...", self)
+        history_action.triggered.connect(self._show_browser_history)
+        browse_menu.addAction(history_action)
+        save_pdf_action = QAction("Save Page as PDF...", self)
+        save_pdf_action.triggered.connect(self._browser_save_pdf)
+        browse_menu.addAction(save_pdf_action)
+        devtools_action = QAction("Developer Tools", self)
+        devtools_action.triggered.connect(self._browser_open_devtools)
+        browse_menu.addAction(devtools_action)
 
         # Agent menu — no items left; the title is a pure tab button.
         agent_menu = menubar.addMenu("Agent")
@@ -1878,9 +2063,12 @@ class MainWindow(QMainWindow):
         indexer_settings_action.triggered.connect(self._open_indexer_settings)
         download_menu.addAction(indexer_settings_action)
 
-        downloads_settings_action = QAction("Downloads Settings...", self)
-        downloads_settings_action.triggered.connect(self._open_downloads_settings)
-        download_menu.addAction(downloads_settings_action)
+        self._download_settings_menu = download_menu.addMenu("Download Settings")
+        for label, page in DOWNLOAD_SETTINGS_PAGES:
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda _checked=False, selected=page: self._open_downloads_settings(selected))
+            self._download_settings_menu.addAction(action)
 
         sources_action = QAction("Sources...", self)
         sources_action.triggered.connect(self._open_sources)
@@ -2019,7 +2207,7 @@ class MainWindow(QMainWindow):
             sc(f"Ctrl+{i + 1}", lambda idx=i: self.main_tabs.setCurrentIndex(idx))
         sc("Ctrl+M", self._add_magnet_dialog)
         sc("Ctrl+O", self._add_torrent_file_dialog)
-        sc("Ctrl+F", lambda: (self.main_tabs.setCurrentWidget(self._agents_tab), self.chat_input.setFocus()))
+        sc("Ctrl+F", self._browser_or_agent_find)
         sc("Ctrl+Q", self.close)
 
         # Browser-scoped: only fire while the Browser tab is shown.
@@ -2032,16 +2220,88 @@ class MainWindow(QMainWindow):
         sc("Ctrl+=", lambda: self._browser_zoom(0.1), parent=bt, context=Qt.WidgetWithChildrenShortcut)
         sc("Ctrl++", lambda: self._browser_zoom(0.1), parent=bt, context=Qt.WidgetWithChildrenShortcut)
         sc("Ctrl+-", lambda: self._browser_zoom(-0.1), parent=bt, context=Qt.WidgetWithChildrenShortcut)
-        sc("Ctrl+0", lambda: self._current_browser_view().setZoomFactor(1.0), parent=bt, context=Qt.WidgetWithChildrenShortcut)
+        sc("Ctrl+0", lambda: self._browser_set_zoom(1.0), parent=bt, context=Qt.WidgetWithChildrenShortcut)
+        sc("F12", self._browser_open_devtools, parent=bt, context=Qt.WidgetWithChildrenShortcut)
+
+    def _browser_or_agent_find(self) -> None:
+        if self.main_tabs.currentWidget() is self._browser_tab:
+            self.browser_find_bar.show()
+            self.browser_find_input.setFocus()
+            self.browser_find_input.selectAll()
+            return
+        self.main_tabs.setCurrentWidget(self._agents_tab)
+        self.chat_input.setFocus()
+
+    def _browser_hide_find(self) -> None:
+        self._current_browser_view().findText("")
+        self.browser_find_result.clear()
+        self.browser_find_bar.hide()
+
+    def _browser_find(self, backward: bool = False) -> None:
+        text = self.browser_find_input.text()
+        if not text:
+            self._current_browser_view().findText("")
+            self.browser_find_result.clear()
+            return
+        flags = QWebEnginePage.FindFlag.FindBackward if backward else QWebEnginePage.FindFlag(0)
+
+        def done(result) -> None:
+            try:
+                total = result.numberOfMatches()
+                active = result.activeMatch()
+                self.browser_find_result.setText(f"{active}/{total}" if total else "0/0")
+            except Exception:
+                self.browser_find_result.clear()
+
+        self._current_browser_view().findText(text, flags, done)
 
     def _browser_focus_url(self) -> None:
         self.main_tabs.setCurrentWidget(self._browser_tab)
         self.browser_url_bar.setFocus()
         self.browser_url_bar.selectAll()
 
-    def _browser_zoom(self, delta: float) -> None:
-        view = self._current_browser_view()
-        view.setZoomFactor(max(0.5, min(3.0, view.zoomFactor() + delta)))
+    def _browser_zoom(self, delta: float, view: Optional[QWebEngineView] = None) -> None:
+        view = view or self._current_browser_view()
+        self._browser_set_zoom(view.zoomFactor() + delta, view=view)
+
+    def _browser_set_zoom(self, factor: float, view: Optional[QWebEngineView] = None) -> None:
+        view = view or self._current_browser_view()
+        factor = max(0.5, min(3.0, float(factor)))
+        view.setZoomFactor(factor)
+        # The badge shows the active tab's zoom — skip it for a non-current
+        # view (e.g. a detached fullscreen view zoomed via Ctrl+scroll); it
+        # resyncs on tab change / fullscreen exit.
+        if view is self.browser_tabs.currentWidget():
+            self.browser_zoom_label.setText(f"{round(factor * 100)}%")
+        if not view.property("deepflux_private"):
+            origin = self._browser_origin(view.url().toString())
+            if origin:
+                self.config.browser.zoom_by_origin[origin] = factor
+                self._schedule_browser_session_save()
+
+    def _browser_zoom_menu(self) -> None:
+        """Zoom controls opened by clicking the nav-bar percentage badge."""
+        menu = QMenu(self.browser_zoom_label)
+        menu.addAction("Zoom in  (Ctrl+=  or Ctrl+scroll up)", lambda: self._browser_zoom(0.1))
+        menu.addAction("Zoom out  (Ctrl+-  or Ctrl+scroll down)", lambda: self._browser_zoom(-0.1))
+        menu.addAction("Reset to 100%  (Ctrl+0)", lambda: self._browser_set_zoom(1.0))
+        menu.exec(self.browser_zoom_label.mapToGlobal(
+            self.browser_zoom_label.rect().bottomLeft()))
+
+    def _browser_open_devtools(self) -> None:
+        inspected = self._current_browser_view()
+        devtools = QWebEngineView()
+        devtools.setAttribute(Qt.WA_DeleteOnClose)
+        devtools.setWindowTitle(f"DeepFlux DevTools — {inspected.title() or inspected.url().host()}")
+        devtools.resize(760, 520)
+        page = QWebEnginePage(inspected.page().profile(), devtools)
+        devtools.setPage(page)
+        inspected.page().setDevToolsPage(page)
+        self._browser_devtools_windows.append(devtools)
+        devtools.destroyed.connect(
+            lambda _obj=None, view=devtools: self._browser_devtools_windows.remove(view)
+            if view in self._browser_devtools_windows else None)
+        devtools.show()
 
     def _poll_overlay_hover(self) -> None:
         """Check cursor position and show/hide the browser overlay.
@@ -2109,6 +2369,15 @@ class MainWindow(QMainWindow):
                 0, 0, self._browser_content.width(),
                 self._browser_overlay.sizeHint().height())
             self._browser_overlay.raise_()
+        # Ctrl+scroll over a browser view → zoom. QtWebEngine doesn't wire up
+        # Chromium's browser-layer ctrl+wheel zoom, so deliver it ourselves
+        # (must be seen app-level — wheel events go to the view's internal
+        # render widget, and per-widget filters never fire for them).
+        if event.type() == QEvent.Wheel and event.modifiers() & Qt.ControlModifier:
+            view = self._browser_view_for_widget(obj)
+            if view is not None:
+                self._browser_zoom(0.1 if event.angleDelta().y() > 0 else -0.1, view=view)
+                return True
         if obj is self.chat_input and event.type() == QEvent.KeyPress:
             if event.key() in (Qt.Key_Up, Qt.Key_Down):
                 self._input_history_nav(-1 if event.key() == Qt.Key_Up else 1)
@@ -2190,6 +2459,45 @@ class MainWindow(QMainWindow):
             )
         if added or errors:
             self._refresh()
+
+    def _show_agent_diagnostics(self) -> None:
+        try:
+            result = self.tools.call("agent_diagnostics", {})
+        except Exception as exc:
+            self._append_error(f"Could not load Agent status: {exc}")
+            return
+        llm = result["llm"]
+        integrations = result["integrations"]
+        limits = result["limits"]
+        tools = result["tools"]
+        integration_rows = "\n".join(
+            f"| {name.replace('_', ' ').title()} | {'Available' if value else 'Unavailable'} |"
+            if isinstance(value, bool) else f"| {name.replace('_', ' ').title()} | {value} |"
+            for name, value in integrations.items()
+        )
+        self._append_agent(
+            "## Agent Status\n\n"
+            f"**Provider:** `{llm['provider']}`  \n"
+            f"**Model:** `{llm['model']}`  \n"
+            f"**Tools:** {tools['total']} total, {tools['read_only']} read-only, "
+            f"{tools['confirmation_required']} confirmation-required\n\n"
+            "| Integration | Status |\n|---|---|\n"
+            f"{integration_rows}\n\n"
+            "| Limit | Value |\n|---|---:|\n"
+            f"| Turns | {limits['max_turns']} |\n"
+            f"| LLM requests | {limits['max_llm_calls']} |\n"
+            f"| Tool calls | {limits['max_tool_calls']} |\n"
+            f"| Task timeout | {limits['task_timeout_seconds']} s |\n"
+            f"| Context budget | {limits['context_budget_tokens']} tokens |"
+        )
+
+    def _on_agent_button(self) -> None:
+        if self._agent_thread and self._agent_thread.is_alive():
+            self.agent.cancel()
+            self.send_btn.setEnabled(False)
+            self.send_btn.setText("Stopping…")
+            return
+        self._on_send()
 
     def _on_send(self) -> None:
         """Send a message to the AI agent (Agent button / Enter)."""
@@ -2359,7 +2667,12 @@ class MainWindow(QMainWindow):
     def _set_busy(self, busy: bool) -> None:
         """Agent working: disable the Agent button and show elapsed time."""
         self._agent_busy = busy
-        self.send_btn.setEnabled(not busy)
+        self.send_btn.setEnabled(True)
+        self.send_btn.setText("Stop" if busy else "Agent")
+        self.send_btn.setToolTip(
+            "Stop after the current operation" if busy
+            else "Ask the conversational torrent agent (Enter)"
+        )
         if busy:
             self._busy_started = time.time()
             self._busy_timer.start()
@@ -2405,27 +2718,58 @@ class MainWindow(QMainWindow):
             self._browser_new_tab()
             idx = self.browser_tabs.currentIndex()
         w = self.browser_tabs.widget(idx)
-        return w if isinstance(w, QWebEngineView) else QWebEngineView()
+        if not isinstance(w, QWebEngineView):
+            raise RuntimeError("Active browser tab has no web view")
+        return w
 
-    def _browser_new_tab(self, url: Optional[QUrl] = None) -> QWebEngineView:
+    def _browser_view_for_widget(self, obj) -> Optional[QWebEngineView]:
+        """Return the browser-tab web view containing obj, if any.
+
+        Walks up the parent chain because wheel events are delivered to the
+        view's internal render widget, not the view itself. Non-browser web
+        views (e.g. the DevTools window) and non-browser widgets return None
+        so their events pass through untouched."""
+        w = obj if isinstance(obj, QWidget) else None
+        while w is not None:
+            if isinstance(w, QWebEngineView):
+                fs = getattr(self, "_browser_fs_state", None)
+                if (self.browser_tabs.indexOf(w) >= 0
+                        or (fs is not None and fs[0] is w)):
+                    return w
+                return None
+            w = w.parentWidget()
+        return None
+
+    def _browser_new_tab(self, url: Optional[QUrl] = None, private: bool = False) -> QWebEngineView:
         """Create a new browser tab and load the given URL (or homepage)."""
         view = QWebEngineView()
-        page = _BrowserPage(self.browser_profile, view)
+        if private:
+            profile = QWebEngineProfile(view)
+            from dlmgr.adblock import AdBlockInterceptor
+            private_adblock = AdBlockInterceptor()
+            private_adblock.set_enabled(self.config.browser.adblock_enabled)
+            private_adblock.set_allowed_sites(set(self.config.browser.adblock_disabled_sites))
+            profile.setUrlRequestInterceptor(private_adblock)
+            profile._deepflux_adblock = private_adblock
+            profile.downloadRequested.connect(self._on_browser_download_requested)
+        else:
+            profile = self.browser_profile
+        page = _BrowserPage(profile, view)
         view.setPage(page)
-        # QWebChannel: each page must have the channel set so
-        # qt.webChannelTransport is available to the injected bootstrap.
-        page.setWebChannel(self._web_channel)
+        view.setProperty("deepflux_private", private)
+        # QWebChannel: each persistent page gets the isolated application bridge.
+        if not private:
+            from PySide6.QtWebEngineCore import QWebEngineScript
+            page.setWebChannel(self._web_channel, QWebEngineScript.ApplicationWorld)
         view.urlChanged.connect(self._browser_url_changed)
         view.titleChanged.connect(self._browser_title_changed)
         # Loading feedback in the tab title.
         view.loadStarted.connect(lambda v=view: self._browser_set_tab_loading(v, True))
-        view.loadFinished.connect(lambda _ok, v=view: self._browser_set_tab_loading(v, False))
-        # Add scrollable space at the top so page content can be scrolled
-        # below the overlay strip (bookmarks + tabs float on top).
-        view.loadFinished.connect(lambda _ok, v=view: v.page().runJavaScript(
-            "document.documentElement.style.scrollPaddingTop='70px';"
-            "document.documentElement.style.paddingTop='70px';"
-        ))
+        view.loadProgress.connect(self._browser_load_progress)
+        view.loadFinished.connect(lambda ok, v=view: self._browser_load_finished(v, ok))
+        page.renderProcessTerminated.connect(
+            lambda status, code, v=view: self._browser_renderer_terminated(v, status, code))
+        # The floating tab overlay never mutates page DOM/layout.
         # Show hovered link URL in the status bar (like a real browser).
         page.linkHovered.connect(
             lambda url: self._hover_label.setText(url if url else ""))
@@ -2436,6 +2780,7 @@ class MainWindow(QMainWindow):
         page.magnetRequested.connect(self._browser_magnet_clicked)
         # TLS certificate errors → user dialog (deferred accept/reject).
         page.certificateErrorRequested.connect(self._browser_cert_error)
+        page.permissionRequested.connect(self._browser_permission_requested)
         # Short status messages from the page policy (blocked schemes etc.)
         page.statusMessage.connect(self._browser_status_message)
         # DOM fullscreen (YouTube ⛶): Chromium only emits the request — the
@@ -2447,13 +2792,14 @@ class MainWindow(QMainWindow):
         load_url = url if url and not url.isEmpty() else None
         if load_url is None and self.config.browser.homepage:
             load_url = QUrl(self.config.browser.homepage)
-        idx = self.browser_tabs.addTab(view, "New Tab")
+        idx = self.browser_tabs.addTab(view, "Private" if private else "New Tab")
         if load_url is not None:
             view.load(load_url)
         else:
             self._browser_show_start_page(view)
         self.browser_tabs.setCurrentIndex(idx)
         self.browser_view = view  # backward-compat reference
+        self._schedule_browser_session_save()
         return view
 
     def _browser_fullscreen_requested(self, view: QWebEngineView, request) -> None:
@@ -2504,9 +2850,80 @@ class MainWindow(QMainWindow):
         if w:
             w.deleteLater()
         self._rebuild_browser_tab_strip()
+        self._schedule_browser_session_save()
+
+    @staticmethod
+    def _browser_origin(url: str) -> str:
+        from urllib.parse import urlsplit
+        try:
+            parsed = urlsplit(url)
+            port = f":{parsed.port}" if parsed.port else ""
+        except ValueError:
+            return ""
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return ""
+        return f"{parsed.scheme}://{parsed.hostname.lower()}{port}"
+
+    def _browser_agent_content_allowed(self, url: str) -> bool:
+        if self._current_browser_view().property("deepflux_private"):
+            return False
+        origin = self._browser_origin(url)
+        if not origin:
+            return url.startswith(f"{_DEEPFLUX_SCHEME}://")
+        policy = self.config.browser.agent_content_permissions.get(origin, "ask")
+        if policy == "allow":
+            return True
+        if policy == "deny":
+            return False
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Share Page with Agent")
+        box.setText(
+            "Allow the Agent to read the rendered text and links from this page?\n\n"
+            f"Origin: {origin}\n\n"
+            "The content will be sent to your configured LLM provider."
+        )
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        remember = QCheckBox("Remember this choice for this origin")
+        box.setCheckBox(remember)
+        allowed = box.exec() == QMessageBox.StandardButton.Yes
+        if remember.isChecked():
+            self.config.browser.agent_content_permissions[origin] = "allow" if allowed else "deny"
+            self._save_config()
+        return allowed
+
+    def _confirm_browser_action(
+        self,
+        action: str,
+        url: str,
+        title: str = "",
+        source_url: str = "",
+    ) -> bool:
+        source_url = source_url or self._current_browser_view().url().toString()
+        labels = {
+            "download": "start this download",
+            "play": "play this stream",
+            "magnet": "add this magnet",
+            "torrent": "add this torrent",
+        }
+        detail = f"Source page:\n{source_url or '(unknown)'}\n\nTarget:\n{url}"
+        if title:
+            detail += f"\n\nName:\n{title}"
+        answer = QMessageBox.warning(
+            self,
+            "Browser Action",
+            f"Allow this page to {labels.get(action, action)}?\n\n{detail}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _browser_magnet_clicked(self, uri: str) -> None:
         """A magnet: link was clicked in a web page — add it to the engine."""
+        if not self._confirm_browser_action("magnet", uri):
+            self._browser_status_message("Magnet action canceled")
+            return
         try:
             result = self.tools.call("add_magnet", {
                 "uri": uri,
@@ -2520,6 +2937,36 @@ class MainWindow(QMainWindow):
             logger.warning("Browser magnet click failed: %s", exc)
             self._append_error(f"Failed to add magnet: {exc}")
 
+    def _browser_permission_requested(self, permission) -> None:
+        from PySide6.QtWebEngineCore import QWebEnginePermission
+
+        kind = permission.permissionType()
+        sensitive = {
+            QWebEnginePermission.PermissionType.MediaAudioCapture,
+            QWebEnginePermission.PermissionType.MediaVideoCapture,
+            QWebEnginePermission.PermissionType.MediaAudioVideoCapture,
+            QWebEnginePermission.PermissionType.DesktopAudioVideoCapture,
+            QWebEnginePermission.PermissionType.DesktopVideoCapture,
+            QWebEnginePermission.PermissionType.MouseLock,
+            QWebEnginePermission.PermissionType.Unsupported,
+        }
+        if kind in sensitive:
+            permission.deny()
+            return
+        origin = permission.origin().toString()
+        answer = QMessageBox.question(
+            self,
+            "Browser Permission",
+            f"Origin:\n{origin or '(unknown)'}\n\n"
+            f"Allow access to {kind.name}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            permission.grant()
+        else:
+            permission.deny()
+
     def _browser_cert_error(self, error) -> None:
         """Show a dialog for an overridable TLS certificate error."""
         try:
@@ -2529,7 +2976,8 @@ class MainWindow(QMainWindow):
                 self, "Certificate Error",
                 f"Secure connection to {host} failed:\n\n{desc}\n\n"
                 "Proceed anyway? (not recommended)",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
             if r == QMessageBox.StandardButton.Yes:
                 error.acceptCertificate()
             else:
@@ -2589,6 +3037,30 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         self._browser_overlay.raise_()
 
+    def _schedule_browser_session_save(self) -> None:
+        if hasattr(self, "_browser_session_timer"):
+            self._browser_session_timer.start()
+
+    def _persist_browser_session(self) -> None:
+        if getattr(self, "_skip_config_save", False):
+            return
+        urls = []
+        active_persistent = 0
+        current = self.browser_tabs.currentIndex()
+        for index in range(self.browser_tabs.count()):
+            view = self.browser_tabs.widget(index)
+            if not isinstance(view, QWebEngineView) or view.property("deepflux_private"):
+                continue
+            url = view.url().toString()
+            if view.url().scheme().lower() not in ("http", "https"):
+                continue
+            if index == current:
+                active_persistent = len(urls)
+            urls.append(url)
+        self.config.browser.open_tabs = urls[:20]
+        self.config.browser.active_tab = min(active_persistent, max(0, len(urls) - 1))
+        self.config.to_file(self.config_path)
+
     def _browser_tab_changed(self, idx: int) -> None:
         """When the active tab changes, update the URL bar and back-compat ref."""
         if idx < 0:
@@ -2597,7 +3069,10 @@ class MainWindow(QMainWindow):
         if isinstance(w, QWebEngineView):
             self.browser_view = w
             self.browser_url_bar.setText(self._display_url(w.url().toString()))
+            self.browser_zoom_label.setText(f"{round(w.zoomFactor() * 100)}%")
             self._rebuild_browser_tab_strip()
+            self._browser_update_nav_buttons()
+            self._schedule_browser_session_save()
 
     def _browser_title_changed(self, title: str) -> None:
         """Update the tab title when the page title changes."""
@@ -2606,9 +3081,54 @@ class MainWindow(QMainWindow):
             return
         idx = self.browser_tabs.indexOf(view)
         if idx >= 0:
-            self.browser_tabs.setTabText(idx, title[:25] if title else "New Tab")
-            self.browser_tabs.setTabToolTip(idx, title)
+            prefix = "Private — " if view.property("deepflux_private") else ""
+            display = prefix + (title or "New Tab")
+            self.browser_tabs.setTabText(idx, display[:32])
+            self.browser_tabs.setTabToolTip(idx, display)
             self._rebuild_browser_tab_strip()
+
+    def _browser_load_progress(self, progress: int) -> None:
+        view = self.sender()
+        if view is not self._current_browser_view():
+            return
+        self.browser_progress.setValue(progress)
+        self.browser_progress.setVisible(progress < 100)
+
+    def _browser_load_finished(self, view: QWebEngineView, ok: bool) -> None:
+        self._browser_set_tab_loading(view, False)
+        if ok and self.config.browser.history_enabled and not view.property("deepflux_private"):
+            self._browser_history.record(view.url().toString(), view.title())
+            self._browser_update_history_suggestions("")
+        if view is self._current_browser_view():
+            self.browser_progress.hide()
+            self._browser_update_nav_buttons()
+            if not ok and view.url().scheme() in ("http", "https"):
+                self._browser_status_message(
+                    f"Page failed to load: {view.url().toString()} — check the connection and retry.")
+
+    def _browser_renderer_terminated(self, view: QWebEngineView, status, code: int) -> None:
+        if self.browser_tabs.indexOf(view) < 0:
+            return
+        answer = QMessageBox.warning(
+            self,
+            "Browser Renderer Stopped",
+            f"The page renderer stopped ({status}, code {code}). Reload this tab?",
+            QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Close,
+            QMessageBox.StandardButton.Retry,
+        )
+        if answer == QMessageBox.StandardButton.Retry:
+            view.reload()
+        else:
+            self._browser_close_tab(self.browser_tabs.indexOf(view))
+
+    def _browser_update_nav_buttons(self) -> None:
+        try:
+            history = self._current_browser_view().history()
+            self.browser_back_btn.setEnabled(history.canGoBack())
+            self.browser_fwd_btn.setEnabled(history.canGoForward())
+        except Exception:
+            self.browser_back_btn.setEnabled(False)
+            self.browser_fwd_btn.setEnabled(False)
 
     def _browser_set_tab_loading(self, view: QWebEngineView, loading: bool) -> None:
         idx = self.browser_tabs.indexOf(view)
@@ -2622,18 +3142,24 @@ class MainWindow(QMainWindow):
             self.browser_tabs.setTabToolTip(idx, title)
         self._rebuild_browser_tab_strip()
 
+    def _browser_update_history_suggestions(self, text: str) -> None:
+        if not self.config.browser.history_enabled:
+            self._browser_history_model.setStringList([])
+            return
+        urls = [entry["url"] for entry in self._browser_history.suggestions(text, 20)]
+        self._browser_history_model.setStringList(urls)
+
     def _browser_navigate(self) -> None:
         """Navigate to the URL in the browser address bar."""
         text = self.browser_url_bar.text().strip()
         if not text:
             return
-        # If it looks like a URL, load it directly; otherwise search Google.
-        if "." in text and " " not in text:
-            if not text.startswith(("http://", "https://")):
-                text = "https://" + text
-            self._current_browser_view().load(QUrl(text))
-        else:
-            self._current_browser_view().load(QUrl(f"https://www.google.com/search?q={text}"))
+        try:
+            target = normalize_browser_target(text, self.config.browser.search_engine)
+        except ValueError as exc:
+            self._browser_status_message(str(exc))
+            return
+        self._current_browser_view().load(QUrl(target))
 
     @staticmethod
     def _display_url(url_str: str) -> str:
@@ -2651,8 +3177,14 @@ class MainWindow(QMainWindow):
         view = self.sender()
         if isinstance(view, QWebEngineView):
             idx = self.browser_tabs.indexOf(view)
+            if not view.property("deepflux_private"):
+                origin = self._browser_origin(url.toString())
+                factor = self.config.browser.zoom_by_origin.get(origin, 1.0)
+                view.setZoomFactor(max(0.5, min(3.0, float(factor))))
             if idx == self.browser_tabs.currentIndex():
                 self.browser_url_bar.setText(self._display_url(url.toString()))
+                self.browser_zoom_label.setText(f"{round(view.zoomFactor() * 100)}%")
+            self._schedule_browser_session_save()
 
     def _browser_go_home(self) -> None:
         """Navigate to the configured homepage (or the built-in start page)."""
@@ -2688,7 +3220,9 @@ class MainWindow(QMainWindow):
         # Static logo (rotation removed). Clock badge mirrors the extension's
         # status badge styling (dlmgr/browser_extension.py createStatusBadge).
         html = (
-            "<html><head><title>DeepFlux</title><style>"
+            "<html><head><title>DeepFlux</title>"
+            "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'\">"
+            "<style>"
             "#df-clock { position:fixed; top:10px; left:10px; "
             "background:linear-gradient(135deg, #011d3e, #001431); color:#2a7abf; "
             "border:1px solid #2a7abf; border-radius:5px; padding:4px 7px; "
@@ -2745,6 +3279,32 @@ class MainWindow(QMainWindow):
         self.main_tabs.setCurrentWidget(self._browser_tab)
         self._browser_new_tab(url=QUrl(url_str))
 
+    def _on_adblock_blocked(self, _host: str) -> None:
+        self._adblock_blocked_count += 1
+        self.browser_adblock_btn.setToolTip(
+            f"Ad blocking enabled — {self._adblock_blocked_count} request(s) blocked this session. "
+            "Right-click for site exceptions.")
+
+    def _browser_adblock_menu(self, position) -> None:
+        host = self._current_browser_view().url().host().lower()
+        if not host:
+            return
+        menu = QMenu(self.browser_adblock_btn)
+        disabled = host in self.config.browser.adblock_disabled_sites
+        action = menu.addAction(
+            f"Enable blocking on {host}" if disabled else f"Disable blocking on {host}")
+        chosen = menu.exec(self.browser_adblock_btn.mapToGlobal(position))
+        if chosen is not action:
+            return
+        if disabled:
+            self.config.browser.adblock_disabled_sites = [
+                saved for saved in self.config.browser.adblock_disabled_sites if saved != host]
+        else:
+            self.config.browser.adblock_disabled_sites.append(host)
+        self.adblock_interceptor.set_allowed_sites(set(self.config.browser.adblock_disabled_sites))
+        self._save_config()
+        self._current_browser_view().reload()
+
     def _toggle_adblock(self) -> None:
         """Toggle ad-blocking on/off."""
         enabled = self.browser_adblock_btn.isChecked()
@@ -2791,11 +3351,80 @@ class MainWindow(QMainWindow):
         else:
             self.browser_extension_btn.setStyleSheet("")
 
+    def _open_site_grabber(self) -> None:
+        """Open (or re-raise) the Site Grabber: keyword search on a video
+        site, results listed with thumbnails, selected items queued as
+        HLS downloads in the download manager."""
+        dialog = getattr(self, "_grabber_dialog", None)
+        if dialog is not None:
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            return
+        from gui.grabber_dialog import SiteGrabberDialog
+        dialog = SiteGrabberDialog(self.config, self._dl_engine, self)
+        self._grabber_dialog = dialog
+        dialog.show()
+
     def _browser_remove_bookmark(self, url: str) -> None:
         """Remove a bookmark."""
         self.config.browser.bookmarks = [b for b in self.config.browser.bookmarks if b.url != url]
         self._save_config()
         self._rebuild_bookmarks_bar()
+
+    def _export_bookmarks(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Bookmarks", "DeepFlux Bookmarks.html", "HTML Files (*.html)")
+        if not path:
+            return
+        import html
+        rows = [
+            f'<DT><A HREF="{html.escape(bookmark.url, quote=True)}">'
+            f'{html.escape(bookmark.title or bookmark.url)}</A>'
+            for bookmark in self.config.browser.bookmarks
+        ]
+        document = "\n".join([
+            "<!DOCTYPE NETSCAPE-Bookmark-file-1>",
+            '<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">',
+            "<TITLE>DeepFlux Bookmarks</TITLE>",
+            "<H1>DeepFlux Bookmarks</H1>",
+            "<DL><p>",
+            *rows,
+            "</DL><p>",
+        ])
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(document)
+        except OSError as exc:
+            QMessageBox.warning(self, "Export Bookmarks", f"Could not export bookmarks:\n{exc}")
+
+    def _show_browser_history(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Browser History")
+        dialog.resize(720, 500)
+        layout = QVBoxLayout(dialog)
+        items = QListWidget()
+        for entry in self._browser_history.suggestions("", 100):
+            item = QListWidgetItem(f"{entry['title']}\n{entry['url']}")
+            item.setData(Qt.UserRole, entry["url"])
+            items.addItem(item)
+        items.itemDoubleClicked.connect(
+            lambda item: (self._browser_open_internal(item.data(Qt.UserRole)), dialog.accept()))
+        layout.addWidget(items)
+        clear = QPushButton("Clear History")
+        clear.clicked.connect(lambda: (self._clear_browser_history(), dialog.accept()))
+        layout.addWidget(clear)
+        dialog.exec()
+
+    def _browser_save_pdf(self) -> None:
+        title = self._current_browser_view().title() or "page"
+        safe = re.sub(r'[<>:"/\\|?*]+', "", title).strip() or "page"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Page as PDF", f"{safe}.pdf", "PDF Files (*.pdf)")
+        if not path:
+            return
+        self._current_browser_view().page().printToPdf(path)
+        self._browser_status_message(f"Saving page to {path}")
 
     def _import_bookmarks(self) -> None:
         """Import bookmarks from another browser (File menu + Browser Settings)."""
@@ -2967,6 +3596,7 @@ class MainWindow(QMainWindow):
         "find_alt_trackers": ("🔎", "Finding alternative trackers"),
         "find_alt_release": ("🔎", "Finding alternative releases"),
         "refresh_tracker_list": ("📋", "Refreshing tracker list"),
+        "agent_diagnostics": ("", "Checking Agent status"),
         "list_torrents": ("📋", "Listing torrents"),
         "get_torrent_status": ("📊", "Getting torrent status"),
         "diagnose_swarm": ("🩺", "Diagnosing swarm"),
@@ -2992,8 +3622,13 @@ class MainWindow(QMainWindow):
         "set_file_priority": ("⚙", "Setting file priority"),
         "add_tracker": ("➕", "Adding tracker"),
         "propose_rename_and_category": ("✏", "Proposing rename"),
+        "analyze_organization": ("", "Analyzing organization"),
+        "apply_organization_plan": ("", "Applying organization plan"),
         "save_memory": ("🧠", "Saving memory"),
         "search_memory": ("🧠", "Searching memory"),
+        "list_memories": ("", "Listing memories"),
+        "edit_memory": ("", "Editing memory"),
+        "forget_memory": ("", "Forgetting memory"),
         "irc_status": ("📡", "Checking IRC status"),
         "irc_list_messages": ("💬", "Reading IRC channel"),
         "irc_search_messages": ("🔎", "Searching IRC buffers"),
@@ -3014,6 +3649,12 @@ class MainWindow(QMainWindow):
         "browser_switch_tab": ("↹", "Switching browser tab"),
         "browser_go": ("↶", "Browser navigation"),
         "browser_get_content": ("📄", "Reading browser page"),
+        "browser_snapshot": ("", "Inspecting browser controls"),
+        "browser_wait": ("", "Waiting for browser page"),
+        "browser_click_ref": ("", "Clicking referenced element"),
+        "browser_type_ref": ("", "Typing into referenced element"),
+        "browser_select_ref": ("", "Selecting referenced option"),
+        "browser_check_ref": ("", "Setting referenced control"),
         "browser_click": ("🖱", "Clicking page element"),
         "browser_fill": ("⌨", "Filling form field"),
         "browser_scroll": ("↕", "Scrolling page"),
@@ -3121,6 +3762,8 @@ class MainWindow(QMainWindow):
             if etype == "thinking":
                 turn = event.get("turn", "?")
                 self._append_event(f"🧠 Thinking... (step {turn})")
+            elif etype == "stopping":
+                self._append_event(event.get("message", "Stopping…"))
             elif etype == "stream_delta":
                 self._on_stream_delta(event.get("kind", "content"), event.get("text", ""))
             elif etype == "model_reasoning":
@@ -3330,28 +3973,82 @@ class MainWindow(QMainWindow):
             self._browser_open_internal(url_str)
 
     # -- browser downloads ----------------------------------------------------
-    def _on_browser_cookie_added(self, cookie) -> None:
-        """Cache browser cookies (domain -> {name: value}) for dlmgr jobs."""
-        try:
-            domain = cookie.domain().lstrip(".")
-            if domain:
-                jar = self._browser_cookies.setdefault(domain, {})
-                jar[bytes(cookie.name()).decode("utf-8", "ignore")] = bytes(cookie.value()).decode("utf-8", "ignore")
-        except Exception:
-            pass
+    @staticmethod
+    def _browser_cookie_key(cookie) -> Tuple[str, str, str]:
+        domain = cookie.domain().strip().lower()
+        path = cookie.path() or "/"
+        name = bytes(cookie.name()).decode("utf-8", "ignore")
+        return domain, path, name
 
-    def _browser_cookies_for(self, url: str) -> str:
-        """Build a Cookie header for url from the browser session cache."""
+    def _on_browser_cookie_added(self, cookie) -> None:
+        """Cache browser cookies with their RFC domain/path/security scope."""
+        try:
+            domain, path, name = self._browser_cookie_key(cookie)
+            if not domain or not name:
+                return
+            expires = 0
+            expiration = cookie.expirationDate()
+            if expiration.isValid():
+                expires = expiration.toSecsSinceEpoch()
+            if len(self._browser_cookies) >= 5000:
+                self._browser_cookies.pop(next(iter(self._browser_cookies)), None)
+            self._browser_cookies[(domain, path, name)] = {
+                "value": bytes(cookie.value()).decode("utf-8", "ignore"),
+                "host_only": not domain.startswith("."),
+                "secure": bool(cookie.isSecure()),
+                "expires": expires,
+            }
+        except Exception:
+            logger.debug("Could not cache browser cookie", exc_info=True)
+
+    def _on_browser_cookie_removed(self, cookie) -> None:
+        try:
+            self._browser_cookies.pop(self._browser_cookie_key(cookie), None)
+        except Exception:
+            logger.debug("Could not remove cached browser cookie", exc_info=True)
+
+    @staticmethod
+    def _browser_origins_related(url: str, source_url: str) -> bool:
         from urllib.parse import urlparse
         try:
-            host = urlparse(url).hostname or ""
+            host = (urlparse(url).hostname or "").lower()
+            source = (urlparse(source_url).hostname or "").lower()
+        except Exception:
+            return False
+        return bool(host and source) and (
+            host == source or host.endswith("." + source) or source.endswith("." + host)
+        )
+
+    def _browser_cookies_for(self, url: str, source_url: str = "") -> str:
+        """Build an RFC-scoped Cookie header for an approved same-site download."""
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(url)
+            host = (parsed.hostname or "").lower()
+            request_path = parsed.path or "/"
         except Exception:
             return ""
-        parts: List[str] = []
-        for domain, jar in self._browser_cookies.items():
-            if host == domain or host.endswith("." + domain):
-                parts.extend(f"{k}={v}" for k, v in jar.items())
-        return "; ".join(parts)
+        if not host or not source_url or not self._browser_origins_related(url, source_url):
+            return ""
+        now = int(time.time())
+        matches = []
+        for key, details in list(self._browser_cookies.items()):
+            raw_domain, cookie_path, name = key
+            if details["expires"] and details["expires"] <= now:
+                self._browser_cookies.pop(key, None)
+                continue
+            domain = raw_domain.lstrip(".")
+            domain_matches = host == domain if details["host_only"] else host == domain or host.endswith("." + domain)
+            path_matches = request_path == cookie_path or (
+                request_path.startswith(cookie_path.rstrip("/") + "/"))
+            if (
+                not domain_matches or not path_matches
+                or details["secure"] and parsed.scheme.lower() != "https"
+            ):
+                continue
+            matches.append((len(cookie_path), name, details["value"]))
+        matches.sort(reverse=True)
+        return "; ".join(f"{name}={value}" for _length, name, value in matches)
 
     def _on_browser_download_requested(self, item) -> None:
         """Route browser downloads: .torrent files keep QtWebEngine's own
@@ -3364,6 +4061,17 @@ class MainWindow(QMainWindow):
         except Exception:
             return
         is_torrent = name.lower().endswith(".torrent") or url.split("?")[0].lower().endswith(".torrent")
+        source_url = ""
+        try:
+            page = item.page()
+            source_url = page.url().toString() if page is not None else ""
+        except Exception:
+            pass
+        if not self._confirm_browser_action(
+            "torrent" if is_torrent else "download", url, name, source_url):
+            item.cancel()
+            self._browser_status_message("Browser download canceled")
+            return
         if not is_torrent:
             self._route_browser_download(item, url, name)
             return
@@ -3390,14 +4098,16 @@ class MainWindow(QMainWindow):
             pass
         try:
             referrer = ""
+            private = False
             try:
                 page = item.page()
                 if page is not None:
                     referrer = page.url().toString()
+                    private = bool(page.view() and page.view().property("deepflux_private"))
             except Exception:
                 pass
             low = url.lower().split("?", 1)[0]
-            cookies = self._browser_cookies_for(url)
+            cookies = "" if private else self._browser_cookies_for(url, referrer)
             if low.endswith((".m3u8", ".mpd")):
                 job = self._dl_engine.add_stream_job(
                     url=url, filename=name,
@@ -4505,14 +5215,14 @@ class MainWindow(QMainWindow):
             import subprocess
             subprocess.Popen(["xdg-open", path])
 
-    def _open_api_keys(self) -> None:
-        """Open the unified API Keys dialog."""
-        dialog = APIKeysDialog(self.config, self)
+    def _open_api_keys(self, page: str = "all") -> None:
+        """Open one focused API Keys page."""
+        dialog = APIKeysDialog(self.config, self, page=page)
         if dialog.exec() == QDialog.Accepted:
             self.config.to_file(self.config_path)
             self._reload_agent()
             self.iptv_tab.reload_config(self.config)
-            self._append_agent("**API Keys saved.** All keys updated.")
+            self._append_agent(f"**API settings saved** ({dialog.windowTitle()}).")
 
     # ------------------------------------------------------------------
     # Settings backup (File → Export/Import Settings)
@@ -4628,9 +5338,9 @@ class MainWindow(QMainWindow):
             # starting Jackett first if needed.
             self._start_jackett_sync(force=True)
 
-    def _open_downloads_settings(self) -> None:
-        """Open Downloads settings (save path + download manager)."""
-        dialog = DownloadsSettingsDialog(self.config, self)
+    def _open_downloads_settings(self, page: str = "all") -> None:
+        """Open one focused download settings page."""
+        dialog = DownloadsSettingsDialog(self.config, self, page=page)
         if dialog.exec() == QDialog.Accepted:
             self.config.to_file(self.config_path)
             # Torrent rate limits apply live; listen port/connections need a restart.
@@ -4654,24 +5364,67 @@ class MainWindow(QMainWindow):
                 )
             except Exception:
                 pass
-            # Download-manager bandwidth limit applies live too.
+            # Download-manager settings apply live too.
             try:
-                self._dl_engine.set_bandwidth_limit(self.config.download.bandwidth_limit_bps)
+                self._dl_engine.update_settings(self.config.download)
             except Exception:
                 pass
             self._append_agent(
-                f"**Downloads Settings saved.** Save path: `{self.config.default_save_path}`, "
+                f"**{dialog.windowTitle()} saved.** Save path: `{self.config.default_save_path}`, "
                 f"Max concurrent: `{self.config.download.max_concurrent}`, "
                 f"Max connections: `{self.config.download.max_connections_per_download}`. "
                 f"Torrent listen port / connection limit changes apply after restart."
             )
 
-    def _open_browser_settings(self) -> None:
-        """Open Browser settings (homepage)."""
-        dialog = BrowserSettingsDialog(self.config, self)
+    def _clear_browser_history(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Clear Browsing History",
+            "Delete all locally stored browser history and address suggestions?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._browser_history.clear()
+        self._browser_history_model.setStringList([])
+        self.browser_profile.clearAllVisitedLinks()
+
+    def _clear_browser_data(self) -> None:
+        answer = QMessageBox.question(
+            self,
+            "Clear Browser Data",
+            "Delete persistent browser cookies and HTTP cache? You will be signed out of websites.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.browser_profile.cookieStore().deleteAllCookies()
+        self.browser_profile.clearHttpCache()
+        self._browser_cookies.clear()
+
+    def _clear_browser_agent_permissions(self) -> None:
+        self.config.browser.agent_content_permissions.clear()
+        self.config.to_file(self.config_path)
+
+    def _open_browser_settings(self, page: str = "all") -> None:
+        """Open one focused browser settings page."""
+        previous_extension = self.browser_extension_btn.isChecked()
+        dialog = BrowserSettingsDialog(self.config, self, page=page)
         if dialog.exec() == QDialog.Accepted:
             self.config.to_file(self.config_path)
-            self._append_agent(f"**Browser Settings saved.** Homepage: `{self.config.browser.homepage}`.")
+            self._browser_history.retention_days = self.config.browser.history_retention_days
+            if not self.config.browser.history_enabled:
+                self._browser_history_model.setStringList([])
+            self.browser_adblock_btn.setChecked(self.config.browser.adblock_enabled)
+            self.adblock_interceptor.set_enabled(self.config.browser.adblock_enabled)
+            self._update_adblock_button_style()
+            if previous_extension != self.config.browser.extension_enabled:
+                self.browser_extension_btn.setChecked(self.config.browser.extension_enabled)
+                self._toggle_extension()
+            self._append_agent(
+                f"**{dialog.windowTitle()} saved.** Homepage: `{self.config.browser.homepage}`.")
 
     def _open_iptv_settings(self) -> None:
         """Play-tab gear button: IPTV settings are split into focused pages —
@@ -4734,7 +5487,9 @@ class MainWindow(QMainWindow):
     def _reload_agent(self) -> None:
         """Recreate the LLM client and agent loop with the current config."""
         try:
+            self.agent.cancel()
             self.agent.stop_watchdog()
+            self.tools.shutdown()
         except Exception:
             pass
         self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine,
@@ -4747,6 +5502,8 @@ class MainWindow(QMainWindow):
             self.engine, self.config, tools=self.tools,
             on_event=lambda evt: self._agent_signals.event.emit(evt),
         )
+        if self.config.watchdog.enabled:
+            self.agent.start_watchdog()
         self._rss_monitor = RSSMonitor(self.config.rss)
         logger.info("Agent reloaded with provider=%s", self.config.llm.provider)
 
@@ -5024,9 +5781,11 @@ class MainWindow(QMainWindow):
         # overwrite it on the way out.
         if not getattr(self, "_skip_config_save", False):
             try:
+                self._persist_browser_session()
                 self.config.ui_geometry = bytes(self.saveGeometry().toBase64()).decode("ascii")
                 self.config.ui_last_tab = self.main_tabs.currentIndex()
                 self._save_splitters()
+                self.commander_tab.persist_pane_paths()
                 self.config.to_file(self.config_path)
             except Exception as exc:
                 logger.warning("Failed to persist UI state: %s", exc)
@@ -5047,7 +5806,9 @@ class MainWindow(QMainWindow):
             self._rss_timer.stop()
         except Exception:
             pass
+        self.agent.cancel()
         self.agent.stop_watchdog()
+        self.tools.shutdown()
         self.engine.stop()
         # Stop download manager.
         try:

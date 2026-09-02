@@ -3,6 +3,7 @@
 import os
 import tempfile
 import time
+from unittest.mock import MagicMock
 
 import libtorrent as lt
 import pytest
@@ -234,3 +235,33 @@ def test_state_manager_persists_magnet_and_backup(tmp_path):
     (tmp_path / "torrents_state.json").unlink()
     loaded = sm.load_state()
     assert len(loaded) == 1
+
+
+def test_organize_torrent_uses_libtorrent_storage_operations(tmp_path):
+    engine = TorrentEngine.__new__(TorrentEngine)
+    record = MagicMock()
+    record.handle.status.return_value.progress = 1.0
+    record.handle.torrent_file.return_value.files.return_value.num_files.return_value = 2
+    engine._get_record = MagicMock(return_value=record)
+    destination = str(tmp_path / "TV")
+
+    result = engine._organize_torrent(
+        "a" * 40, destination, "TV", [{"file_id": 1, "new_path": "Show/episode.mkv"}],
+    )
+
+    assert result["success"] is True
+    assert record.category == "TV"
+    record.handle.rename_file.assert_called_once_with(1, "Show/episode.mkv")
+    record.handle.move_storage.assert_called_once_with(destination)
+
+
+def test_organize_torrent_requires_completion(tmp_path):
+    engine = TorrentEngine.__new__(TorrentEngine)
+    record = MagicMock()
+    record.handle.status.return_value.progress = 0.9
+    engine._get_record = MagicMock(return_value=record)
+
+    with pytest.raises(Exception, match="complete"):
+        engine._organize_torrent("a" * 40, str(tmp_path / "Movies"), "Movies", [])
+
+    record.handle.move_storage.assert_not_called()

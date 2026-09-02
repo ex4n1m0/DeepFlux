@@ -94,3 +94,68 @@ def test_memory_tools_disabled(tmp_path):
     r = tools.call("save_memory", {"content": "anything"})
     assert r["success"] is False
     assert not list(tmp_path.iterdir())  # nothing written
+
+
+def test_list_edit_and_forget_memory(tmp_path):
+    store = MemoryStore(str(tmp_path))
+    saved = store.save("Prefers x265 encodes", scope="user")
+
+    listed = store.list_entries("user")
+    assert listed["count"] == 1
+    assert listed["results"][0]["id"] == saved["id"]
+    assert listed["results"][0]["content"] == "Prefers x265 encodes"
+
+    edited = store.edit(saved["id"], "Prefers AV1 encodes")
+    assert edited["success"] is True
+    assert store.list_entries("user")["results"][0]["id"] == saved["id"]
+    assert "Prefers AV1 encodes" in store.prompt_section()
+    assert "Prefers x265 encodes" not in store.prompt_section()
+
+    forgotten = store.forget(saved["id"])
+    assert forgotten["success"] is True
+    assert store.list_entries("user")["count"] == 0
+
+
+def test_legacy_memory_entries_receive_addressable_ids(tmp_path):
+    (tmp_path / "USER.md").write_text("# User\n\n- Prefers 1080p releases\n", encoding="utf-8")
+    store = MemoryStore(str(tmp_path))
+
+    entry = store.list_entries("user")["results"][0]
+    assert entry["id"].startswith("legacy-")
+    assert store.edit(entry["id"], "Prefers 4K releases")["success"] is True
+    assert store.list_entries("user")["results"][0]["id"] == entry["id"]
+
+
+def test_memory_rejects_secret_values(tmp_path):
+    store = MemoryStore(str(tmp_path))
+
+    result = store.save("API key: sk-do-not-save", scope="fact")
+    raw_result = store.save("sk-abcdefghijklmnopqrstuvwxyz123456", scope="fact")
+
+    assert result["success"] is False
+    assert raw_result["success"] is False
+    assert not list(tmp_path.iterdir())
+
+
+def test_memory_dedup_uses_whole_entries(tmp_path):
+    store = MemoryStore(str(tmp_path))
+    first = store.save("Prefers 1080p releases", scope="user")
+    second = store.save("1080p", scope="user")
+
+    assert first["duplicate"] is False
+    assert second["duplicate"] is False
+    assert store.list_entries("user")["count"] == 2
+
+
+def test_memory_governance_tools(tmp_path):
+    config = DeeptorrentConfig()
+    config.llm.memory_dir = str(tmp_path)
+    tools = ToolRegistry(MagicMock(), config)
+    saved = tools.call("save_memory", {"content": "Prefers quiet downloads", "scope": "user"})
+
+    listed = tools.call("list_memories", {"scope": "user"})
+    assert listed["results"][0]["id"] == saved["id"]
+    assert tools.call("edit_memory", {
+        "memory_id": saved["id"], "content": "Prefers scheduled downloads",
+    })["success"] is True
+    assert tools.call("forget_memory", {"memory_id": saved["id"]})["success"] is True

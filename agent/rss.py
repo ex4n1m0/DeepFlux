@@ -1,18 +1,71 @@
 """RSS feed fetcher and monitor for Deeptorrent."""
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
+import socket
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from xml.etree import ElementTree as ET
 
 import requests
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 from config import RSSFeed
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_public_feed_url(url: str) -> str:
+    from urllib.parse import urlparse
+
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Feed URL must be a valid public http:// or https:// address")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(".localhost") or hostname.endswith(".local"):
+        raise ValueError("Local and private network feed URLs are not allowed")
+    try:
+        literal = ipaddress.ip_address(hostname)
+        addresses = [literal]
+    except ValueError:
+        try:
+            addresses = {
+                ipaddress.ip_address(item[4][0].split("%", 1)[0])
+                for item in socket.getaddrinfo(
+                    hostname, parsed.port or (443 if parsed.scheme == "https" else 80),
+                    type=socket.SOCK_STREAM,
+                )
+            }
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Could not resolve feed host: {hostname}") from exc
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError("Local and private network feed URLs are not allowed")
+    return parsed.geturl()
+
+
+def _public_feed_get(url: str) -> requests.Response:
+    from urllib.parse import urljoin
+
+    current = url
+    for _ in range(6):
+        current = _validate_public_feed_url(current)
+        response = requests.get(
+            current,
+            timeout=30,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Deeptorrent/0.1 RSS Reader"},
+            allow_redirects=False,
+        )
+        if response.status_code not in (301, 302, 303, 307, 308):
+            return response
+        location = response.headers.get("Location")
+        response.close()
+        if not location:
+            raise ValueError("Feed redirect did not include a destination")
+        current = urljoin(current, location)
+    raise ValueError("Too many feed redirects")
 
 
 @dataclass
@@ -30,6 +83,8 @@ class FeedItem:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "item_id": self.guid,
+            "guid": self.guid,
             "title": self.title,
             "link": self.link,
             "description": self.description[:500] if self.description else "",
@@ -49,23 +104,22 @@ class RSSFeedClient:
     def fetch(self) -> List[FeedItem]:
         """Fetch the feed URL and return parsed items."""
         try:
-            resp = requests.get(
-                self.feed.url,
-                timeout=30,
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Deeptorrent/0.1 RSS Reader"},
-            )
+            resp = _public_feed_get(self.feed.url)
             resp.raise_for_status()
+            content = resp.content
+            if len(content) > 5 * 1024 * 1024:
+                raise ValueError("Feed response exceeds the 5 MiB limit")
         except Exception as exc:
             logger.warning("RSS fetch failed for %s: %s", self.feed.url, exc)
             return []
 
-        return self._parse(resp.content)
+        return self._parse(content)
 
     def _parse(self, content: bytes) -> List[FeedItem]:
         """Parse RSS 2.0 or Atom XML into FeedItem list."""
         try:
             root = ET.fromstring(content)
-        except ET.ParseError as exc:
+        except (ET.ParseError, DefusedXmlException) as exc:
             logger.warning("RSS parse error for %s: %s", self.feed.url, exc)
             return []
 

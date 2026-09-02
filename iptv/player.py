@@ -105,6 +105,13 @@ class PlayerBackend:
         raise NotImplementedError
     def set_cache(self, seconds: int) -> None:
         raise NotImplementedError
+    def set_live_pause_buffer(self, seconds: int) -> None:
+        """Configure a bounded in-memory live pause/rewind buffer if supported.
+
+        This is deliberately not called durable timeshift: it disappears when
+        playback stops and actual retained time varies with stream bitrate.
+        """
+        pass
     def set_aspect(self, mode: str) -> None:
         raise NotImplementedError
     def set_deinterlace(self, on: bool) -> None:
@@ -365,6 +372,32 @@ class MpvBackend(PlayerBackend):
             try:
                 self._mpv["cache-secs"] = max(1, int(seconds))
                 self._mpv["cache"] = "yes"
+            except Exception:
+                pass
+
+    def set_live_pause_buffer(self, seconds: int) -> None:
+        """Bound mpv's volatile live rewind cache by both time target and bytes.
+
+        ``cache-secs`` is a target rather than a hard allocation ceiling, so a
+        byte ceiling is also required. One MiB per requested second gives the
+        common 8-Mbit/s case the configured duration while remaining bounded;
+        higher bitrate channels retain proportionally less history.
+        """
+        if self._mpv is not None:
+            try:
+                seconds = max(0, int(seconds or 0))
+                # Hard memory ceiling: the time setting is an approximate
+                # retention target, never permission for unbounded cache RAM.
+                back_bytes = min(seconds * 1024 * 1024, 512 * 1024 * 1024)
+                self._mpv["cache"] = "yes"
+                self._mpv["cache-pause"] = "yes"
+                if seconds:
+                    self._mpv["cache-secs"] = seconds
+                self._mpv["demuxer-max-back-bytes"] = back_bytes
+                self._mpv["demuxer-max-bytes"] = (
+                    max(16 * 1024 * 1024, back_bytes)
+                    if seconds else 150 * 1024 * 1024
+                )
             except Exception:
                 pass
 

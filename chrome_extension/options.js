@@ -4,11 +4,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // Load saved settings.
   chrome.storage.sync.get({
     autoCapture: false,
-    sizeThreshold: 10,
+    sizeThreshold: 10 * 1024 * 1024,
     showOverlay: true
   }, (settings) => {
     document.getElementById("autoCapture").checked = settings.autoCapture;
-    document.getElementById("sizeThreshold").value = settings.sizeThreshold;
+    const bytes = settings.sizeThreshold < 1024 ? settings.sizeThreshold * 1024 * 1024 : settings.sizeThreshold;
+    document.getElementById("sizeThreshold").value = Math.max(1, Math.round(bytes / (1024 * 1024)));
     document.getElementById("showOverlay").checked = settings.showOverlay;
   });
 
@@ -20,7 +21,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("save").addEventListener("click", () => {
     const settings = {
       autoCapture: document.getElementById("autoCapture").checked,
-      sizeThreshold: parseInt(document.getElementById("sizeThreshold").value) || 10,
+      sizeThreshold: (parseInt(document.getElementById("sizeThreshold").value) || 10) * 1024 * 1024,
       showOverlay: document.getElementById("showOverlay").checked
     };
     chrome.storage.sync.set(settings, () => {

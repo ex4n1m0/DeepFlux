@@ -103,6 +103,7 @@ _wanted_datas = [
     (os.path.join(project_root, "packaging", "icons", "newtab.png"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "adblock.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "adblock.png"), "packaging/icons"),
+    (os.path.join(project_root, "packaging", "icons", "grabber.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "ffmpeg", "ffmpeg.exe"), "ffmpeg"),
     (os.path.join(project_root, "chrome_extension"), "chrome_extension"),
     # MilkDrop audio visualizer: the Butterchurn renderer + .milk converter run
@@ -151,6 +152,7 @@ a = Analysis(
         "ircmgr",
         "ircmgr.client",
         "ircmgr.state",
+        "ircmgr.history",
         "iptv",
         "iptv.models",
         "iptv.m3u_parser",

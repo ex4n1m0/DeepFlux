@@ -985,6 +985,26 @@ def test_framegrab_uses_no_window_flag(tmp_path):
     assert run.call_args.kwargs["creationflags"] == getattr(_sp, "CREATE_NO_WINDOW", 0)
 
 
+def test_framegrab_retries_without_unsupported_reconnect_options(tmp_path):
+    g, cache, _ = _grabber(tmp_path)
+    commands = []
+
+    def fake_run(cmd, **kwargs):
+        commands.append(cmd)
+        if "-reconnect" in cmd:
+            return mock.Mock(returncode=1, stderr=b"Option reconnect not found.", stdout=b"")
+        with open(cmd[-1], "wb") as fh:
+            fh.write(b"\xff\xd8\xff-frame")
+        return mock.Mock(returncode=0, stderr=b"", stdout=b"")
+
+    with mock.patch("iptv.framegrab.subprocess.run", side_effect=fake_run):
+        url = g.grab("http://host/redirected.mp4")
+    assert url and cache.get_cached(url)
+    assert len(commands) == 2
+    assert "-reconnect" in commands[0]
+    assert "-reconnect" not in commands[1]
+
+
 def test_poster_fallback_only_when_allowed(tmp_path):
     """The 48k-entry background sweep must never open video connections."""
     mgr = IPTVManager(sources=[], tmdb_api_key="", data_dir=str(tmp_path))
@@ -4291,12 +4311,8 @@ def test_local_folder_shows_in_the_sidebar_tree(tmp_path):
     _close_tab(tab)
 
 
-def test_error_auto_retry_before_showing_overlay():
-    """When the backend emits an error, PlayerWidget auto-retries up to
-    _MAX_RETRIES times (at 1-second intervals) before showing the error
-    overlay — automating the "click Play again a few times" pattern for
-    flaky IPTV servers that reject the first connection but succeed on
-    retry."""
+def test_error_and_watchdog_share_one_retry_for_an_attempt():
+    """The backend callback and watchdog cannot both consume attempt 1."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     from unittest.mock import MagicMock, patch
@@ -4304,29 +4320,57 @@ def test_error_auto_retry_before_showing_overlay():
     from gui.iptv_tab import PlayerWidget
     from iptv.manager import IPTVManager
 
-    app = QApplication.instance() or QApplication([])
+    QApplication.instance() or QApplication([])
     player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
                           DeeptorrentConfig())
     player._current_item = MagicMock(url="http://example.com/stream.m3u8")
     player._backend = MagicMock()
+    player._backend.buffer_status.return_value = {
+        "state": "stopped", "percent": 0, "demuxer_cache_duration": 0,
+        "paused_for_cache": False, "time_pos": 0, "core_idle": True,
+    }
+    player._playback_generation = 4
+    player._attempt_id = 1
+    callbacks = []
 
-    show_error_calls = []
-    player._show_error = lambda msg: show_error_calls.append(msg)
+    with patch("gui.iptv_tab.QTimer.singleShot",
+               side_effect=lambda _ms, cb: callbacks.append(cb)):
+        player._on_error("connection refused", 4, 1)
+        assert player._retry_count == 1
+        player._loading_started = time.monotonic() - player._RETRY_INTERVAL - 1
+        player._update_loading()
 
-    # Stub QTimer.singleShot so retries don't actually fire during the test.
-    with patch("gui.iptv_tab.QTimer.singleShot"):
-        # First _MAX_RETRIES errors should schedule retries, not show overlay.
-        for i in range(player._MAX_RETRIES):
-            player._on_error("connection refused")
-            assert player._retry_count == i + 1, f"retry count after error {i+1}"
-            assert player._error_retry_pending is True
-        assert show_error_calls == [], "error overlay shown during retries"
+    assert player._retry_count == 1
+    assert len(callbacks) == 1
+    assert player._backend.play.call_count == 0
+    callbacks[0]()
+    assert player._backend.play.call_count == 1
+    assert player._attempt_id == 2
 
-        # One more error exhausts retries → show the overlay + reset state.
-        player._on_error("connection refused")
-        assert len(show_error_calls) == 1, "error overlay not shown after exhausting retries"
-        assert player._retry_count == 0
-        assert player._error_retry_pending is False
+
+def test_stale_scheduled_retry_is_ignored_after_generation_change():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from unittest.mock import MagicMock, patch
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    QApplication.instance() or QApplication([])
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig())
+    player._current_item = MagicMock(url="http://example.com/old.m3u8")
+    player._backend = MagicMock()
+    player._playback_generation = 2
+    player._attempt_id = 3
+    callbacks = []
+    with patch("gui.iptv_tab.QTimer.singleShot",
+               side_effect=lambda _ms, cb: callbacks.append(cb)):
+        player._on_error("connection reset", 2, 3)
+    player._playback_generation = 3
+    player._attempt_id = 1
+    callbacks[0]()
+    assert player._backend.play.call_count == 0
 
 
 def test_error_retry_skipped_when_no_current_item():
@@ -4377,4 +4421,462 @@ def test_stop_cancels_pending_error_retry():
 
     player.stop()
     assert player._error_retry_pending is False
+
+
+@pytest.mark.parametrize(
+    ("kind", "needle"),
+    [
+        (xtream.XtreamErrorKind.AUTH_REJECTED, "authentication was rejected"),
+        (xtream.XtreamErrorKind.UNREACHABLE, "provider is unreachable"),
+        (xtream.XtreamErrorKind.INVALID_RESPONSE, "invalid response"),
+        (None, "genuinely empty"),
+    ],
+)
+def test_xtream_source_error_presentations_are_distinct(kind, needle):
+    from gui.iptv_tab import _source_empty_message
+
+    source = PlaylistSource(id="x", name="Provider", kind="xtream", url="http://x")
+    error = xtream.XtreamLoadError(kind, "safe") if kind is not None else None
+    playlist = xtream.XtreamPlaylist(source_id="x", error=error)
+    assert needle in _source_empty_message(source, playlist).lower()
+
+
+def test_non_xtream_empty_source_keeps_generic_presentation():
+    from gui.iptv_tab import _source_empty_message
+
+    source = PlaylistSource(id="m", name="M3U", kind="m3u_url", url="http://x/list")
+    message = _source_empty_message(source, Playlist(source_id="m"))
+    assert "check the source url/credentials" in message.lower()
+    assert "xtream" not in message.lower()
+
+
+def test_manager_callback_preserves_typed_xtream_error(tmp_path, monkeypatch):
+    source = PlaylistSource(
+        id="x", name="Provider", kind="xtream", url="http://provider",
+        username="u", password="p")
+    expected = xtream.XtreamPlaylist(
+        source_id="x",
+        error=xtream.XtreamLoadError(
+            xtream.XtreamErrorKind.UNREACHABLE, "Provider unreachable"),
+    )
+    monkeypatch.setattr(xtream, "load_playlist", lambda *a, **k: expected)
+    manager = IPTVManager([source], data_dir=str(tmp_path / "cache"))
+    callbacks = []
+    thread = manager.load_source_async(
+        source, use_cache=False, on_done=lambda ok, pl: callbacks.append((ok, pl)))
+    thread.join(timeout=5)
+    assert callbacks
+    assert callbacks[-1][0] is False
+    assert callbacks[-1][1].error.kind is xtream.XtreamErrorKind.UNREACHABLE
+    manager.shutdown()
+
+
+def test_opensubtitles_login_warning_continues_key_only_and_hides_secrets(
+        tmp_path, monkeypatch, caplog):
+    from iptv.opensubtitles import OpenSubtitlesClient, OpenSubtitlesLoginWarning
+
+    class Response:
+        def __init__(self, status, payload=None, content=b""):
+            self.status_code = status
+            self._payload = payload or {}
+            self.content = content
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError(response=self)
+
+    posts = []
+
+    def fake_post(url, **kwargs):
+        posts.append(url)
+        if url.endswith("/login"):
+            return Response(401)
+        return Response(200, {"link": "https://cdn.example/sub.srt"})
+
+    monkeypatch.setattr("iptv.opensubtitles.requests.post", fake_post)
+    monkeypatch.setattr(
+        "iptv.opensubtitles.requests.get",
+        lambda *a, **k: Response(200, content=b"subtitle"),
+    )
+    caplog.set_level("WARNING", logger="iptv.opensubtitles")
+    client = OpenSubtitlesClient("api-key", "private-user", "private-password")
+    dest = tmp_path / "subtitle.srt"
+    assert client.download(12, str(dest)) == str(dest)
+    assert isinstance(client.login_warning, OpenSubtitlesLoginWarning)
+    assert "key-only mode" in client.login_warning.message
+    assert len(posts) == 2  # rejected login did not prevent /download
+    assert "private-user" not in caplog.text
+    assert "private-password" not in caplog.text
+
+
+def test_subtitle_dialog_displays_nonfatal_login_warning(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import _SubtitleSearchDialog
+
+    QApplication.instance() or QApplication([])
+    config = DeeptorrentConfig()
+    config.iptv.opensubtitles_api_key = "key"
+    loaded = []
+    dialog = _SubtitleSearchDialog(
+        config, "", "Movie", on_loaded=loaded.append)
+    path = str(tmp_path / "movie.en.srt")
+    dialog._on_downloaded(path, "", "Account rejected; continuing key-only.")
+    assert loaded == [path]
+    assert "warning" in dialog.status.text().lower()
+    assert "account rejected" in dialog.status.text().lower()
+    dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "classification"),
+    [
+        ("Error opening input: End of file", "permanent"),
+        ("TLS handshake failed: connection reset by peer", "transient"),
+        ("Connection timed out", "transient"),
+        ("Input/output error", "permanent"),
+    ],
+)
+def test_framegrab_error_classification(diagnostic, classification):
+    from iptv.framegrab import _classify_ffmpeg_error
+    assert _classify_ffmpeg_error(diagnostic) == classification
+
+
+def test_framegrab_eof_is_negative_cached(tmp_path):
+    from iptv.artwork import ArtworkCache
+    from iptv.framegrab import FrameGrabber
+
+    grabber = FrameGrabber(ArtworkCache(str(tmp_path / "a")), ffmpeg_path="ffmpeg")
+    eof = mock.Mock(returncode=1, stdout=b"", stderr=b"End of file")
+    with mock.patch("iptv.framegrab.subprocess.run", return_value=eof) as run:
+        assert grabber.grab("http://host/dead.ts") == ""
+        first_calls = run.call_count
+        assert grabber.grab("http://host/dead.ts") == ""
+    assert first_calls == 2  # both seek fallbacks, one pass
+    assert run.call_count == first_calls
+
+
+@pytest.mark.parametrize(
+    ("url", "valid"),
+    [
+        ("", True),
+        ("https://provider.example/epg.xml?token=a", True),
+        ("http://127.0.0.1:8080/guide.xml", True),
+        ("provider.example/epg.xml", False),
+        ("ftp://provider.example/epg.xml", False),
+        ("https:///epg.xml", False),
+        ("https://provider.example:bad/epg.xml", False),
+        ("https://provider.example/my guide.xml", False),
+    ],
+)
+def test_epg_url_validation(url, valid):
+    from gui.iptv_settings_dialog import _epg_url_error
+    assert (not _epg_url_error(url)) is valid
+
+
+# ---------------------------------------------------------------------------
+# Play capability: watch progress, recording, sleep, live buffer, compact host
+# ---------------------------------------------------------------------------
+
+def test_watch_progress_schema_migrates_partial_legacy_table(tmp_path):
+    """An early two-column development table upgrades additively in place."""
+    import sqlite3
+
+    db = tmp_path / "iptv_cache.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE watch_progress (source_id TEXT, item_id TEXT, "
+        "PRIMARY KEY(source_id, item_id))")
+    conn.execute("INSERT INTO watch_progress(source_id, item_id) VALUES('s', 'i')")
+    conn.commit()
+    conn.close()
+
+    cache = IPTVCache(str(tmp_path))
+    cols = {r[1] for r in cache._conn().execute(
+        "PRAGMA table_info(watch_progress)").fetchall()}
+    assert {"source_id", "item_id", "position_seconds", "duration_seconds",
+            "watched", "updated_at"} <= cols
+    migrated = cache.watch_progress("s", "i")
+    assert migrated == pytest.approx({
+        "position": 0.0, "duration": 0.0, "watched": False, "updated_at": 0.0})
+    cache.close()
+
+
+def test_watch_progress_roundtrip_and_explicit_watched_state(tmp_path):
+    cache = IPTVCache(str(tmp_path))
+    cache.save_watch_progress("s", "movie", 125.5, 1000.0)
+    assert cache.watch_progress("s", "movie")["position"] == 125.5
+    cache.set_watched("s", "movie", True)
+    cache.save_watch_progress("s", "movie", 30.0, 1000.0, watched=None)
+    assert cache.watch_progress("s", "movie")["watched"] is True
+    cache.set_watched("s", "movie", False)
+    assert cache.watch_progress("s", "movie")["watched"] is False
+
+
+@pytest.mark.parametrize(
+    ("position", "duration", "watched", "resume", "complete"),
+    [
+        (10, 1000, False, False, False),
+        (100, 1000, False, True, False),
+        (900, 1000, False, False, True),
+        (490, 600, False, False, True),  # <=2 min left and >half consumed
+        (100, 1000, True, False, False),
+        (100, 0, False, False, False),
+    ],
+)
+def test_manager_resume_and_watched_rules(position, duration, watched, resume, complete):
+    assert IPTVManager.is_meaningful_resume(position, duration, watched) is resume
+    assert IPTVManager.is_near_completion(position, duration) is complete
+
+
+def test_manager_watch_progress_is_per_source_and_never_live(tmp_path):
+    mgr, pl = _manager_with_playlist(tmp_path)
+    movie = Movie(id="s1::movie", name="Film", url="http://host/film.mkv")
+    mgr.update_watch_progress(movie, 120, 1000)
+    assert mgr.resume_position(movie) == 120
+    mgr.update_watch_progress(pl.channels[0], 500, 600)
+    assert mgr.watch_progress(pl.channels[0]) is None
+    assert mgr.cache.watch_progress("s1", "c1") is None
+    mgr.set_watched(movie, True)
+    assert mgr.resume_position(movie) == 0
+    mgr.set_watched(movie, False)
+    assert mgr.resume_position(movie) == 120
+    mgr.shutdown()
+
+
+def test_player_checkpoints_and_applies_resume(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+
+    QApplication.instance() or QApplication([])
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    movie = Movie(id="s1::movie", name="Film", url="http://host/film.mkv")
+    mgr.update_watch_progress(movie, 125, 1000)
+    player = PlayerWidget(mgr, DeeptorrentConfig())
+    player._current_item = movie
+    player._backend = mock.MagicMock()
+    player._pending_resume = mgr.resume_position(movie)
+    player._on_position(0, 1000)
+    player._backend.seek.assert_called_once_with(125)
+    player._last_position = 300
+    player._last_duration = 1000
+    player._checkpoint_current()
+    assert mgr.watch_progress(movie)["position"] == 300
+    player.shutdown()
+    mgr.shutdown()
+
+
+def test_stream_recorder_command_redaction_and_lifecycle(tmp_path, caplog):
+    from dlmgr.ffmpeg import StreamRecorder, redact_recording_error
+
+    ffmpeg = tmp_path / "ffmpeg.exe"
+    ffmpeg.write_bytes(b"")
+    calls = []
+    finished = threading.Event()
+
+    class FakeProcess:
+        def __init__(self):
+            self.returncode = None
+            self.done = threading.Event()
+
+        def poll(self):
+            return self.returncode
+
+        def communicate(self):
+            self.done.wait(2)
+            return None, b""
+
+        def terminate(self):
+            self.returncode = -15
+            self.done.set()
+
+        def wait(self, timeout=None):
+            assert self.done.wait(timeout)
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+            self.done.set()
+
+    proc = FakeProcess()
+
+    def fake_popen(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return proc
+
+    statuses = []
+    recorder = StreamRecorder(
+        str(ffmpeg), str(tmp_path / "recordings"),
+        on_status=lambda state, text: (statuses.append((state, text)),
+                                       finished.set() if state == "stopped" else None),
+        popen_factory=fake_popen)
+    secret_url = "https://user:pass@provider.test/live.m3u8?token=private"
+    ok, output = recorder.start(secret_url, 'Bad:/Name*?', {"Cookie": "secret=1"})
+    assert ok and output.endswith(".mkv")
+    cmd, kwargs = calls[0]
+    assert cmd[0] == str(ffmpeg) and cmd[-1] == output
+    assert "-c" in cmd and "copy" in cmd and "-nostdin" in cmd
+    assert kwargs["creationflags"] is not None
+    assert recorder.is_recording
+    assert recorder.stop()
+    assert finished.wait(2)
+    assert statuses[0][0] == "recording" and statuses[-1][0] == "stopped"
+    assert "user:pass" not in caplog.text and "token=private" not in caplog.text
+    redacted = redact_recording_error(f"Failed to open {secret_url}\nCookie: secret=1")
+    assert secret_url not in redacted and "secret=1" not in redacted
+
+
+def test_stream_recorder_refuses_missing_ffmpeg_and_local_input(tmp_path):
+    from dlmgr.ffmpeg import StreamRecorder
+
+    missing = StreamRecorder("", str(tmp_path))
+    assert missing.start("https://provider.test/live", "Live")[0] is False
+    ffmpeg = tmp_path / "ffmpeg.exe"
+    ffmpeg.write_bytes(b"")
+    local = StreamRecorder(str(ffmpeg), str(tmp_path))
+    assert local.start(str(tmp_path / "movie.mkv"), "Movie")[0] is False
+    assert local.start("file:///tmp/movie.mkv", "Movie")[0] is False
+
+
+def test_sleep_timer_stops_playback_and_stays_visible(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+
+    QApplication.instance() or QApplication([])
+    mgr, pl = _manager_with_playlist(tmp_path)
+    player = PlayerWidget(mgr, DeeptorrentConfig())
+    player._backend = mock.MagicMock()
+    player._current_item = pl.channels[0]
+    player._playback_active = True
+    player._set_sleep_minutes(15)
+    assert player._sleep_timer.isActive()
+    player._on_sleep_timeout()
+    player._backend.stop.assert_called_once()
+    assert not player._playback_active
+    assert player.sleep_btn.text() == "Sleep: Stopped"
+    player.shutdown()
+    mgr.shutdown()
+
+
+def test_mpv_applies_bounded_live_pause_buffer_options():
+    from iptv.player import MpvBackend
+
+    values = {}
+
+    class FakeMpv:
+        def __setitem__(self, key, value):
+            values[key] = value
+
+    backend = MpvBackend(None)
+    backend._mpv = FakeMpv()
+    backend.set_live_pause_buffer(300)
+    assert values["cache"] == "yes"
+    assert values["cache-pause"] == "yes"
+    assert values["cache-secs"] == 300
+    assert values["demuxer-max-back-bytes"] == 300 * 1024 * 1024
+    assert values["demuxer-max-bytes"] == 300 * 1024 * 1024
+
+
+def test_player_applies_pause_buffer_only_to_live_playback(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+
+    QApplication.instance() or QApplication([])
+    cfg = DeeptorrentConfig()
+    cfg.iptv.live_pause_buffer_seconds = 180
+    mgr, pl = _manager_with_playlist(tmp_path)
+    player = PlayerWidget(mgr, cfg)
+    backend = mock.MagicMock()
+    player._media_backend = backend
+    player._backend = backend
+    player._ensure_backend = lambda: True
+    player.play(pl.channels[0])
+    backend.set_live_pause_buffer.assert_called_with(180)
+
+    movie = Movie(id="s1::movie", name="Film", url="http://host/film.mkv")
+    player.play(movie)
+    backend.set_live_pause_buffer.assert_called_with(0)
+    player.shutdown()
+    mgr.shutdown()
+
+
+def test_live_pause_buffer_config_defaults_and_loads(tmp_path):
+    import json
+    from config import DeeptorrentConfig
+
+    assert DeeptorrentConfig().iptv.live_pause_buffer_seconds == 300
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({"iptv": {"live_pause_buffer_seconds": 90,
+                                          "recording_dir": "R"}}), encoding="utf-8")
+    cfg = DeeptorrentConfig.from_file(str(path))
+    assert cfg.iptv.live_pause_buffer_seconds == 90
+    assert cfg.iptv.recording_dir == "R"
+
+
+def test_compact_topmost_uses_pointer_sized_win32_signature():
+    import ctypes
+    from ctypes import wintypes
+    from gui.iptv_tab import PlayerWidget
+
+    calls = []
+
+    class FakeSetWindowPos:
+        argtypes = None
+        restype = None
+
+        def __call__(self, *args):
+            calls.append(args)
+            return 1
+
+    set_window_pos = FakeSetWindowPos()
+    user32 = mock.Mock(SetWindowPos=set_window_pos)
+    widget = mock.Mock()
+    widget.winId.return_value = 0x12345678
+    with mock.patch.object(PlayerWidget, "compact_mode_supported", return_value=True), \
+            mock.patch("ctypes.WinDLL", create=True, return_value=user32) as win_dll:
+        assert PlayerWidget._set_native_topmost(widget, True)
+    win_dll.assert_called_once_with("user32", use_last_error=True)
+    assert set_window_pos.argtypes == [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT,
+    ]
+    assert set_window_pos.restype is wintypes.BOOL
+    assert calls[0][0].value == 0x12345678
+    assert calls[0][1].value == ctypes.c_void_p(-1).value
+
+
+def test_compact_host_never_reparents_player_surface(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+
+    QApplication.instance() or QApplication([])
+    mgr, _pl = _manager_with_playlist(tmp_path)
+    player = PlayerWidget(mgr, DeeptorrentConfig())
+    original_parent = player.surface.parent()
+    states = []
+    player.sig_compact.connect(states.append)
+    with mock.patch.object(PlayerWidget, "compact_mode_supported", return_value=True), \
+            mock.patch.object(PlayerWidget, "_set_native_topmost", return_value=True):
+        player._toggle_compact()
+        assert player._compact and states == [True]
+        assert player.surface.parent() is original_parent
+        assert player.rw_btn.isHidden() and player.preset_btn.isHidden()
+        player._toggle_compact()
+        assert not player._compact and states == [True, False]
+        assert player.surface.parent() is original_parent
+        assert not player.rw_btn.isHidden() and player.preset_btn.isHidden()
+    player.shutdown()
+    mgr.shutdown()
 

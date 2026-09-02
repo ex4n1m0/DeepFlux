@@ -14,6 +14,7 @@ import logging
 import re
 from typing import Set
 
+from PySide6.QtCore import Signal
 from PySide6.QtWebEngineCore import QWebEngineUrlRequestInterceptor
 
 logger = logging.getLogger(__name__)
@@ -267,12 +268,6 @@ _NEVER_BLOCK_EXTENSIONS = {
     ".css", ".woff", ".woff2", ".ttf", ".otf", ".eot",
 }
 
-# URL path patterns that are likely important page resources, not ads.
-_NEVER_BLOCK_PATH_HINTS = (
-    "/api/", "/auth/", "/login", "/oauth",
-)
-
-
 class AdBlockInterceptor(QWebEngineUrlRequestInterceptor):
     """Request interceptor that blocks ad/tracker domains.
 
@@ -280,10 +275,13 @@ class AdBlockInterceptor(QWebEngineUrlRequestInterceptor):
     Toggle at runtime with set_enabled().
     """
 
+    blockedRequest = Signal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self._enabled: bool = False
-        self._blocked_domains: Set[str] = _BLOCKED_DOMAINS
+        self._blocked_domains: Set[str] = set(_BLOCKED_DOMAINS)
+        self._allowed_sites: Set[str] = set()
         # Compile a regex for never-block extensions for fast checking.
         self._never_block_re = re.compile(
             r"\.(?:css|woff2?|ttf|otf|eot)(?:\?|$)",
@@ -297,6 +295,9 @@ class AdBlockInterceptor(QWebEngineUrlRequestInterceptor):
         self._enabled = enabled
         logger.info("AdBlock %s", "enabled" if enabled else "disabled")
 
+    def set_allowed_sites(self, hosts: Set[str]) -> None:
+        self._allowed_sites = {host.lower().strip(".") for host in hosts if host}
+
     @property
     def enabled(self) -> bool:
         return self._enabled
@@ -305,6 +306,12 @@ class AdBlockInterceptor(QWebEngineUrlRequestInterceptor):
         """Called by Chromium for every URL request. Blocks if the
         request host matches a blocked domain and ad-block is on."""
         if not self._enabled:
+            return
+        try:
+            first_party = info.firstPartyUrl().host().lower()
+        except Exception:
+            first_party = ""
+        if any(first_party == host or first_party.endswith("." + host) for host in self._allowed_sites):
             return
 
         # Never block main-frame navigations — some blocklisted domains are
@@ -324,14 +331,10 @@ class AdBlockInterceptor(QWebEngineUrlRequestInterceptor):
         if self._never_block_re.search(path):
             return
 
-        # Never block API/auth paths.
-        for hint in _NEVER_BLOCK_PATH_HINTS:
-            if hint in path:
-                return
-
         # Check if the host (or any parent domain) is in the blocklist.
         if self._host_matches_blocklist(host):
             info.block(True)
+            self.blockedRequest.emit(host)
 
     def _host_matches_blocklist(self, host: str) -> bool:
         """Check if host or any of its parent domains are blocked.

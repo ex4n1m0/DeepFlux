@@ -49,6 +49,25 @@ class Organizer:
             "total_size": sum(f["size"] for f in files),
         }
 
+    def build_proposal(
+        self,
+        status: Dict[str, Any],
+        categories: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        metadata = self.gather_metadata(status)
+        allowed = categories or self.CATEGORIES
+        category = self.detect_category(metadata.get("name") or "", metadata["files"])
+        if category not in allowed:
+            category = "Other" if "Other" in allowed else allowed[0]
+        destination = str((self.base_path / category).resolve())
+        return {
+            **metadata,
+            "suggested_category": category,
+            "destination": destination,
+            "file_renames": [],
+            "note": "Review the destination and optional relative file renames before applying.",
+        }
+
     def apply_proposal(self, proposal: RenameProposal) -> Dict[str, Any]:
         """Physically move files into the proposed category folder and rename top-level items."""
         try:

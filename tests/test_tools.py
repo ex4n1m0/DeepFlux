@@ -94,6 +94,26 @@ def test_list_tools(tools):
     assert expected.issubset(names)
 
 
+def test_context_tool_selection_limits_unrelated_domains(tools):
+    default_names = tools.tool_names_for_context("find an Ubuntu torrent")
+    assert "search_indexers" in default_names
+    assert "browser_fill" not in default_names
+    assert "irc_send_message" not in default_names
+
+    browser_names = tools.tool_names_for_context("open the browser and log in")
+    assert "browser_fill" in browser_names
+    assert "search_indexers" in browser_names
+
+    rss_names = tools.tool_names_for_context("show my RSS feed subscriptions")
+    assert "get_rss_feed_items" in rss_names
+    assert "download_from_feed" in rss_names
+
+
+def test_capability_question_exposes_every_tool(tools):
+    names = tools.tool_names_for_context("what can you do?")
+    assert names == {tool["function"]["name"] for tool in tools.list_tools()}
+
+
 def test_add_magnet(tools, mock_engine):
     result = tools.call("add_magnet", {"uri": "magnet:?xt=urn:btih:" + "d" * 40, "save_path": "/tmp", "category": "Movies"})
     assert result["success"] is True
@@ -110,6 +130,103 @@ def test_list_torrents(tools, mock_engine):
     result = tools.call("list_torrents", {})
     assert len(result["torrents"]) == 1
     assert result["torrents"][0]["name"] == "Test Torrent"
+    assert result["success"] is True
+
+
+def test_tool_schema_enforces_constraints(tools, mock_engine):
+    with pytest.raises(ToolError, match="at most 7"):
+        tools.call("set_file_priority", {"info_hash": "a" * 40, "file_id": 0, "level": 8})
+    with pytest.raises(ToolError, match="must be an array"):
+        tools.call("download_from_feed", {"feed_url": "https://example.com/feed", "item_ids": "one"})
+    with pytest.raises(ToolError, match="Provide one of"):
+        tools.call("web_fetch", {})
+    with pytest.raises(ToolError, match="must be one of"):
+        tools.call("list_downloads", {"status": "unknown"})
+    mock_engine.set_file_priority.assert_not_called()
+
+
+def test_list_torrents_paginates(tools, mock_engine):
+    mock_engine.list_torrents.return_value = [
+        {"info_hash": f"{index:040x}", "name": f"Torrent {index}"}
+        for index in range(120)
+    ]
+
+    result = tools.call("list_torrents", {"offset": 50, "limit": 25})
+
+    assert result["count"] == 25
+    assert result["total"] == 120
+    assert result["has_more"] is True
+    assert result["torrents"][0]["name"] == "Torrent 50"
+
+
+def test_torrent_status_paginates_files(tools, mock_engine):
+    mock_engine.get_torrent_status.return_value = {
+        "info_hash": "a" * 40,
+        "files": [{"file_id": index, "path": f"file-{index}"} for index in range(250)],
+    }
+
+    result = tools.call("get_torrent_status", {
+        "info_hash": "a" * 40, "file_offset": 100, "file_limit": 50,
+    })
+
+    assert len(result["status"]["files"]) == 50
+    assert result["status"]["files"][0]["file_id"] == 100
+    assert result["status"]["file_page"]["total"] == 250
+    assert result["status"]["file_page"]["has_more"] is True
+
+
+def test_organization_analyze_and_apply(mock_engine, tmp_path):
+    config = DeeptorrentConfig()
+    config.default_save_path = str(tmp_path)
+    mock_engine.get_torrent_status.return_value = {
+        "info_hash": "a" * 40, "name": "Show S01E02", "progress": 1.0,
+        "category": "Other", "save_path": str(tmp_path),
+        "files": [{"file_id": 0, "path": "episode.mkv", "size": 100, "priority": 4}],
+    }
+    destination = str(tmp_path / "TV")
+    mock_engine.organize_torrent.return_value = {
+        "success": True, "info_hash": "a" * 40, "category": "TV", "destination": destination,
+    }
+    tools = ToolRegistry(mock_engine, config)
+
+    proposal = tools.call("analyze_organization", {"info_hash": "a" * 40})
+    assert proposal["suggested_category"] == "TV"
+    assert proposal["destination"] == destination
+
+    result = tools.call("apply_organization_plan", {
+        "info_hash": "a" * 40, "category": "TV", "destination": destination,
+        "file_renames": [{"file_id": 0, "new_path": "Show S01E02.mkv"}],
+    })
+    assert result["success"] is True
+    mock_engine.organize_torrent.assert_called_once_with(
+        "a" * 40, destination, "TV", [{"file_id": 0, "new_path": "Show S01E02.mkv"}],
+    )
+
+
+def test_organization_rejects_destination_outside_save_path(mock_engine, tmp_path):
+    config = DeeptorrentConfig()
+    config.default_save_path = str(tmp_path / "downloads")
+    tools = ToolRegistry(mock_engine, config)
+
+    with pytest.raises(ToolError, match="inside the default save path"):
+        tools.call("apply_organization_plan", {
+            "info_hash": "a" * 40, "category": "Movies",
+            "destination": str(tmp_path / "elsewhere"),
+        })
+    mock_engine.organize_torrent.assert_not_called()
+
+
+def test_organization_rename_schema_rejects_unknown_fields(mock_engine, tmp_path):
+    config = DeeptorrentConfig()
+    config.default_save_path = str(tmp_path)
+    tools = ToolRegistry(mock_engine, config)
+
+    with pytest.raises(ToolError, match="Unknown argument"):
+        tools.call("apply_organization_plan", {
+            "info_hash": "a" * 40, "category": "Movies",
+            "destination": str(tmp_path / "Movies"),
+            "file_renames": [{"file_id": 0, "new_path": "movie.mkv", "extra": True}],
+        })
 
 
 def test_diagnose_swarm_stalled(tools):
@@ -287,8 +404,46 @@ def test_web_fetch_extracts_magnets_from_html(mock_engine):
     with patch("agent.tools.requests.get", return_value=fake_resp):
         result = tools.call("web_fetch", {"url": "http://example.com/release"})
     assert result["success"] is True
+    assert result["_trust"] == "untrusted_external_content"
     assert result["magnets"] == ["magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Ubuntu"]
     assert "magnet:" not in result["content"]  # tags stripped, but magnets field preserved
+
+
+def test_web_fetch_blocks_private_network_targets(tools):
+    with patch("agent.tools.requests.get") as mock_get:
+        result = tools.call("web_fetch", {"url": "http://127.0.0.1/private"})
+
+    assert result["success"] is False
+    assert "private network" in result["error"]
+    mock_get.assert_not_called()
+
+
+def test_web_fetch_blocks_redirect_to_private_network(tools):
+    response = MagicMock()
+    response.status_code = 302
+    response.headers = {"Location": "http://169.254.169.254/latest/meta-data"}
+    with patch("agent.tools.socket.getaddrinfo", return_value=[
+        (2, 1, 6, "", ("93.184.216.34", 80)),
+    ]), patch("agent.tools.requests.get", return_value=response) as mock_get:
+        result = tools.call("web_fetch", {"url": "http://example.com/start"})
+
+    assert result["success"] is False
+    assert "private network" in result["error"]
+    assert mock_get.call_count == 1
+
+
+def test_tool_logging_redacts_sensitive_values(mock_engine, caplog):
+    bridge = MagicMock()
+    bridge.call.return_value = {"success": True, "password": "returned-secret"}
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig(), browser_bridge=bridge)
+
+    with caplog.at_level("INFO", logger="agent.tools"):
+        result = tools.call("browser_fill", {
+            "selector": "#password", "value": "typed-secret", "submit": True,
+        })
+
+    assert "typed-secret" not in caplog.text
+    assert result["password"] == "returned-secret"
 
 
 def test_query_variants_strip_quality_and_year(mock_engine):
@@ -768,7 +923,7 @@ def test_add_download_stream_detection(mock_engine):
     dl.add_stream_job.return_value = MagicMock(id="s1", filename="v.mp4", save_path="/dl/v.mp4", job_type="hls")
     tools = ToolRegistry(mock_engine, DeeptorrentConfig(), dl_engine=dl)
 
-    result = tools.call("add_download", {"url": "https://cdn.example.com/live/master.m3u8"})
+    result = tools.call("add_download", {"url": "https://example.com/live/master.m3u8"})
     dl.add_stream_job.assert_called_once()
     dl.add_job.assert_not_called()
     assert result["job_type"] == "hls"
@@ -783,6 +938,8 @@ def test_add_download_lazy_engine_creation(mock_engine):
         result = tools.call("add_download", {"url": "https://example.com/y.iso"})
     fake.start.assert_called_once()
     assert result["success"] is True
+    tools.shutdown()
+    fake.stop.assert_called_once()
 
 
 def test_web_fetch_extracts_download_links(mock_engine):
@@ -1333,6 +1490,12 @@ def test_browser_tools_route_through_bridge(mock_engine):
     assert tools.call("browser_switch_tab", {"index": 0})["success"] is True
     assert tools.call("browser_go", {"action": "back"})["success"] is True
     assert tools.call("browser_get_content", {"max_chars": 500, "include_links": False})["success"] is True
+    assert tools.call("browser_snapshot", {"limit": 20})["success"] is True
+    assert tools.call("browser_wait", {"url_contains": "example"})["success"] is True
+    assert tools.call("browser_click_ref", {"ref": "e1"})["success"] is True
+    assert tools.call("browser_type_ref", {"ref": "e2", "value": "hello"})["success"] is True
+    assert tools.call("browser_select_ref", {"ref": "e3", "value": "Option"})["success"] is True
+    assert tools.call("browser_check_ref", {"ref": "e4", "checked": True})["success"] is True
     assert tools.call("browser_click", {"text": "Download"})["success"] is True
     assert tools.call("browser_fill", {"selector": "#q", "value": "hi", "submit": True})["success"] is True
     assert tools.call("browser_scroll", {"direction": "bottom"})["success"] is True
@@ -1342,12 +1505,13 @@ def test_browser_tools_route_through_bridge(mock_engine):
 
     actions = [a for a, _ in bridge.calls]
     assert actions == ["list_tabs", "navigate", "close_tab", "switch_tab", "go",
-                       "get_content", "click", "fill", "scroll",
+                       "get_content", "snapshot", "wait", "click_ref", "type_ref",
+                       "select_ref", "check_ref", "click", "fill", "scroll",
                        "add_bookmark", "remove_bookmark", "list_bookmarks"]
     # Params forwarded as bridge kwargs.
     assert bridge.calls[1][1] == {"url": "example.com", "new_tab": True}
     assert bridge.calls[5][1] == {"max_chars": 500, "include_links": False}
-    assert bridge.calls[7][1] == {"selector": "#q", "value": "hi", "submit": True}
+    assert bridge.calls[13][1] == {"selector": "#q", "value": "hi", "submit": True}
 
 
 def test_browser_tools_require_gui(mock_engine):
@@ -1364,11 +1528,10 @@ def test_browser_tools_require_gui(mock_engine):
 def test_browser_tools_classification():
     from agent.loop import DESTRUCTIVE_TOOLS, READ_ONLY_TOOLS
 
-    assert {"browser_list_tabs", "browser_get_content", "browser_list_bookmarks"} <= READ_ONLY_TOOLS
-    assert {"browser_click", "browser_fill"} <= DESTRUCTIVE_TOOLS
-    # Navigation/tab management run without confirmation but sequentially.
-    for t in ("browser_navigate", "browser_close_tab", "browser_switch_tab",
-              "browser_go", "browser_scroll"):
+    assert {"browser_list_tabs", "browser_get_content", "browser_snapshot", "browser_wait", "browser_list_bookmarks"} <= READ_ONLY_TOOLS
+    assert {"browser_click", "browser_fill", "browser_click_ref", "browser_type_ref", "browser_select_ref", "browser_check_ref", "browser_close_tab", "browser_add_bookmark", "browser_remove_bookmark"} <= DESTRUCTIVE_TOOLS
+    # Navigation/tab switching run without confirmation but sequentially.
+    for t in ("browser_navigate", "browser_switch_tab", "browser_go", "browser_scroll"):
         assert t not in READ_ONLY_TOOLS and t not in DESTRUCTIVE_TOOLS
 
 
@@ -1502,11 +1665,244 @@ def test_rss_feed_management(mock_engine, tmp_path):
         tools.call("add_rss_feed", {"url": "ftp://x.com/f"})
 
 
+def test_rss_item_dict_preserves_stable_guid():
+    from agent.rss import FeedItem
+
+    item = FeedItem(title="Release", link="https://example.com/release", guid="stable-guid")
+    data = item.to_dict()
+
+    assert data["item_id"] == "stable-guid"
+    assert data["guid"] == "stable-guid"
+
+
+def test_get_rss_items_is_side_effect_free(mock_engine):
+    from config import RSSFeed
+
+    config = DeeptorrentConfig()
+    feed = RSSFeed(url="https://example.com/feed.xml", seen_items=["old-guid"])
+    config.rss.feeds = [feed]
+    tools = ToolRegistry(mock_engine, config)
+    tools._rss_monitor.check_feed = MagicMock(return_value={
+        "feed_name": "Example", "total_items": 2, "new_items": 1,
+        "items": [{"item_id": "new-guid", "guid": "new-guid", "title": "New"}],
+        "all_items": [
+            {"item_id": "old-guid", "guid": "old-guid", "title": "Old"},
+            {"item_id": "new-guid", "guid": "new-guid", "title": "New"},
+        ],
+    })
+
+    result = tools.call("get_rss_feed_items", {"feed_url": feed.url})
+
+    assert result["items"][0]["item_id"] == "new-guid"
+    assert feed.seen_items == ["old-guid"]
+
+
+def test_download_from_feed_uses_stable_ids_and_marks_success_only(mock_engine, tmp_path):
+    from config import RSSFeed
+
+    config = DeeptorrentConfig()
+    feed = RSSFeed(url="https://example.com/feed.xml", seen_items=["old-guid"])
+    config.rss.feeds = [feed]
+    tools = ToolRegistry(mock_engine, config)
+    new_item = {
+        "item_id": "new-guid", "guid": "new-guid", "title": "New",
+        "magnet_uri": "magnet:?xt=urn:btih:" + "b" * 40,
+    }
+    tools._rss_monitor.check_feed = MagicMock(return_value={
+        "items": [new_item],
+        "all_items": [{"item_id": "old-guid", "guid": "old-guid", "title": "Old"}, new_item],
+    })
+    mock_engine.add_magnet.return_value = "b" * 40
+
+    with patch.object(DeeptorrentConfig, "default_config_path", return_value=str(tmp_path / "config.json")):
+        result = tools.call("download_from_feed", {"feed_url": feed.url, "item_ids": ["new-guid"]})
+
+    assert result["success"] is True
+    assert result["downloaded"][0]["item_id"] == "new-guid"
+    assert feed.seen_items == ["old-guid", "new-guid"]
+    mock_engine.add_magnet.assert_called_once_with(new_item["magnet_uri"], config.default_save_path, "Other")
+
+
+def test_download_from_feed_legacy_index_targets_new_items(mock_engine, tmp_path):
+    from config import RSSFeed
+
+    config = DeeptorrentConfig()
+    feed = RSSFeed(url="https://example.com/feed.xml", seen_items=["old-guid"])
+    config.rss.feeds = [feed]
+    tools = ToolRegistry(mock_engine, config)
+    new_item = {
+        "item_id": "new-guid", "guid": "new-guid", "title": "New",
+        "magnet_uri": "magnet:?xt=urn:btih:" + "c" * 40,
+    }
+    tools._rss_monitor.check_feed = MagicMock(return_value={
+        "items": [new_item],
+        "all_items": [
+            {"item_id": "old-guid", "guid": "old-guid", "title": "Old",
+             "magnet_uri": "magnet:?xt=urn:btih:" + "a" * 40},
+            new_item,
+        ],
+    })
+    mock_engine.add_magnet.return_value = "c" * 40
+
+    with patch.object(DeeptorrentConfig, "default_config_path", return_value=str(tmp_path / "config.json")):
+        result = tools.call("download_from_feed", {"feed_url": feed.url, "item_indices": [0]})
+
+    assert result["downloaded"][0]["item_id"] == "new-guid"
+    mock_engine.add_magnet.assert_called_once_with(new_item["magnet_uri"], config.default_save_path, "Other")
+
+
+def test_update_rss_feed(mock_engine, tmp_path):
+    from config import RSSFeed
+
+    config = DeeptorrentConfig()
+    config.rss.feeds = [RSSFeed(
+        url="https://example.com/feed.xml", name="Old", mode="monitor", category="Other",
+    )]
+    tools = ToolRegistry(mock_engine, config)
+
+    with patch.object(DeeptorrentConfig, "default_config_path", return_value=str(tmp_path / "config.json")):
+        result = tools.call("update_rss_feed", {
+            "url": "https://example.com/feed.xml", "name": "New",
+            "mode": "auto_download", "category": "TV",
+        })
+
+    assert result["name"] == "New"
+    assert result["mode"] == "auto_download"
+    assert result["category"] == "TV"
+
+
+def test_add_download_accepts_destination(mock_engine, tmp_path):
+    dl = MagicMock()
+    dl.add_job.return_value = MagicMock(
+        id="job1", filename="x.zip", save_path=str(tmp_path / "x.zip"), job_type="file",
+    )
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig(), dl_engine=dl)
+
+    tools.call("add_download", {
+        "url": "https://example.com/x.zip", "save_path": str(tmp_path),
+    })
+
+    assert dl.add_job.call_args.kwargs["save_path"] == str(tmp_path) + __import__("os").sep
+
+
+def test_agent_diagnostics_exposes_capabilities_without_keys(mock_engine):
+    config = DeeptorrentConfig()
+    config.llm.api_key = "never-return-this"
+    config.web_search.brave_api_key = "also-secret"
+    tools = ToolRegistry(mock_engine, config)
+
+    result = tools.call("agent_diagnostics", {})
+
+    assert result["tools"]["total"] == len(tools.list_tools())
+    assert result["llm"]["api_key_configured"] is True
+    assert result["integrations"]["brave"] is True
+    assert "never-return-this" not in json.dumps(result)
+    assert "also-secret" not in json.dumps(result)
+
+
+def test_successful_empty_search_is_cached(mock_engine):
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+    tools._search_indexers_uncached = MagicMock(return_value={
+        "success": True, "count": 0, "results": [], "source": "test",
+    })
+    tools._fetch_about = MagicMock(return_value=None)
+
+    first = tools.call("search_indexers", {"query": "nothing-here"})
+    second = tools.call("search_indexers", {"query": "nothing-here"})
+
+    assert first["results"] == second["results"] == []
+    assert tools._search_indexers_uncached.call_count == 1
+
+
+def test_multi_web_fetch_reports_partial_failure(mock_engine):
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+    tools._fetch_one = MagicMock(side_effect=[
+        {"success": True, "url": "https://example.com/a", "content": "a"},
+        {"success": False, "url": "https://example.com/b", "error": "failed"},
+    ])
+
+    result = tools.call("web_fetch", {"urls": ["https://example.com/a", "https://example.com/b"]})
+
+    assert result["success"] is True
+    assert result["partial"] is True
+    assert result["succeeded"] == 1
+    assert result["failed"] == 1
+
+
+def test_torrent_url_blocks_private_network(mock_engine):
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+
+    with patch("agent.tools.requests.get") as mock_get, pytest.raises(ToolError, match="private network"):
+        tools.call("add_torrent_file", {
+            "path": "http://127.0.0.1/file.torrent", "save_path": "C:\\Downloads",
+        })
+
+    mock_get.assert_not_called()
+
+
+def test_torrent_url_allows_configured_local_jackett(mock_engine):
+    config = DeeptorrentConfig()
+    config.indexer.api_key = "test-key"
+    config.indexer.url = "http://127.0.0.1:9117"
+    tools = ToolRegistry(mock_engine, config)
+    response = MagicMock()
+    response.status_code = 200
+    response.content = ("magnet:?xt=urn:btih:" + "d" * 40).encode()
+    response.headers = {"Content-Type": "text/plain"}
+    response.raise_for_status.return_value = None
+    mock_engine.add_magnet.return_value = "d" * 40
+
+    with patch("agent.tools.requests.get", return_value=response) as mock_get:
+        result = tools.call("add_torrent_file", {
+            "path": "http://127.0.0.1:9117/dl/test", "save_path": "C:\\Downloads",
+        })
+
+    assert result["success"] is True
+    assert mock_get.call_args.kwargs["allow_redirects"] is False
+    mock_engine.add_magnet.assert_called_once()
+
+
+def test_lazy_download_engine_initialization_is_synchronized(mock_engine):
+    from concurrent.futures import ThreadPoolExecutor
+
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+    engine = MagicMock()
+    with patch("dlmgr.engine.DownloadEngine", return_value=engine) as constructor:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            resources = list(pool.map(lambda _: tools._get_dl_engine(), range(20)))
+
+    assert all(resource is engine for resource in resources)
+    constructor.assert_called_once()
+    engine.start.assert_called_once()
+    tools.shutdown()
+
+
+def test_rss_fetch_blocks_private_network():
+    from agent.rss import RSSFeedClient
+    from config import RSSFeed
+
+    client = RSSFeedClient(RSSFeed(url="http://169.254.169.254/feed.xml"))
+    with patch("agent.rss.requests.get") as mock_get:
+        assert client.fetch() == []
+    mock_get.assert_not_called()
+
+
+def test_rss_parser_rejects_entity_declarations():
+    from agent.rss import RSSFeedClient
+    from config import RSSFeed
+
+    client = RSSFeedClient(RSSFeed(url="https://example.com/feed.xml"))
+    content = b'<!DOCTYPE rss [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><rss><channel><item><title>&xxe;</title></item></channel></rss>'
+
+    assert client._parse(content) == []
+
+
 def test_gapfill_tools_classified():
     from agent.loop import DESTRUCTIVE_TOOLS, READ_ONLY_TOOLS
 
     assert "list_downloads" in READ_ONLY_TOOLS
-    assert {"cancel_download", "add_rss_feed", "remove_rss_feed"} <= DESTRUCTIVE_TOOLS
+    assert {"cancel_download", "add_rss_feed", "update_rss_feed", "remove_rss_feed", "download_from_feed", "edit_memory", "forget_memory", "apply_organization_plan"} <= DESTRUCTIVE_TOOLS
+    assert {"propose_rename_and_category", "analyze_organization", "list_memories", "agent_diagnostics"} <= READ_ONLY_TOOLS
     for t in ("pause_download", "resume_download", "retry_download", "remove_download",
               "set_torrent_rate_limits", "set_sequential_download",
               "force_recheck", "force_reannounce"):

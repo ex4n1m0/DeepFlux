@@ -22,6 +22,7 @@ local control API at 127.0.0.1:53742.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Optional
@@ -38,10 +39,10 @@ BROWSER_EXTENSION_JS = r"""
   if (window.__deeptorrentInjected) return;
   window.__deeptorrentInjected = true;
 
-  var CONTROL_API_PORT = 53742;
-  // The server falls back to the next port(s) if the default is taken,
-  // so probe a small range when looking for it.
-  var CONTROL_API_CANDIDATE_PORTS = [53742, 53743, 53744, 53745, 53746, 53747, 53748, 53749, 53750, 53751];
+  var CONTROL_API_PORT = __DEEPFLUX_API_PORT__;
+  var CONTROL_API_TOKEN = __DEEPFLUX_API_TOKEN__;
+  // The authenticated server port is injected by the app.
+  var CONTROL_API_CANDIDATE_PORTS = [CONTROL_API_PORT];
   var apiPortIndex = 0;
   function controlApiBase() { return 'http://127.0.0.1:' + CONTROL_API_PORT; }
   var detectedVideos = [];
@@ -75,35 +76,16 @@ BROWSER_EXTENSION_JS = r"""
   }
 
   function sendDownload(url, type, title) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', controlApiBase() + '/api/jobs', true);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState === 4) {
-        showNotification(xhr.status === 201 ? 'Sent to DeepFlux!' : 'Download failed: ' + xhr.status);
-      }
-    };
-    // Include referrer and cookies — important for sites like YouTube
-    // where googlevideo.com URLs require a valid referer header.
-    var payload = {
-      url: url,
-      type: type || guessType(url),
-      source_url: window.location.href,
-      referrer: window.location.href,
-      headers: {
-        'User-Agent': navigator.userAgent,
-        'Origin': window.location.origin
-      }
-    };
-    // Pass the video title so the download gets a meaningful filename
-    // instead of the manifest/URL basename.
-    var fn = sanitizeFilename(title);
-    if (fn) payload.filename = fn;
-    // Try to grab cookies for the current page (same-origin only).
-    try {
-      if (document.cookie) payload.cookies = document.cookie;
-    } catch(e) {}
-    xhr.send(JSON.stringify(payload));
+    if (!window.deepflux || !window.deepflux.sendDownload) {
+      showNotification('DeepFlux bridge is not ready');
+      return;
+    }
+    window.deepflux.sendDownload(
+      url,
+      type || guessType(url),
+      sanitizeFilename(title),
+      function(ok) { showNotification(ok ? 'Sent to DeepFlux!' : 'Download canceled'); }
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -114,28 +96,16 @@ BROWSER_EXTENSION_JS = r"""
   // support) — the extension hands the stream URL + headers over for playback.
   // ---------------------------------------------------------------------------
   function sendPlay(url, type, title) {
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', controlApiBase() + '/api/play', true);
-    xhr.setRequestHeader('Content-Type', 'application/json');
-    xhr.onreadystatechange = function() {
-      if (xhr.readyState === 4) {
-        showNotification(xhr.status === 200 ? 'Playing in DeepFlux' : 'Play failed: ' + xhr.status);
-      }
-    };
-    var payload = {
-      url: url,
-      type: type || guessType(url),
-      title: title || '',
-      referrer: window.location.href,
-      headers: {
-        'User-Agent': navigator.userAgent,
-        'Origin': window.location.origin
-      }
-    };
-    try {
-      if (document.cookie) payload.cookies = document.cookie;
-    } catch(e) {}
-    xhr.send(JSON.stringify(payload));
+    if (!window.deepflux || !window.deepflux.sendPlay) {
+      showNotification('DeepFlux bridge is not ready');
+      return;
+    }
+    window.deepflux.sendPlay(
+      url,
+      type || guessType(url),
+      title || '',
+      function(ok) { showNotification(ok ? 'Playing in DeepFlux' : 'Playback canceled'); }
+    );
   }
 
   // ---------------------------------------------------------------------------
@@ -719,6 +689,7 @@ BROWSER_EXTENSION_JS = r"""
     var settled = false;
     var xhr = new XMLHttpRequest();
     xhr.open('GET', 'http://127.0.0.1:' + CONTROL_API_CANDIDATE_PORTS[apiPortIndex] + '/api/health', true);
+    xhr.setRequestHeader('Authorization', 'Bearer ' + CONTROL_API_TOKEN);
     xhr.timeout = 3000;
     function fail() {
       if (settled) return;
@@ -1047,7 +1018,12 @@ def get_extension_js() -> str:
     return BROWSER_EXTENSION_JS
 
 
-def inject_into_profile(profile, script_name: str = "deeptorrent_extension"):
+def inject_into_profile(
+    profile,
+    api_port: int,
+    api_token: str,
+    script_name: str = "deeptorrent_extension",
+):
     """Inject the extension script into a QWebEngineProfile.
 
     The script runs on every page load at document ready, providing
@@ -1055,6 +1031,8 @@ def inject_into_profile(profile, script_name: str = "deeptorrent_extension"):
 
     Args:
         profile: A QWebEngineProfile instance.
+        api_port: Bound loopback control API port.
+        api_token: Bearer token required by the control API.
         script_name: Unique name for the script (for management).
 
     Returns:
@@ -1063,12 +1041,16 @@ def inject_into_profile(profile, script_name: str = "deeptorrent_extension"):
     """
     from PySide6.QtWebEngineCore import QWebEngineScript
 
+    if not api_token:
+        raise ValueError("Browser extension requires a control API token")
+    source = BROWSER_EXTENSION_JS.replace("__DEEPFLUX_API_PORT__", str(int(api_port)))
+    source = source.replace("__DEEPFLUX_API_TOKEN__", json.dumps(api_token))
     script = QWebEngineScript()
     script.setName(script_name)
-    script.setSourceCode(BROWSER_EXTENSION_JS)
+    script.setSourceCode(source)
     script.setInjectionPoint(QWebEngineScript.DocumentReady)
-    script.setWorldId(QWebEngineScript.MainWorld)
-    script.setRunsOnSubFrames(True)
+    script.setWorldId(QWebEngineScript.ApplicationWorld)
+    script.setRunsOnSubFrames(False)
 
     profile.scripts().insert(script)
     logger.info("DeepFlux browser extension injected into profile")

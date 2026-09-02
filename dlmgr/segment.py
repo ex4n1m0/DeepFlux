@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import threading
 import time
 from typing import Callable, Optional
@@ -43,6 +44,9 @@ class SegmentWorker(threading.Thread):
         on_progress: Optional[Callable[[int], None]] = None,
         on_done: Optional[Callable[[bool, str], None]] = None,
         throttle_event: Optional[threading.Event] = None,
+        use_range: bool = True,
+        if_range: str = "",
+        expected_file_size: int = 0,
     ) -> None:
         super().__init__(daemon=True, name=f"seg-{segment.index}")
         self._url = url
@@ -54,6 +58,9 @@ class SegmentWorker(threading.Thread):
         self._on_progress = on_progress
         self._on_done = on_done
         self._throttle_event = throttle_event  # set = paused
+        self._use_range = use_range
+        self._if_range = if_range
+        self._expected_file_size = expected_file_size
         self._stop_flag = threading.Event()
         self._last_data_time = time.time()
 
@@ -78,13 +85,16 @@ class SegmentWorker(threading.Thread):
 
         try:
             req_headers = dict(self._headers)
+            if not self._use_range:
+                self._segment.completed_bytes = 0
+            request_start = self._segment.start_byte + self._segment.completed_bytes
             # end_byte < 0 means unknown total size: plain GET, stream to EOF
             # (no Range header — a range request would fetch a single byte on
             # range-capable servers).
-            if self._segment.end_byte >= 0:
-                req_headers["Range"] = (
-                    f"bytes={self._segment.start_byte + self._segment.completed_bytes}-{self._segment.end_byte}"
-                )
+            if self._use_range and self._segment.end_byte >= 0:
+                req_headers["Range"] = f"bytes={request_start}-{self._segment.end_byte}"
+                if self._if_range and self._segment.completed_bytes:
+                    req_headers["If-Range"] = self._if_range
             if self._referrer:
                 req_headers["Referer"] = self._referrer
             if self._cookies:
@@ -95,12 +105,26 @@ class SegmentWorker(threading.Thread):
             resp = http_client.get(self._url, headers=req_headers, stream=True, timeout=(10, 20))
             try:
                 resp.raise_for_status()
+                ranged = self._use_range and self._segment.end_byte >= 0
+                if ranged:
+                    status_code = getattr(resp, "status_code", 0)
+                    content_range = resp.headers.get("Content-Range", "")
+                    match = re.fullmatch(r"bytes\s+(\d+)-(\d+)/(\d+|\*)", content_range.strip(), re.IGNORECASE)
+                    if status_code != 206 or match is None:
+                        raise RuntimeError("Range request was not honored by the server")
+                    actual_start, actual_end = int(match.group(1)), int(match.group(2))
+                    if actual_start != request_start or actual_end != self._segment.end_byte:
+                        raise RuntimeError("Range response did not match the requested byte window")
+                    if self._expected_file_size and match.group(3) != "*" and int(match.group(3)) != self._expected_file_size:
+                        raise RuntimeError("Remote file size changed during download")
                 # The file may not exist yet (unknown-size jobs aren't
                 # pre-allocated) — create it in that case.
-                mode = "r+b" if os.path.isfile(self._file_path) else "w+b"
+                mode = "r+b" if ranged and os.path.isfile(self._file_path) else "w+b"
                 with open(self._file_path, mode) as f:
-                    write_pos = self._segment.start_byte + self._segment.completed_bytes
+                    write_pos = request_start if ranged else 0
                     f.seek(write_pos)
+                    response_bytes = 0
+                    expected_bytes = self._segment.end_byte - request_start + 1 if self._segment.end_byte >= 0 else -1
 
                     for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
                         if self._stop_flag.is_set():
@@ -123,8 +147,11 @@ class SegmentWorker(threading.Thread):
                         if not chunk:
                             continue
 
-                        f.write(chunk)
                         chunk_len = len(chunk)
+                        response_bytes += chunk_len
+                        if expected_bytes >= 0 and response_bytes > expected_bytes:
+                            raise RuntimeError("Response body exceeded the requested byte window")
+                        f.write(chunk)
                         self._segment.completed_bytes += chunk_len
                         self._last_data_time = time.time()
 

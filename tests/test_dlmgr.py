@@ -13,14 +13,16 @@ import pytest
 from dlmgr.engine import DownloadEngine, _BandwidthLimiter, MAX_SEGMENT_RETRIES
 from dlmgr.job import DownloadJob, JobStatus, SegmentState, SegmentStatus
 from dlmgr.segment import SegmentWorker
+from dlmgr import http_client, resume_state
 
 
 class _FakeResp:
     """Minimal streaming-response stub for requests.get."""
 
-    def __init__(self, data: bytes):
+    def __init__(self, data: bytes, status_code: int = 200, headers=None):
         self._data = data
-        self.headers = {}
+        self.status_code = status_code
+        self.headers = headers or {}
 
     def raise_for_status(self):
         pass
@@ -41,6 +43,31 @@ def engine():
     eng = DownloadEngine(None)
     yield eng
     eng._running = False
+
+
+def test_http_client_revalidates_redirect_destinations():
+    response = mock.MagicMock(status_code=302)
+    response.headers = {"Location": "http://127.0.0.1/private"}
+
+    def validate(url):
+        if "127.0.0.1" in url:
+            raise ValueError("private")
+        return url
+
+    with mock.patch.object(http_client, "validate_public_url", side_effect=validate), \
+            mock.patch.object(http_client, "_request_once", return_value=response) as request:
+        with pytest.raises(ValueError, match="private"):
+            http_client.get("https://example.com/start")
+
+    request.assert_called_once()
+    response.close.assert_called_once()
+
+
+def test_http_client_rejects_private_and_credential_urls():
+    with pytest.raises(Exception, match="Local/private"):
+        http_client.validate_public_url("http://127.0.0.1/private")
+    with pytest.raises(Exception, match="credentials"):
+        http_client.validate_public_url("https://user:pass@example.com/file")
 
 
 # ---------------------------------------------------------------------------
@@ -69,10 +96,68 @@ def test_known_size_sends_range_header(tmp_path):
     data = b"y" * 1000
     seg = SegmentState(index=0, start_byte=0, end_byte=999)
     w = SegmentWorker("http://x/f", seg, dest)
-    with mock.patch("dlmgr.segment.http_client.get", return_value=_FakeResp(data)) as g:
+    response = _FakeResp(data, status_code=206, headers={"Content-Range": "bytes 0-999/1000"})
+    with mock.patch("dlmgr.segment.http_client.get", return_value=response) as g:
         w.run()
     assert seg.status == SegmentStatus.DONE
     assert g.call_args.kwargs["headers"]["Range"] == "bytes=0-999"
+    with open(dest, "rb") as f:
+        assert f.read() == data
+
+
+def test_range_response_must_be_partial_and_match_requested_window(tmp_path):
+    dest = str(tmp_path / "file.bin")
+    with open(dest, "wb") as f:
+        f.truncate(1000)
+    seg = SegmentState(index=0, start_byte=500, end_byte=999)
+    response = _FakeResp(b"x" * 1000, status_code=200)
+    done = []
+    w = SegmentWorker("http://x/f", seg, dest, on_done=lambda ok, err: done.append((ok, err)))
+
+    with mock.patch("dlmgr.segment.http_client.get", return_value=response):
+        w.run()
+
+    assert seg.status == SegmentStatus.ERROR
+    assert done and done[0][0] is False
+    assert "range" in done[0][1].lower()
+    assert os.path.getsize(dest) == 1000
+    assert seg.completed_bytes == 0
+
+
+def test_range_response_rejects_wrong_content_range(tmp_path):
+    dest = str(tmp_path / "file.bin")
+    with open(dest, "wb") as f:
+        f.truncate(1000)
+    seg = SegmentState(index=0, start_byte=500, end_byte=999)
+    response = _FakeResp(
+        b"x" * 500,
+        status_code=206,
+        headers={"Content-Range": "bytes 0-499/1000"},
+    )
+    w = SegmentWorker("http://x/f", seg, dest)
+
+    with mock.patch("dlmgr.segment.http_client.get", return_value=response):
+        w.run()
+
+    assert seg.status == SegmentStatus.ERROR
+    assert seg.completed_bytes == 0
+
+
+def test_non_range_worker_restarts_from_zero_without_range_header(tmp_path):
+    dest = str(tmp_path / "file.bin")
+    with open(dest, "wb") as f:
+        f.write(b"old-prefix")
+    data = b"replacement"
+    seg = SegmentState(index=0, start_byte=0, end_byte=len(data) - 1, completed_bytes=4)
+    response = _FakeResp(data)
+    w = SegmentWorker("http://x/f", seg, dest, use_range=False)
+
+    with mock.patch("dlmgr.segment.http_client.get", return_value=response) as get:
+        w.run()
+
+    assert "Range" not in get.call_args.kwargs["headers"]
+    assert seg.status == SegmentStatus.DONE
+    assert seg.completed_bytes == len(data)
     with open(dest, "rb") as f:
         assert f.read() == data
 
@@ -91,6 +176,36 @@ def test_unique_save_path_dedupes(engine, tmp_path):
     engine._jobs[job.id] = job
     p2 = engine._unique_save_path(str(tmp_path), "movie.mp4")
     assert p2.endswith("movie (2).mp4")
+
+
+def test_prepare_save_path_sanitizes_names_and_uses_destination_folder(engine, tmp_path):
+    destination = os.path.join(str(tmp_path), "")
+    path, category = engine._prepare_save_path("../../CON?.zip", destination)
+
+    assert category == ""
+    assert os.path.dirname(path) == str(tmp_path)
+    assert "?" not in os.path.basename(path)
+    assert ".." not in os.path.basename(path)
+
+
+def test_update_settings_applies_live(engine, tmp_path):
+    config = mock.MagicMock(
+        max_concurrent=7,
+        max_connections_per_download=12,
+        default_folder=str(tmp_path),
+        segment_threshold_mb=5,
+        auto_start=False,
+        bandwidth_limit_bps=12345,
+    )
+
+    engine.update_settings(config)
+
+    assert engine._max_concurrent == 7
+    assert engine._max_connections == 12
+    assert engine._default_folder == str(tmp_path)
+    assert engine._segment_threshold == 5
+    assert engine._auto_start is False
+    assert engine._bandwidth_limit == 12345
 
 
 def test_speed_and_eta_from_deltas(engine):
@@ -119,6 +234,37 @@ def test_unknown_size_job_adopts_file_size_on_done(engine):
     engine._on_segment_done(job.id, True, "")
     assert job.file_size == 1234
     assert job.status == JobStatus.COMPLETED
+
+
+def test_resume_non_range_job_restarts_from_zero(engine):
+    job = DownloadJob(filename="f", save_path="f", file_size=100, downloaded=40)
+    job.status = JobStatus.PAUSED
+    job.supports_ranges = False
+    job.segments = [SegmentState(index=0, start_byte=0, end_byte=99, completed_bytes=40)]
+    engine._jobs[job.id] = job
+    engine._job_throttles[job.id] = __import__("threading").Event()
+
+    with mock.patch.object(engine, "_try_start_jobs"):
+        assert engine.resume_job(job.id)
+
+    assert job.downloaded == 0
+    assert job.segments[0].completed_bytes == 0
+    assert job.segments[0].status == SegmentStatus.PENDING
+
+
+def test_auto_start_false_holds_stream_job(engine, tmp_path):
+    engine._auto_start = False
+    info = mock.MagicMock()
+    info.error = ""
+    info.segment_urls = ["https://example.com/1.ts"]
+    info.stream_type = "hls"
+
+    with mock.patch("dlmgr.hls_dash.parse_manifest", return_value=info), \
+            mock.patch.object(engine, "_start_stream_job") as start:
+        job = engine.add_stream_job("https://example.com/master.m3u8", save_path=str(tmp_path / "v.mp4"))
+
+    assert job.status == JobStatus.PAUSED
+    start.assert_not_called()
 
 
 def test_auto_retry_restarts_errored_segments(engine):
@@ -152,6 +298,34 @@ def test_cancel_hls_job_removes_temp_segments(engine, tmp_path):
     engine.cancel_job(job.id)
     assert job.id not in engine._jobs
     assert not os.path.isdir(temp_dir)
+
+
+def test_resume_state_encrypts_request_credentials(tmp_path):
+    job = DownloadJob(
+        url="https://example.com/file?token=signed-secret",
+        filename="file.bin",
+        save_path=str(tmp_path / "file.bin"),
+        headers={"Authorization": "Bearer header-secret"},
+        cookies="session=cookie-secret",
+        referrer="https://example.com/private",
+        source_url="https://example.com/page?key=source-secret",
+        status=JobStatus.PAUSED,
+        segments=[SegmentState(index=0, start_byte=0, end_byte=9, completed_bytes=4)],
+    )
+
+    with mock.patch.object(resume_state, "_credential_key_path", return_value=str(tmp_path / "dlmgr.key")):
+        resume_state.save_resume_state(job)
+        raw = open(job.resume_file_path, encoding="utf-8").read()
+        restored = resume_state.load_resume_state(job.resume_file_path)
+
+    for secret in ("signed-secret", "header-secret", "cookie-secret", "source-secret"):
+        assert secret not in raw
+    assert restored is not None
+    assert restored.url == job.url
+    assert restored.headers == job.headers
+    assert restored.cookies == job.cookies
+    assert restored.referrer == job.referrer
+    assert restored.source_url == job.source_url
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +388,44 @@ def test_hls_master_playlist_tuple_resolution():
     with mock.patch("dlmgr.hls_dash.http_client.get", side_effect=fake_get) as g:
         parse_manifest("https://cdn.example.com/abc/playlist.m3u8")
     assert g.call_args.kwargs["headers"]["User-Agent"] == DEFAULT_USER_AGENT
+
+
+def test_hls_media_sequence_and_duration_are_preserved():
+    from dlmgr.hls_dash import parse_manifest
+
+    playlist = """#EXTM3U
+#EXT-X-MEDIA-SEQUENCE:42
+#EXT-X-TARGETDURATION:6
+#EXTINF:6.0,
+a.ts
+#EXTINF:4.5,
+b.ts
+#EXT-X-ENDLIST
+"""
+    with mock.patch("dlmgr.hls_dash.http_client.get", return_value=_FakeTextResp(playlist)):
+        info = parse_manifest("https://cdn.example.com/media.m3u8")
+
+    assert info.media_sequence == 42
+    assert info.duration_seconds == 10.5
+
+
+def test_dash_duration_bounds_numbered_segment_generation():
+    from dlmgr.hls_dash import parse_manifest
+
+    manifest = """<?xml version="1.0"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" mediaPresentationDuration="PT10S">
+  <Period><AdaptationSet contentType="video">
+    <SegmentTemplate timescale="1" duration="2" startNumber="1" media="v-$Number$.m4s" initialization="init.mp4"/>
+    <Representation id="v1" bandwidth="1000" width="640" height="360"/>
+  </AdaptationSet></Period>
+</MPD>"""
+    with mock.patch("dlmgr.hls_dash.http_client.get", return_value=_FakeTextResp(manifest)):
+        info = parse_manifest("https://cdn.example.com/video.mpd")
+
+    assert info.error == ""
+    assert info.duration_seconds == 10
+    assert len(info.segment_urls) == 5
+    assert info.segment_urls[-1].endswith("v-5.m4s")
 
 
 # ---------------------------------------------------------------------------

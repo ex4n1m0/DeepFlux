@@ -24,15 +24,19 @@ logger = logging.getLogger(__name__)
 # user-provided fallbacks in DeeptorrentConfig.from_file.
 
 
-# DeepFlux is a DeepSeek-native app. Two API surfaces are supported, both
-# serving the same DeepSeek models: the official DeepSeek API (sends
-# reasoning_effort) and OpenRouter (OpenAI-compatible, no reasoning_effort).
+# DeepFlux is DeepSeek-native and also supports OpenAI-compatible endpoints.
+# Provider capability metadata controls payload differences instead of assuming
+# every endpoint accepts DeepSeek-specific fields.
 # No keys are shipped — the user brings their own.
 LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     "deepseek": {
         "label": "DeepSeek API (direct)",
         "base_url": "https://api.deepseek.com",
         "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        "reasoning_effort": True,
+        "effort_map": {},
+        "streaming": True,
+        "tools": True,
         "key_hint": "Get one at https://platform.deepseek.com/api_keys\n"
                     "Required for the agent — left blank, the app runs in offline demo mode.",
     },
@@ -40,8 +44,22 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "label": "DeepSeek via OpenRouter",
         "base_url": "https://openrouter.ai/api/v1",
         "models": ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"],
+        "reasoning_effort": True,
+        "effort_map": {"max": "xhigh"},
+        "streaming": True,
+        "tools": True,
         "key_hint": "Get one at https://openrouter.ai/keys\n"
                     "Uses OpenRouter's vendor/model slugs.",
+    },
+    "custom": {
+        "label": "Custom OpenAI-compatible",
+        "base_url": "",
+        "models": [],
+        "reasoning_effort": False,
+        "effort_map": {},
+        "streaming": True,
+        "tools": True,
+        "key_hint": "Enter the endpoint base URL, model name, and API key required by your provider.",
     },
 }
 
@@ -53,8 +71,15 @@ class LLMConfig:
     base_url: str = ""
     model: str = "deepseek-v4-pro"       # main agent model — locked to DeepSeek
     reasoning_effort: str = "high"       # planning turns; summaries always use "low"
+    custom_reasoning_effort: bool = False
     fast_model: str = "deepseek-v4-flash"  # summaries/quick replies
-    max_turns: int = 500            # ReAct loop cap per user message; the loop self-terminates when the model stops calling tools
+    max_turns: int = 40             # ReAct loop cap per user message; the loop self-terminates when the model stops calling tools
+    max_llm_calls: int = 50
+    max_tool_calls: int = 100
+    task_timeout_seconds: int = 600
+    repeated_call_limit: int = 3
+    context_budget_tokens: int = 64000
+    response_reserve_tokens: int = 8000
     history_budget: int = 60        # max history messages sent to the LLM; oldest turns dropped first (0 = unlimited)
     stream: bool = True             # stream tokens to the UI as they arrive
     memory_enabled: bool = True     # persistent local memory (markdown files on disk)
@@ -107,6 +132,7 @@ class TorrentsConfig:
 class WatchdogConfig:
     enabled: bool = False
     stall_threshold_seconds: int = 300
+    cooldown_seconds: int = 1800
     auto_heal: bool = False
 
 
@@ -135,14 +161,31 @@ class Bookmark:
 
 
 DEFAULT_BROWSER_HOMEPAGE = "https://deepflux.space/"
+BROWSER_SEARCH_ENGINES = {
+    "google": "https://www.google.com/search?q={query}",
+    "duckduckgo": "https://duckduckgo.com/?q={query}",
+    "bing": "https://www.bing.com/search?q={query}",
+    "brave": "https://search.brave.com/search?q={query}",
+}
 
 
 @dataclass
 class BrowserConfig:
     homepage: str = DEFAULT_BROWSER_HOMEPAGE  # empty migrates to the default on load
+    search_engine: str = "google"
     bookmarks: List[Bookmark] = field(default_factory=list)
-    adblock_enabled: bool = False  # Ad-block off by default
+    adblock_enabled: bool = True
+    adblock_disabled_sites: List[str] = field(default_factory=list)
     extension_enabled: bool = False  # Video grabber (browser extension JS injection) — off by default
+    grabber_auto_queue: bool = False  # Site Grabber: queue search results without a Download click
+    grabber_auto_limit: int = 5  # max videos the Site Grabber auto-queues per search/page
+    agent_content_permissions: Dict[str, str] = field(default_factory=dict)
+    restore_tabs: bool = True
+    open_tabs: List[str] = field(default_factory=list)
+    active_tab: int = 0
+    history_enabled: bool = True
+    history_retention_days: int = 90
+    zoom_by_origin: Dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -247,6 +290,10 @@ class DownloadConfig:
     segment_threshold_mb: int = 1               # files smaller than this use single-stream
     control_api_port: int = 53742
     ffmpeg_path: str = ""                       # empty = use bundled
+    stream_max_height: int = 0
+    youtube_max_height: int = 1080
+    youtube_subtitles: bool = False
+    youtube_playlists: bool = False
     categories: List[DownloadCategory] = field(default_factory=list)
 
 
@@ -321,7 +368,15 @@ class IPTVConfig:
     # enforce_size_limit). 10 GB default: posters are small and re-downloading
     # evicted art is cheap, but a big playlist cache is worth keeping.
     cache_limit_mb: int = 10240
-    cache_seconds: int = 15         # network stream buffer (seconds)
+    # Xtream get_series_info is one request per show.  A low bounded default
+    # avoids provider rate limits while still filling episode lists promptly.
+    xtream_series_concurrency: int = 2
+    cache_seconds: int = 15         # network stream startup buffer (seconds)
+    # Volatile mpv live pause/rewind cache. This is bounded RAM/disk cache, not
+    # durable timeshift; retained time varies with stream bitrate. 0 disables.
+    live_pause_buffer_seconds: int = 300
+    # Empty uses ~/Videos/DeepFlux Recordings.
+    recording_dir: str = ""
     hwdec: str = "auto-safe"        # mpv hardware decoding mode
     interpolation: bool = True      # mpv smoothmotion frame blending (GPU cost)
     # SVP 4 (SmoothVideo Project) true motion interpolation. Nothing is
@@ -384,15 +439,27 @@ class IRCConfig:
     buffer_lines: int = 500          # per-channel ring buffer (agent reads this)
     flood_delay: float = 2.0         # min seconds between outgoing messages
     reconnect_max_seconds: int = 300
+    reconnect_max_attempts: int = 5
+    # Persistent transcripts are explicitly opt-in. Message bodies, targets,
+    # nicknames and IRCv3 metadata are encrypted with a local key at rest.
+    history_enabled: bool = False
+    history_private_messages: bool = False
+    history_retention_days: int = 30
 
 
 # Built-in default IRC networks — merged into user configs by `from_file`
 # (match by `id`, Jackett-style). A curated set of popular public networks plus
 # private-tracker support networks so the user can connect with one click from
-# the IRC tab. All start disconnected (the user connects manually). Public
-# networks have no pre-joined channels — on connect the client auto-requests
-# /LIST (retried every 10s until it arrives) so the user can browse channels.
-# The private-tracker networks pre-join their support/disabled channels.
+# the IRC tab. All start disconnected (the user connects manually) and NONE
+# ships pre-joined channels — every network auto-requests /LIST on connect
+# (retried until it arrives) so the channel browser offers a directory to join.
+# Hosts/ports verified against the live servers 2026-09-01 with a registration
+# probe (CAP LS + NICK/USER + CAP END → 001): networks whose shipped TLS port
+# was dead or legacy-cipher-only (Undernet, GeekShed, P2P-Network, BrokenSphere,
+# IPTorrents round-robin) ship plain 6667, which registered on every one of
+# them. irc.animebytes.tv was seized (NXDOMAIN) — the network lives at
+# irc.animefriends.moe:7000 (TLS) now. MoreThanTV's own network is gone; MTV
+# support lives on DigitalIRC (already a default), so no morethantv entry.
 DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
     IRCNetworkConfig(
         id="libera",
@@ -425,8 +492,8 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
     IRCNetworkConfig(
         id="undernet",
         host="irc.undernet.org",
-        port=6697,
-        tls=True,
+        port=6667,
+        tls=False,
         nick="DeepFluxUser",
     ),
     IRCNetworkConfig(
@@ -453,26 +520,24 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
     IRCNetworkConfig(
         id="geekshed",
         host="irc.geekshed.net",
-        port=6697,
-        tls=True,
+        port=6667,
+        tls=False,
         nick="DeepFluxUser",
     ),
-    # --- Private-tracker support networks (TLS) ---
+    # --- Private-tracker support networks ---
     IRCNetworkConfig(
         id="animebytes",
-        host="irc.animebytes.tv",
+        host="irc.animefriends.moe",
         port=7000,
         tls=True,
         nick="DeepFluxUser",
-        channels=["#support"],
     ),
     IRCNetworkConfig(
         id="p2p-network",
         host="irc.p2p-network.net",
-        port=6697,
-        tls=True,
+        port=6667,
+        tls=False,
         nick="DeepFluxUser",
-        channels=["#bibliotik-help", "#BitSpyder"],
     ),
     IRCNetworkConfig(
         id="digitalirc",
@@ -480,7 +545,6 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
         port=6697,
         tls=True,
         nick="DeepFluxUser",
-        channels=["#empornium-help"],
     ),
     IRCNetworkConfig(
         id="gazellegames",
@@ -488,7 +552,6 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
         port=7000,
         tls=True,
         nick="DeepFluxUser",
-        channels=["#GGn-Help"],
     ),
     IRCNetworkConfig(
         id="synirc",
@@ -496,23 +559,13 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
         port=6697,
         tls=True,
         nick="DeepFluxUser",
-        channels=["#jpopsuki-support"],
     ),
     IRCNetworkConfig(
         id="brokensphere",
         host="irc.brokensphere.net",
-        port=6697,
-        tls=True,
+        port=6667,
+        tls=False,
         nick="DeepFluxUser",
-        channels=["#KG-Help"],
-    ),
-    IRCNetworkConfig(
-        id="morethantv",
-        host="irc.morethan.tv",
-        port=6669,
-        tls=True,
-        nick="DeepFluxUser",
-        channels=["#help", "#morethan.tv-disabled"],
     ),
     IRCNetworkConfig(
         id="orpheus",
@@ -520,7 +573,6 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
         port=7000,
         tls=True,
         nick="DeepFluxUser",
-        channels=["#help", "#disabled"],
     ),
     IRCNetworkConfig(
         id="passthepopcorn",
@@ -528,7 +580,6 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
         port=7000,
         tls=True,
         nick="DeepFluxUser",
-        channels=["#ptp-help", "#ptp-disabled"],
     ),
     IRCNetworkConfig(
         id="scratch-network",
@@ -536,7 +587,6 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
         port=7000,
         tls=True,
         nick="DeepFluxUser",
-        channels=["#red-help", "#red-disabled"],
     ),
     IRCNetworkConfig(
         id="torrentleech",
@@ -544,15 +594,13 @@ DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
         port=7021,
         tls=True,
         nick="DeepFluxUser",
-        channels=["#tlhelp"],
     ),
     IRCNetworkConfig(
         id="iptorrents",
         host="irc.iptorrents.com",
-        port=7000,
-        tls=True,
+        port=6667,
+        tls=False,
         nick="DeepFluxUser",
-        channels=["#iptorrents"],
     ),
 ]
 
@@ -596,6 +644,9 @@ class DeeptorrentConfig:
     ui_notifications: bool = True
     # Splitter states (name -> base64 QSplitter.saveState) — persisted on close.
     ui_splitters: Dict[str, str] = field(default_factory=dict)
+    # Commander locations are paths, not splitter integers/state. Keeping this
+    # separate also lets invalid or unavailable folders fail closed on restore.
+    ui_commander_paths: Dict[str, str] = field(default_factory=dict)
     # Agent debug mode: raw tool args/results, full reasoning, watchdog activity in chat.
     ui_agent_debug: bool = True
 
@@ -686,8 +737,9 @@ class DeeptorrentConfig:
             merged_sources = list(DEFAULT_SOURCES)
 
         # Merge built-in default IRC networks into the saved list (match by
-        # `id`, Jackett-style). New users auto-connect to Libera + #DeepFlux
-        # without configuring anything; existing user networks are preserved.
+        # `id`, Jackett-style). Existing user networks are preserved; missing
+        # defaults append. No default ships channels — connecting opens the
+        # channel browser (/LIST) instead of auto-joining anything.
         irc_data = data.get("irc", {})
         merged_irc_nets = [IRCNetworkConfig(**{k: v for k, v in n.items()
                                                if k in IRCNetworkConfig.__dataclass_fields__})
@@ -713,6 +765,60 @@ class DeeptorrentConfig:
         for n in merged_irc_nets:
             n.channels = [c for c in n.channels if c.lower() != "#deepflux"]
 
+        # Migration (2026-09): no default ships pre-joined channels any more —
+        # every network opens the channel browser on connect instead. Strip
+        # the old shipped channel sets (subset-gated, so an entry the user
+        # customized with extra channels keeps everything).
+        _LEGACY_DEFAULT_CHANNELS = {
+            "animebytes": {"#support"},
+            "p2p-network": {"#bibliotik-help", "#bitspyder"},
+            "digitalirc": {"#empornium-help"},
+            "gazellegames": {"#ggn-help"},
+            "synirc": {"#jpopsuki-support"},
+            "brokensphere": {"#kg-help"},
+            "morethantv": {"#help", "#morethan.tv-disabled"},
+            "orpheus": {"#help", "#disabled"},
+            "passthepopcorn": {"#ptp-help", "#ptp-disabled"},
+            "scratch-network": {"#red-help", "#red-disabled"},
+            "torrentleech": {"#tlhelp"},
+            "iptorrents": {"#iptorrents"},
+        }
+        for n in merged_irc_nets:
+            shipped = _LEGACY_DEFAULT_CHANNELS.get(n.id)
+            if shipped and {c.lower() for c in n.channels} <= shipped:
+                n.channels = []
+
+        # Migration (2026-09): dead or broken shipped endpoints, verified with
+        # a live registration probe (see DEFAULT_IRC_NETWORKS). Retarget only
+        # entries still carrying the old shipped host/port/TLS — customized
+        # entries are left alone.
+        _LEGACY_IRC_TARGETS = {
+            # id: (old host, old port, old tls, new host, new port, new tls)
+            "undernet": ("irc.undernet.org", 6697, True,
+                         "irc.undernet.org", 6667, False),
+            "geekshed": ("irc.geekshed.net", 6697, True,
+                         "irc.geekshed.net", 6667, False),
+            "p2p-network": ("irc.p2p-network.net", 6697, True,
+                            "irc.p2p-network.net", 6667, False),
+            "brokensphere": ("irc.brokensphere.net", 6697, True,
+                             "irc.brokensphere.net", 6667, False),
+            "iptorrents": ("irc.iptorrents.com", 7000, True,
+                           "irc.iptorrents.com", 6667, False),
+            "animebytes": ("irc.animebytes.tv", 7000, True,
+                           "irc.animefriends.moe", 7000, True),
+        }
+        for n in merged_irc_nets:
+            legacy = _LEGACY_IRC_TARGETS.get(n.id)
+            if legacy and (n.host, n.port, n.tls) == legacy[:3]:
+                n.host, n.port, n.tls = legacy[3:]
+
+        # Migration (2026-09): MoreThanTV's own IRC network is gone (the host
+        # no longer resolves; MTV support lives on DigitalIRC, which ships as
+        # its own default). Drop the dead entry — user-added channels on it
+        # cannot be reached anyway.
+        merged_irc_nets = [n for n in merged_irc_nets
+                           if not (n.id == "morethantv" and n.host == "irc.morethan.tv")]
+
         # Drop stale keys from older configs (e.g. the removed `local_only`)
         # so LLMConfig(**...) never fails on an unknown field.
         llm_clean = {k: v for k, v in llm_data.items() if k in LLMConfig.__dataclass_fields__}
@@ -722,10 +828,10 @@ class DeeptorrentConfig:
         llm_clean["stream"] = True
         llm_clean["memory_enabled"] = True
 
-        # Migration: a hand-edited switch to OpenRouter keeps the DeepSeek
-        # fast-model default, which doesn't exist there — clear it so summary
+        # Migration: a switch to OpenRouter/custom keeps the DeepSeek fast-model
+        # default, which may not exist there — clear it so summary
         # calls fall back to the main model instead of 404ing.
-        if llm_clean.get("provider") == "openrouter" and llm_clean.get("fast_model") in LLM_PROVIDER_PRESETS["deepseek"]["models"]:
+        if llm_clean.get("provider") in ("openrouter", "custom") and llm_clean.get("fast_model") in LLM_PROVIDER_PRESETS["deepseek"]["models"]:
             llm_clean["fast_model"] = ""
 
         # Migration: the artwork cache cap was 500 MB and never enforced; the
@@ -748,9 +854,24 @@ class DeeptorrentConfig:
                 # Empty/missing homepage migrates to the default site; custom
                 # user homepages are preserved.
                 homepage=(data.get("browser", {}).get("homepage") or "").strip() or DEFAULT_BROWSER_HOMEPAGE,
+                search_engine=(data.get("browser", {}).get("search_engine")
+                               if data.get("browser", {}).get("search_engine") in BROWSER_SEARCH_ENGINES else "google"),
                 bookmarks=[Bookmark(**b) for b in data.get("browser", {}).get("bookmarks", [])],
-                adblock_enabled=data.get("browser", {}).get("adblock_enabled", False),
+                adblock_enabled=data.get("browser", {}).get("adblock_enabled", True),
+                adblock_disabled_sites=[str(host).lower() for host in data.get("browser", {}).get("adblock_disabled_sites", [])],
                 extension_enabled=data.get("browser", {}).get("extension_enabled", False),
+                grabber_auto_queue=bool(data.get("browser", {}).get("grabber_auto_queue", False)),
+                grabber_auto_limit=max(1, int(data.get("browser", {}).get("grabber_auto_limit", 5) or 5)),
+                agent_content_permissions=(data.get("browser", {}).get("agent_content_permissions", {})
+                                           if isinstance(data.get("browser", {}).get("agent_content_permissions", {}), dict) else {}),
+                restore_tabs=bool(data.get("browser", {}).get("restore_tabs", True)),
+                open_tabs=([str(url) for url in data.get("browser", {}).get("open_tabs", [])[:20]]
+                           if isinstance(data.get("browser", {}).get("open_tabs", []), list) else []),
+                active_tab=max(0, int(data.get("browser", {}).get("active_tab", 0) or 0)),
+                history_enabled=bool(data.get("browser", {}).get("history_enabled", True)),
+                history_retention_days=max(1, int(data.get("browser", {}).get("history_retention_days", 90) or 90)),
+                zoom_by_origin=(data.get("browser", {}).get("zoom_by_origin", {})
+                                if isinstance(data.get("browser", {}).get("zoom_by_origin", {}), dict) else {}),
             ),
             download=DownloadConfig(
                 max_concurrent=data.get("download", {}).get("max_concurrent", 3),
@@ -761,6 +882,10 @@ class DeeptorrentConfig:
                 segment_threshold_mb=data.get("download", {}).get("segment_threshold_mb", 1),
                 control_api_port=data.get("download", {}).get("control_api_port", 53742),
                 ffmpeg_path=data.get("download", {}).get("ffmpeg_path", ""),
+                stream_max_height=max(0, int(data.get("download", {}).get("stream_max_height", 0) or 0)),
+                youtube_max_height=max(144, int(data.get("download", {}).get("youtube_max_height", 1080) or 1080)),
+                youtube_subtitles=bool(data.get("download", {}).get("youtube_subtitles", False)),
+                youtube_playlists=bool(data.get("download", {}).get("youtube_playlists", False)),
                 categories=[DownloadCategory(**c) for c in data.get("download", {}).get("categories", [])],
             ),
             torrents=TorrentsConfig(**data.get("torrents", {})),
@@ -788,7 +913,13 @@ class DeeptorrentConfig:
                 epg_url=data.get("iptv", {}).get("epg_url", ""),
                 cache_dir=data.get("iptv", {}).get("cache_dir", ""),
                 cache_limit_mb=iptv_cache_limit,
-                cache_seconds=data.get("iptv", {}).get("cache_seconds", 15),
+                xtream_series_concurrency=max(1, min(6, int(
+                    data.get("iptv", {}).get("xtream_series_concurrency", 2) or 2))),
+                cache_seconds=max(1, min(120, int(
+                    data.get("iptv", {}).get("cache_seconds", 15) or 15))),
+                live_pause_buffer_seconds=max(0, min(3600, int(
+                    data.get("iptv", {}).get("live_pause_buffer_seconds", 300) or 0))),
+                recording_dir=data.get("iptv", {}).get("recording_dir", ""),
                 hwdec=data.get("iptv", {}).get("hwdec", "auto-safe"),
                 interpolation=bool(data.get("iptv", {}).get("interpolation", True)),
                 svp_enabled=bool(data.get("iptv", {}).get("svp_enabled", False)),
@@ -808,9 +939,17 @@ class DeeptorrentConfig:
             ),
             irc=IRCConfig(
                 networks=merged_irc_nets,
-                buffer_lines=int(irc_data.get("buffer_lines", 500)),
-                flood_delay=float(irc_data.get("flood_delay", 2.0)),
-                reconnect_max_seconds=int(irc_data.get("reconnect_max_seconds", 300)),
+                buffer_lines=max(50, min(5000, int(irc_data.get("buffer_lines", 500)))),
+                flood_delay=max(0.5, float(irc_data.get("flood_delay", 2.0))),
+                reconnect_max_seconds=max(10, min(3600, int(
+                    irc_data.get("reconnect_max_seconds", 300)))),
+                reconnect_max_attempts=max(1, min(100, int(
+                    irc_data.get("reconnect_max_attempts", 5)))),
+                history_enabled=bool(irc_data.get("history_enabled", False)),
+                history_private_messages=bool(
+                    irc_data.get("history_private_messages", False)),
+                history_retention_days=max(1, min(3650, int(
+                    irc_data.get("history_retention_days", 30) or 30))),
             ),
             voice=VoiceConfig(**{k: v for k, v in data.get("voice", {}).items()
                                  if k in VoiceConfig.__dataclass_fields__}),
@@ -830,6 +969,10 @@ class DeeptorrentConfig:
             ui_last_tab=int(data.get("ui_last_tab", 0) or 0),
             ui_notifications=bool(data.get("ui_notifications", True)),
             ui_splitters=data.get("ui_splitters", {}) if isinstance(data.get("ui_splitters"), dict) else {},
+            ui_commander_paths={
+                key: value for key, value in data.get("ui_commander_paths", {}).items()
+                if key in ("left", "right") and isinstance(value, str)
+            } if isinstance(data.get("ui_commander_paths"), dict) else {},
             ui_agent_debug=True,  # assumed always-on (no UI toggle anymore)
         )
 

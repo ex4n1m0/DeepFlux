@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from typing import Optional
 
@@ -31,9 +32,9 @@ HOST_NAME = "com.deeptorrent.integration"
 HOST_DESCRIPTION = "DeepFlux Integration Module"
 
 # The extension ID will be set after publishing to the Chrome Web Store.
-# For development, use a placeholder — Chrome will show the actual ID when
-# loading the unpacked extension. Users can update this in settings.
-DEFAULT_EXTENSION_ID = ""  # Empty = allow any (for development)
+# Development registration also requires the exact ID shown for the unpacked
+# extension; native-messaging manifests must never use a wildcard origin.
+DEFAULT_EXTENSION_ID = ""
 
 
 def _get_host_manifest_path() -> str:
@@ -75,14 +76,11 @@ def write_host_manifest(extension_id: str = "") -> str:
     Returns the path to the manifest file."""
     exe_path = _get_exe_path()
 
-    # Build allowed_origins. If no extension ID is specified, use a wildcard
-    # pattern for development (Chrome requires at least one origin).
-    if extension_id:
-        allowed_origins = [f"chrome-extension://{extension_id}/"]
-    else:
-        # For development, allow any extension ID.
-        # Chrome will still require the extension to declare nativeMessaging permission.
-        allowed_origins = ["chrome-extension://*/"]
+    # Build allowed_origins from one exact, validated Chrome extension ID.
+    extension_id = (extension_id or DEFAULT_EXTENSION_ID).strip().lower()
+    if not re.fullmatch(r"[a-p]{32}", extension_id):
+        raise ValueError("A valid 32-character Chrome extension ID is required")
+    allowed_origins = [f"chrome-extension://{extension_id}/"]
 
     manifest = {
         "name": HOST_NAME,
@@ -119,7 +117,11 @@ def register_native_host(extension_id: str = "") -> bool:
         return False
 
     # Write the manifest file first.
-    manifest_path = write_host_manifest(extension_id)
+    try:
+        manifest_path = write_host_manifest(extension_id)
+    except (OSError, ValueError) as exc:
+        logger.error("Failed to write native messaging manifest: %s", exc)
+        return False
 
     # Create the registry key.
     key_path = f"SOFTWARE\\Google\\Chrome\\NativeMessagingHosts\\{HOST_NAME}"

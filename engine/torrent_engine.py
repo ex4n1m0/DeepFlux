@@ -273,6 +273,17 @@ class TorrentEngine:
         future = self._enqueue(lambda: self._set_file_priority(info_hash, file_id, level))
         return self._wait(future)
 
+    def organize_torrent(
+        self,
+        info_hash: str,
+        destination: str,
+        category: str,
+        file_renames: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        future = self._enqueue(
+            lambda: self._organize_torrent(info_hash, destination, category, file_renames or []))
+        return self._wait(future)
+
     def set_sequential_download(self, info_hash: str, on: bool = True) -> bool:
         """Toggle sequential piece download (needed to stream while downloading)."""
         future = self._enqueue(lambda: self._set_sequential_download(info_hash, on))
@@ -534,6 +545,51 @@ class TorrentEngine:
             raise EngineCommandError(f"Invalid priority level {level}")
         record.handle.file_priority(file_id, level)
         return True
+
+    def _organize_torrent(
+        self,
+        info_hash: str,
+        destination: str,
+        category: str,
+        file_renames: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        record = self._get_record(info_hash)
+        status = record.handle.status()
+        if status.progress < 1.0:
+            raise EngineCommandError("Torrent must be complete before it can be organized")
+        ti = record.handle.torrent_file()
+        if ti is None:
+            raise EngineCommandError("Torrent metadata not yet available")
+        destination = str(destination or "").strip()
+        if not destination:
+            raise EngineCommandError("Destination is required")
+        destination = os.path.abspath(destination)
+        renamed = []
+        seen_ids = set()
+        for item in file_renames:
+            file_id = int(item["file_id"])
+            new_path = str(item["new_path"]).strip().replace("\\", "/")
+            parts = [part for part in new_path.split("/") if part]
+            if (
+                file_id in seen_ids or not 0 <= file_id < ti.files().num_files()
+                or not new_path or new_path.startswith("/") or os.path.splitdrive(new_path)[0]
+                or any(part in (".", "..") for part in parts)
+            ):
+                raise EngineCommandError(f"Invalid file rename: {item}")
+            seen_ids.add(file_id)
+            record.handle.rename_file(file_id, new_path)
+            renamed.append({"file_id": file_id, "new_path": new_path})
+        os.makedirs(destination, exist_ok=True)
+        record.handle.move_storage(destination)
+        record.category = category
+        return {
+            "success": True,
+            "info_hash": info_hash,
+            "category": category,
+            "destination": destination,
+            "file_renames": renamed,
+            "note": "Storage move requested through libtorrent; completion continues asynchronously.",
+        }
 
     def _set_sequential_download(self, info_hash: str, on: bool) -> bool:
         record = self._get_record(info_hash)

@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import binascii
+import copy
+import ipaddress
 import json
 import logging
 import os
 import re
 import shutil
+import socket
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import httpx
 import requests
@@ -19,7 +23,7 @@ try:
 except ImportError:  # ddgs not installed — DuckDuckGo stage is skipped
     DDGS = None
 
-from config import DeeptorrentConfig, source_popularity
+from config import DeeptorrentConfig, LLM_PROVIDER_PRESETS, source_popularity
 from engine import TorrentEngine
 from agent.memory import MemoryStore
 from agent.rss import RSSMonitor
@@ -37,6 +41,164 @@ class ToolError(Exception):
     """Raised when a tool call fails."""
 
 
+@dataclass(frozen=True)
+class ToolPolicy:
+    effect: str = "reversible"
+    confirmation: str = "never"
+    watchdog_auto_heal: bool = False
+    sensitive_fields: Tuple[str, ...] = ()
+
+
+READ_ONLY_TOOL_NAMES = frozenset({
+    "list_torrents", "get_torrent_status", "get_swarm_stats", "diagnose_swarm",
+    "search_indexers", "find_alt_trackers", "find_alt_release", "refresh_tracker_list",
+    "web_search", "web_fetch", "list_rss_feeds", "search_memory", "irc_status",
+    "irc_list_messages", "irc_search_messages", "list_directory", "iptv_search",
+    "iptv_list", "iptv_epg", "iptv_now_playing", "iptv_find_subtitles",
+    "irc_list_nicks", "irc_list_channels", "browser_list_tabs", "browser_get_content", "browser_snapshot",
+    "browser_wait", "browser_list_bookmarks", "list_downloads", "propose_rename_and_category",
+    "analyze_organization", "list_memories", "agent_diagnostics",
+})
+
+CONFIRMATION_TOOL_NAMES = frozenset({
+    "add_magnet", "add_torrent_file", "add_download", "remove_torrent", "add_tracker",
+    "irc_send_message", "irc_join", "irc_part", "irc_connect", "irc_disconnect",
+    "irc_send_action", "irc_send_notice", "irc_set_nick", "irc_send_raw",
+    "create_folder", "copy_path", "move_path", "rename_path", "delete_path", "iptv_play",
+    "cancel_download", "add_rss_feed", "remove_rss_feed", "update_rss_feed", "download_from_feed",
+    "browser_click", "browser_fill", "browser_click_ref", "browser_type_ref",
+    "browser_select_ref", "browser_check_ref", "browser_close_tab",
+    "browser_add_bookmark", "browser_remove_bookmark", "edit_memory", "forget_memory",
+    "apply_organization_plan",
+})
+
+WATCHDOG_AUTO_HEAL_TOOL_NAMES = frozenset({
+    "add_tracker", "force_reannounce", "force_recheck", "refresh_tracker_list",
+    "find_alt_trackers", "find_alt_release", "search_indexers", "diagnose_swarm",
+    "get_swarm_stats", "get_torrent_status", "list_torrents",
+})
+
+SENSITIVE_TOOL_FIELDS = {
+    "browser_fill": ("value",),
+    "browser_type_ref": ("value",),
+    "irc_send_raw": ("line",),
+    "save_memory": ("content",),
+    "edit_memory": ("content",),
+}
+
+UNTRUSTED_RESULT_TOOLS = frozenset({
+    "web_search", "web_fetch", "search_indexers", "find_alt_trackers",
+    "find_alt_release", "get_rss_feed_items", "irc_list_messages",
+    "irc_search_messages", "browser_get_content", "browser_snapshot", "browser_wait",
+})
+
+
+def redact_url_secrets(value: str) -> str:
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return value
+    if not parsed.query:
+        return value
+    changed = False
+    query = []
+    for key, item in parse_qsl(parsed.query, keep_blank_values=True):
+        if any(part in key.lower() for part in ("password", "passphrase", "token", "secret", "key", "auth", "signature")):
+            item = "<redacted>"
+            changed = True
+        query.append((key, item))
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)) if changed else value
+
+
+def redact_tool_arguments(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    sensitive = set(tool_policy(name).sensitive_fields)
+    sensitive.update(
+        key for key in arguments
+        if any(part in key.lower() for part in ("password", "passphrase", "token", "secret", "api_key"))
+    )
+    return {
+        key: "<redacted>" if key in sensitive
+        else redact_url_secrets(value) if isinstance(value, str) and key.lower() in ("url", "uri")
+        else value
+        for key, value in arguments.items()
+    }
+
+
+def redact_sensitive_data(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: "<redacted>" if any(
+                part in key.lower() for part in ("password", "passphrase", "token", "secret", "api_key")
+            ) else redact_url_secrets(item) if isinstance(item, str) and key.lower() in ("url", "uri")
+            else redact_sensitive_data(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_sensitive_data(item) for item in value]
+    return value
+
+
+def validate_public_http_url(url: str) -> str:
+    from urllib.parse import urlparse
+
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        raise ToolError("URL must be a valid http:// or https:// address")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith(".localhost") or hostname.endswith(".local"):
+        raise ToolError("Local and private network URLs are not allowed")
+    try:
+        literal = ipaddress.ip_address(hostname)
+        addresses = [literal]
+    except ValueError:
+        try:
+            addresses = {
+                ipaddress.ip_address(item[4][0].split("%", 1)[0])
+                for item in socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+            }
+        except (OSError, ValueError) as exc:
+            raise ToolError(f"Could not resolve URL host: {hostname}") from exc
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ToolError("Local and private network URLs are not allowed")
+    return parsed.geturl()
+
+
+def public_http_get(url: str, *, timeout: int, headers: Dict[str, str]) -> requests.Response:
+    from urllib.parse import urljoin
+
+    current = url
+    for _ in range(6):
+        current = validate_public_http_url(current)
+        response = requests.get(current, timeout=timeout, headers=headers, allow_redirects=False)
+        if response.status_code not in (301, 302, 303, 307, 308):
+            return response
+        location = response.headers.get("Location")
+        response.close()
+        if not location:
+            raise ToolError("Redirect response did not include a destination")
+        current = urljoin(current, location)
+    raise ToolError("Too many redirects")
+
+
+def tool_policy(name: str) -> ToolPolicy:
+    if name in READ_ONLY_TOOL_NAMES:
+        return ToolPolicy(effect="read")
+    if name in CONFIRMATION_TOOL_NAMES:
+        return ToolPolicy(
+            effect="external" if name.startswith(("irc_", "browser_")) else "destructive",
+            confirmation="always",
+            watchdog_auto_heal=name in WATCHDOG_AUTO_HEAL_TOOL_NAMES,
+            sensitive_fields=SENSITIVE_TOOL_FIELDS.get(name, ()),
+        )
+    return ToolPolicy(
+        effect="persistent" if name in {"save_memory", "browser_add_bookmark", "browser_remove_bookmark"} else "reversible",
+        watchdog_auto_heal=name in WATCHDOG_AUTO_HEAL_TOOL_NAMES,
+        sensitive_fields=SENSITIVE_TOOL_FIELDS.get(name, ()),
+    )
+
+
 class ToolRegistry:
     """Registry of JSON-schema tools backed by the TorrentEngine and web/indexer clients."""
 
@@ -47,20 +209,24 @@ class ToolRegistry:
         self.engine = engine
         self.config = config
         self.on_progress = on_progress  # sub-step reporter, wired up by AgentLoop
+        self._resource_lock = threading.Lock()
         # The IDM-style download manager (dlmgr.DownloadEngine). Injected by
         # the GUI; created lazily on first add_download otherwise (CLI/REPL).
         self._dl_engine = dl_engine
+        self._owns_dl_engine = False
         # The embedded IRC client (ircmgr.IRCClientCore). Injected by the GUI
         # (shared with the IRC tab); lazily created on first irc_* tool use
         # otherwise. A lazy client has no connected networks until the user
         # connects from the IRC tab.
         self._irc_client = irc_client
+        self._owns_irc_client = False
         # IPTV bridge (gui.iptv_tab.AgentIPTVBridge). Injected by the GUI via
         # set_iptv_bridge() once the Play tab exists — it marshals playback
         # actions onto the Qt thread. Without it (CLI) reads fall back to a
         # lazily created IPTVManager and playback tools report unavailability.
         self._iptv_bridge = iptv_bridge
         self._iptv_manager = None
+        self._owns_iptv_manager = False
         # Browser bridge (gui.browser_bridge.BrowserBridge) — injected by the
         # GUI; browser_* tools report unavailability without it (CLI).
         self._browser_bridge = browser_bridge
@@ -75,25 +241,94 @@ class ToolRegistry:
         self._search_cache: Dict[Tuple[str, str, bool], Tuple[float, Dict[str, Any]]] = {}
         self._search_cache_lock = threading.Lock()
 
-    def list_tools(self) -> List[Dict[str, Any]]:
+    def list_tools(self, names: Optional[Iterable[str]] = None) -> List[Dict[str, Any]]:
         """Return tool definitions in OpenAI function-calling format."""
-        return [t["schema"] for t in self._tools.values()]
+        selected = set(names) if names is not None else None
+        return [
+            tool["schema"] for name, tool in self._tools.items()
+            if selected is None or name in selected
+        ]
+
+    def tool_names_for_context(self, message: str) -> set[str]:
+        text = (message or "").lower()
+        all_names = set(self._tools)
+        if any(phrase in text for phrase in ("what can you do", "capabilities", "available tools", "agent help")):
+            return all_names
+        selected = {
+            "add_magnet", "add_torrent_file", "add_download", "list_downloads",
+            "pause_download", "resume_download", "retry_download", "cancel_download",
+            "remove_download", "pause_torrent", "resume_torrent", "remove_torrent",
+            "list_torrents", "get_torrent_status", "set_file_priority", "add_tracker",
+            "set_torrent_rate_limits", "set_sequential_download", "force_recheck",
+            "force_reannounce", "get_swarm_stats", "diagnose_swarm", "refresh_tracker_list",
+            "find_alt_trackers", "search_indexers", "find_alt_release",
+            "propose_rename_and_category", "analyze_organization", "apply_organization_plan",
+            "web_search", "web_fetch", "save_memory",
+            "search_memory", "list_memories", "edit_memory", "forget_memory", "agent_diagnostics",
+        }
+        groups = {
+            "rss": {name for name in all_names if name.endswith("rss_feed") or "rss_feed" in name or name == "download_from_feed"},
+            "irc": {name for name in all_names if name.startswith("irc_")},
+            "files": {"list_directory", "create_folder", "copy_path", "move_path", "rename_path", "delete_path"},
+            "iptv": {name for name in all_names if name.startswith("iptv_")},
+            "browser": {name for name in all_names if name.startswith("browser_")},
+        }
+        if any(word in text for word in ("rss", "feed", "subscription")):
+            selected.update(groups["rss"])
+        if any(word in text for word in ("irc", "channel", "nickname", "nick ", "chat room")) or "#" in text:
+            selected.update(groups["irc"])
+        if any(word in text for word in ("file", "folder", "directory", "path", "rename", "move", "copy", "delete")):
+            selected.update(groups["files"])
+        if any(word in text for word in ("iptv", "play", "player", "channel", "epg", "subtitle", "volume", "movie", "series", "episode")):
+            selected.update(groups["iptv"])
+        if any(word in text for word in ("browser", "browse", "bookmark", "tab", "click", "form", "navigate", "web page", "website", "login", "log in")):
+            selected.update(groups["browser"])
+        return selected & all_names
+
+    def shutdown(self) -> None:
+        if self._owns_dl_engine and self._dl_engine is not None:
+            try:
+                self._dl_engine.stop()
+            except Exception:
+                logger.debug("owned download engine shutdown failed", exc_info=True)
+            self._dl_engine = None
+            self._owns_dl_engine = False
+        if self._owns_irc_client and self._irc_client is not None:
+            try:
+                self._irc_client.shutdown()
+            except Exception:
+                logger.debug("owned IRC client shutdown failed", exc_info=True)
+            self._irc_client = None
+            self._owns_irc_client = False
+        if self._owns_iptv_manager and self._iptv_manager is not None:
+            try:
+                self._iptv_manager.shutdown()
+            except Exception:
+                logger.debug("owned IPTV manager shutdown failed", exc_info=True)
+            self._iptv_manager = None
+            self._owns_iptv_manager = False
+
+    def normalize_arguments(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        if name not in self._tools:
+            raise ToolError(f"Unknown tool: {name}")
+        normalized = copy.deepcopy(arguments)
+        schema = self._tools[name]["schema"]["function"]["parameters"]
+        self._validate_args(normalized, schema)
+        return normalized
 
     def call(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Validate, execute and log a tool call; return structured JSON."""
-        if name not in self._tools:
-            raise ToolError(f"Unknown tool: {name}")
-
+        arguments = self.normalize_arguments(name, arguments)
         tool = self._tools[name]
-        schema = tool["schema"]["function"]["parameters"]
-        try:
-            self._validate_args(arguments, schema)
-        except ToolError:
-            raise
 
-        logger.info("TOOL_CALL name=%s args=%s", name, json.dumps(arguments))
+        logger.info("TOOL_CALL name=%s args=%s", name, json.dumps(redact_tool_arguments(name, arguments)))
         try:
             result = tool["handler"](**arguments)
+            if not isinstance(result, dict):
+                raise ToolError(f"Tool {name} returned a non-object result")
+            result.setdefault("success", not bool(result.get("error")))
+            if name in UNTRUSTED_RESULT_TOOLS:
+                result.setdefault("_trust", "untrusted_external_content")
             logger.info("TOOL_RESULT name=%s result_keys=%s", name, list(result.keys()))
             return result
         except Exception as exc:
@@ -114,6 +349,15 @@ class ToolRegistry:
 
     def _build_tools(self) -> Dict[str, Dict[str, Any]]:
         return {
+            "agent_diagnostics": {
+                "schema": self._tool_schema(
+                    name="agent_diagnostics",
+                    description="Report Agent capabilities, integration availability, safety policy counts, and execution limits without exposing secrets.",
+                    properties={},
+                    required=[],
+                ),
+                "handler": self._agent_diagnostics,
+            },
             "add_magnet": {
                 "schema": self._tool_schema(
                     name="add_magnet",
@@ -155,6 +399,7 @@ class ToolRegistry:
                     properties={
                         "url": {"type": "string", "description": "Direct file URL (http/https), or an .m3u8/.mpd stream URL."},
                         "filename": {"type": "string", "description": "Optional output filename — defaults to the URL's basename.", "default": ""},
+                        "save_path": {"type": "string", "description": "Optional destination folder; defaults to Download Manager settings.", "default": ""},
                     },
                     required=["url"],
                 ),
@@ -167,7 +412,9 @@ class ToolRegistry:
                     "status, progress, speed, save path. Use this to find job ids for the other "
                     "download tools.",
                     properties={
-                        "status": {"type": "string", "description": "Filter: queued|downloading|processing|paused|completed|error (default: all).", "default": ""},
+                        "status": {"type": "string", "enum": ["", "queued", "downloading", "processing", "paused", "completed", "error"], "description": "Filter: queued|downloading|processing|paused|completed|error (default: all).", "default": ""},
+                        "offset": {"type": "integer", "minimum": 0, "description": "Zero-based result offset.", "default": 0},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum jobs to return (default 50).", "default": 50},
                     },
                     required=[],
                 ),
@@ -268,12 +515,15 @@ class ToolRegistry:
             "list_torrents": {
                 "schema": self._tool_schema(
                     name="list_torrents",
-                    description="List all managed torrents, optionally filtered by state.",
+                    description="List managed torrents, optionally filtered by state, with pagination.",
                     properties={
                         "filter": {
                             "type": "string",
                             "description": "Optional state filter (e.g. downloading, seeding, stalled).",
-                        }
+                            "default": "",
+                        },
+                        "offset": {"type": "integer", "minimum": 0, "description": "Zero-based result offset.", "default": 0},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum torrents to return (default 50).", "default": 50},
                     },
                     required=[],
                 ),
@@ -282,8 +532,12 @@ class ToolRegistry:
             "get_torrent_status": {
                 "schema": self._tool_schema(
                     name="get_torrent_status",
-                    description="Get detailed status for a single torrent including files.",
-                    properties={"info_hash": {"type": "string", "description": "Torrent info hash (hex)."}},
+                    description="Get detailed status for a single torrent, with a paged file list.",
+                    properties={
+                        "info_hash": {"type": "string", "description": "Torrent info hash (hex)."},
+                        "file_offset": {"type": "integer", "minimum": 0, "description": "Zero-based file offset.", "default": 0},
+                        "file_limit": {"type": "integer", "minimum": 1, "maximum": 200, "description": "Maximum files to return (default 100).", "default": 100},
+                    },
                     required=["info_hash"],
                 ),
                 "handler": self._get_torrent_status,
@@ -436,7 +690,7 @@ class ToolRegistry:
             "propose_rename_and_category": {
                 "schema": self._tool_schema(
                     name="propose_rename_and_category",
-                    description="On completion, propose clean filenames and destination category.",
+                    description="Compatibility alias for analyze_organization. Builds a read-only organization proposal.",
                     properties={
                         "info_hash": {"type": "string", "description": "Torrent info hash (hex)."},
                         "categories": {
@@ -449,6 +703,51 @@ class ToolRegistry:
                     required=["info_hash"],
                 ),
                 "handler": self._propose_rename_and_category,
+            },
+            "analyze_organization": {
+                "schema": self._tool_schema(
+                    name="analyze_organization",
+                    description="Build a read-only organization proposal for a completed torrent. Review the returned destination and files before applying.",
+                    properties={
+                        "info_hash": {"type": "string", "description": "Torrent info hash (hex)."},
+                        "categories": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Allowed categories.",
+                            "default": ["Movies", "TV", "Software", "Other"],
+                        },
+                    },
+                    required=["info_hash"],
+                ),
+                "handler": self._analyze_organization,
+            },
+            "apply_organization_plan": {
+                "schema": self._tool_schema(
+                    name="apply_organization_plan",
+                    description="Apply an explicitly reviewed organization plan through libtorrent. The torrent must be complete and confirmation is required.",
+                    properties={
+                        "info_hash": {"type": "string", "description": "Torrent info hash (hex)."},
+                        "category": {"type": "string", "minLength": 1, "description": "New category."},
+                        "destination": {"type": "string", "minLength": 1, "description": "Exact destination directory shown to the user."},
+                        "file_renames": {
+                            "type": "array",
+                            "maxItems": 500,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "file_id": {"type": "integer", "minimum": 0},
+                                    "new_path": {"type": "string", "minLength": 1},
+                                },
+                                "required": ["file_id", "new_path"],
+                                "additionalProperties": False,
+                            },
+                            "description": "Optional relative file paths keyed by file_id.",
+                            "default": [],
+                        },
+                    },
+                    required=["info_hash", "category", "destination"],
+                ),
+                "handler": self._apply_organization_plan,
             },
             "web_search": {
                 "schema": self._tool_schema(
@@ -487,9 +786,10 @@ class ToolRegistry:
                             "items": {"type": "string"},
                             "description": "Multiple URLs to fetch in parallel. Prefer this over repeated single-url calls.",
                         },
-                        "max_chars": {"type": "integer", "description": "Max characters to return per page (default 8000).", "default": 8000},
+                        "max_chars": {"type": "integer", "description": "Max characters to return per page (default 8000).", "default": 8000, "minimum": 500, "maximum": 50000},
                     },
                     required=[],
+                    any_of=[["url"], ["urls"]],
                 ),
                 "handler": self._web_fetch_tool,
             },
@@ -512,6 +812,8 @@ class ToolRegistry:
                     properties={
                         "feed_url": {"type": "string", "description": "URL of the RSS feed to fetch. Use list_rss_feeds first to see available feeds."},
                         "include_seen": {"type": "boolean", "description": "If true, return all items including previously seen ones. Default false (new only).", "default": False},
+                        "offset": {"type": "integer", "minimum": 0, "description": "Zero-based item offset.", "default": 0},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "Maximum items to return (default 40).", "default": 40},
                     },
                     required=["feed_url"],
                 ),
@@ -520,19 +822,25 @@ class ToolRegistry:
             "download_from_feed": {
                 "schema": self._tool_schema(
                     name="download_from_feed",
-                    description="Download specific items from an RSS feed by their index. "
-                    "Call get_rss_feed_items first to see the items, then use this tool "
-                    "with the item indices to download them.",
+                    description="Download specific items from an RSS feed. Call get_rss_feed_items "
+                    "first, then pass its stable item_id values. Positional item_indices remain "
+                    "available for compatibility but item_ids are safer across feed refreshes.",
                     properties={
                         "feed_url": {"type": "string", "description": "URL of the RSS feed."},
+                        "item_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Stable item_id values returned by get_rss_feed_items.",
+                        },
                         "item_indices": {
                             "type": "array",
                             "items": {"type": "integer"},
-                            "description": "List of item indices (0-based) to download from the feed.",
+                            "description": "Legacy indices into the current new-items list.",
                         },
                         "category": {"type": "string", "description": "Category for the downloads.", "default": "Other"},
                     },
-                    required=["feed_url", "item_indices"],
+                    required=["feed_url"],
+                    any_of=[["item_ids"], ["item_indices"]],
                 ),
                 "handler": self._download_from_feed,
             },
@@ -561,6 +869,20 @@ class ToolRegistry:
                     required=["url"],
                 ),
                 "handler": self._remove_rss_feed,
+            },
+            "update_rss_feed": {
+                "schema": self._tool_schema(
+                    name="update_rss_feed",
+                    description="Update the name, mode, or category of an existing RSS subscription.",
+                    properties={
+                        "url": {"type": "string", "description": "Current subscribed feed URL."},
+                        "name": {"type": "string", "description": "New display name."},
+                        "mode": {"type": "string", "enum": ["monitor", "auto_download"], "description": "New feed mode."},
+                        "category": {"type": "string", "description": "New download category."},
+                    },
+                    required=["url"],
+                ),
+                "handler": self._update_rss_feed,
             },
             "save_memory": {
                 "schema": self._tool_schema(
@@ -595,6 +917,41 @@ class ToolRegistry:
                     required=["query"],
                 ),
                 "handler": self._search_memory_tool,
+            },
+            "list_memories": {
+                "schema": self._tool_schema(
+                    name="list_memories",
+                    description="List saved memories with stable ids so the user can review, edit, or forget them.",
+                    properties={
+                        "scope": {"type": "string", "enum": ["", "user", "fact", "note"], "description": "Optional memory scope.", "default": ""},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Maximum entries (default 200).", "default": 200},
+                    },
+                    required=[],
+                ),
+                "handler": self._list_memories_tool,
+            },
+            "edit_memory": {
+                "schema": self._tool_schema(
+                    name="edit_memory",
+                    description="Replace a saved memory by id. Requires confirmation because it changes persistent memory.",
+                    properties={
+                        "memory_id": {"type": "string", "description": "Stable id from list_memories or search_memory."},
+                        "content": {"type": "string", "minLength": 1, "description": "Replacement memory text without credentials or secrets."},
+                    },
+                    required=["memory_id", "content"],
+                ),
+                "handler": self._edit_memory_tool,
+            },
+            "forget_memory": {
+                "schema": self._tool_schema(
+                    name="forget_memory",
+                    description="Permanently remove a saved memory by id. Requires confirmation.",
+                    properties={
+                        "memory_id": {"type": "string", "description": "Stable id from list_memories or search_memory."},
+                    },
+                    required=["memory_id"],
+                ),
+                "handler": self._forget_memory_tool,
             },
             "irc_status": {
                 "schema": self._tool_schema(
@@ -756,7 +1113,8 @@ class ToolRegistry:
                 "schema": self._tool_schema(
                     name="irc_list_channels",
                     description="List channels on an IRC network (server LIST reply), sorted by user "
-                    "count. Use refresh=false to reuse the last fetched list instantly.",
+                    "count. A refresh queues LIST and returns immediately with the current cache; "
+                    "call again with refresh=false to read the completed reply.",
                     properties={
                         "network": {"type": "string", "description": "Network id. Optional when unambiguous.", "default": ""},
                         "filter": {"type": "string", "description": "Optional LIST mask, e.g. '#python*'.", "default": ""},
@@ -916,6 +1274,7 @@ class ToolRegistry:
                     properties={
                         "query": {"type": "string", "description": "Title to search (default: the current video's title).", "default": ""},
                         "languages": {"type": "string", "description": "Comma-separated ISO codes (default: the user's preferred subtitle language, else 'en').", "default": ""},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "Maximum subtitle matches (default 20).", "default": 20},
                     },
                     required=[],
                 ),
@@ -952,6 +1311,7 @@ class ToolRegistry:
                         "file": {"type": "string", "description": "Local media file path to play.", "default": ""},
                     },
                     required=[],
+                    any_of=[["item_id"], ["query"], ["url"], ["file"]],
                 ),
                 "handler": self._iptv_play,
             },
@@ -1057,6 +1417,77 @@ class ToolRegistry:
                 ),
                 "handler": self._browser_get_content,
             },
+            "browser_snapshot": {
+                "schema": self._tool_schema(
+                    name="browser_snapshot",
+                    description="Inspect visible interactive controls on the current rendered page and return stable refs for safe follow-up actions. Requires per-origin page-sharing consent.",
+                    properties={
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 250, "description": "Maximum visible controls (default 120).", "default": 120},
+                    },
+                    required=[],
+                ),
+                "handler": self._browser_snapshot,
+            },
+            "browser_wait": {
+                "schema": self._tool_schema(
+                    name="browser_wait",
+                    description="Wait for a selector, URL fragment, or visible text after navigation or interaction.",
+                    properties={
+                        "selector": {"type": "string", "description": "CSS selector to wait for.", "default": ""},
+                        "url_contains": {"type": "string", "description": "URL fragment to wait for.", "default": ""},
+                        "text": {"type": "string", "description": "Visible text to wait for.", "default": ""},
+                        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 30, "description": "Timeout in seconds (default 10).", "default": 10},
+                    },
+                    required=[],
+                    any_of=[["selector"], ["url_contains"], ["text"]],
+                ),
+                "handler": self._browser_wait,
+            },
+            "browser_click_ref": {
+                "schema": self._tool_schema(
+                    name="browser_click_ref",
+                    description="Click one stable element ref returned by browser_snapshot. Requires confirmation and a fresh snapshot.",
+                    properties={"ref": {"type": "string", "pattern": "^e[0-9]{1,3}$", "description": "Element ref from browser_snapshot."}},
+                    required=["ref"],
+                ),
+                "handler": self._browser_click_ref,
+            },
+            "browser_type_ref": {
+                "schema": self._tool_schema(
+                    name="browser_type_ref",
+                    description="Type into one stable input/contenteditable ref using framework-compatible input events. Requires confirmation.",
+                    properties={
+                        "ref": {"type": "string", "pattern": "^e[0-9]{1,3}$", "description": "Element ref from browser_snapshot."},
+                        "value": {"type": "string", "description": "Text to type."},
+                    },
+                    required=["ref", "value"],
+                ),
+                "handler": self._browser_type_ref,
+            },
+            "browser_select_ref": {
+                "schema": self._tool_schema(
+                    name="browser_select_ref",
+                    description="Select an option by value or exact label on a stable select ref. Requires confirmation.",
+                    properties={
+                        "ref": {"type": "string", "pattern": "^e[0-9]{1,3}$", "description": "Element ref from browser_snapshot."},
+                        "value": {"type": "string", "description": "Option value or exact visible label."},
+                    },
+                    required=["ref", "value"],
+                ),
+                "handler": self._browser_select_ref,
+            },
+            "browser_check_ref": {
+                "schema": self._tool_schema(
+                    name="browser_check_ref",
+                    description="Set a stable checkbox/radio ref to the requested state. Requires confirmation.",
+                    properties={
+                        "ref": {"type": "string", "pattern": "^e[0-9]{1,3}$", "description": "Element ref from browser_snapshot."},
+                        "checked": {"type": "boolean", "description": "Requested checked state.", "default": True},
+                    },
+                    required=["ref"],
+                ),
+                "handler": self._browser_check_ref,
+            },
             "browser_click": {
                 "schema": self._tool_schema(
                     name="browser_click",
@@ -1134,42 +1565,172 @@ class ToolRegistry:
         }
 
     @staticmethod
-    def _tool_schema(name: str, description: str, properties: Dict[str, Any], required: List[str]) -> Dict[str, Any]:
+    def _tool_schema(
+        name: str,
+        description: str,
+        properties: Dict[str, Any],
+        required: List[str],
+        any_of: Optional[List[List[str]]] = None,
+    ) -> Dict[str, Any]:
+        parameters: Dict[str, Any] = {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "additionalProperties": False,
+        }
+        if any_of:
+            parameters["anyOf"] = [{"required": keys} for keys in any_of]
         return {
             "type": "function",
             "function": {
                 "name": name,
                 "description": description,
-                "parameters": {"type": "object", "properties": properties, "required": required},
+                "parameters": parameters,
             },
         }
 
-    @staticmethod
-    def _validate_args(args: Dict[str, Any], schema: Dict[str, Any]) -> None:
+    @classmethod
+    def _validate_args(cls, args: Dict[str, Any], schema: Dict[str, Any]) -> None:
+        if not isinstance(args, dict):
+            raise ToolError("Tool arguments must be an object")
         props = schema.get("properties", {})
-        required = schema.get("required", [])
-        for key in required:
+        for key in schema.get("required", []):
             if key not in args:
                 raise ToolError(f"Missing required argument: {key}")
-        for key, value in args.items():
+        any_of = schema.get("anyOf", [])
+        if any_of and not any(
+            all(key in args and args[key] not in (None, "", []) for key in branch.get("required", []))
+            for branch in any_of
+        ):
+            choices = [" + ".join(branch.get("required", [])) for branch in any_of]
+            raise ToolError(f"Provide one of: {', '.join(choices)}")
+        for key in args:
             if key not in props:
                 raise ToolError(f"Unknown argument: {key}")
-            prop = props[key]
-            ptype = prop.get("type")
-            if ptype == "integer" and not isinstance(value, int):
+        for key, prop in props.items():
+            if key in args:
+                args[key] = cls._validate_value(args[key], prop, key)
+            elif "default" in prop:
+                args[key] = prop["default"]
+
+    @classmethod
+    def _validate_value(cls, value: Any, schema: Dict[str, Any], path: str) -> Any:
+        ptype = schema.get("type")
+        if ptype == "integer":
+            if isinstance(value, bool):
+                raise ToolError(f"Argument {path} must be an integer")
+            if not isinstance(value, int):
                 try:
-                    args[key] = int(value)
-                except (TypeError, ValueError):
-                    raise ToolError(f"Argument {key} must be an integer")
-            elif ptype == "boolean" and not isinstance(value, bool):
-                if isinstance(value, str):
-                    args[key] = value.lower() in ("true", "1", "yes", "on")
+                    value = int(value)
+                except (TypeError, ValueError) as exc:
+                    raise ToolError(f"Argument {path} must be an integer") from exc
+        elif ptype == "number":
+            if isinstance(value, bool):
+                raise ToolError(f"Argument {path} must be a number")
+            if not isinstance(value, (int, float)):
+                try:
+                    value = float(value)
+                except (TypeError, ValueError) as exc:
+                    raise ToolError(f"Argument {path} must be a number") from exc
+        elif ptype == "boolean":
+            if not isinstance(value, bool):
+                if isinstance(value, str) and value.lower() in ("true", "1", "yes", "on", "false", "0", "no", "off"):
+                    value = value.lower() in ("true", "1", "yes", "on")
                 else:
-                    args[key] = bool(value)
+                    raise ToolError(f"Argument {path} must be a boolean")
+        elif ptype == "string":
+            if not isinstance(value, str):
+                raise ToolError(f"Argument {path} must be a string")
+        elif ptype == "array":
+            if not isinstance(value, list):
+                raise ToolError(f"Argument {path} must be an array")
+            item_schema = schema.get("items", {})
+            value = [cls._validate_value(item, item_schema, f"{path}[{index}]") for index, item in enumerate(value)]
+        elif ptype == "object":
+            if not isinstance(value, dict):
+                raise ToolError(f"Argument {path} must be an object")
+            properties = schema.get("properties", {})
+            for key in schema.get("required", []):
+                if key not in value:
+                    raise ToolError(f"Missing required argument: {path}.{key}")
+            if schema.get("additionalProperties") is False:
+                unknown = set(value) - set(properties)
+                if unknown:
+                    raise ToolError(f"Unknown argument: {path}.{sorted(unknown)[0]}")
+            value = {
+                key: cls._validate_value(item, properties[key], f"{path}.{key}") if key in properties else item
+                for key, item in value.items()
+            }
+        if "enum" in schema and value not in schema["enum"]:
+            raise ToolError(f"Argument {path} must be one of: {', '.join(map(str, schema['enum']))}")
+        if "minimum" in schema and value < schema["minimum"]:
+            raise ToolError(f"Argument {path} must be at least {schema['minimum']}")
+        if "maximum" in schema and value > schema["maximum"]:
+            raise ToolError(f"Argument {path} must be at most {schema['maximum']}")
+        if "minItems" in schema and len(value) < schema["minItems"]:
+            raise ToolError(f"Argument {path} must contain at least {schema['minItems']} item(s)")
+        if "maxItems" in schema and len(value) > schema["maxItems"]:
+            raise ToolError(f"Argument {path} must contain at most {schema['maxItems']} item(s)")
+        if "minLength" in schema and len(value) < schema["minLength"]:
+            raise ToolError(f"Argument {path} is too short")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            raise ToolError(f"Argument {path} is too long")
+        if "pattern" in schema and not re.search(schema["pattern"], value):
+            raise ToolError(f"Argument {path} has an invalid format")
+        return value
 
     # ------------------------------------------------------------------
     # Engine-backed handlers
     # ------------------------------------------------------------------
+
+    def _agent_diagnostics(self) -> Dict[str, Any]:
+        provider = self.config.llm.provider
+        preset = LLM_PROVIDER_PRESETS.get(provider, {})
+        policies = [tool_policy(name) for name in self._tools]
+        return {
+            "success": True,
+            "llm": {
+                "provider": provider,
+                "model": self.config.llm.model,
+                "base_url": redact_url_secrets(self.config.llm.base_url or preset.get("base_url", "")),
+                "api_key_configured": bool(self.config.llm.api_key),
+                "streaming": bool(preset.get("streaming", True)),
+                "tools": bool(preset.get("tools", True)),
+                "reasoning_effort": bool(
+                    self.config.llm.custom_reasoning_effort if provider == "custom"
+                    else preset.get("reasoning_effort", False)
+                ),
+            },
+            "integrations": {
+                "jackett": bool(self.config.indexer.api_key),
+                "brave": bool(self.config.web_search.brave_api_key),
+                "perplexity": bool(self.config.web_search.api_key),
+                "memory": self.memory is not None,
+                "rss_feeds": len(self.config.rss.feeds),
+                "irc": self._irc_client is not None,
+                "iptv_gui": self._iptv_bridge is not None,
+                "browser_gui": self._browser_bridge is not None,
+                "download_manager": self._dl_engine is not None,
+            },
+            "tools": {
+                "total": len(self._tools),
+                "read_only": sum(policy.effect == "read" for policy in policies),
+                "confirmation_required": sum(policy.confirmation == "always" for policy in policies),
+            },
+            "limits": {
+                "max_turns": self.config.llm.max_turns,
+                "max_llm_calls": self.config.llm.max_llm_calls,
+                "max_tool_calls": self.config.llm.max_tool_calls,
+                "task_timeout_seconds": self.config.llm.task_timeout_seconds,
+                "context_budget_tokens": self.config.llm.context_budget_tokens,
+            },
+            "watchdog": {
+                "enabled": self.config.watchdog.enabled,
+                "auto_heal": self.config.watchdog.auto_heal,
+                "stall_threshold_seconds": self.config.watchdog.stall_threshold_seconds,
+                "cooldown_seconds": self.config.watchdog.cooldown_seconds,
+            },
+        }
 
     def _add_magnet(self, uri: str, save_path: str, category: str = "Other") -> Dict[str, Any]:
         uri = uri.strip()
@@ -1192,23 +1753,26 @@ class ToolRegistry:
         """The download-manager engine — injected by the GUI; lazily created
         (and started) on first use elsewhere, e.g. the CLI REPL."""
         if self._dl_engine is None:
-            from dlmgr.engine import DownloadEngine
+            with self._resource_lock:
+                if self._dl_engine is None:
+                    from dlmgr.engine import DownloadEngine
 
-            self._dl_engine = DownloadEngine(self.config.download)
-            self._dl_engine.start()
-            logger.info("add_download: lazily started a DownloadEngine")
+                    self._dl_engine = DownloadEngine(self.config.download)
+                    self._owns_dl_engine = True
+                    self._dl_engine.start()
+                    logger.info("add_download: lazily started a DownloadEngine")
         return self._dl_engine
 
-    def _add_download(self, url: str, filename: str = "") -> Dict[str, Any]:
-        url = url.strip()
-        if not url.lower().startswith(("http://", "https://")):
-            raise ToolError("Invalid download URL — must start with http:// or https://")
+    def _add_download(self, url: str, filename: str = "", save_path: str = "") -> Dict[str, Any]:
+        url = validate_public_http_url(url)
+        if save_path:
+            save_path = os.path.join(os.path.abspath(os.path.expanduser(save_path)), "")
         engine = self._get_dl_engine()
         low = url.lower().split("?", 1)[0]
         if low.endswith((".m3u8", ".mpd")):
-            job = engine.add_stream_job(url=url, filename=filename)
+            job = engine.add_stream_job(url=url, filename=filename, save_path=save_path)
         else:
-            job = engine.add_job(url=url, filename=filename)
+            job = engine.add_job(url=url, filename=filename, save_path=save_path)
         self._progress(f"Download queued: {job.filename}")
         return {
             "success": True,
@@ -1253,13 +1817,21 @@ class ToolRegistry:
                             + ", ".join(j.id for j in matches))
         raise ToolError(f"Unknown job id: {job_id} — use list_downloads to see jobs")
 
-    def _list_downloads(self, status: str = "") -> Dict[str, Any]:
+    def _list_downloads(self, status: str = "", offset: int = 0, limit: int = 50) -> Dict[str, Any]:
         engine = self._get_dl_engine()
         jobs = engine.list_jobs()
         if status:
             jobs = [j for j in jobs if j.status.value == status.lower()]
-        return {"success": True, "count": len(jobs),
-                "downloads": [self._fmt_dl_job(j) for j in jobs]}
+        total = len(jobs)
+        page = jobs[offset:offset + limit]
+        return {
+            "success": True,
+            "count": len(page),
+            "total": total,
+            "offset": offset,
+            "has_more": offset + len(page) < total,
+            "downloads": [self._fmt_dl_job(j) for j in page],
+        }
 
     def _pause_download(self, job_id: str) -> Dict[str, Any]:
         engine = self._get_dl_engine()
@@ -1305,11 +1877,32 @@ class ToolRegistry:
     def _remove_torrent(self, info_hash: str, delete_files: bool = False) -> Dict[str, Any]:
         return {"success": self.engine.remove(info_hash, delete_files), "info_hash": info_hash, "deleted": delete_files}
 
-    def _list_torrents(self, filter: Optional[str] = None) -> Dict[str, Any]:
-        return {"torrents": self.engine.list_torrents(filter=filter)}
+    def _list_torrents(self, filter: str = "", offset: int = 0, limit: int = 50) -> Dict[str, Any]:
+        torrents = self.engine.list_torrents(filter=filter or None)
+        total = len(torrents)
+        page = torrents[offset:offset + limit]
+        return {
+            "torrents": page,
+            "count": len(page),
+            "total": total,
+            "offset": offset,
+            "has_more": offset + len(page) < total,
+        }
 
-    def _get_torrent_status(self, info_hash: str) -> Dict[str, Any]:
-        return {"status": self.engine.get_torrent_status(info_hash)}
+    def _get_torrent_status(self, info_hash: str, file_offset: int = 0, file_limit: int = 100) -> Dict[str, Any]:
+        status = dict(self.engine.get_torrent_status(info_hash))
+        files = status.get("files")
+        if isinstance(files, list):
+            total = len(files)
+            page = files[file_offset:file_offset + file_limit]
+            status["files"] = page
+            status["file_page"] = {
+                "count": len(page),
+                "total": total,
+                "offset": file_offset,
+                "has_more": file_offset + len(page) < total,
+            }
+        return {"status": status}
 
     def _set_file_priority(self, info_hash: str, file_id: int, level: int) -> Dict[str, Any]:
         return {"success": self.engine.set_file_priority(info_hash, file_id, level), "info_hash": info_hash}
@@ -1436,7 +2029,7 @@ class ToolRegistry:
         about = about_box.get("value")
         if about:
             result["about"] = about
-        if result.get("success") and result.get("results"):
+        if result.get("success") and isinstance(result.get("results"), list):
             with self._search_cache_lock:
                 self._search_cache[cache_key] = (time.time(), result)
         return self._page_result(result, offset)
@@ -2106,16 +2699,38 @@ class ToolRegistry:
         return self._web_search.search(query, limit=10)
 
     def _propose_rename_and_category(self, info_hash: str, categories: Optional[List[str]] = None) -> Dict[str, Any]:
-        # Deferred to organizer.py; tools layer returns raw file list for the LLM to reason over.
+        # Compatibility alias for the read-only organization analysis.
+        return self._analyze_organization(info_hash, categories)
+
+    def _analyze_organization(self, info_hash: str, categories: Optional[List[str]] = None) -> Dict[str, Any]:
+        from agent.organizer import Organizer
+
         status = self.engine.get_torrent_status(info_hash)
-        return {
-            "info_hash": info_hash,
-            "name": status.get("name"),
-            "files": status.get("files", []),
-            "current_category": status.get("category"),
-            "categories": categories or self.config.categories,
-            "note": "Use this data to propose a clean destination folder and filename(s).",
-        }
+        if status.get("progress", 0) < 1.0:
+            return {"success": False, "error": "Torrent must be complete before it can be organized"}
+        organizer = Organizer(self.config.default_save_path)
+        proposal = organizer.build_proposal(status, categories or self.config.categories)
+        proposal["success"] = True
+        return proposal
+
+    def _apply_organization_plan(
+        self,
+        info_hash: str,
+        category: str,
+        destination: str,
+        file_renames: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
+        base = os.path.realpath(self.config.default_save_path)
+        destination = os.path.realpath(destination)
+        try:
+            inside_base = os.path.commonpath([base, destination]) == base
+        except ValueError:
+            inside_base = False
+        if not inside_base:
+            raise ToolError(f"Organization destination must stay inside the default save path: {base}")
+        if category not in self.config.categories:
+            raise ToolError(f"Unknown category: {category}")
+        return self.engine.organize_torrent(info_hash, destination, category, file_renames or [])
 
     # ------------------------------------------------------------------
     # General web access
@@ -2143,9 +2758,13 @@ class ToolRegistry:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=min(8, len(targets))) as pool:
             results = list(pool.map(lambda u: self._fetch_one(u, max_chars), targets))
+        succeeded = sum(1 for result in results if result.get("success"))
         return {
-            "success": any(r.get("success") for r in results),
+            "success": succeeded > 0,
+            "partial": 0 < succeeded < len(results),
             "count": len(results),
+            "succeeded": succeeded,
+            "failed": len(results) - succeeded,
             "results": results,
         }
 
@@ -2153,7 +2772,7 @@ class ToolRegistry:
         """Fetch a single page and extract its text content."""
         self._progress(f"Fetching {url}…")
         try:
-            resp = requests.get(url, timeout=30, headers={"User-Agent": BROWSER_UA})
+            resp = public_http_get(url, timeout=30, headers={"User-Agent": BROWSER_UA})
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("web_fetch failed for %s: %s", url, exc)
@@ -2235,6 +2854,21 @@ class ToolRegistry:
             return {"success": False, "error": "Memory is disabled in settings."}
         return self.memory.search(query)
 
+    def _list_memories_tool(self, scope: str = "", limit: int = 200) -> Dict[str, Any]:
+        if self.memory is None:
+            return {"success": False, "error": "Memory is disabled in settings."}
+        return self.memory.list_entries(scope, limit)
+
+    def _edit_memory_tool(self, memory_id: str, content: str) -> Dict[str, Any]:
+        if self.memory is None:
+            return {"success": False, "error": "Memory is disabled in settings."}
+        return self.memory.edit(memory_id, content)
+
+    def _forget_memory_tool(self, memory_id: str) -> Dict[str, Any]:
+        if self.memory is None:
+            return {"success": False, "error": "Memory is disabled in settings."}
+        return self.memory.forget(memory_id)
+
     # ------------------------------------------------------------------
     # IRC handlers (embedded IRC client — shared with the GUI's IRC tab)
     # ------------------------------------------------------------------
@@ -2243,11 +2877,14 @@ class ToolRegistry:
         """The IRC client core — injected by the GUI; lazily created (and
         started) on first use elsewhere, e.g. the CLI REPL."""
         if self._irc_client is None:
-            from ircmgr.client import IRCClientCore
+            with self._resource_lock:
+                if self._irc_client is None:
+                    from ircmgr.client import IRCClientCore
 
-            self._irc_client = IRCClientCore(self.config.irc)
-            self._irc_client.start()
-            logger.info("irc tool: lazily started an IRCClientCore")
+                    self._irc_client = IRCClientCore(self.config.irc)
+                    self._owns_irc_client = True
+                    self._irc_client.start()
+                    logger.info("irc tool: lazily started an IRCClientCore")
         return self._irc_client
 
     @staticmethod
@@ -2420,23 +3057,21 @@ class ToolRegistry:
             return {"success": False, "error": err}
         limit = max(1, min(int(limit or 50), 500))
         if refresh:
-            started = time.time()
             client.send_raw(net_id, "LIST " + filter.strip() if filter.strip() else "LIST")
-            # LIST replies stream in as numerics; wait for the end-of-list.
-            while time.time() - started < 20:
-                if client.state.chanlist_ts(net_id) > started:
-                    break
-                time.sleep(0.4)
         rows = client.state.chanlist_of(net_id)
         out: Dict[str, Any] = {
             "success": True,
             "network": net_id,
             "count": len(rows),
             "channels": rows[:limit],
+            "pending": bool(refresh),
+            "cached_at": client.state.chanlist_ts(net_id),
         }
-        if not rows:
-            out["note"] = ("No channel list yet — the server may still be sending it "
-                           "(large networks take a while); retry with refresh=false.")
+        if refresh:
+            out["note"] = ("LIST queued; returning the current cache without waiting. "
+                           "Call again with refresh=false for the completed reply.")
+        elif not rows:
+            out["note"] = "No cached channel list is available yet."
         return out
 
     def _irc_list_nicks(self, channel: str, network: str = "") -> Dict[str, Any]:
@@ -2556,30 +3191,33 @@ class ToolRegistry:
         if self._iptv_bridge is not None:
             return self._iptv_bridge.manager
         if self._iptv_manager is None:
-            from iptv.manager import IPTVManager
-            from iptv.models import PlaylistSource
+            with self._resource_lock:
+                if self._iptv_manager is None:
+                    from iptv.manager import IPTVManager
+                    from iptv.models import PlaylistSource
 
-            cfg = self.config.iptv
-            self._iptv_manager = IPTVManager(
-                sources=[
-                    PlaylistSource(
-                        id=s.id, name=s.name, kind=s.kind, url=s.url,
-                        user_agent=s.user_agent, referer=s.referer,
-                        username=s.username, password=s.password,
-                        enabled=s.enabled, auto_refresh_minutes=s.auto_refresh_minutes,
-                        epg_url=getattr(s, "epg_url", ""),
+                    cfg = self.config.iptv
+                    self._iptv_manager = IPTVManager(
+                        sources=[
+                            PlaylistSource(
+                                id=s.id, name=s.name, kind=s.kind, url=s.url,
+                                user_agent=s.user_agent, referer=s.referer,
+                                username=s.username, password=s.password,
+                                enabled=s.enabled, auto_refresh_minutes=s.auto_refresh_minutes,
+                                epg_url=getattr(s, "epg_url", ""),
+                            )
+                            for s in cfg.sources
+                        ],
+                        tmdb_api_key=cfg.tmdb_api_key,
+                        data_dir=cfg.cache_dir or None,
+                        cache_seconds=cfg.cache_seconds,
+                        hwdec=cfg.hwdec,
                     )
-                    for s in cfg.sources
-                ],
-                tmdb_api_key=cfg.tmdb_api_key,
-                data_dir=cfg.cache_dir or None,
-                cache_seconds=cfg.cache_seconds,
-                hwdec=cfg.hwdec,
-            )
-            src = self._iptv_manager.active_source()
-            if src is not None:
-                logger.info("iptv tool: lazily loading playlist for %s", src.name)
-                self._iptv_manager.load_source_async(src).join(timeout=60)
+                    self._owns_iptv_manager = True
+                    src = self._iptv_manager.active_source()
+                    if src is not None:
+                        logger.info("iptv tool: lazily loading playlist for %s", src.name)
+                        self._iptv_manager.load_source_async(src).join(timeout=60)
         return self._iptv_manager
 
     @staticmethod
@@ -2695,7 +3333,7 @@ class ToolRegistry:
             "languages": languages or self.config.iptv.preferred_sub_lang or "en",
         }
 
-    def _iptv_find_subtitles(self, query: str = "", languages: str = "") -> Dict[str, Any]:
+    def _iptv_find_subtitles(self, query: str = "", languages: str = "", limit: int = 20) -> Dict[str, Any]:
         from iptv.opensubtitles import OpenSubtitlesError
         ctx = self._ost_context(query, languages)
         if not ctx["query"] and not ctx["file_path"]:
@@ -2706,7 +3344,9 @@ class ToolRegistry:
                 query=ctx["query"], file_path=ctx["file_path"], languages=ctx["languages"])
         except OpenSubtitlesError as exc:
             return {"success": False, "error": str(exc)}
-        return {"success": True, "count": len(results), "results": results,
+        total = len(results)
+        results = results[:limit]
+        return {"success": True, "count": len(results), "total": total, "results": results,
                 "note": "Load one with iptv_load_subtitle (file_id), or call iptv_load_subtitle "
                         "with no file_id to auto-pick the best match."}
 
@@ -2843,6 +3483,33 @@ class ToolRegistry:
         return self._browser_call("get_content", max_chars=int(max_chars),
                                   include_links=bool(include_links))
 
+    def _browser_snapshot(self, limit: int = 120) -> Dict[str, Any]:
+        return self._browser_call("snapshot", limit=int(limit))
+
+    def _browser_wait(
+        self,
+        selector: str = "",
+        url_contains: str = "",
+        text: str = "",
+        timeout_seconds: int = 10,
+    ) -> Dict[str, Any]:
+        return self._browser_call(
+            "wait", selector=selector, url_contains=url_contains, text=text,
+            timeout_seconds=int(timeout_seconds),
+        )
+
+    def _browser_click_ref(self, ref: str) -> Dict[str, Any]:
+        return self._browser_call("click_ref", ref=ref)
+
+    def _browser_type_ref(self, ref: str, value: str) -> Dict[str, Any]:
+        return self._browser_call("type_ref", ref=ref, value=value)
+
+    def _browser_select_ref(self, ref: str, value: str) -> Dict[str, Any]:
+        return self._browser_call("select_ref", ref=ref, value=value)
+
+    def _browser_check_ref(self, ref: str, checked: bool = True) -> Dict[str, Any]:
+        return self._browser_call("check_ref", ref=ref, checked=bool(checked))
+
     def _browser_click(self, selector: str = "", text: str = "") -> Dict[str, Any]:
         self._progress(f"Browser: click {selector or text}")
         return self._browser_call("click", selector=selector, text=text)
@@ -2884,7 +3551,13 @@ class ToolRegistry:
             ],
         }
 
-    def _get_rss_feed_items(self, feed_url: str, include_seen: bool = False) -> Dict[str, Any]:
+    def _get_rss_feed_items(
+        self,
+        feed_url: str,
+        include_seen: bool = False,
+        offset: int = 0,
+        limit: int = 40,
+    ) -> Dict[str, Any]:
         """Fetch items from an RSS feed."""
         feed = self._find_feed(feed_url)
         if not feed:
@@ -2895,9 +3568,9 @@ class ToolRegistry:
             return {"success": False, "feed_url": feed_url, "error": result["error"]}
 
         items = result.get("all_items", []) if include_seen else result.get("items", [])
-        # Mark items as seen after fetching.
-        if not include_seen:
-            self._rss_monitor.mark_seen(feed, items)
+        # Reading a feed is side-effect free; items are marked seen only after download.
+        item_total = len(items)
+        page = items[offset:offset + limit]
 
         return {
             "success": True,
@@ -2906,8 +3579,12 @@ class ToolRegistry:
             "mode": feed.mode,
             "total_items": result["total_items"],
             "new_items": result["new_items"],
-            "items": items,
-            "note": "Items with magnet_uri or torrent_url can be downloaded. Use download_from_feed with item indices to download.",
+            "count": len(page),
+            "item_total": item_total,
+            "offset": offset,
+            "has_more": offset + len(page) < item_total,
+            "items": page,
+            "note": "Items with magnet_uri or torrent_url can be downloaded. Pass their item_id values to download_from_feed.",
         }
 
     def _persist_rss_config(self) -> None:
@@ -2940,45 +3617,102 @@ class ToolRegistry:
         self._persist_rss_config()
         return {"success": True, "removed": url}
 
-    def _download_from_feed(self, feed_url: str, item_indices: List[int], category: str = "Other") -> Dict[str, Any]:
-        """Download specific items from an RSS feed by index."""
+    def _update_rss_feed(
+        self,
+        url: str,
+        name: Optional[str] = None,
+        mode: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        feed = self._find_feed(url)
+        if feed is None:
+            return {"success": False, "error": f"Feed not found: {url}"}
+        if name is None and mode is None and category is None:
+            return {"success": False, "error": "Provide at least one of name, mode, or category"}
+        if name is not None:
+            feed.name = name.strip() or url
+        if mode is not None:
+            feed.mode = mode
+        if category is not None:
+            feed.category = category.strip() or "Other"
+        self._persist_rss_config()
+        return {
+            "success": True,
+            "url": feed.url,
+            "name": feed.name,
+            "mode": feed.mode,
+            "category": feed.category,
+        }
+
+    def _download_from_feed(
+        self,
+        feed_url: str,
+        item_ids: Optional[List[str]] = None,
+        item_indices: Optional[List[int]] = None,
+        category: str = "Other",
+    ) -> Dict[str, Any]:
+        """Download specific items from an RSS feed by stable id or legacy index."""
         feed = self._find_feed(feed_url)
         if not feed:
             return {"success": False, "error": f"Feed not found: {feed_url}"}
 
         result = self._rss_monitor.check_feed(feed)
         all_items = result.get("all_items", [])
+        new_items = result.get("items", [])
         if not all_items:
             return {"success": False, "error": "No items in feed"}
+        if not item_ids and not item_indices:
+            return {"success": False, "error": "Provide item_ids from get_rss_feed_items or legacy item_indices"}
+
+        selected = []
+        failed = []
+        if item_ids:
+            by_id = {str(item.get("item_id") or item.get("guid") or ""): item for item in all_items}
+            for item_id in dict.fromkeys(str(value) for value in item_ids):
+                item = by_id.get(item_id)
+                if item is None:
+                    failed.append({"item_id": item_id, "error": "Item id not found in current feed"})
+                else:
+                    selected.append((item_id, None, item))
+        else:
+            for idx in dict.fromkeys(item_indices or []):
+                if idx < 0 or idx >= len(new_items):
+                    failed.append({"index": idx, "error": "Index out of range for current new items"})
+                else:
+                    item = new_items[idx]
+                    selected.append((str(item.get("item_id") or item.get("guid") or ""), idx, item))
 
         downloaded = []
-        failed = []
-        for idx in item_indices:
-            if idx < 0 or idx >= len(all_items):
-                failed.append({"index": idx, "error": "Index out of range"})
-                continue
-            item = all_items[idx]
+        seen_items = []
+        for item_id, idx, item in selected:
             magnet = item.get("magnet_uri", "")
             torrent_url = item.get("torrent_url", "")
-            title = item.get("title", f"item_{idx}")
+            title = item.get("title", item_id or f"item_{idx}")
+            output = {"item_id": item_id, "title": title}
+            if idx is not None:
+                output["index"] = idx
 
             if magnet:
                 try:
-                    result = self._add_magnet(magnet, self.config.default_save_path, category)
-                    downloaded.append({"index": idx, "title": title, "info_hash": result.get("info_hash", "")})
+                    download_result = self._add_magnet(magnet, self.config.default_save_path, category)
+                    downloaded.append({**output, "info_hash": download_result.get("info_hash", "")})
+                    seen_items.append(item)
                 except Exception as exc:
-                    failed.append({"index": idx, "title": title, "error": str(exc)})
+                    failed.append({**output, "error": str(exc)})
             elif torrent_url:
                 try:
-                    result = self._add_torrent_from_url(torrent_url, self.config.default_save_path, category)
-                    downloaded.append({"index": idx, "title": title, "info_hash": result.get("info_hash", "")})
+                    download_result = self._add_torrent_from_url(torrent_url, self.config.default_save_path, category)
+                    downloaded.append({**output, "info_hash": download_result.get("info_hash", "")})
+                    seen_items.append(item)
                 except Exception as exc:
-                    failed.append({"index": idx, "title": title, "error": str(exc)})
+                    failed.append({**output, "error": str(exc)})
             else:
-                failed.append({"index": idx, "title": title, "error": "No magnet or torrent URL in item"})
+                failed.append({**output, "error": "No magnet or torrent URL in item"})
 
-        # Mark all items as seen.
-        self._rss_monitor.mark_seen(feed, all_items)
+        # Mark only successfully downloaded items as seen.
+        if seen_items:
+            self._rss_monitor.mark_seen(feed, seen_items)
+            self._persist_rss_config()
 
         return {
             "success": len(downloaded) > 0,
@@ -2995,19 +3729,41 @@ class ToolRegistry:
                 return f
         return None
 
+    def _validate_torrent_download_url(self, url: str) -> str:
+        from urllib.parse import urlsplit
+
+        candidate = urlsplit((url or "").strip())
+        configured = urlsplit(self.config.indexer.url or "")
+        candidate_origin = (candidate.scheme.lower(), candidate.hostname, candidate.port)
+        configured_origin = (configured.scheme.lower(), configured.hostname, configured.port)
+        if self.config.indexer.api_key and candidate_origin == configured_origin and candidate.hostname:
+            return candidate.geturl()
+        return validate_public_http_url(url)
+
     def _add_torrent_from_url(self, url: str, save_path: str, category: str = "Other") -> Dict[str, Any]:
         """Download a .torrent file from URL and add it to the engine."""
         import tempfile
+        from urllib.parse import urljoin
+
         try:
-            try:
-                resp = requests.get(url, timeout=30, headers={"User-Agent": BROWSER_UA})
-            except requests.exceptions.InvalidSchema as exc:
+            current = url
+            for _ in range(6):
+                current = self._validate_torrent_download_url(current)
+                resp = requests.get(
+                    current, timeout=30, headers={"User-Agent": BROWSER_UA}, allow_redirects=False)
+                if resp.status_code not in (301, 302, 303, 307, 308):
+                    break
+                location = resp.headers.get("Location", "")
+                resp.close()
                 # Indexer download links (e.g. Jackett /dl/) sometimes redirect
                 # straight to a magnet: URI, which requests cannot follow.
-                magnet = re.search(r"magnet:\?[^\s'\"]+", str(exc))
-                if not magnet:
-                    raise
-                return self._add_magnet(magnet.group(0), save_path, category)
+                if location.startswith("magnet:"):
+                    return self._add_magnet(location, save_path, category)
+                if not location:
+                    raise ToolError("Torrent redirect did not include a destination")
+                current = urljoin(current, location)
+            else:
+                raise ToolError("Too many torrent download redirects")
             resp.raise_for_status()
             body = resp.content
             # Some indexers return the magnet URI as the response body.

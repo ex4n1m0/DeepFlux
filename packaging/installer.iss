@@ -3,11 +3,16 @@
 ; Then open this script in Inno Setup and Compile.
 
 #define MyAppName "DeepFlux"
-#define MyAppVersion "3.2.8"
+#define MyAppVersion "3.4.1"
 #define MyAppPublisher "DeepFlux"
 #define MyAppExeName "DeepFlux.exe"
 ; PyInstaller onedir output, relative to this script (packaging/..\dist).
+#ifndef BuildDir
 #define BuildDir "..\dist"
+#endif
+#ifndef BuildOutputDir
+#define BuildOutputDir BuildDir
+#endif
 
 [Setup]
 AppId={{7E1A3C4D-8B2F-4C5E-9A1D-3F6E2B8C7A0D}
@@ -17,8 +22,8 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-OutputDir={#BuildDir}
-OutputBaseFilename=DeepFlux3.2.8Setup
+OutputDir={#BuildOutputDir}
+OutputBaseFilename=DeepFlux3.4.1Setup
 SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -44,7 +49,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
 FinishedHeadingLabel=DeepFlux {#MyAppVersion} installation complete
-FinishedLabel=DeepFlux has been installed successfully.%n%nThe Chrome native messaging host has been registered automatically.%n%nTo use the Chrome extension:%n  1. Open chrome://extensions and enable Developer mode%n  2. Click "Load unpacked" and select the chrome_extension folder%n     (found in the install directory under _internal\chrome_extension\)%n  3. The extension will connect to DeepFlux automatically%n%nYou can now manage sources via Download → Sources and access%nthe full guide via Help → User Guide.%n%nThe IPTV tab bundles libmpv + FFmpeg (LGPL) so video plays with no external installs. License notices are in the install directory under _internal\licenses\.
+; Keep this SHORT — the finished-page label has a fixed height (no scroll,
+; no auto-grow), and long text gets cropped on machines with larger system
+; fonts / text scaling. The full Chrome-extension steps live in the in-app
+; Help → User Guide ("Chrome Extension" section).
+FinishedLabel=DeepFlux has been installed successfully.%n%nThe Chrome native messaging host was registered automatically. For the Chrome extension steps, open Help → User Guide.%n%nIPTV playback bundles libmpv + FFmpeg (LGPL); license notices are in _internal\licenses\.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -59,7 +68,6 @@ Name: "{group}\IPTV Player Licenses (LGPL)"; Filename: "notepad.exe"; Parameters
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--register-native-host"; Description: "Register Chrome native messaging host"; Flags: runhidden
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--register-associations"; Description: "Register file associations (.torrent, magnet:, media, html)"; Flags: runhidden
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 

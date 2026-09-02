@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import struct
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -22,7 +23,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.opensubtitles.com/api/v1"
-USER_AGENT = "DeepFlux v3.2.8"
+USER_AGENT = "DeepFlux v3.4.1"
 _TIMEOUT = 20
 
 
@@ -97,6 +98,13 @@ class OpenSubtitlesError(Exception):
     """User-facing failure (quota exhausted, bad key, network, …)."""
 
 
+@dataclass(frozen=True)
+class OpenSubtitlesLoginWarning:
+    """Non-fatal account-login failure; API-key-only mode may continue."""
+
+    message: str
+
+
 class OpenSubtitlesClient:
     """Search and download subtitles from OpenSubtitles.com."""
 
@@ -105,10 +113,16 @@ class OpenSubtitlesClient:
         self._username = username.strip()
         self._password = password
         self._token: Optional[str] = None
+        self._login_attempted = False
+        self._login_warning: Optional[OpenSubtitlesLoginWarning] = None
 
     @property
     def available(self) -> bool:
         return bool(self.api_key)
+
+    @property
+    def login_warning(self) -> Optional[OpenSubtitlesLoginWarning]:
+        return self._login_warning
 
     # -- HTTP plumbing --------------------------------------------------------
     def _headers(self) -> Dict[str, str]:
@@ -118,10 +132,13 @@ class OpenSubtitlesClient:
             h["Authorization"] = f"Bearer {self._token}"
         return h
 
-    def _login(self) -> None:
-        """Exchange account credentials for a JWT (higher download quota)."""
+    def _login(self) -> Optional[OpenSubtitlesLoginWarning]:
+        """Try account login, returning a typed non-fatal warning on failure."""
         if self._token or not (self._username and self._password):
-            return
+            return self._login_warning
+        if self._login_attempted:
+            return self._login_warning
+        self._login_attempted = True
         try:
             resp = requests.post(
                 f"{API_BASE}/login",
@@ -131,11 +148,30 @@ class OpenSubtitlesClient:
                 timeout=_TIMEOUT,
             )
             if resp.status_code == 200:
-                self._token = resp.json().get("token")
+                try:
+                    self._token = resp.json().get("token")
+                except (AttributeError, TypeError, ValueError):
+                    self._token = None
+                if self._token:
+                    return None
+                message = ("OpenSubtitles account login returned no token; "
+                           "continuing with API-key-only mode.")
+            elif resp.status_code in (401, 403):
+                message = ("OpenSubtitles account login was rejected; check the "
+                           "account username/password. Continuing with API-key-only mode.")
             else:
-                logger.warning("OpenSubtitles login failed: HTTP %s", resp.status_code)
-        except requests.RequestException as exc:
-            logger.warning("OpenSubtitles login error: %s", exc)
+                message = (f"OpenSubtitles account login failed (HTTP {resp.status_code}); "
+                           "continuing with API-key-only mode.")
+            logger.warning("OpenSubtitles account login unavailable (HTTP %s)",
+                           resp.status_code)
+        except requests.RequestException:
+            message = ("OpenSubtitles account login could not reach the service; "
+                       "continuing with API-key-only mode.")
+            # Deliberately omit exception/request details: login requests carry
+            # account credentials in their body.
+            logger.warning("OpenSubtitles account login request failed")
+        self._login_warning = OpenSubtitlesLoginWarning(message)
+        return self._login_warning
 
     def _get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
         try:

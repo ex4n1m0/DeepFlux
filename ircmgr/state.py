@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional
@@ -26,10 +27,32 @@ KIND_SERVER = "server"      # MOTD, numerics, connection chatter
 KIND_ERROR = "error"
 
 CHANNEL_PREFIXES = ("#", "&", "+", "!")
+CASEMAPPINGS = ("ascii", "strict-rfc1459", "rfc1459")
+_PREFIX_ORDER = "~&@%+"
 
 
 def is_channel(target: str) -> bool:
     return target.startswith(CHANNEL_PREFIXES)
+
+
+def irc_casefold(value: str, casemapping: str = "rfc1459") -> str:
+    """Fold an IRC identifier according to the server's advertised mapping."""
+    folded = value.lower()
+    if casemapping == "ascii":
+        return folded
+    folded = folded.translate(str.maketrans({"[": "{", "]": "}", "\\": "|"}))
+    if casemapping != "strict-rfc1459":
+        folded = folded.replace("^", "~")
+    return folded
+
+
+def irc_equals(left: str, right: str, casemapping: str = "rfc1459") -> bool:
+    return irc_casefold(left, casemapping) == irc_casefold(right, casemapping)
+
+
+def normalize_prefix(prefix: str) -> str:
+    """Return all known membership prefixes in strongest-to-weakest order."""
+    return "".join(symbol for symbol in _PREFIX_ORDER if symbol in prefix)
 
 
 @dataclass
@@ -38,16 +61,24 @@ class ChatMessage:
     kind: str
     nick: str = ""          # source nick ("" for server messages)
     text: str = ""
+    event_id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    account: str = ""
+    away: Optional[bool] = None
+    tags: Dict[str, Optional[str]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, object]:
-        return {"ts": self.ts, "kind": self.kind, "nick": self.nick, "text": self.text}
+        return {
+            "id": self.event_id, "ts": self.ts, "kind": self.kind,
+            "nick": self.nick, "text": self.text, "account": self.account,
+            "away": self.away, "tags": dict(self.tags),
+        }
 
 
 @dataclass
 class ChannelState:
     name: str
     topic: str = ""
-    # nick -> membership prefix ("" / "@" / "+"), insertion-ordered
+    # nick -> membership prefixes ("" / "@" / "@+" / etc.), insertion-ordered
     nicks: Dict[str, str] = field(default_factory=dict)
     buffer: Deque[ChatMessage] = field(default_factory=deque)
 
@@ -61,8 +92,12 @@ class NetworkState:
     nick: str = ""
     connected: bool = False
     connecting: bool = False
+    casemapping: str = "rfc1459"
     channels: Dict[str, ChannelState] = field(default_factory=dict)
     server_buffer: Deque[ChatMessage] = field(default_factory=deque)
+    # IRCv3 account-notify / away-notify metadata keyed by last-seen nick.
+    accounts: Dict[str, str] = field(default_factory=dict)
+    away: Dict[str, bool] = field(default_factory=dict)
     # Last LIST result: [{"channel": str, "users": int, "topic": str}]
     chanlist: List[Dict[str, Any]] = field(default_factory=list)
     chanlist_ts: float = 0.0
@@ -75,6 +110,17 @@ class IRCState:
         self.buffer_lines = max(50, buffer_lines)
         self._networks: Dict[str, NetworkState] = {}
         self._lock = threading.RLock()
+
+    def _channel_locked(self, net: NetworkState, channel: str) -> Optional[ChannelState]:
+        folded = irc_casefold(channel, net.casemapping)
+        return next((ch for ch in net.channels.values()
+                     if irc_casefold(ch.name, net.casemapping) == folded), None)
+
+    @staticmethod
+    def _nick_key(nicks: Dict[str, Any], nick: str, casemapping: str) -> Optional[str]:
+        folded = irc_casefold(nick, casemapping)
+        return next((known for known in nicks
+                     if irc_casefold(known, casemapping) == folded), None)
 
     # -- network lifecycle -------------------------------------------------
 
@@ -107,12 +153,49 @@ class IRCState:
             if not connected:
                 for ch in net.channels.values():
                     ch.nicks.clear()
+                net.accounts.clear()
+                net.away.clear()
 
     def set_connecting(self, net_id: str, flag: bool) -> None:
         with self._lock:
             net = self._networks.get(net_id)
             if net:
                 net.connecting = flag
+
+    def set_casemapping(self, net_id: str, casemapping: str) -> None:
+        mapping = casemapping.lower()
+        if mapping not in CASEMAPPINGS:
+            return
+        with self._lock:
+            net = self._networks.get(net_id)
+            if not net:
+                return
+            net.casemapping = mapping
+            # Coalesce channels which only differ under the newly advertised mapping.
+            merged: Dict[str, ChannelState] = {}
+            for channel in net.channels.values():
+                existing = next((candidate for candidate in merged.values()
+                                 if irc_equals(candidate.name, channel.name, mapping)), None)
+                if existing is None:
+                    merged[channel.name] = channel
+                else:
+                    existing.topic = channel.topic or existing.topic
+                    existing.buffer.extend(channel.buffer)
+                    for nick, prefix in channel.nicks.items():
+                        key = self._nick_key(existing.nicks, nick, mapping)
+                        if key is None:
+                            existing.nicks[nick] = normalize_prefix(prefix)
+                        else:
+                            existing.nicks[key] = normalize_prefix(existing.nicks[key] + prefix)
+            net.channels = merged
+
+    def casemapping_of(self, net_id: str) -> str:
+        with self._lock:
+            net = self._networks.get(net_id)
+            return net.casemapping if net else "rfc1459"
+
+    def identifiers_equal(self, net_id: str, left: str, right: str) -> bool:
+        return irc_equals(left, right, self.casemapping_of(net_id))
 
     # -- channels ----------------------------------------------------------
 
@@ -121,7 +204,7 @@ class IRCState:
             net = self._networks.get(net_id)
             if net is None:
                 return None
-            ch = net.channels.get(channel)
+            ch = self._channel_locked(net, channel)
             if ch is None:
                 ch = ChannelState(name=channel)
                 ch.buffer = deque(maxlen=self.buffer_lines)
@@ -132,7 +215,9 @@ class IRCState:
         with self._lock:
             net = self._networks.get(net_id)
             if net:
-                net.channels.pop(channel, None)
+                ch = self._channel_locked(net, channel)
+                if ch:
+                    net.channels.pop(ch.name, None)
 
     def set_topic(self, net_id: str, channel: str, topic: str) -> None:
         with self._lock:
@@ -160,24 +245,47 @@ class IRCState:
     def set_nicks(self, net_id: str, channel: str, nicks: Dict[str, str]) -> None:
         with self._lock:
             ch = self.ensure_channel(net_id, channel)
-            if ch is not None:
-                ch.nicks = dict(nicks)
+            net = self._networks.get(net_id)
+            if ch is None or net is None:
+                return
+            merged: Dict[str, str] = {}
+            for nick, prefix in nicks.items():
+                key = self._nick_key(merged, nick, net.casemapping)
+                if key is None:
+                    merged[nick] = normalize_prefix(prefix)
+                else:
+                    merged[key] = normalize_prefix(merged[key] + prefix)
+            ch.nicks = merged
 
     def add_nick(self, net_id: str, channel: str, nick: str) -> None:
         with self._lock:
             ch = self.ensure_channel(net_id, channel)
-            if ch is not None:
-                ch.nicks[nick] = ""
+            net = self._networks.get(net_id)
+            if ch is not None and net is not None:
+                key = self._nick_key(ch.nicks, nick, net.casemapping)
+                if key is None:
+                    ch.nicks[nick] = ""
 
     def remove_nick(self, net_id: str, nick: str, channel: Optional[str] = None) -> None:
         with self._lock:
             net = self._networks.get(net_id)
             if net is None:
                 return
-            targets = [net.channels[channel]] if channel and channel in net.channels \
-                else list(net.channels.values())
+            selected = self._channel_locked(net, channel) if channel else None
+            targets = [selected] if selected else list(net.channels.values())
             for ch in targets:
-                ch.nicks.pop(nick, None)
+                if ch is None:
+                    continue
+                key = self._nick_key(ch.nicks, nick, net.casemapping)
+                if key is not None:
+                    ch.nicks.pop(key, None)
+            if channel is None:
+                account_key = self._nick_key(net.accounts, nick, net.casemapping)
+                away_key = self._nick_key(net.away, nick, net.casemapping)
+                if account_key is not None:
+                    net.accounts.pop(account_key, None)
+                if away_key is not None:
+                    net.away.pop(away_key, None)
 
     def rename_nick(self, net_id: str, old: str, new: str) -> None:
         with self._lock:
@@ -185,8 +293,48 @@ class IRCState:
             if net is None:
                 return
             for ch in net.channels.values():
-                if old in ch.nicks:
-                    ch.nicks[new] = ch.nicks.pop(old)
+                key = self._nick_key(ch.nicks, old, net.casemapping)
+                if key is not None:
+                    prefix = ch.nicks.pop(key)
+                    new_key = self._nick_key(ch.nicks, new, net.casemapping)
+                    if new_key is None:
+                        ch.nicks[new] = prefix
+                    else:
+                        ch.nicks[new_key] = normalize_prefix(ch.nicks[new_key] + prefix)
+            account_key = self._nick_key(net.accounts, old, net.casemapping)
+            if account_key is not None:
+                net.accounts[new] = net.accounts.pop(account_key)
+            away_key = self._nick_key(net.away, old, net.casemapping)
+            if away_key is not None:
+                net.away[new] = net.away.pop(away_key)
+
+    def set_user_metadata(self, net_id: str, nick: str, account: Optional[str] = None,
+                          away: Optional[bool] = None) -> None:
+        with self._lock:
+            net = self._networks.get(net_id)
+            if net is None or not nick:
+                return
+            if account is not None:
+                key = self._nick_key(net.accounts, nick, net.casemapping)
+                if account and account != "*":
+                    net.accounts[key or nick] = account
+                elif key is not None:
+                    net.accounts.pop(key, None)
+            if away is not None:
+                key = self._nick_key(net.away, nick, net.casemapping)
+                net.away[key or nick] = bool(away)
+
+    def user_metadata(self, net_id: str, nick: str) -> Dict[str, Any]:
+        with self._lock:
+            net = self._networks.get(net_id)
+            if net is None:
+                return {"account": "", "away": None}
+            account_key = self._nick_key(net.accounts, nick, net.casemapping)
+            away_key = self._nick_key(net.away, nick, net.casemapping)
+            return {
+                "account": net.accounts.get(account_key, "") if account_key else "",
+                "away": net.away.get(away_key) if away_key else None,
+            }
 
     # -- messages ----------------------------------------------------------
 
@@ -212,7 +360,7 @@ class IRCState:
             if net is None:
                 return []
             if channel:
-                ch = net.channels.get(channel)
+                ch = self._channel_locked(net, channel)
                 buf = list(ch.buffer) if ch else []
             else:
                 buf = list(net.server_buffer)
@@ -220,7 +368,7 @@ class IRCState:
         return msgs[-limit:] if limit else msgs
 
     def search(self, query: str, net_id: Optional[str] = None,
-               channel: Optional[str] = None, limit: int = 30) -> List[Dict[str, str]]:
+               channel: Optional[str] = None, limit: int = 30) -> List[Dict[str, Any]]:
         """Case-insensitive substring search across buffers. Returns flat hits."""
         q = query.lower()
         hits: List[Dict[str, str]] = []
@@ -230,16 +378,18 @@ class IRCState:
             snapshots = []
             for net in nets:
                 if channel:
-                    chans = [net.channels[channel]] if channel in net.channels else []
+                    selected = self._channel_locked(net, channel)
+                    chans = [selected] if selected else []
                 else:
                     chans = list(net.channels.values())
                 for ch in chans:
                     snapshots.append((net.id, ch.name, list(ch.buffer)))
         for nid, chname, buf in snapshots:
-            for m in buf:
-                if q in m.text.lower() or (m.nick and q in m.nick.lower()):
-                    hits.append({"network": nid, "channel": chname, "ts": m.ts,
-                                 "kind": m.kind, "nick": m.nick, "text": m.text})
+            for msg in buf:
+                if q in msg.text.lower() or (msg.nick and q in msg.nick.lower()):
+                    hit = msg.to_dict()
+                    hit.update({"network": nid, "channel": chname})
+                    hits.append(hit)
                     if len(hits) >= limit:
                         return hits
         return hits
@@ -251,20 +401,21 @@ class IRCState:
             return {
                 "networks": [
                     {
-                        "id": n.id,
-                        "host": n.host,
-                        "port": n.port,
-                        "tls": n.tls,
-                        "nick": n.nick,
-                        "connected": n.connected,
-                        "connecting": n.connecting,
+                        "id": net.id,
+                        "host": net.host,
+                        "port": net.port,
+                        "tls": net.tls,
+                        "nick": net.nick,
+                        "connected": net.connected,
+                        "connecting": net.connecting,
+                        "casemapping": net.casemapping,
                         "channels": [
-                            {"name": c.name, "topic": c.topic,
-                             "users": len(c.nicks), "buffered": len(c.buffer)}
-                            for c in n.channels.values()
+                            {"name": channel.name, "topic": channel.topic,
+                             "users": len(channel.nicks), "buffered": len(channel.buffer)}
+                            for channel in net.channels.values()
                         ],
                     }
-                    for n in self._networks.values()
+                    for net in self._networks.values()
                 ]
             }
 
@@ -272,24 +423,76 @@ class IRCState:
         with self._lock:
             return list(self._networks.keys())
 
+    def network_connected(self, net_id: str) -> bool:
+        """Cheap single-network connected check (no snapshot build)."""
+        with self._lock:
+            net = self._networks.get(net_id)
+            return bool(net and net.connected)
+
+    def network_link_state(self, net_id: str) -> str:
+        """connected / connecting / offline for one network (no snapshot)."""
+        with self._lock:
+            net = self._networks.get(net_id)
+            if net is None:
+                return "offline"
+            if net.connected:
+                return "connected"
+            if net.connecting:
+                return "connecting"
+            return "offline"
+
+    def channel_names(self, net_id: str) -> List[str]:
+        """Names of every open channel/query on a network (no snapshot build)."""
+        with self._lock:
+            net = self._networks.get(net_id)
+            return [ch.name for ch in net.channels.values()] if net else []
+
+    def channels_of_nick(self, net_id: str, nick: str) -> List[str]:
+        """Channels where a nick is present (no snapshot build). Used by hot
+        per-event paths (QUIT/NICK storms during netsplits)."""
+        with self._lock:
+            net = self._networks.get(net_id)
+            if not net:
+                return []
+            return [ch.name for ch in net.channels.values()
+                    if self._nick_key(ch.nicks, nick, net.casemapping) is not None]
+
+    def clear_buffer(self, net_id: str, channel: Optional[str]) -> None:
+        """Drop a channel's (or the server) buffered transcript, keep membership."""
+        with self._lock:
+            net = self._networks.get(net_id)
+            if net is None:
+                return
+            if channel:
+                ch = self._channel_locked(net, channel)
+                if ch is not None:
+                    ch.buffer.clear()
+            else:
+                net.server_buffer.clear()
+
     def nick_of(self, net_id: str) -> str:
         with self._lock:
             net = self._networks.get(net_id)
             return net.nick if net else ""
 
+    def nick_equals(self, net_id: str, left: str, right: str) -> bool:
+        return self.identifiers_equal(net_id, left, right)
+
     def nicks_of(self, net_id: str, channel: str) -> Dict[str, str]:
         with self._lock:
             net = self._networks.get(net_id)
-            if not net or channel not in net.channels:
+            if not net:
                 return {}
-            return dict(net.channels[channel].nicks)
+            ch = self._channel_locked(net, channel)
+            return dict(ch.nicks) if ch else {}
 
     def topic_of(self, net_id: str, channel: str) -> str:
         with self._lock:
             net = self._networks.get(net_id)
-            if not net or channel not in net.channels:
+            if not net:
                 return ""
-            return net.channels[channel].topic
+            ch = self._channel_locked(net, channel)
+            return ch.topic if ch else ""
 
 
 def now_ts() -> float:

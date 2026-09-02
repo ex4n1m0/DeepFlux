@@ -73,12 +73,15 @@ class DeepSeekClient(LLMClient):
     def __init__(self, config: LLMConfig) -> None:
         self.provider = (config.provider or "deepseek").lower()
         preset = LLM_PROVIDER_PRESETS.get(self.provider, {})
+        self.capabilities = preset
         if self.provider == "deepseek":
             self.api_key = config.api_key or os.environ.get("DEEPSEEK_API_KEY", "")
         else:
             self.api_key = config.api_key
         preset_models = preset.get("models") or []
-        self.base_url = config.base_url or preset.get("base_url") or "https://api.deepseek.com"
+        if self.provider == "custom" and not config.base_url.strip():
+            raise ValueError("Custom LLM provider requires a base URL")
+        self.base_url = (config.base_url or preset.get("base_url") or "https://api.deepseek.com").rstrip("/")
         model = config.model or (preset_models[0] if preset_models else "deepseek-v4-pro")
         # OpenRouter needs vendor-prefixed model slugs (deepseek/deepseek-v4-pro).
         # The config stores bare names — normalise here so switching endpoints
@@ -87,9 +90,13 @@ class DeepSeekClient(LLMClient):
             model = f"deepseek/{model}"
         self.model = model
         self.reasoning_effort = config.reasoning_effort or "high"
+        self.send_reasoning_effort = bool(
+            config.custom_reasoning_effort if self.provider == "custom"
+            else preset.get("reasoning_effort", False)
+        )
 
     def supports_tools(self) -> bool:
-        return True
+        return bool(self.capabilities.get("tools", True))
 
     def chat(
         self,
@@ -99,28 +106,26 @@ class DeepSeekClient(LLMClient):
         model: Optional[str] = None,
         on_delta: Optional[DeltaCallback] = None,
     ) -> LLMMessage:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         payload: Dict[str, Any] = {
             "model": model or self.model,
             "messages": messages,
         }
-        # Both the direct DeepSeek API and OpenRouter support reasoning_effort.
-        # DeepSeek native uses "high" / "max"; OpenRouter uses the same enum
-        # but calls max-reasoning "xhigh" instead of "max".
-        _effort = effort or self.reasoning_effort
-        if self.provider == "openrouter":
-            _effort = "xhigh" if _effort == "max" else _effort
-        payload["reasoning_effort"] = _effort
-        if tools:
+        # Provider capability metadata decides whether and how reasoning effort is sent.
+        if self.send_reasoning_effort:
+            _effort = effort or self.reasoning_effort
+            _effort = self.capabilities.get("effort_map", {}).get(_effort, _effort)
+            payload["reasoning_effort"] = _effort
+        if tools and self.supports_tools():
             payload["tools"] = tools
-        if on_delta is not None:
+        use_stream = on_delta is not None and bool(self.capabilities.get("streaming", True))
+        if use_stream:
             payload["stream"] = True
 
         response = self._post_with_retry(f"{self.base_url}/chat/completions", headers, payload)
-        if on_delta is not None:
+        if use_stream:
             return self._consume_stream(response, on_delta)
 
         data = response.json()
@@ -246,6 +251,41 @@ class DummyLLMClient(LLMClient):
 
         # If a tool has already been executed for this user message, summarize.
         tool_after_user = last_user_idx >= 0 and any(m.get("role") == "tool" for m in messages[last_user_idx + 1 :])
+        size_match = re.search(r"pause everything over (\d+)\s*gb", user)
+        tool_names = {
+            tc.get("function", {}).get("name", "")
+            for message in messages[last_user_idx + 1:]
+            if message.get("role") == "assistant"
+            for tc in message.get("tool_calls", [])
+        }
+        if tool_after_user and size_match and "pause_torrent" not in tool_names:
+            threshold = int(size_match.group(1)) * 1024 * 1024 * 1024
+            torrents = []
+            for message in messages[last_user_idx + 1:]:
+                if message.get("role") != "tool":
+                    continue
+                try:
+                    result = json.loads(message.get("content") or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if isinstance(result.get("torrents"), list):
+                    torrents = result["torrents"]
+                    break
+            pause_calls = [
+                {
+                    "id": f"call_pause_{index}",
+                    "type": "function",
+                    "function": {
+                        "name": "pause_torrent",
+                        "arguments": json.dumps({"info_hash": torrent["info_hash"]}),
+                    },
+                }
+                for index, torrent in enumerate(torrents)
+                if torrent.get("total_size", 0) > threshold and torrent.get("info_hash")
+            ]
+            if pause_calls:
+                return LLMMessage(role="assistant", content=None, tool_calls=pause_calls)
+            return LLMMessage(role="assistant", content="No torrents exceed that size.", tool_calls=[])
         if tool_after_user:
             if "list" in user or "show" in user or "status" in user:
                 return LLMMessage(role="assistant", content="Here are the current torrents.", tool_calls=[])

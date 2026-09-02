@@ -25,3 +25,18 @@ def test_gather_metadata():
     meta = o.gather_metadata(status)
     assert meta["name"] == "Ubuntu"
     assert meta["total_size"] == 1024
+
+
+def test_build_proposal_uses_allowed_category(tmp_path):
+    organizer = Organizer(str(tmp_path))
+    status = {
+        "name": "Show S01E02", "info_hash": "a" * 40, "category": "Other",
+        "save_path": str(tmp_path), "progress": 1.0,
+        "files": [{"file_id": 0, "path": "episode.mkv", "size": 1024, "priority": 4}],
+    }
+
+    proposal = organizer.build_proposal(status, ["TV", "Other"])
+
+    assert proposal["suggested_category"] == "TV"
+    assert proposal["destination"] == str((tmp_path / "TV").resolve())
+    assert proposal["file_renames"] == []

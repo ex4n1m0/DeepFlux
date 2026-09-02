@@ -9,10 +9,13 @@ Both wrappers return a ``requests``-compatible Response object.
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
+import socket
 import threading
 from typing import Dict, Optional
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -60,32 +63,74 @@ def _sanitize_headers(headers: Optional[Dict[str, str]]) -> Optional[Dict[str, s
     return h
 
 
-def get(url: str, headers: Optional[Dict[str, str]] = None, timeout=15, stream: bool = False):
-    """GET with a Chrome TLS fingerprint when curl_cffi is available."""
-    headers = _sanitize_headers(headers)
+def validate_public_url(url: str) -> str:
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
+        raise requests.exceptions.InvalidURL("Only public HTTP(S) URLs are accepted")
+    if parsed.username or parsed.password:
+        raise requests.exceptions.InvalidURL("URLs containing credentials are not accepted")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local")):
+        raise requests.exceptions.InvalidURL("Local/private URLs are not accepted")
+    try:
+        addresses = {ipaddress.ip_address(hostname)}
+    except ValueError:
+        try:
+            addresses = {
+                ipaddress.ip_address(item[4][0].split("%", 1)[0])
+                for item in socket.getaddrinfo(
+                    hostname, parsed.port or (443 if parsed.scheme == "https" else 80),
+                    type=socket.SOCK_STREAM,
+                )
+            }
+        except (OSError, ValueError) as exc:
+            raise requests.exceptions.InvalidURL(f"Could not resolve URL host: {hostname}") from exc
+    if not addresses or any(not address.is_global for address in addresses):
+        raise requests.exceptions.InvalidURL("Local/private URLs are not accepted")
+    return parsed.geturl()
+
+
+def _request_once(method: str, url: str, headers, timeout, stream: bool):
     if _HAS_CURL_CFFI:
         try:
-            return _session().get(url, headers=headers, timeout=timeout, stream=stream)
+            request = getattr(_session(), method.lower())
+            return request(url, headers=headers, timeout=timeout, stream=stream, allow_redirects=False)
         except Exception as exc:
             # Fingerprint failures (unsupported target, etc.) fall back to
             # plain requests; HTTP errors (403/404) are returned as-is.
             if getattr(exc, "response", None) is not None:
                 raise
-            logger.debug("curl_cffi GET failed (%s) — retrying with requests", exc)
-    return requests.get(url, headers=headers, timeout=timeout, stream=stream)
+            logger.debug("curl_cffi %s failed (%s) — retrying with requests", method, exc)
+    return requests.request(
+        method, url, headers=headers, timeout=timeout, stream=stream, allow_redirects=False)
+
+
+def _request(method: str, url: str, headers, timeout, stream: bool, allow_redirects: bool):
+    current = url
+    for _ in range(7):
+        current = validate_public_url(current)
+        response = _request_once(method, current, headers, timeout, stream)
+        if not allow_redirects or response.status_code not in (301, 302, 303, 307, 308):
+            return response
+        location = response.headers.get("Location", "")
+        response.close()
+        if not location:
+            raise requests.exceptions.InvalidURL("Redirect response did not include a destination")
+        current = urljoin(current, location)
+    raise requests.exceptions.TooManyRedirects("Too many redirects")
+
+
+def get(
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    timeout=15,
+    stream: bool = False,
+    allow_redirects: bool = True,
+):
+    """GET with a Chrome TLS fingerprint when curl_cffi is available."""
+    return _request("GET", url, _sanitize_headers(headers), timeout, stream, allow_redirects)
 
 
 def head(url: str, headers: Optional[Dict[str, str]] = None, timeout=15, allow_redirects: bool = True):
     """HEAD with a Chrome TLS fingerprint when curl_cffi is available."""
-    headers = _sanitize_headers(headers)
-    if _HAS_CURL_CFFI:
-        try:
-            return _curl_requests.head(
-                url, headers=headers, timeout=timeout,
-                allow_redirects=allow_redirects, impersonate=_IMPERSONATE,
-            )
-        except Exception as exc:
-            if getattr(exc, "response", None) is not None:
-                raise
-            logger.debug("curl_cffi HEAD failed (%s) — retrying with requests", exc)
-    return requests.head(url, headers=headers, timeout=timeout, allow_redirects=allow_redirects)
+    return _request("HEAD", url, _sanitize_headers(headers), timeout, False, allow_redirects)

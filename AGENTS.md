@@ -13,8 +13,9 @@
 ## Verify changes
 - Quick check: `python -c "import ast; ast.parse(open(<file>, encoding='utf-8').read())"`
 - Tests: `python -m pytest tests/ -v`
-- Tests must NEVER write the real `~/.deeptorrent/config.json`: patch
-  `DeeptorrentConfig.default_config_path` (or pass explicit paths) whenever
+- Tests must NEVER write the real `~/.deeptorrent/config.json`: the autouse
+  fixture in `tests/conftest.py` redirects `DeeptorrentConfig.default_config_path`
+  for every test; still pass explicit paths whenever
   code under test can persist — `IRCTab.shutdown` and the RSS feed tools both
   call `config.to_file(default_config_path())`. An unpatched GUI-tab test once
   wiped a user's real config (sources + API keys) with test defaults.
@@ -22,6 +23,10 @@
 ## Build / package
 - App bundle: `python -m PyInstaller packaging/app.spec --clean --noconfirm`
   → `dist/DeepFlux/` (onedir; launcher `DeepFlux.exe` + `_internal/`).
+  SVP Manager can keep the old bundle's `_internal/msvcp140.dll` loaded after
+  DeepFlux exits, making COLLECT fail with WinError 5. For a local test build,
+  leave SVP running and use `--distpath dist-local`; before an installer build,
+  close SVP Manager and rebuild the canonical `dist/DeepFlux` output.
 - app.spec must `collect_all` every package that ships native extensions or
   `importlib.resources` data — currently yt_dlp, curl_cffi, ddgs, primp,
   fake_useragent (ddgs' DDG engine loads `browsers.jsonl`; missing data =
@@ -29,9 +34,15 @@
   frozen build), irc (codes.txt).
 - Installer: `"$LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging/installer.iss`
   (Inno 7.0.2 also installed at `C:\Program Files\Inno Setup 7\`). Reads
-  `dist/DeepFlux/*` and writes `dist/DeepFlux<version>Setup.exe` — `BuildDir` in
-  installer.iss is relative to the script. The old `Documents\DeePFlux`
-  output folder is no longer used.
+  `dist/DeepFlux/*` and writes `dist/DeepFlux<version>Setup.exe` by default.
+  `BuildDir` and `BuildOutputDir` are command-line-overridable ISPP defines,
+  both relative to installer.iss; this lets a locked-bundle build read
+  `dist-local` and emit directly into `website/deepflux`. The old
+  `Documents\DeePFlux` output folder is no longer used. The finished-page
+  `FinishedLabel` is fixed-height (no scroll/auto-grow): keep it ≤ ~8
+  rendered lines or it gets cropped on machines with larger system fonts /
+  text scaling — long instructions belong in the in-app User Guide, not the
+  installer final page.
 - Logo: every derived asset (icon.ico, logo_48, wizard images, extension
   icons, website webp) is generated from the root `DeepFlux<version>.png` by
   `python packaging/gen_logo_assets.py` — update that script's source
@@ -113,13 +124,14 @@
   custom): retries transient failures (429/5xx/network, 3 attempts, backoff);
   streams SSE when given `on_delta(kind, text)`; captures `reasoning_content`
   (DeepSeek) or `reasoning` (OpenRouter) into `LLMMessage.reasoning`.
-  `reasoning_effort` is sent ONLY when provider == "deepseek" — other
-  endpoints may 400 on it. Per-call `model=` override: summaries use
-  `config.llm.fast_model` + effort "low"; planning uses `model` +
-  `reasoning_effort` from config. The Provider combo + Base URL live in the
-  API Keys window (File → API Keys) — it swaps base URL presets on switch
-  (user-typed custom URLs survive; preset values follow). Models are locked
-  (deepseek-v4-pro / deepseek-v4-flash). There is NO AI Settings dialog:
+  Provider capability metadata controls `reasoning_effort`, effort-name mapping,
+  streaming and tools: DeepSeek/OpenRouter send effort (`max` maps to `xhigh`
+  on OpenRouter); custom endpoints omit it unless explicitly enabled. Per-call
+  `model=` override: summaries use `config.llm.fast_model` + effort "low";
+  planning uses `model` + `reasoning_effort` from config. The Provider combo,
+  Base URL and custom model live in File → API Keys; keyless custom endpoints
+  are supported. DeepSeek/OpenRouter models remain preset-locked. There is NO
+  separate AI Settings dialog:
   stream / memory / agent-debug are assumed always-on — `from_file` forces
   `llm.stream=True`, `llm.memory_enabled=True`, `ui_agent_debug=True`
   regardless of what's saved; `reasoning_effort` stays a config.json-only
@@ -127,13 +139,22 @@
   provider deepseek.
 - `memory.py` — OpenClaw-style persistent memory in `~/.deeptorrent/memory/`
   (`USER.md`, `MEMORY.md`, `daily/YYYY-MM-DD.md`). Curated files are injected
-  into the system prompt (budgeted); daily notes are search-only. LLM tools:
-  `save_memory` (scopes user/fact/note, deduped) + `search_memory`.
+  into the system prompt (budgeted); daily notes are search-only. Entries carry
+  stable ids; LLM tools are `save_memory` / `search_memory` / `list_memories`
+  plus confirmed `edit_memory` / `forget_memory`. Secret-like values are rejected.
 - `loop.py` — bounded history: `_pruned_history` caps at
   `llm.history_budget` msgs and only cuts at safe boundaries (never orphans
-  a tool message from its assistant tool_calls). Streaming emits
-  `stream_delta` events; GUI replaces the raw stream with the rendered
-  bubble on finish (`_seal_stream` on tool turns).
+  a tool message from its assistant tool_calls); `_fit_context` also enforces
+  an approximate token budget on every LLM call. Tool schemas are selected by
+  task domain instead of always sending the full registry. Turns, LLM calls,
+  tool calls, repeated identical calls and wall time are bounded; the GUI Stop
+  button sets cooperative cancellation. Streaming emits `stream_delta` events;
+  GUI replaces the raw stream with the rendered bubble on finish (`_seal_stream`
+  on tool turns). Confirmation preserves the complete mixed tool batch, previews
+  exact redacted arguments, expires after five minutes, and never inherits the
+  watchdog auto-heal setting. The enabled watchdog is started by GUI/CLI, records
+  first observations without false stalls, has per-torrent cooldowns, and can
+  mutate only through its torrent-recovery allowlist.
 - `search_indexers` has `deep` param: default quick pass = private tier +
   top-1 public source; zero hits auto-escalate to the full sweep. The GUI
   never passes `deep=True` directly — only the agent does; the Agent tab's
@@ -170,20 +191,53 @@
   agent in dummy mode; without TMDb/Jackett keys those integrations degrade
   gracefully. The system prompt fixes the agent's identity as "DeepFlux"
   (never "DeepTorrent" — that name only survives in legacy paths).
-- Adding a tool: register schema+handler in `tools.py`, then classify it in
-  `loop.py` (`READ_ONLY_TOOLS` run concurrently / `DESTRUCTIVE_TOOLS` need
-  confirmation) and add a GUI label in `main_window._TOOL_LABELS`.
-- `add_download` submits direct file/HLS/DASH URLs to the dlmgr DownloadEngine.
-  ToolRegistry takes `dl_engine=` (GUI injects the real one; CLI lazily creates
+- Adding a tool: register schema+handler in `tools.py`, classify it in the
+  centralized policy sets there (`READ_ONLY_TOOL_NAMES` can run concurrently /
+  `CONFIRMATION_TOOL_NAMES` need approval), include it in context routing, and
+  add a GUI label in `main_window._TOOL_LABELS`. `loop.py` exports compatibility
+  aliases for older tests/callers. Watchdog mutations also need the narrow
+  `WATCHDOG_AUTO_HEAL_TOOL_NAMES` allowlist.
+- `add_download` submits public direct file/HLS/DASH URLs to the dlmgr
+  DownloadEngine and accepts an optional destination. ToolRegistry takes
+  `dl_engine=` (GUI injects the real one; CLI lazily creates
   its own). The queue is fully agent-managed: `list_downloads` (READ_ONLY),
   `pause/resume/retry/remove_download` (plain; job ids accept unique prefixes —
   `_resolve_dl_job`), `cancel_download` (DESTRUCTIVE — deletes the partial file
   by default). `web_fetch` extracts `magnets`, `torrent_urls`, and
   `download_links` (file/stream hrefs, resolved with urljoin) from raw HTML.
+  `web_fetch` and `add_download` reject local/private targets and validate every
+  redirect. Torrent-URL downloads do the same except for the exact configured
+  Jackett origin (when its key is configured). External tool results carry an
+  untrusted-content marker; tool args/results are redacted before logs/debug UI.
+- Site Grabber (Browser toolbar magnifier → `gui/grabber_dialog.py`): keyword
+  search on a video site → checkable result list (thumbnails loaded async) →
+  batch "Download selected/this page". Backend is Qt-free in
+  `dlmgr/site_grabber.py` (site adapters: `search()` parses server-rendered
+  cards, `resolve()` delegates to the extractor); new sites plug into its
+  `SITES` dict. MissAV specifics live in `dlmgr/extractors/missav.py`
+  (first real `ExtractorRegistry` builtin — watch page → surrit.com
+  `{uuid}/playlist.m3u8`; the UUID sits 2 chars before "seek" in a script
+  tag, same trick as the in-page grabber in `browser_extension.py`; site
+  extractors MUST register before the always-matching generic fallback).
+  surrit is Cloudflare-fronted → all requests go through
+  `dlmgr/http_client.py` (curl_cffi); playlists/segments need only a
+  Referer, no cookies/EXT-X-TOKEN. The card's `setPreview` UUID is NOT the
+  stream UUID — resolving needs one watch-page fetch per video (the
+  "watch" is fully simulated server-side; no play/JS/cookies needed).
+  Dialog workers keep engine calls on ONE thread (serialized mutation);
+  failures stay checked in the list for retry. Opt-in Auto-queue
+  (`browser.grabber_auto_queue` + `grabber_auto_limit` in config): each
+  search/page auto-resolves and queues up to the limit, only still-checked
+  items are picked (no re-queue of done ones); toggling it on mid-session
+  immediately queues the current batch.
 - Torrent session tools: `set_torrent_rate_limits` / `set_sequential_download`
   / `force_recheck` / `force_reannounce` (all plain — runtime, reversible).
   force_recheck/force_reannounce are engine methods added via the `_enqueue`
   serial-thread pattern (see `engine/torrent_engine.py::_force_recheck`).
+- Torrent organization is two-step: `analyze_organization` is read-only;
+  confirmed `apply_organization_plan` is restricted under the configured save
+  root and calls `TorrentEngine.organize_torrent`, which rejects incomplete
+  torrents and uses libtorrent `rename_file` / `move_storage` on its serial thread.
 - Stream-while-downloading (GUI "Stream" action, `_stream_torrent` /
   `_on_stream_status` in main_window.py): sequential download + mpv reads the
   growing file once a buffer threshold is met. The threshold is ADAPTIVE:
@@ -211,6 +265,13 @@
   the track **id** (not track-list index); VLC normalizes
   `audio_get_track_description`/`video_get_spu_description` tuples and
   disables subs with -1.
+- Player Compact mode is Windows-only pseudo-PiP: it keeps the native video
+  surface in place, makes the top-level host topmost, hides surrounding and
+  secondary player controls, temporarily lowers the host minimum size, and
+  resizes to 640x420; exit restores control visibility, minimum size and saved
+  geometry. `SetWindowPos` MUST use `ctypes.WinDLL(..., use_last_error=True)`
+  with pointer-sized `wintypes.HWND` argtypes — untyped `ctypes.windll` returns
+  false on 64-bit Windows and makes the button silently do nothing.
 - The mpv backend MUST use `vo="gpu-next"` (libplacebo), with a `vo="gpu"`
   fallback if init fails (`MpvBackend.create`). Legacy vo=gpu never
   processes Dolby Vision: P5 files (no HDR10 base layer — most streaming DV)
@@ -453,7 +514,10 @@
   the user's provider. Concurrency is capped at 2 on a dedicated pool so
   grabs can't starve ordinary artwork downloads.
   `-ss` goes BEFORE `-i` (input seek = HTTP range request, not a full
-  decode); seeks 120s then 8s so short clips still yield a frame.
+  decode); seeks 120s then 8s so short clips still yield a frame. Some
+  redirecting MP4 sources make FFmpeg reject the optional HTTP reconnect args
+  with `Option reconnect not found` after opening the input; `_run` retries that
+  exact compatibility failure without reconnect args rather than blanking the tile.
   MEASURED live: stream CDNs reset the TLS handshake under bursts while the
   content is perfectly fine (HEAD 200 / GET 206 on the same URL), so `_run`
   classifies stderr as transient vs permanent — transient failures are
@@ -608,10 +672,14 @@
   once per file via mpv's `track-list` observer (`on_tracks` → `sig_tracks`)
   plus a 2.5s one-shot timer fallback for VLC; also the default language in
   the subtitle dialog and agent tools.
-- RSS subscriptions are agent-managed too: `add_rss_feed` / `remove_rss_feed`
-  (DESTRUCTIVE — they mutate and persist config via
-  `DeeptorrentConfig.default_config_path()` and rebuild the ToolRegistry's
-  RSSMonitor; call it on the CLASS, it's a self-less method).
+- RSS subscriptions are agent-managed too: `add_rss_feed` / `update_rss_feed` /
+  `remove_rss_feed` require confirmation and persist via
+  `DeeptorrentConfig.default_config_path()`. Feed results preserve GUID-backed
+  stable item ids; reads do not mark items seen, and `download_from_feed`
+  confirms and marks only successfully downloaded ids. Fetches reject
+  local/private targets and redirect pivots; XML uses `defusedxml` with a 5 MiB
+  response cap. These operations rebuild the ToolRegistry's RSSMonitor; call
+  `default_config_path` on the CLASS.
 - Deliberately NOT agent-controllable: settings-dialog config (AI/Jackett/
   IPTV/IRC network entries, API keys) — generic config mutation would leak
   secrets into the LLM context and can break the app; the dialogs stay the
@@ -645,7 +713,12 @@
   handled by the library itself. TLS + SASL PLAIN supported; CTCP
   VERSION/PING/TIME auto-answered; DCC offers surfaced as events, never
   auto-accepted. LIST replies (321/322/323) are collected into
-  `state.chanlist` (sorted by users desc).
+  `state.chanlist` (sorted by users desc). WHOIS numerics (311/312/313/317/
+  318/319/330) and away acks (305/306) are handled and recorded into the
+  server buffer so `/whois`, `/away`, `/back` have visible answers (jaraco
+  event names: whoisuser, whoisserver, whoisoperator, whoisidle,
+  whoischannels, whoisaccount, endofwhois, unaway, nowaway — verify with
+  `irc.client.events.Command.lookup('<numeric>')`).
 - Multi-network routing: the jaraco `Reactor.add_global_handler` registers
   handlers on the REACTOR, which fires them for EVERY connection's events —
   so per-connection handlers baked with a fixed `net_id` cross-contaminate
@@ -655,34 +728,79 @@
   `_dispatch` resolves the owning `net_id` from a `ServerConnection -> net_id`
   map (`_conn_to_net`, populated in `_do_connect` before `conn.connect()`).
   Never go back to `conn.add_global_handler(partial(..., net_id, ...))`.
+- Hot-path rule: `_on_quit`/`_on_nick` and the GUI's `_is_connected` /
+  `_complete_input` use the LIGHT state accessors
+  (`IRCState.channels_of_nick` / `network_connected` / `network_link_state` /
+  `channel_names`, plus `IRCClientCore.is_connected`) — never `state.snapshot()`
+  or `client.status()` per event (netsplit storms made the old full-snapshot
+  per QUIT stall the network thread). `state.clear_buffer` backs `/clear`.
 - `ircmgr/state.py` — thread-safe `IRCState`: per-network nick lists, topics,
   and per-channel ring buffers (`irc.buffer_lines`, default 500) — this buffer
   is what the agent's `irc_*` tools read.
+- `ircmgr/history.py` — ONE cached SQLite connection per store
+  (`journal_mode=WAL`, `synchronous=NORMAL`, `close()` is idempotent,
+  re-created lazily). It used to open a fresh connection with
+  `synchronous=FULL`/journal DELETE per message — on the shared reactor
+  thread that stalled every network's socket on busy channels. All access
+  stays under the store RLock (thread-safe across GUI + network threads).
 - GUI: `IRCTab` gets events via a single queued Qt signal (`_IRCSignals.event`),
   like `_IPTVSignals`. Joined channels persist to config on shutdown
   (`IRCTab.shutdown` in `closeEvent`).
-- Defaults: `DEFAULT_IRC_NETWORKS` (config.py) = a curated set of popular
-  public IRC networks (Libera, OFTC, Rizon, DALnet, Undernet, EFnet, QuakeNet,
-  IRCnet, GeekShed) plus private-tracker support networks (AnimeBytes,
-  p2p-network/Bibliotik/BitSpyder, DigitalIRC/Empornium, GazelleGames,
-  synIRC/JPopSuki, BrokenSphere/Karagarga, MoreThanTV, Orpheus, PassThePopcorn,
-  Scratch/RED, TorrentLeech), merged into user configs by `id`. Public networks
-  have NO pre-joined channels — on connect the client auto-requests `/LIST`
-  (retried every 10s via `_check_pending_lists` until `listend` arrives, since
-  some servers throttle LIST for ~60s after connect) so the user can browse and
-  pick channels from the server view. The private-tracker networks pre-join
-  their support/disabled channels. The IRC tab starts DISCONNECTED (3.2.1+) —
-  the `auto_connect` field was removed; the user connects manually from the
-  toolbar. The merge never touches existing ids, so `from_file` migrates:
-  test-era `#deepflux-test` channels are dropped (no longer swapped for
-  `#DeepFlux`), and `#DeepFlux` is stripped from the libera entry (it was the
-  shipped default, now removed — user-added channels on any network survive).
+- GUI perf invariants (regression-tested): `_append_html` NEVER serializes the
+  document — the "Nothing here yet" placeholder is tracked by the
+  `_chat_empty` flag (the old `chat.toHtml()` per line made busy channels
+  O(n²)); search match counts update incrementally per appended line
+  (`_search_count`), full recounts only on query change / re-render.
+- Multi-server UX: the network combo carries a live status dot per network
+  (● ◌ ○ ✕ via `_network_combo_label`), combo `activated` follows the tree,
+  tree selection syncs the combo; the Join box acts on the network of the
+  VIEWED channel (not the combo); the toolbar has Connect All / Disconnect All
+  and a nick field (`_apply_nick` — renames live when connected, persists
+  `nick` in the network entry otherwise); the status label aggregates
+  "N/M connected". The tree has a context menu (`_build_tree_menu` — built
+  separately from `_show_tree_menu` so tests can inspect actions without a
+  modal exec). /LIST results render in the channel-directory panel
+  (`_populate_chanlist`: sortable QTableWidget, Users-desc by default — a
+  fresh Qt table sorts col-0 DESCENDING otherwise — filter box, Refresh,
+  double-click a row to join, visible only on a network's server view).
+  Nick list sorts ops-first (~ & @ % +) then name, away users italic+muted,
+  account tooltip. Input commands: /join /part /msg /me /nick /notice
+  <target> text /whois /away /back /hop /close /clear /list /raw /quit /help.
+  NetworkDialog's port is a QSpinBox; the TLS checkbox auto-follows the port
+  only while it is a standard 6667/6697 value.
+- PySide6 test gotcha: patching `QMenu.exec` (or any C++ method) on the CLASS
+  does NOT intercept instance calls — shiboken resolves instance methods
+  through the C++ method table, bypassing Python class attributes, so a test
+  that patches it hangs on a real modal menu. Split menu construction
+  (`_build_tree_menu`) from execution, or call via the class (static methods
+  like `QInputDialog.getText` / `QMessageBox.question` DO patch fine because
+  the code calls them on the class).
+- Defaults: `DEFAULT_IRC_NETWORKS` (config.py) — endpoints VERIFIED 2026-09-01
+  with a live registration probe (CAP LS 302 + NICK/USER + CAP END → 001):
+  Libera/OFTC/Rizon/DALnet 6697 TLS; Undernet/GeekShed/P2P-Network/
+  BrokenSphere/IPTorrents on plain 6667 (their shipped TLS ports are dead,
+  legacy-cipher-only, or carry an expired cert — see the block comment in
+  config.py); AnimeBytes at irc.animefriends.moe:7000 TLS (irc.animebytes.tv
+  was seized, NXDOMAIN); MoreThanTV dropped (its network is gone — MTV
+  support lives on DigitalIRC, a default). NO default ships channels anymore:
+  every network is channelless and auto-requests `/LIST` on connect (retried
+  every 10s via `_check_pending_lists` until `listend` arrives, since some
+  servers throttle LIST for ~60s after connect) so the user picks channels
+  from the directory panel. The IRC tab starts DISCONNECTED (3.2.1+) — the
+  `auto_connect` field was removed; the user connects manually from the
+  toolbar. `from_file` migrations: legacy shipped channels are stripped
+  (subset-gated so user-customized entries survive), dead endpoints are
+  retargeted only when still carrying the old shipped host/port/TLS, and a
+  dead morethantv entry is dropped; user-added channels/entries always win.
 - Agent tools: `irc_status` / `irc_list_messages` / `irc_search_messages` are
   READ_ONLY; `irc_send_message` / `irc_join` / `irc_part` require confirmation.
   ToolRegistry takes `irc_client=` (GUI injects the shared core; CLI lazily
   starts its own — with no networks connected until configured).
 - Tests: `tests/test_ircmgr.py` has a fake localhost IRC server — use it for
-  any protocol-level regression (no external network in tests).
+  any protocol-level regression (no external network in tests). GUI tests run
+  offscreen (`QT_QPA_PLATFORM=offscreen`); never assert `isVisible()` on
+  widgets of a never-shown parent (always False offscreen — assert
+  `isHidden()`/`not isHidden()` for setVisible state instead).
 
 ## IPTV + filesystem agent tools (Play / Command tabs)
 - IPTV settings are SPLIT into small scrollable pages in
@@ -738,10 +856,17 @@
   channels in a PT guide). `maybe_refresh_epg` (hourly QTimer in IPTVTab)
   re-fetches guides older than 6h. `ch.epg_now`/`epg_next` model attributes
   are legacy — nothing populates them; always query the EPG store.
-- Menu bar layout: File (API Keys, file associations) | Browse (Browser
-  Settings, Import Bookmarks) | Agent | Download (Add Magnet/Torrent,
-  Jackett Settings, Downloads Settings, Sources, RSS Feeds) | Play (the four
-  IPTV_SETTINGS_PAGES) | Command | IRC (Networks) | Help | Bookmarks.
+- Low-resolution settings: `gui/settings_dialog.py` exposes
+  `API_KEY_PAGES`, `BROWSER_SETTINGS_PAGES`, and `DOWNLOAD_SETTINGS_PAGES`;
+  each drives a submenu whose entries open one focused 580–600×420–440 page.
+  The dialog classes retain `page="all"` for compatibility, keep every page
+  scrollable, and save only the selected section so hidden fields cannot
+  overwrite unrelated settings. Menu-launched scalable viewers cap their
+  defaults/minimums to fit within an 800×600 desktop.
+- Menu bar layout: File (API Keys submenu, file associations) | Browse (Browser
+  Settings submenu, Import Bookmarks) | Agent | Download (Add Magnet/Torrent,
+  Jackett Settings, Download Settings submenu, Sources, RSS Feeds) | Play (the
+  four IPTV_SETTINGS_PAGES) | Command | IRC (Networks) | Help | Bookmarks.
   `_TabMenuBar` (gui/main_window.py) makes the six tab-linked titles double
   as tab buttons: a click from another tab switches tabs (menu doesn't open),
   a click while on the tab opens the menu; empty linked menus (Agent,
@@ -787,22 +912,35 @@
 ## Browser agent tools (Browse tab)
 - `gui/browser_bridge.py::BrowserBridge` — a QObject parented to MainWindow.
   Agent tools call `bridge.call(op, **params)` from worker threads: the call
-  is queued onto the GUI thread via one signal and the worker blocks on a
-  `threading.Event` (35s timeout) until the GUI posts the result. JS actions
-  (`get_content`/`click`/`fill`/`scroll`) complete the pending call from
-  `runJavaScript`'s own callback. NOTE: neither `call` nor
+  is queued onto the GUI thread and blocks ≤35s. Late JS callbacks are ignored
+  after timeout. All Agent JavaScript runs in `QWebEngineScript.ApplicationWorld`,
+  never the page's MainWorld. NOTE: neither `call` nor
   `ToolRegistry._browser_call` may name their first param `action` — the
-  `browser_go` tool forwards an `action=` kwarg and Python would bind it
-  twice.
-- Tools: `browser_navigate` (address-bar semantics — domains load, anything
-  else is a Google search), tab management (`list_tabs`/`switch_tab`/
-  `close_tab`), `browser_go` (back/forward/reload/stop/home),
-  `browser_get_content` (LIVE rendered DOM + the user's logged-in sessions,
-  unlike `web_fetch`), `browser_scroll`, bookmark add/remove/list.
-  `browser_click` (CSS selector or visible text) and `browser_fill`
-  (selector+value, optional form submit) are DESTRUCTIVE — they can submit
-  forms or start downloads under the user's accounts. Everything else runs
-  without confirmation. Agent navigation auto-focuses the Browse tab.
+  `browser_go` tool forwards an `action=` kwarg and Python would bind it twice.
+- Tools: navigation/tab/go/scroll/bookmarks plus consent-gated
+  `browser_get_content`; preferred automation is `browser_snapshot` → stable
+  `eN` refs → confirmed `browser_click_ref` / `browser_type_ref` /
+  `browser_select_ref` / `browser_check_ref`, with `browser_wait` after async
+  actions. Legacy selector/text click/fill remain confirmation-gated. Page
+  sharing is remembered per origin and always denied in private tabs; text,
+  token-like values, email addresses and signed-link query values are redacted
+  locally before reaching the LLM. Closing tabs and bookmark mutations also
+  require Agent confirmation. Agent navigation auto-focuses the Browse tab.
+- Browser UX/state: configurable Google/DDG/Bing/Brave search with shared URL
+  normalization; Ctrl+F find bar, progress/error/renderer recovery, accessible
+  toolbar names, per-origin zoom, F12 DevTools, PDF save, history dialog + SQLite
+  autocomplete (`gui/browser_history.py`), bookmark HTML export, and restore of
+  up to 20 non-private tabs. Off-the-record tabs never persist, enter history,
+  expose the Agent bridge, or receive persistent cookies. Browser Settings can
+  clear history, cookies/cache and remembered Agent-origin permissions separately.
+- Zoom: besides Ctrl+=/-/0, Ctrl+scroll-wheel zoom works and the nav-bar
+  percentage badge is clickable (menu: in/out/reset, `tests/test_browser_zoom.py`).
+  The wheel interception MUST be an app-level event filter
+  (`MainWindow.eventFilter` → `_browser_view_for_widget` parent-walk): wheel
+  events target QWebEngineView's internal render widget, so per-widget /
+  ancestor filters never fire (same reason overlay hover uses a poll timer).
+  Detached fullscreen views are matched via `_browser_fs_state` and zoom
+  without touching the badge (it tracks the active tab only).
 - DOM fullscreen (YouTube ⛶ etc.): `_BrowserPage` enables
   `FullScreenSupportEnabled` and `MainWindow._browser_fullscreen_requested`
   accepts `fullScreenRequested` — Qt WebEngine NEVER honors the Fullscreen
@@ -818,22 +956,20 @@
   waits ≤20s for chanlist_ts, `refresh=false` reuses the cache — plain
   sequential, not READ_ONLY) and `irc_list_nicks` (READ_ONLY, nicks + topic
   from IRCState).
-- Browser file downloads (`downloadRequested` →
-  `MainWindow._on_browser_download_requested`): non-torrent files are routed
-  to the internal segmented DownloadEngine (`_route_browser_download`) with a
-  tray toast + Agent-tab event; `.m3u8/.mpd` become stream jobs. The job
-  carries the browser session's cookies (live cache fed by
-  `cookieStore().cookieAdded` → `_browser_cookies_for`) and the page URL as
-  referrer. Only `.torrent` files still use QtWebEngine's own downloader
-  (private-tracker cookies) and are auto-added to the torrent engine on
-  completion. dlmgr note: `segment.py` must NOT use `with http_client.get()`
-  — curl_cffi's Response isn't a context manager; close it explicitly.
+- Browser downloads/magnets/playback are deny-by-default: every page-triggered
+  action shows source + exact target before execution. Non-torrent files route
+  to DownloadEngine; `.torrent` files use QtWebEngine then enter the torrent
+  engine after completion. Cookie forwarding tracks add/remove, domain/host-only,
+  path, Secure and expiry scope; only approved same-site downloads receive
+  cookies, and private tabs never reuse persistent-profile cookies. dlmgr note:
+  `segment.py` must NOT use `with http_client.get()` — curl_cffi's Response
+  isn't a context manager; close it explicitly.
 - Browser engine capabilities (`_BrowserPage` + profile setup in
   `MainWindow.__init__`):
   - **Navigation policy**: `acceptNavigationRequest` intercepts `magnet:`
-    links → `magnetRequested` signal → torrent engine (the page never
-    navigates to them). `javascript:`/`vbscript:` navigations from links
-    are blocked (XSS hardening); typed `file://` is allowed for local dev.
+    links, then asks before handing them to the engine. `javascript:`,
+    `vbscript:`, `file:`, top-level `data:`/`blob:` and unsupported schemes are
+    blocked regardless of navigation source; only `about:blank` is accepted.
   - **TLS certificate errors**: `certificateError` defers overridable
     errors and emits `certificateErrorRequested` → `_browser_cert_error`
     shows a Yes/No dialog (default: reject). Non-overridable errors are
@@ -846,28 +982,24 @@
     → `_decide_permission`: sensitive capture (camera/mic/screen/mouselock)
     is denied without prompting; geolocation/notifications/clipboard/fonts
     get a Yes/No dialog (default: deny).
-  - **Profile tuning**: UA string has the `QtWebEngine/x.y` token stripped
-    (vanilla Chrome UA, accurate Chrome version); `Accept-Language` derived
-    from system locale (fallback `en-US,en;q=0.9`); persistent cookies
-    explicit; 100MB disk HTTP cache; spell check on (system language);
-    DNS prefetch, scroll animator, back-forward cache, local-content-
-    remote-access, favicons, PDF viewer, WebGL, accelerated 2D canvas all
-    enabled; hyperlink auditing (ping=) off for privacy.
-  - **Custom `deepflux://` scheme**: registered via `QWebEngineUrlScheme`
-    in `register_deepflux_scheme()` (called at the top of `run_gui()`
-    BEFORE any profile is created — Chromium locks the scheme list at
-    profile-init). `_DeepFluxSchemeHandler` serves `deepflux://start/`
-    (the built-in start page) and a 404 for unknown paths. The start page
-    now loads via `setUrl(QUrl("deepflux://start/"))` instead of the old
-    `setHtml(..., about:blank)` hack — the page has a real, addressable
-    origin. `_display_url` hides `deepflux://` from the address bar.
-  - **QWebChannel** (`gui/browser_channel.py`): a direct JS↔Python bridge
-    exposed as `window.deepflux` on every page. `qwebchannel.js` (minimal
-    embedded copy) + a bootstrap script are injected at `DocumentCreation`
-    (before the extension). The existing browser extension still uses the
-    control-API XHR path (tested, works); the channel is the idiomatic Qt
-    way for new page-side code. Slots: `ping`, `sendDownload`, `sendPlay`,
-    `addMagnet`, `getVersion`. Each page gets `page.setWebChannel(channel)`.
+  - **Profile tuning**: normalized UA/language, persistent cookies, 100MB disk
+    cache, spellcheck, scroll animation, back-forward cache, favicons, PDF,
+    WebGL and accelerated canvas. DNS prefetch, local-content remote access and
+    hyperlink auditing are OFF for privacy. Fresh configs enable the compact
+    ad/tracker blocker; right-click its toolbar button for per-site exceptions
+    and its tooltip reports the session block count.
+  - **Custom `deepflux://` scheme**: registered before the first profile with
+    only Secure+Local flags; no local-file access, CORS, or CSP bypass. The
+    built-in start page carries a strict CSP and `_display_url` hides its URL.
+  - **QWebChannel** (`gui/browser_channel.py`): Qt's official resource
+    `qwebchannel.js` and bootstrap are injected at DocumentCreation in
+    ApplicationWorld. Persistent pages bind the channel in that same isolated
+    world; private tabs never get it. The media detector also runs isolated and
+    calls confirmed `sendDownload`/`sendPlay`; arbitrary page JS and iframes
+    cannot access `window.deepflux`. The loopback ControlAPI requires a
+    profile token on every request; single-instance and native-host clients
+    load it from `~/.deeptorrent/control_api.token`. Native registration fails
+    closed without one exact 32-character Chrome extension ID.
   - **H.264/AAC codecs**: stock PySide6 QtWebEngine lacks proprietary
     codecs → in-page `<video>` on most streaming sites won't decode. This
     is a build-time limitation (needs a custom Qt build with

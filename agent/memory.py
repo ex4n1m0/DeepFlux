@@ -14,10 +14,12 @@ lives in these files — there is no hidden state.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import logging
 import os
 import re
 import threading
+import uuid
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -29,6 +31,16 @@ SCOPES = ("user", "fact", "note")
 # injected copy is capped so old context can't crowd out the conversation.
 USER_BUDGET = 2000
 MEMORY_BUDGET = 3000
+
+
+def _contains_secret(content: str) -> bool:
+    patterns = (
+        r"(?i)(api[_ -]?key|password|passphrase|secret|access[_ -]?token)\s*[:=]\s*\S+",
+        r"(?i)\b(?:sk|pplx|ghp|github_pat|xox[baprs])[-_][a-z0-9_-]{12,}\b",
+        r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b",
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----",
+    )
+    return any(re.search(pattern, content) for pattern in patterns)
 
 
 class MemoryStore:
@@ -69,11 +81,56 @@ class MemoryStore:
         except OSError:
             return ""
 
+    @staticmethod
+    def _entry_id(scope: str, line: str) -> str:
+        match = re.match(r"^- \[id:([a-z0-9-]+)\] ", line, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        digest = hashlib.sha256(f"{scope}:{line}".encode("utf-8")).hexdigest()[:12]
+        return f"legacy-{digest}"
+
+    @classmethod
+    def _entry_content(cls, line: str) -> str:
+        return re.sub(r"^- \[id:[a-z0-9-]+\] ", "", line, flags=re.IGNORECASE).strip()
+
+    @classmethod
+    def _clean_prompt_text(cls, text: str) -> str:
+        return "\n".join(
+            f"- {cls._entry_content(line)}" if line.strip().startswith("- ") else line
+            for line in text.splitlines()
+        )
+
+    def _memory_files(self, scope: str = "") -> List[tuple[str, str]]:
+        files: List[tuple[str, str]] = []
+        if scope in ("", "user"):
+            files.append(("user", self.user_file))
+        if scope in ("", "fact"):
+            files.append(("fact", self.memory_file))
+        if scope in ("", "note"):
+            daily_dir = os.path.join(self.root, "daily")
+            try:
+                files.extend(
+                    ("note", os.path.join(daily_dir, name))
+                    for name in sorted(os.listdir(daily_dir), reverse=True)
+                    if name.endswith(".md")
+                )
+            except OSError:
+                pass
+        return files
+
+    @staticmethod
+    def _write_lines(path: str, lines: List[str]) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        temp_path = f"{path}.tmp"
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines).rstrip() + "\n")
+        os.replace(temp_path, path)
+
     def load_core(self) -> Dict[str, str]:
         """Budgeted contents of the curated files, for prompt injection."""
         with self._lock:
-            user = self._read(self.user_file).strip()
-            memory = self._read(self.memory_file).strip()
+            user = self._clean_prompt_text(self._read(self.user_file)).strip()
+            memory = self._clean_prompt_text(self._read(self.memory_file)).strip()
         if len(user) > USER_BUDGET:
             user = user[:USER_BUDGET].rsplit("\n", 1)[0] + "\n… (truncated — see USER.md)"
         if len(memory) > MEMORY_BUDGET:
@@ -103,16 +160,31 @@ class MemoryStore:
         content = " ".join((content or "").split())
         if not content:
             return {"success": False, "error": "empty content"}
+        if _contains_secret(content):
+            return {"success": False, "error": "Memory cannot store credentials or secrets"}
         if scope not in SCOPES:
             scope = "fact"
         path = self._file_for_scope(scope)
         today = datetime.date.today().isoformat()
-        line = f"- {content}" if scope != "note" else f"- {today}: {content}"
+        entry_id = uuid.uuid4().hex[:12]
+        value = content if scope != "note" else f"{today}: {content}"
+        line = f"- [id:{entry_id}] {value}"
 
         with self._lock:
             existing = self._read(path)
-            if content.lower() in existing.lower():
-                return {"success": True, "scope": scope, "path": path, "duplicate": True}
+            existing_values = {
+                self._entry_content(existing_line).lower()
+                for existing_line in existing.splitlines()
+                if existing_line.strip().startswith("- ")
+            }
+            if value.lower() in existing_values:
+                duplicate_id = next(
+                    self._entry_id(scope, existing_line)
+                    for existing_line in existing.splitlines()
+                    if existing_line.strip().startswith("- ")
+                    and self._entry_content(existing_line).lower() == value.lower()
+                )
+                return {"success": True, "id": duplicate_id, "scope": scope, "path": path, "duplicate": True}
             header = ""
             if not existing:
                 header = {
@@ -131,7 +203,77 @@ class MemoryStore:
             except OSError as exc:
                 logger.warning("memory save failed: %s", exc)
                 return {"success": False, "error": str(exc)}
-        return {"success": True, "scope": scope, "path": path, "duplicate": False}
+        return {"success": True, "id": entry_id, "scope": scope, "path": path, "duplicate": False}
+
+    def list_entries(self, scope: str = "", max_results: int = 200) -> Dict[str, Any]:
+        if scope and scope not in SCOPES:
+            return {"success": False, "error": f"Unknown scope: {scope}", "results": []}
+        results = []
+        with self._lock:
+            for entry_scope, path in self._memory_files(scope):
+                for line in self._read(path).splitlines():
+                    line = line.strip()
+                    if not line.startswith("- "):
+                        continue
+                    value = self._entry_content(line)
+                    created = ""
+                    content = value
+                    if entry_scope == "note":
+                        match = re.match(r"^(\d{4}-\d{2}-\d{2}):\s*(.*)$", value)
+                        if match:
+                            created, content = match.groups()
+                    results.append({
+                        "id": self._entry_id(entry_scope, line),
+                        "scope": entry_scope,
+                        "source": os.path.basename(path),
+                        "created": created,
+                        "content": content,
+                    })
+                    if len(results) >= max_results:
+                        return {"success": True, "count": len(results), "results": results, "truncated": True}
+        return {"success": True, "count": len(results), "results": results, "truncated": False}
+
+    def edit(self, memory_id: str, content: str) -> Dict[str, Any]:
+        content = " ".join((content or "").split())
+        if not content:
+            return {"success": False, "error": "empty content"}
+        if _contains_secret(content):
+            return {"success": False, "error": "Memory cannot store credentials or secrets"}
+        with self._lock:
+            for scope, path in self._memory_files():
+                lines = self._read(path).splitlines()
+                for index, line in enumerate(lines):
+                    if not line.strip().startswith("- ") or self._entry_id(scope, line.strip()) != memory_id:
+                        continue
+                    value = content
+                    if scope == "note":
+                        old_value = self._entry_content(line.strip())
+                        match = re.match(r"^(\d{4}-\d{2}-\d{2}):", old_value)
+                        day = match.group(1) if match else datetime.date.today().isoformat()
+                        value = f"{day}: {content}"
+                    lines[index] = f"- [id:{memory_id}] {value}"
+                    try:
+                        self._write_lines(path, lines)
+                    except OSError as exc:
+                        return {"success": False, "error": str(exc)}
+                    return {"success": True, "id": memory_id, "scope": scope, "content": content}
+        return {"success": False, "error": f"Memory not found: {memory_id}"}
+
+    def forget(self, memory_id: str) -> Dict[str, Any]:
+        with self._lock:
+            for scope, path in self._memory_files():
+                lines = self._read(path).splitlines()
+                for index, line in enumerate(lines):
+                    if not line.strip().startswith("- ") or self._entry_id(scope, line.strip()) != memory_id:
+                        continue
+                    content = self._entry_content(line.strip())
+                    del lines[index]
+                    try:
+                        self._write_lines(path, lines)
+                    except OSError as exc:
+                        return {"success": False, "error": str(exc)}
+                    return {"success": True, "id": memory_id, "scope": scope, "content": content}
+        return {"success": False, "error": f"Memory not found: {memory_id}"}
 
     # -- search --------------------------------------------------------------
 
@@ -141,20 +283,9 @@ class MemoryStore:
         if not tokens:
             return {"success": False, "error": "query too short", "results": []}
 
-        files = [self.user_file, self.memory_file]
-        daily_dir = os.path.join(self.root, "daily")
-        try:
-            files.extend(
-                os.path.join(daily_dir, name)
-                for name in sorted(os.listdir(daily_dir), reverse=True)
-                if name.endswith(".md")
-            )
-        except OSError:
-            pass
-
         hits: List[Dict[str, Any]] = []
         with self._lock:
-            for path in files:
+            for scope, path in self._memory_files():
                 text = self._read(path)
                 if not text:
                     continue
@@ -162,13 +293,16 @@ class MemoryStore:
                     line = line.strip()
                     if not line or line.startswith("#"):
                         continue
-                    low = line.lower()
+                    content = self._entry_content(line)
+                    low = content.lower()
                     score = sum(1 for t in tokens if t in low)
                     if score:
                         hits.append({
+                            "id": self._entry_id(scope, line),
+                            "scope": scope,
                             "score": score,
                             "source": os.path.basename(path),
-                            "line": line[:500],
+                            "line": content[:500],
                         })
         hits.sort(key=lambda h: h["score"], reverse=True)
         hits = hits[:max_results]

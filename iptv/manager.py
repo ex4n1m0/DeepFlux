@@ -10,6 +10,7 @@ so the rest of the subsystem stays Qt-free and unit-testable.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -69,6 +70,7 @@ class IPTVManager:
         cache_limit_mb: int = 10240,
         epg_url: str = "",
         enable_epg: bool = True,
+        xtream_series_concurrency: int = 2,
     ) -> None:
         self.sources: List[PlaylistSource] = list(sources)
         self.data_dir = data_dir or default_data_dir()
@@ -93,6 +95,8 @@ class IPTVManager:
         # source without its own per-source epg_url.
         self.epg_url = epg_url
         self.enable_epg = enable_epg
+        self.xtream_series_concurrency = max(1, min(6, int(
+            xtream_series_concurrency or 2)))
 
         # The currently loaded playlist (per source) and the active source id.
         self._playlists: Dict[str, Playlist] = {}
@@ -274,18 +278,30 @@ class IPTVManager:
         cancel = self._cancel_flags.get(source.id)
         is_cancelled = (lambda: cancel.is_set()) if cancel else None
 
+        # Defined for every source kind: local_folder/xtream branches never
+        # build request headers, but the EPG kickoff at the end references
+        # this for all kinds.
+        headers: Dict[str, str] = {}
+
         if source.kind == "local_folder":
             pl = local_folder.scan_folder(
                 source, on_progress=on_progress, is_cancelled=is_cancelled)
         elif source.kind == "xtream":
             if not source.has_credentials():
-                pl = Playlist(source_id=source.id)
+                pl = xtream.XtreamPlaylist(
+                    source_id=source.id,
+                    error=xtream.XtreamLoadError(
+                        xtream.XtreamErrorKind.AUTH_REJECTED,
+                        "Xtream server URL, username, and password are required.",
+                    ),
+                )
             else:
-                pl = xtream.load_playlist(source, on_progress=on_progress, is_cancelled=is_cancelled)
+                pl = xtream.load_playlist(
+                    source, on_progress=on_progress, is_cancelled=is_cancelled,
+                    series_info_concurrency=self.xtream_series_concurrency)
         else:
             text = None
             path = None
-            headers = {}
             if source.user_agent:
                 headers["User-Agent"] = source.user_agent
             if source.referer:
@@ -640,6 +656,92 @@ class IPTVManager:
         if pl is None:
             return []
         return self.cache.recent(pl.source_id)
+
+    # -- durable watch progress ---------------------------------------------
+    WATCH_MIN_POSITION = 30.0
+    WATCHED_RATIO = 0.90
+    WATCHED_REMAINING_SECONDS = 120.0
+
+    def _watch_identity(self, item: Any) -> tuple[str, str]:
+        """Return a stable ``(source_id, item_id)`` for movies and episodes."""
+        sid = self.source_id_of(item)
+        if not sid:
+            pl = self.current_playlist()
+            sid = pl.source_id if pl else ""
+        iid = getattr(item, "id", "") or ""
+        if not iid:
+            # Episode has no model id. Its provider URL plus season/episode is
+            # stable across cache refreshes and distinct within its source.
+            raw = "|".join((
+                str(getattr(item, "url", "") or ""),
+                str(getattr(item, "season", "") or ""),
+                str(getattr(item, "episode", "") or ""),
+                str(getattr(item, "name", "") or ""),
+            ))
+            iid = "episode::" + hashlib.sha1(
+                raw.encode("utf-8", "replace")).hexdigest()[:20]
+        return sid, iid
+
+    @staticmethod
+    def is_live_item(item: Any) -> bool:
+        return getattr(item, "section", "") == SECTION_LIVE
+
+    @classmethod
+    def is_near_completion(cls, position: float, duration: float) -> bool:
+        position = max(0.0, float(position or 0.0))
+        duration = max(0.0, float(duration or 0.0))
+        if position < cls.WATCH_MIN_POSITION or duration <= 0.0:
+            return False
+        ratio = min(1.0, position / duration)
+        remaining = max(0.0, duration - position)
+        return ratio >= cls.WATCHED_RATIO or (
+            ratio >= 0.5 and remaining <= cls.WATCHED_REMAINING_SECONDS
+        )
+
+    @classmethod
+    def is_meaningful_resume(
+        cls, position: float, duration: float, watched: bool = False
+    ) -> bool:
+        if watched:
+            return False
+        position = max(0.0, float(position or 0.0))
+        duration = max(0.0, float(duration or 0.0))
+        return (
+            position >= cls.WATCH_MIN_POSITION
+            and duration > position
+            and not cls.is_near_completion(position, duration)
+        )
+
+    def update_watch_progress(self, item: Any, position: float, duration: float) -> None:
+        """Checkpoint VOD/episode playback; live channels are never persisted."""
+        if item is None or self.is_live_item(item):
+            return
+        sid, iid = self._watch_identity(item)
+        if not sid or not iid:
+            return
+        watched = True if self.is_near_completion(position, duration) else None
+        self.cache.save_watch_progress(sid, iid, position, duration, watched=watched)
+
+    def watch_progress(self, item: Any) -> Optional[Dict[str, Any]]:
+        if item is None or self.is_live_item(item):
+            return None
+        sid, iid = self._watch_identity(item)
+        return self.cache.watch_progress(sid, iid) if sid and iid else None
+
+    def resume_position(self, item: Any) -> float:
+        progress = self.watch_progress(item)
+        if progress and self.is_meaningful_resume(
+            progress["position"], progress["duration"], progress["watched"]
+        ):
+            return float(progress["position"])
+        return 0.0
+
+    def set_watched(self, item: Any, watched: bool = True) -> None:
+        if item is None or self.is_live_item(item):
+            return
+        sid, iid = self._watch_identity(item)
+        if sid and iid:
+            self.cache.set_watched(sid, iid, watched)
 
     # -- cache maintenance ---------------------------------------------------
     def cache_stats(self) -> Dict[str, Any]:

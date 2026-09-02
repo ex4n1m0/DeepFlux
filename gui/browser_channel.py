@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from PySide6.QtCore import QObject, Slot
+from PySide6.QtCore import QFile, QIODevice, QObject, Slot
 from PySide6.QtWebChannel import QWebChannel
 
 logger = logging.getLogger(__name__)
@@ -112,21 +112,31 @@ _QWEBCHANNEL_JS = r"""
 # Bootstrap script: create the channel and expose window.deepflux.
 # Pages that don't have qt.webChannelTransport (non-Qt pages) silently skip.
 _CHANNEL_BOOTSTRAP_JS = r"""
-(function(){
+(function bootDeepFluxChannel(attempt){
   if (window.__deepfluxChannelReady) return;
+  if (typeof qt === 'undefined' || !qt.webChannelTransport) {
+    if (attempt < 20) setTimeout(function(){ bootDeepFluxChannel(attempt + 1); }, 25);
+    return;
+  }
   window.__deepfluxChannelReady = true;
-  if (typeof qt === 'undefined' || !qt.webChannelTransport) return;
   new QWebChannel(qt.webChannelTransport, function(channel) {
     window.deepflux = channel.objects.deepflux;
     window.dispatchEvent(new CustomEvent('deepflux-ready'));
   });
-})();
+})(0);
 """
 
 
 def channel_injection_script() -> str:
-    """Return the full JS to inject: qwebchannel.js + bootstrap."""
-    return _QWEBCHANNEL_JS + "\n" + _CHANNEL_BOOTSTRAP_JS
+    """Return the official Qt qwebchannel.js plus the DeepFlux bootstrap."""
+    source = QFile(":/qtwebchannel/qwebchannel.js")
+    if not source.open(QIODevice.OpenModeFlag.ReadOnly):
+        raise RuntimeError("Qt qwebchannel.js resource is unavailable")
+    try:
+        loader = bytes(source.readAll()).decode("utf-8")
+    finally:
+        source.close()
+    return loader + "\n" + _CHANNEL_BOOTSTRAP_JS
 
 
 class BrowserChannelBridge(QObject):
@@ -153,8 +163,11 @@ class BrowserChannelBridge(QObject):
         Equivalent to POST /api/jobs on the control API, but without the
         HTTP loopback. Returns True if the job was accepted."""
         try:
-            cookies = self._window._browser_cookies_for(url)
-            referrer = url  # best-effort; the page JS can pass it explicitly
+            source_url = self._window._current_browser_view().url().toString()
+            if not self._window._confirm_browser_action("download", url, title, source_url):
+                return False
+            cookies = self._window._browser_cookies_for(url, source_url)
+            referrer = source_url
             low = url.lower().split("?", 1)[0]
             if low.endswith((".m3u8", ".mpd")):
                 job = self._window._dl_engine.add_stream_job(
@@ -166,6 +179,8 @@ class BrowserChannelBridge(QObject):
                     url=url, filename=title or "", cookies=cookies,
                     referrer=referrer, source_url=referrer,
                 )
+            self._window._notify("Download started", job.filename, path=job.save_path)
+            self._window.main_tabs.setCurrentWidget(self._window._torrents_tab)
             return True
         except Exception as exc:
             logger.warning("WebChannel sendDownload failed: %s", exc)
@@ -177,6 +192,8 @@ class BrowserChannelBridge(QObject):
 
         Equivalent to POST /api/play on the control API."""
         try:
+            if not self._window._confirm_browser_action("play", url, title):
+                return False
             self._window._play_signals.play_stream.emit({
                 "url": url,
                 "type": stream_type or "",
@@ -191,6 +208,8 @@ class BrowserChannelBridge(QObject):
     def addMagnet(self, uri: str) -> bool:
         """Add a magnet URI to the torrent engine directly from page JS."""
         try:
+            if not self._window._confirm_browser_action("magnet", uri):
+                return False
             result = self._window.tools.call("add_magnet", {
                 "uri": uri,
                 "save_path": self._window.config.default_save_path,

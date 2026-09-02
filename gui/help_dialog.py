@@ -42,7 +42,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.2.8 — User Guide</h1>
+<h1>DeepFlux 3.4.1 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -226,6 +226,16 @@ the torrent engine on completion.</p>
   <li>Aspect ratio cycles with <code>A</code>; <code>F</code> or double-click for fullscreen.</li>
 </ul>
 
+<h2>Site Grabber</h2>
+<p>The magnifier button in the browser toolbar searches a video site by
+keywords and lists the results (thumbnail, duration, title) — check the
+ones you want and press <b>Download selected</b> (or grab the whole page).
+Each video is resolved to its stream and queued in the download manager as
+a normal HLS job; failures stay checked so you can retry just those.</p>
+<p>Prefer zero clicks? Turn on <b>Auto-queue</b>: every search (and every
+page you browse to) resolves and queues up to the <b>max</b> limit
+automatically — keywords in, downloads out. The setting is remembered.</p>
+
 <h2>Chrome Extension</h2>
 <p>The Chrome extension sends downloads from your external browser to DeepFlux.
 Install it from the <code>_internal\chrome_extension\</code> folder in your install
@@ -290,7 +300,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.2.8 — AI Deep Search</p>
+<p>DeepFlux 3.4.1 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -304,7 +314,8 @@ class HelpDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("DeepFlux — User Guide")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(520, 360)
+        self.resize(760, 520)
         self.setStyleSheet("QDialog { background-color: #0a0a0f; }")
 
         layout = QVBoxLayout(self)
@@ -357,7 +368,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 24px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.2.8 — AI Deep Search")
+        version = QLabel("3.4.1 — AI Deep Search")
         version.setStyleSheet("color: #c8d3e0; font-size: 14px;")
         layout.addWidget(version)
 

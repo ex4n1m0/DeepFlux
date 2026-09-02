@@ -11,12 +11,21 @@ import os
 import subprocess
 import sys
 from typing import Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtCore import (
+    QAbstractTableModel,
+    QItemSelectionModel,
+    QModelIndex,
+    QSortFilterProxyModel,
+    Qt,
+    QTimer,
+)
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
-    QFileDialog,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -25,9 +34,11 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
-    QProgressBar,
     QPushButton,
-    QSpinBox,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionProgressBar,
+    QTableView,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -64,14 +75,254 @@ def _format_eta(seconds: int) -> str:
     return f"{seconds // 3600}h {(seconds % 3600) // 60}m"
 
 
+def _redact_url(url: str) -> str:
+    """Return a useful URL for display without credentials or secret query values."""
+    if not url:
+        return ""
+    sensitive = {
+        "access_token", "apikey", "api_key", "auth", "authorization",
+        "credential", "key", "passwd", "password", "sig", "signature", "token",
+    }
+    try:
+        parts = urlsplit(url)
+        host = parts.hostname or ""
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        try:
+            port = f":{parts.port}" if parts.port is not None else ""
+        except ValueError:
+            port = ""
+        credentials = "[credentials-redacted]@" if parts.username or parts.password else ""
+        netloc = credentials + host + port if parts.netloc else ""
+        query = urlencode([
+            (key, "REDACTED" if key.lower() in sensitive else value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        ])
+        return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
+    except (TypeError, ValueError):
+        return "[invalid URL]"
+
+
+_STATUS_COLORS = {
+    JobStatus.QUEUED: "#ffcc00",
+    JobStatus.DOWNLOADING: "#00ff9d",
+    JobStatus.PROCESSING: "#c084fc",
+    JobStatus.PAUSED: "#8a9ab0",
+    JobStatus.COMPLETED: "#2a7abf",
+    JobStatus.ERROR: "#ff3366",
+}
+
+
+class DownloadsTableModel(QAbstractTableModel):
+    """Read-only job model that updates in place on the one-second refresh."""
+
+    COLUMNS = ("Filename", "Progress", "Speed", "ETA", "Status", "Size", "Source URL", "Category", "Priority")
+    JOB_ID_ROLE = int(Qt.UserRole) + 1
+    SORT_ROLE = int(Qt.UserRole) + 2
+    UNKNOWN_PROGRESS_ROLE = int(Qt.UserRole) + 3
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._jobs = []
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self._jobs)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self.COLUMNS)
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole and 0 <= section < len(self.COLUMNS):
+            return self.COLUMNS[section]
+        return super().headerData(section, orientation, role)
+
+    def flags(self, index: QModelIndex):
+        if not index.isValid():
+            return Qt.NoItemFlags
+        return Qt.ItemIsEnabled | Qt.ItemIsSelectable
+
+    def job_at(self, row: int):
+        return self._jobs[row] if 0 <= row < len(self._jobs) else None
+
+    def update_jobs(self, jobs) -> None:
+        jobs = list(jobs)
+        old_ids = [job.id for job in self._jobs]
+        new_ids = [job.id for job in jobs]
+        if old_ids != new_ids:
+            self.beginResetModel()
+            self._jobs = jobs
+            self.endResetModel()
+        else:
+            self._jobs = jobs
+            if jobs:
+                self.dataChanged.emit(
+                    self.index(0, 0), self.index(len(jobs) - 1, len(self.COLUMNS) - 1), []
+                )
+
+    def data(self, index: QModelIndex, role=Qt.DisplayRole):
+        if not index.isValid() or not 0 <= index.row() < len(self._jobs):
+            return None
+        job = self._jobs[index.row()]
+        column = index.column()
+        source_url = job.source_url or job.url
+        redacted_url = _redact_url(source_url)
+        unknown_size = job.file_size <= 0 and job.job_type not in ("hls", "dash")
+
+        if role == self.JOB_ID_ROLE:
+            return job.id
+        if role == self.UNKNOWN_PROGRESS_ROLE:
+            return unknown_size and job.status == JobStatus.DOWNLOADING
+        if role == self.SORT_ROLE:
+            return (
+                job.filename.casefold(),
+                job.progress,
+                job.speed_bps,
+                job.eta_seconds,
+                job.status.value,
+                job.file_size if job.file_size > 0 else job.downloaded,
+                redacted_url.casefold(),
+                job.category.casefold(),
+                job.priority,
+            )[column]
+        if role == Qt.ForegroundRole and column == 4:
+            return QColor(_STATUS_COLORS.get(job.status, "#ffffff"))
+        if role == Qt.ToolTipRole:
+            if column == 4 and job.error_message:
+                return job.error_message
+            if column == 6:
+                return redacted_url
+            return None
+        if role == Qt.TextAlignmentRole and column in (1, 2, 3, 5):
+            return int(Qt.AlignRight | Qt.AlignVCenter)
+        if role != Qt.DisplayRole:
+            return None
+
+        if column == 0:
+            play_mark = "▶ " if _is_playable_job(job) else ""
+            return play_mark + job.filename
+        if column == 1:
+            if unknown_size and job.status == JobStatus.DOWNLOADING:
+                return f"{_format_size(job.downloaded)} so far" if job.downloaded else "Downloading…"
+            return f"{job.progress * 100:.1f}%"
+        if column == 2:
+            return _format_speed(job.speed_bps)
+        if column == 3:
+            return _format_eta(job.eta_seconds)
+        if column == 4:
+            if job.status == JobStatus.ERROR and job.error_message:
+                return f"Error: {job.error_message}"
+            return job.status.value.capitalize()
+        if column == 5:
+            if job.job_type in ("hls", "dash"):
+                return f"{job.file_size} segs" if job.file_size > 0 else "—"
+            if job.file_size > 0:
+                return _format_size(job.file_size)
+            if job.downloaded > 0:
+                return f"{_format_size(job.downloaded)} / ?"
+            return "—"
+        if column == 6:
+            return redacted_url if len(redacted_url) <= 72 else redacted_url[:69] + "..."
+        if column == 7:
+            return job.category or "—"
+        if column == 8:
+            return str(job.priority)
+        return None
+
+
+class DownloadsFilterProxyModel(QSortFilterProxyModel):
+    """Combined filename/URL search and exact status filter."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._search = ""
+        self._status = ""
+        self.setDynamicSortFilter(True)
+        self.setSortRole(DownloadsTableModel.SORT_ROLE)
+        self.setSortCaseSensitivity(Qt.CaseInsensitive)
+
+    def _set_filter_value(self, attribute: str, value: str) -> None:
+        if value == getattr(self, attribute):
+            return
+        if hasattr(self, "beginFilterChange"):
+            self.beginFilterChange()
+            setattr(self, attribute, value)
+            self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
+        else:
+            setattr(self, attribute, value)
+            self.invalidateFilter()
+
+    def set_search(self, text: str) -> None:
+        self._set_filter_value("_search", text.strip().casefold())
+
+    def set_status(self, status: str) -> None:
+        self._set_filter_value("_status", status)
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        model = self.sourceModel()
+        job = model.job_at(source_row) if isinstance(model, DownloadsTableModel) else None
+        if job is None:
+            return False
+        if self._status and job.status.value != self._status:
+            return False
+        if self._search:
+            haystack = "\n".join((job.filename, job.category, _redact_url(job.source_url or job.url))).casefold()
+            if self._search not in haystack:
+                return False
+        return True
+
+
+class ProgressDelegate(QStyledItemDelegate):
+    """Paint progress without allocating a widget for every queue row."""
+
+    def paint(self, painter, option, index) -> None:
+        progress = QStyleOptionProgressBar()
+        progress.rect = option.rect.adjusted(4, 3, -4, -3)
+        progress.state = option.state
+        progress.direction = option.direction
+        progress.fontMetrics = option.fontMetrics
+        progress.textAlignment = Qt.AlignCenter
+        progress.textVisible = True
+        progress.text = str(index.data(Qt.DisplayRole) or "")
+        if index.data(DownloadsTableModel.UNKNOWN_PROGRESS_ROLE):
+            progress.minimum = 0
+            progress.maximum = 0
+        else:
+            progress.minimum = 0
+            progress.maximum = 1000
+            progress.progress = int(float(index.data(DownloadsTableModel.SORT_ROLE) or 0) * 1000)
+        QApplication.style().drawControl(QStyle.CE_ProgressBar, progress, painter)
+
+
+_VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
+               ".m4v", ".mpg", ".mpeg", ".ts", ".m2ts", ".vob", ".3gp", ".ogv")
+
+
+def _is_playable_job(job) -> bool:
+    return (job.status == JobStatus.COMPLETED
+            and job.save_path.lower().endswith(_VIDEO_EXTS)
+            and os.path.isfile(job.save_path))
+
+
 class DownloadsTab(QWidget):
     """The Downloads tab widget — queue list + toolbar + details panel."""
+
+    VIDEO_EXTS = _VIDEO_EXTS
+    PAUSABLE = (JobStatus.DOWNLOADING, JobStatus.QUEUED)
+    RESUMABLE = (JobStatus.PAUSED, JobStatus.ERROR)
+    CANCELLABLE = (
+        JobStatus.QUEUED, JobStatus.DOWNLOADING, JobStatus.PROCESSING,
+        JobStatus.PAUSED, JobStatus.ERROR,
+    )
+    REMOVABLE = (JobStatus.COMPLETED, JobStatus.ERROR)
 
     def __init__(self, engine: DownloadEngine, config, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._engine = engine
         self._config = config
         self._play_callback = None  # set via set_play_callback()
+        self._selection_job_ids: set[str] = set()
+        self._current_job_id: Optional[str] = None
+        self._restoring_selection = False
         self._build_ui()
         self._start_refresh_timer()
 
@@ -132,14 +383,9 @@ class DownloadsTab(QWidget):
                 self._torrent_handled.add(job.id)
                 cb(job.save_path, job.id)
 
-    VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
-                  ".m4v", ".mpg", ".mpeg", ".ts", ".m2ts", ".vob", ".3gp", ".ogv")
-
     def _is_playable(self, job) -> bool:
         """Completed video file that exists on disk."""
-        return (job.status == JobStatus.COMPLETED
-                and job.save_path.lower().endswith(self.VIDEO_EXTS)
-                and os.path.isfile(job.save_path))
+        return _is_playable_job(job)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -175,6 +421,10 @@ class DownloadsTab(QWidget):
         self.retry_btn.clicked.connect(self._retry_selected)
         toolbar.addWidget(self.retry_btn)
 
+        self.remove_btn = QPushButton("Remove")
+        self.remove_btn.clicked.connect(self._remove_selected)
+        toolbar.addWidget(self.remove_btn)
+
         toolbar.addStretch()
 
         self.open_file_btn = QPushButton("Open File")
@@ -191,19 +441,46 @@ class DownloadsTab(QWidget):
 
         layout.addLayout(toolbar)
 
+        filters = QHBoxLayout()
+        filters.setSpacing(6)
+        self.search_edit = QLineEdit()
+        self.search_edit.setObjectName("downloads_search")
+        self.search_edit.setPlaceholderText("Search filename or source URL…")
+        self.search_edit.setClearButtonEnabled(True)
+        filters.addWidget(self.search_edit, 1)
+        self.status_filter = QComboBox()
+        self.status_filter.setObjectName("downloads_status_filter")
+        self.status_filter.addItem("All statuses", "")
+        for status in JobStatus:
+            self.status_filter.addItem(status.value.capitalize(), status.value)
+        filters.addWidget(self.status_filter)
+        self.summary_label = QLabel("Active: 0  |  Queued: 0  |  Speed: —")
+        self.summary_label.setObjectName("downloads_summary")
+        filters.addWidget(self.summary_label)
+        layout.addLayout(filters)
+
         # --- Downloads table ---
-        self.table = QTableWidget()
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(["Filename", "Progress", "Speed", "ETA", "Status", "Size", "Source URL"])
+        self._model = DownloadsTableModel(self)
+        self._proxy = DownloadsFilterProxyModel(self)
+        self._proxy.setSourceModel(self._model)
+        self.table = QTableView()
+        self.table.setModel(self._proxy)
+        self.table.setItemDelegateForColumn(1, ProgressDelegate(self.table))
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         self.table.setAlternatingRowColors(True)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSortingEnabled(True)
+        self.table.sortByColumn(0, Qt.AscendingOrder)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
-        self.table.itemDoubleClicked.connect(lambda _item: self._on_double_click())
+        self.table.doubleClicked.connect(lambda _index: self._on_double_click())
+        self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self.table.verticalHeader().setDefaultSectionSize(20)
+        self.search_edit.textChanged.connect(self._set_search_filter)
+        self.status_filter.currentIndexChanged.connect(self._set_status_filter)
         layout.addWidget(self.table)
 
         # --- Details panel (segmented file downloads only; hidden for streams) ---
@@ -226,6 +503,7 @@ class DownloadsTab(QWidget):
         self.details_group.setVisible(False)
 
         layout.addWidget(self.details_group)
+        self._update_action_states()
 
     def _start_refresh_timer(self) -> None:
         self._timer = QTimer(self)
@@ -237,108 +515,125 @@ class DownloadsTab(QWidget):
     # ------------------------------------------------------------------
 
     def _refresh(self) -> None:
-        """Update the table from the engine's current job list."""
+        """Update the model from the engine's current job list."""
         jobs = self._engine.list_jobs()
         # Sort by created_at descending (newest first).
         jobs.sort(key=lambda j: j.created_at, reverse=True)
         self._check_torrent_jobs(jobs)
         self._check_completed_notifications(jobs)
 
-        selected_row = self.table.currentRow()
-        selected_id = ""
-        if selected_row >= 0 and selected_row < self.table.rowCount():
-            item = self.table.item(selected_row, 0)
-            if item:
-                selected_id = item.data(Qt.UserRole) or ""
+        known_ids = {job.id for job in jobs}
+        selected_ids = self._selection_job_ids & known_ids
+        current_id = self._current_job_id if self._current_job_id in known_ids else None
+        self._restoring_selection = True
+        try:
+            self._model.update_jobs(jobs)
+            self._restore_selection(selected_ids, current_id)
+        finally:
+            self._restoring_selection = False
+        self._selection_job_ids = selected_ids
+        self._current_job_id = current_id if current_id in selected_ids else next(iter(selected_ids), None)
 
-        self.table.setRowCount(len(jobs))
-        for row, job in enumerate(jobs):
-            # Filename — completed videos get a play indicator (double-click plays).
-            play_mark = "▶ " if self._is_playable(job) else ""
-            name_item = QTableWidgetItem(play_mark + job.filename)
-            name_item.setData(Qt.UserRole, job.id)
-            self.table.setItem(row, 0, name_item)
-
-            # Progress bar — reuse the existing cell widget if present
-            # (allocating a fresh widget per row per second is wasteful).
-            bar = None
-            existing = self.table.cellWidget(row, 1)
-            if existing is not None:
-                bar = existing.findChild(QProgressBar)
-            if bar is None:
-                progress_widget = QWidget()
-                progress_layout = QHBoxLayout(progress_widget)
-                progress_layout.setContentsMargins(4, 2, 4, 2)
-                bar = QProgressBar()
-                bar.setMinimum(0)
-                bar.setMaximum(100)
-                bar.setTextVisible(True)
-                bar.setFixedHeight(18)
-                progress_layout.addWidget(bar)
-                self.table.setCellWidget(row, 1, progress_widget)
-            # Unknown total size (no Content-Length / HEAD failed): a plain
-            # 0% bar looks dead, so animate a busy indicator instead — Qt
-            # renders no text on a busy bar, the byte counter lives in the
-            # Size column below.
-            unknown_size = job.file_size <= 0 and job.job_type not in ("hls", "dash")
-            if unknown_size and job.status == JobStatus.DOWNLOADING:
-                if bar.maximum() != 0:
-                    bar.setRange(0, 0)  # busy indicator
-            else:
-                if bar.maximum() != 100:
-                    bar.setRange(0, 100)
-                bar.setValue(int(job.progress * 100))
-                if unknown_size and job.status != JobStatus.COMPLETED:
-                    bar.setFormat(f"{_format_size(job.downloaded)} so far")
-                else:
-                    bar.setFormat(f"{job.progress * 100:.1f}%")
-
-            # Speed
-            self.table.setItem(row, 2, QTableWidgetItem(_format_speed(job.speed_bps)))
-
-            # ETA
-            self.table.setItem(row, 3, QTableWidgetItem(_format_eta(job.eta_seconds)))
-
-            # Status
-            status_colors = {
-                JobStatus.QUEUED: "#ffcc00",
-                JobStatus.DOWNLOADING: "#00ff9d",
-                JobStatus.PROCESSING: "#c084fc",
-                JobStatus.PAUSED: "#8a9ab0",
-                JobStatus.COMPLETED: "#2a7abf",
-                JobStatus.ERROR: "#ff3366",
-            }
-            status_item = QTableWidgetItem(job.status.value.capitalize())
-            status_item.setForeground(Qt.GlobalColor.white)
-            self.table.setItem(row, 4, status_item)
-
-            # Size — unknown-total jobs show bytes fetched so far instead.
-            if job.job_type in ("hls", "dash"):
-                size_text = f"{job.file_size} segs" if job.file_size > 0 else "—"
-            elif job.file_size > 0:
-                size_text = _format_size(job.file_size)
-            elif job.downloaded > 0:
-                size_text = f"{_format_size(job.downloaded)} / ?"
-            else:
-                size_text = "—"
-            self.table.setItem(row, 5, QTableWidgetItem(size_text))
-
-            # Source URL
-            url_text = job.source_url or job.url
-            if len(url_text) > 60:
-                url_text = url_text[:57] + "..."
-            self.table.setItem(row, 6, QTableWidgetItem(url_text))
-
-        # Restore selection.
-        if selected_id:
-            for row in range(self.table.rowCount()):
-                item = self.table.item(row, 0)
-                if item and item.data(Qt.UserRole) == selected_id:
-                    self.table.selectRow(row)
-                    break
-
-        # Update details panel.
+        self._update_summary(jobs)
         self._update_details()
+        self._update_action_states()
+
+    def _update_summary(self, jobs) -> None:
+        active = sum(job.status in (JobStatus.DOWNLOADING, JobStatus.PROCESSING) for job in jobs)
+        queued = sum(job.status == JobStatus.QUEUED for job in jobs)
+        speed = sum(max(0, job.speed_bps) for job in jobs
+                    if job.status in (JobStatus.DOWNLOADING, JobStatus.PROCESSING))
+        showing = self._proxy.rowCount()
+        suffix = f"  |  Showing: {showing}/{len(jobs)}" if showing != len(jobs) else ""
+        self.summary_label.setText(
+            f"Active: {active}  |  Queued: {queued}  |  Speed: {_format_speed(speed)}{suffix}"
+        )
+
+    def _set_search_filter(self, text: str) -> None:
+        self._apply_filter(lambda: self._proxy.set_search(text))
+
+    def _set_status_filter(self, _index: int) -> None:
+        self._apply_filter(lambda: self._proxy.set_status(self.status_filter.currentData() or ""))
+
+    def _apply_filter(self, change_filter) -> None:
+        selected_ids = set(self._selection_job_ids)
+        current_id = self._current_job_id
+        self._restoring_selection = True
+        try:
+            change_filter()
+            self._restore_selection(selected_ids, current_id)
+        finally:
+            self._restoring_selection = False
+        self._update_summary(self._engine.list_jobs())
+        self._update_details()
+        self._update_action_states()
+
+    def _restore_selection(self, job_ids: set[str], current_id: Optional[str]) -> None:
+        selection_model = self.table.selectionModel()
+        selection_model.clearSelection()
+        current_index = QModelIndex()
+        for row in range(self._proxy.rowCount()):
+            index = self._proxy.index(row, 0)
+            job_id = index.data(DownloadsTableModel.JOB_ID_ROLE)
+            if job_id in job_ids:
+                selection_model.select(
+                    index,
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                )
+                if job_id == current_id or not current_index.isValid():
+                    current_index = index
+        if current_index.isValid():
+            selection_model.setCurrentIndex(
+                current_index, QItemSelectionModel.SelectionFlag.NoUpdate
+            )
+        else:
+            selection_model.setCurrentIndex(
+                QModelIndex(), QItemSelectionModel.SelectionFlag.NoUpdate
+            )
+
+    def _on_selection_changed(self, _selected=None, _deselected=None) -> None:
+        if self._restoring_selection:
+            return
+        self._selection_job_ids = set(self._selected_job_ids_from_view())
+        current = self.table.currentIndex()
+        self._current_job_id = (
+            self._proxy.index(current.row(), 0).data(DownloadsTableModel.JOB_ID_ROLE)
+            if current.isValid() else next(iter(self._selection_job_ids), None)
+        )
+        self._update_details()
+        self._update_action_states()
+
+    def _selected_job_ids_from_view(self) -> list[str]:
+        indexes = self.table.selectionModel().selectedRows(0)
+        indexes.sort(key=lambda index: index.row())
+        return [index.data(DownloadsTableModel.JOB_ID_ROLE) for index in indexes if index.isValid()]
+
+    def _selected_jobs(self):
+        jobs = []
+        for job_id in self._selected_job_ids_from_view():
+            job = self._engine.get_job(job_id)
+            if job is not None:
+                jobs.append(job)
+        return jobs
+
+    def _update_action_states(self) -> None:
+        jobs = self._selected_jobs()
+        statuses = {job.status for job in jobs}
+        self.pause_btn.setEnabled(bool(statuses.intersection(self.PAUSABLE)))
+        self.resume_btn.setEnabled(bool(statuses.intersection(self.RESUMABLE)))
+        self.cancel_btn.setEnabled(bool(statuses.intersection(self.CANCELLABLE)))
+        self.retry_btn.setEnabled(JobStatus.ERROR in statuses)
+        self.remove_btn.setEnabled(bool(statuses.intersection(self.REMOVABLE)))
+        one_job = jobs[0] if len(jobs) == 1 else None
+        self.open_file_btn.setEnabled(bool(
+            one_job and one_job.status == JobStatus.COMPLETED and os.path.isfile(one_job.save_path)
+        ))
+        self.open_folder_btn.setEnabled(bool(
+            one_job and os.path.isdir(os.path.dirname(one_job.save_path))
+        ))
+        self.clear_completed_btn.setEnabled(any(
+            job.status == JobStatus.COMPLETED for job in self._engine.list_jobs()
+        ))
 
     def _update_details(self) -> None:
         """Update the segment details panel for the selected job.
@@ -346,12 +641,8 @@ class DownloadsTab(QWidget):
         The panel only exists for segmented file downloads — stream jobs
         (HLS/DASH/YouTube) don't have byte-range segments, so the panel
         hides itself for them."""
-        row = self.table.currentRow()
-        job = None
-        if 0 <= row < self.table.rowCount():
-            item = self.table.item(row, 0)
-            if item:
-                job = self._engine.get_job(item.data(Qt.UserRole))
+        job_id = self._get_selected_job_id()
+        job = self._engine.get_job(job_id) if job_id else None
 
         if job is None or job.job_type in ("hls", "dash", "youtube"):
             self.details_group.setVisible(False)
@@ -383,11 +674,11 @@ class DownloadsTab(QWidget):
     # ------------------------------------------------------------------
 
     def _get_selected_job_id(self) -> Optional[str]:
-        row = self.table.currentRow()
-        if row < 0 or row >= self.table.rowCount():
-            return None
-        item = self.table.item(row, 0)
-        return item.data(Qt.UserRole) if item else None
+        current = self.table.currentIndex()
+        if current.isValid():
+            return self._proxy.index(current.row(), 0).data(DownloadsTableModel.JOB_ID_ROLE)
+        selected = self._selected_job_ids_from_view()
+        return selected[0] if selected else None
 
     def _add_url_dialog(self) -> None:
         """Open a dialog to add a download URL manually.
@@ -412,95 +703,127 @@ class DownloadsTab(QWidget):
                 except Exception as exc:
                     QMessageBox.warning(self, "Error", f"Failed to add download: {exc}")
 
+    def _run_bulk_action(self, method_name: str, allowed_statuses) -> None:
+        for job in self._selected_jobs():
+            current = self._engine.get_job(job.id)
+            if current is None or current.status not in allowed_statuses:
+                continue
+            try:
+                getattr(self._engine, method_name)(job.id)
+            except Exception:
+                logger.exception("Download action %s failed for %s", method_name, job.id)
+
     def _pause_selected(self) -> None:
-        job_id = self._get_selected_job_id()
-        if job_id:
-            self._engine.pause_job(job_id)
+        self._run_bulk_action("pause_job", self.PAUSABLE)
 
     def _resume_selected(self) -> None:
-        job_id = self._get_selected_job_id()
-        if job_id:
-            self._engine.resume_job(job_id)
+        self._run_bulk_action("resume_job", self.RESUMABLE)
 
     def _cancel_selected(self) -> None:
-        job_id = self._get_selected_job_id()
-        if not job_id:
+        jobs = [job for job in self._selected_jobs() if job.status in self.CANCELLABLE]
+        if not jobs:
             return
+        noun = "this download" if len(jobs) == 1 else f"these {len(jobs)} downloads"
         reply = QMessageBox.question(
-            self, "Cancel Download",
-            "Cancel this download and delete the partial file?",
+            self, "Cancel Download" if len(jobs) == 1 else "Cancel Downloads",
+            f"Cancel {noun} and delete the partial file{'s' if len(jobs) != 1 else ''}?",
             QMessageBox.Yes | QMessageBox.No,
         )
         if reply == QMessageBox.Yes:
-            self._engine.cancel_job(job_id)
+            self._run_bulk_action("cancel_job", self.CANCELLABLE)
 
     def _retry_selected(self) -> None:
-        job_id = self._get_selected_job_id()
-        if job_id:
-            self._engine.retry_job(job_id)
+        self._run_bulk_action("retry_job", (JobStatus.ERROR,))
+
+    def _remove_selected(self) -> None:
+        self._run_bulk_action("remove_job", self.REMOVABLE)
+
+    def _set_selected_priority(self, priority: int) -> None:
+        for job in self._selected_jobs():
+            self._engine.set_job_priority(job.id, priority)
+        self._refresh()
 
     def _open_selected_file(self) -> None:
-        job_id = self._get_selected_job_id()
-        if not job_id:
+        jobs = self._selected_jobs()
+        if len(jobs) != 1:
             return
-        job = self._engine.get_job(job_id)
-        if job and os.path.exists(job.save_path):
+        job = jobs[0]
+        if job.status == JobStatus.COMPLETED and os.path.isfile(job.save_path):
             if sys.platform == "win32":
                 os.startfile(job.save_path)
             else:
                 subprocess.Popen(["xdg-open", job.save_path])
 
     def _open_selected_folder(self) -> None:
-        job_id = self._get_selected_job_id()
-        if not job_id:
+        jobs = self._selected_jobs()
+        if len(jobs) != 1:
             return
-        job = self._engine.get_job(job_id)
-        if job:
-            folder = os.path.dirname(job.save_path)
-            if os.path.exists(folder):
-                if sys.platform == "win32":
-                    os.startfile(folder)
-                else:
-                    subprocess.Popen(["xdg-open", folder])
+        folder = os.path.dirname(jobs[0].save_path)
+        if os.path.exists(folder):
+            if sys.platform == "win32":
+                os.startfile(folder)
+            else:
+                subprocess.Popen(["xdg-open", folder])
 
     def _clear_completed(self) -> None:
-        """Remove all completed and errored jobs from the list."""
+        """Remove all completed jobs from the list."""
         for job in self._engine.list_jobs():
-            if job.status in (JobStatus.COMPLETED, JobStatus.ERROR):
-                self._engine.remove_job(job.id)
+            if job.status == JobStatus.COMPLETED:
+                try:
+                    self._engine.remove_job(job.id)
+                except Exception:
+                    logger.exception("Failed to remove completed job %s", job.id)
 
     # ------------------------------------------------------------------
     # Context menu
     # ------------------------------------------------------------------
 
     def _context_menu(self, pos) -> None:
-        row = self.table.rowAt(pos.y())
-        if row < 0:
+        index = self.table.indexAt(pos)
+        if not index.isValid():
             return
-        self.table.selectRow(row)
-        job_id = self._get_selected_job_id()
-        if not job_id:
+        row_index = self._proxy.index(index.row(), 0)
+        clicked_id = row_index.data(DownloadsTableModel.JOB_ID_ROLE)
+        if clicked_id not in self._selected_job_ids_from_view():
+            self.table.selectionModel().select(
+                row_index,
+                QItemSelectionModel.SelectionFlag.ClearAndSelect
+                | QItemSelectionModel.SelectionFlag.Rows,
+            )
+            self.table.setCurrentIndex(row_index)
+        jobs = self._selected_jobs()
+        if not jobs:
             return
-        job = self._engine.get_job(job_id)
-        if not job:
+        clicked_job = self._engine.get_job(clicked_id)
+        if clicked_job is None:
             return
 
+        statuses = {job.status for job in jobs}
         menu = QMenu(self)
-        if job.status in (JobStatus.DOWNLOADING, JobStatus.QUEUED):
+        if statuses.intersection(self.PAUSABLE):
             menu.addAction("Pause", self._pause_selected)
-        if job.status in (JobStatus.PAUSED, JobStatus.ERROR):
+        if statuses.intersection(self.RESUMABLE):
             menu.addAction("Resume", self._resume_selected)
-        if job.status == JobStatus.ERROR:
+        if JobStatus.ERROR in statuses:
             menu.addAction("Retry", self._retry_selected)
-        menu.addAction("Cancel", self._cancel_selected)
+        if statuses.intersection(self.CANCELLABLE):
+            menu.addAction("Cancel", self._cancel_selected)
+        if statuses.intersection(self.REMOVABLE):
+            menu.addAction("Remove from List", self._remove_selected)
+        priority_menu = menu.addMenu("Priority")
+        for label, value in (("Highest", 10), ("High", 5), ("Normal", 0), ("Low", -5), ("Lowest", -10)):
+            priority_menu.addAction(label, lambda checked=False, priority=value: self._set_selected_priority(priority))
         menu.addSeparator()
-        if self._play_callback is not None and os.path.isfile(job.save_path):
+        if len(jobs) == 1 and self._play_callback is not None and self._is_playable(clicked_job):
             menu.addAction("Play in Player", self._play_selected)
-        menu.addAction("Open File", self._open_selected_file)
-        menu.addAction("Open Folder", self._open_selected_folder)
+        if (len(jobs) == 1 and clicked_job.status == JobStatus.COMPLETED
+                and os.path.isfile(clicked_job.save_path)):
+            menu.addAction("Open File", self._open_selected_file)
+        if len(jobs) == 1 and os.path.isdir(os.path.dirname(clicked_job.save_path)):
+            menu.addAction("Open Folder", self._open_selected_folder)
         menu.addSeparator()
         copy_url_action = menu.addAction("Copy URL")
-        copy_url_action.triggered.connect(lambda: QApplication.clipboard().setText(job.url))
+        copy_url_action.triggered.connect(lambda: QApplication.clipboard().setText(clicked_job.url))
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def _on_double_click(self) -> None:
@@ -517,5 +840,5 @@ class DownloadsTab(QWidget):
         if not job_id or self._play_callback is None:
             return
         job = self._engine.get_job(job_id)
-        if job and os.path.isfile(job.save_path):
+        if job and self._is_playable(job):
             self._play_callback(job.save_path)

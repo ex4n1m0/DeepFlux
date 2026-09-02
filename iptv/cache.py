@@ -83,6 +83,18 @@ CREATE TABLE IF NOT EXISTS recent (
 );
 
 CREATE INDEX IF NOT EXISTS idx_recent_time ON recent(watched_at DESC);
+
+-- Durable VOD/episode playback state. Kept separate from ``recent`` because
+-- opening an item and actually watching it are different events.
+CREATE TABLE IF NOT EXISTS watch_progress (
+    source_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    position_seconds REAL NOT NULL DEFAULT 0,
+    duration_seconds REAL NOT NULL DEFAULT 0,
+    watched INTEGER NOT NULL DEFAULT 0,
+    updated_at REAL NOT NULL DEFAULT 0,
+    PRIMARY KEY (source_id, item_id)
+);
 """
 
 
@@ -116,6 +128,29 @@ class IPTVCache:
             cols = {r[1] for r in conn.execute("PRAGMA table_info(epg)").fetchall()}
             if "url" not in cols:
                 conn.execute("ALTER TABLE epg ADD COLUMN url TEXT DEFAULT ''")
+
+            # ``CREATE TABLE IF NOT EXISTS`` handles databases predating watch
+            # progress. These additive checks also make upgrades safe from
+            # short-lived development schemas that had only some columns.
+            progress_cols = {
+                r[1] for r in conn.execute(
+                    "PRAGMA table_info(watch_progress)").fetchall()
+            }
+            progress_migrations = {
+                "position_seconds": "REAL NOT NULL DEFAULT 0",
+                "duration_seconds": "REAL NOT NULL DEFAULT 0",
+                "watched": "INTEGER NOT NULL DEFAULT 0",
+                "updated_at": "REAL NOT NULL DEFAULT 0",
+            }
+            for name, declaration in progress_migrations.items():
+                if name not in progress_cols:
+                    conn.execute(
+                        f"ALTER TABLE watch_progress ADD COLUMN {name} {declaration}"
+                    )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_watch_progress_updated "
+                "ON watch_progress(updated_at DESC)"
+            )
             conn.commit()
 
     def close(self) -> None:
@@ -332,6 +367,72 @@ class IPTVCache:
             ).fetchall()
         ]
 
+    # -- watch progress ------------------------------------------------------
+    def save_watch_progress(
+        self,
+        source_id: str,
+        item_id: str,
+        position_seconds: float,
+        duration_seconds: float,
+        watched: Optional[bool] = None,
+    ) -> None:
+        """Upsert a VOD/episode checkpoint.
+
+        ``watched=None`` preserves an existing explicit watched state. This is
+        important when somebody replays the first few minutes of an item they
+        already completed; periodic checkpoints must not silently unwatch it.
+        """
+        if not source_id or not item_id:
+            return
+        conn = self._conn()
+        previous = conn.execute(
+            "SELECT watched FROM watch_progress WHERE source_id=? AND item_id=?",
+            (source_id, item_id),
+        ).fetchone()
+        watched_value = (
+            int(bool(watched)) if watched is not None
+            else int(previous["watched"]) if previous is not None else 0
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO watch_progress("
+            "source_id, item_id, position_seconds, duration_seconds, watched, updated_at"
+            ") VALUES(?,?,?,?,?,?)",
+            (
+                source_id,
+                item_id,
+                max(0.0, float(position_seconds or 0.0)),
+                max(0.0, float(duration_seconds or 0.0)),
+                watched_value,
+                time.time(),
+            ),
+        )
+        conn.commit()
+
+    def watch_progress(self, source_id: str, item_id: str) -> Optional[Dict[str, Any]]:
+        row = self._conn().execute(
+            "SELECT position_seconds, duration_seconds, watched, updated_at "
+            "FROM watch_progress WHERE source_id=? AND item_id=?",
+            (source_id, item_id),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "position": float(row["position_seconds"] or 0.0),
+            "duration": float(row["duration_seconds"] or 0.0),
+            "watched": bool(row["watched"]),
+            "updated_at": float(row["updated_at"] or 0.0),
+        }
+
+    def set_watched(self, source_id: str, item_id: str, watched: bool) -> None:
+        existing = self.watch_progress(source_id, item_id) or {}
+        self.save_watch_progress(
+            source_id,
+            item_id,
+            existing.get("position", 0.0),
+            existing.get("duration", 0.0),
+            watched=watched,
+        )
+
     # -- maintenance ---------------------------------------------------------
     def prune_metadata(self, max_age_days: int = 30) -> int:
         cutoff = time.time() - max_age_days * 86400
@@ -341,7 +442,10 @@ class IPTVCache:
 
     def clear_all(self) -> None:
         conn = self._conn()
-        for t in ("playlists", "metadata", "epg", "epg_meta", "favorites", "recent"):
+        for t in (
+            "playlists", "metadata", "epg", "epg_meta", "favorites", "recent",
+            "watch_progress",
+        ):
             conn.execute(f"DELETE FROM {t}")
         conn.commit()
 

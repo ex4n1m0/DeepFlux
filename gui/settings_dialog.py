@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -36,7 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config import DeeptorrentConfig, IndexerConfig, LLM_PROVIDER_PRESETS
+from config import BROWSER_SEARCH_ENGINES, DeeptorrentConfig, DownloadCategory, IndexerConfig, LLM_PROVIDER_PRESETS
 
 logger = logging.getLogger(__name__)
 
@@ -142,20 +143,41 @@ class IndexerSettingsDialog(QDialog):
 # Downloads Settings — Torrent save path + Download Manager
 # ---------------------------------------------------------------------------
 
+DOWNLOAD_SETTINGS_PAGES = [
+    ("Torrent Downloads…", "torrent"),
+    ("Torrent Queue…", "queue"),
+    ("Download Manager…", "manager"),
+]
+
+
 class DownloadsSettingsDialog(QDialog):
     """Settings for torrent save path and the IDM-style download manager."""
 
-    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None,
+                 page: str = "all") -> None:
         super().__init__(parent)
         self.config = config
-        self.setWindowTitle("Downloads Settings")
-        self.setMinimumWidth(550)
+        self._page = page
+        titles = {
+            "torrent": "Torrent Downloads Settings",
+            "queue": "Torrent Queue Settings",
+            "manager": "Download Manager Settings",
+        }
+        self.setWindowTitle(titles.get(page, "Downloads Settings"))
+        self.setMinimumWidth(480)
+        self.resize(600, 440)
         self.setStyleSheet(_SHARED_STYLE)
         self._build_ui()
         self._load_values()
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(body)
 
         # Torrent save path
         dl_group = QGroupBox("Torrent Downloads")
@@ -250,6 +272,8 @@ class DownloadsSettingsDialog(QDialog):
 
         layout.addWidget(dl_group)
         layout.addWidget(queue_group)
+        dl_group.setVisible(self._page in ("all", "torrent"))
+        queue_group.setVisible(self._page in ("all", "queue"))
 
         # Download Manager (IDM-style)
         dm_group = QGroupBox("Download Manager")
@@ -289,6 +313,28 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_segment_threshold.setValue(1)
         dm_layout.addRow("Segment Threshold (files smaller than this use single-stream):", self.dm_segment_threshold)
 
+        self.dm_stream_height = QSpinBox()
+        self.dm_stream_height.setRange(0, 4320)
+        self.dm_stream_height.setSpecialValueText("Highest available")
+        self.dm_stream_height.setSuffix("p")
+        dm_layout.addRow("HLS Maximum Height:", self.dm_stream_height)
+
+        self.dm_youtube_height = QSpinBox()
+        self.dm_youtube_height.setRange(144, 4320)
+        self.dm_youtube_height.setSuffix("p")
+        dm_layout.addRow("YouTube Maximum Height:", self.dm_youtube_height)
+
+        self.dm_youtube_subtitles = QCheckBox("Download and embed available subtitles")
+        dm_layout.addRow("", self.dm_youtube_subtitles)
+
+        self.dm_youtube_playlists = QCheckBox("Allow complete YouTube playlists")
+        dm_layout.addRow("", self.dm_youtube_playlists)
+
+        self.dm_categories = QPlainTextEdit()
+        self.dm_categories.setMaximumHeight(90)
+        self.dm_categories.setPlaceholderText("Videos|D:\\Media\\Videos|mp4,mkv,webm")
+        dm_layout.addRow("Categories (Name|Folder|extensions):", self.dm_categories)
+
         dm_hint = QLabel("The download manager uses segmented downloading with dynamic rebalancing\n"
                          "for maximum speed, similar to Internet Download Manager.")
         dm_hint.setObjectName("hint")
@@ -296,11 +342,15 @@ class DownloadsSettingsDialog(QDialog):
         dm_layout.addRow("", dm_hint)
 
         layout.addWidget(dm_group)
+        dm_group.setVisible(self._page in ("all", "manager"))
+        layout.addStretch()
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._save_and_accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer.addWidget(buttons)
 
     def _load_values(self) -> None:
         self.save_path.setText(self.config.default_save_path)
@@ -323,6 +373,14 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_bandwidth.setValue(self.config.download.bandwidth_limit_bps // 1024)
         self.dm_auto_start.setChecked(self.config.download.auto_start)
         self.dm_segment_threshold.setValue(self.config.download.segment_threshold_mb)
+        self.dm_stream_height.setValue(self.config.download.stream_max_height)
+        self.dm_youtube_height.setValue(self.config.download.youtube_max_height)
+        self.dm_youtube_subtitles.setChecked(self.config.download.youtube_subtitles)
+        self.dm_youtube_playlists.setChecked(self.config.download.youtube_playlists)
+        self.dm_categories.setPlainText("\n".join(
+            f"{category.name}|{category.folder}|{','.join(category.extensions)}"
+            for category in self.config.download.categories
+        ))
 
     def _browse_save_path(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Select Default Save Path")
@@ -335,26 +393,45 @@ class DownloadsSettingsDialog(QDialog):
             self.dm_default_folder.setText(path)
 
     def _save_and_accept(self) -> None:
-        self.config.default_save_path = self.save_path.text().strip() or self.config.default_save_path
-        self.config.torrents.download_rate_limit_kb = self.tor_download_limit.value()
-        self.config.torrents.upload_rate_limit_kb = self.tor_upload_limit.value()
-        self.config.torrents.listen_port = self.tor_listen_port.value()
-        self.config.torrents.max_connections = self.tor_max_connections.value()
-        self.config.torrents.restore_completed = self.tor_restore_completed.isChecked()
-        self.config.torrents.max_downloading_torrents = self.tor_max_downloading.value()
-        self.config.torrents.max_seeding_torrents = self.tor_max_seeding.value()
-        self.config.torrents.max_active_torrents = self.tor_max_active.value()
-        self.config.torrents.max_queued_torrents = self.tor_max_queued.value()
-        self.config.torrents.auto_manage_interval_seconds = self.tor_auto_manage_interval.value()
-        self.config.torrents.seed_ratio_limit = self.tor_seed_ratio.value()
-        self.config.torrents.seed_time_limit_minutes = self.tor_seed_time.value()
-        self.config.torrents.auto_save_state_seconds = self.tor_auto_save.value()
-        self.config.download.max_concurrent = self.dm_max_concurrent.value()
-        self.config.download.max_connections_per_download = self.dm_max_connections.value()
-        self.config.download.default_folder = self.dm_default_folder.text().strip() or self.config.download.default_folder
-        self.config.download.bandwidth_limit_bps = self.dm_bandwidth.value() * 1024
-        self.config.download.auto_start = self.dm_auto_start.isChecked()
-        self.config.download.segment_threshold_mb = self.dm_segment_threshold.value()
+        if self._page in ("all", "manager"):
+            categories = []
+            for line in self.dm_categories.toPlainText().splitlines():
+                if not line.strip():
+                    continue
+                parts = [part.strip() for part in line.split("|", 2)]
+                if len(parts) != 3 or not parts[0] or not parts[1]:
+                    QMessageBox.warning(self, "Download Categories", f"Invalid category line: {line}")
+                    return
+                extensions = [value.strip().lower().lstrip(".") for value in parts[2].split(",") if value.strip()]
+                categories.append(DownloadCategory(name=parts[0], folder=parts[1], extensions=extensions))
+        if self._page in ("all", "torrent"):
+            self.config.default_save_path = self.save_path.text().strip() or self.config.default_save_path
+            self.config.torrents.download_rate_limit_kb = self.tor_download_limit.value()
+            self.config.torrents.upload_rate_limit_kb = self.tor_upload_limit.value()
+            self.config.torrents.listen_port = self.tor_listen_port.value()
+            self.config.torrents.max_connections = self.tor_max_connections.value()
+            self.config.torrents.restore_completed = self.tor_restore_completed.isChecked()
+        if self._page in ("all", "queue"):
+            self.config.torrents.max_downloading_torrents = self.tor_max_downloading.value()
+            self.config.torrents.max_seeding_torrents = self.tor_max_seeding.value()
+            self.config.torrents.max_active_torrents = self.tor_max_active.value()
+            self.config.torrents.max_queued_torrents = self.tor_max_queued.value()
+            self.config.torrents.auto_manage_interval_seconds = self.tor_auto_manage_interval.value()
+            self.config.torrents.seed_ratio_limit = self.tor_seed_ratio.value()
+            self.config.torrents.seed_time_limit_minutes = self.tor_seed_time.value()
+            self.config.torrents.auto_save_state_seconds = self.tor_auto_save.value()
+        if self._page in ("all", "manager"):
+            self.config.download.max_concurrent = self.dm_max_concurrent.value()
+            self.config.download.max_connections_per_download = self.dm_max_connections.value()
+            self.config.download.default_folder = self.dm_default_folder.text().strip() or self.config.download.default_folder
+            self.config.download.bandwidth_limit_bps = self.dm_bandwidth.value() * 1024
+            self.config.download.auto_start = self.dm_auto_start.isChecked()
+            self.config.download.segment_threshold_mb = self.dm_segment_threshold.value()
+            self.config.download.stream_max_height = self.dm_stream_height.value()
+            self.config.download.youtube_max_height = self.dm_youtube_height.value()
+            self.config.download.youtube_subtitles = self.dm_youtube_subtitles.isChecked()
+            self.config.download.youtube_playlists = self.dm_youtube_playlists.isChecked()
+            self.config.download.categories = categories
         self.accept()
 
 
@@ -362,72 +439,163 @@ class DownloadsSettingsDialog(QDialog):
 # Browser Settings — Homepage
 # ---------------------------------------------------------------------------
 
+BROWSER_SETTINGS_PAGES = [
+    ("General…", "general"),
+    ("Privacy && Data…", "privacy"),
+]
+
+
 class BrowserSettingsDialog(QDialog):
     """Settings for the built-in browser."""
 
-    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None,
+                 page: str = "all") -> None:
         super().__init__(parent)
         self.config = config
-        self.setWindowTitle("Browser Settings")
-        self.setMinimumWidth(450)
+        self._page = page
+        titles = {
+            "general": "Browser General Settings",
+            "privacy": "Browser Privacy & Data",
+        }
+        self.setWindowTitle(titles.get(page, "Browser Settings"))
+        self.setMinimumWidth(440)
+        self.resize(580, 420)
         self.setStyleSheet(_SHARED_STYLE)
         self._build_ui()
         self._load_values()
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(body)
 
-        browser_group = QGroupBox("Browser")
-        browser_layout = QFormLayout(browser_group)
+        general_group = QGroupBox("General")
+        general_layout = QFormLayout(general_group)
 
         self.browser_homepage = QLineEdit()
         self.browser_homepage.setPlaceholderText("Default: https://deepflux.space/")
-        browser_layout.addRow("Homepage:", self.browser_homepage)
+        general_layout.addRow("Homepage:", self.browser_homepage)
+
+        self.browser_search_engine = QComboBox()
+        for engine in BROWSER_SEARCH_ENGINES:
+            self.browser_search_engine.addItem(engine.title(), engine)
+        general_layout.addRow("Search engine:", self.browser_search_engine)
 
         hint = QLabel("The page loaded when the Browse tab opens or the Home button is clicked. Default: https://deepflux.space/ — leave empty to reset to the default.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
-        browser_layout.addRow("", hint)
+        general_layout.addRow("", hint)
 
-        from PySide6.QtWidgets import QCheckBox
         self.browser_adblock_check = QCheckBox("Enable ad blocking (blocks ads, trackers, and analytics)")
-        browser_layout.addRow("", self.browser_adblock_check)
+        general_layout.addRow("", self.browser_adblock_check)
 
-        adblock_hint = QLabel("When enabled, requests to known ad/tracker domains are blocked before they load. Off by default. You can also toggle this from the AdBlock button in the browser toolbar.")
+        adblock_hint = QLabel("Requests to known ad/tracker domains are blocked before they load. Enabled by default; right-click the toolbar button to disable it for the current site.")
         adblock_hint.setObjectName("hint")
         adblock_hint.setWordWrap(True)
-        browser_layout.addRow("", adblock_hint)
+        general_layout.addRow("", adblock_hint)
 
         self.browser_extension_check = QCheckBox("Enable video grabber (detects downloadable videos on web pages)")
-        browser_layout.addRow("", self.browser_extension_check)
+        general_layout.addRow("", self.browser_extension_check)
 
         extension_hint = QLabel("When enabled, a script scans every page for downloadable videos (<video>, HLS, DASH, YouTube, etc.) and shows a status badge. Its monitoring can cause flashing during video playback — turn off if you experience that. Off by default. You can also toggle this from the toolbar button next to AdBlock.")
         extension_hint.setObjectName("hint")
         extension_hint.setWordWrap(True)
-        browser_layout.addRow("", extension_hint)
+        general_layout.addRow("", extension_hint)
+
+        self.browser_restore_tabs = QCheckBox("Restore open tabs on startup")
+        general_layout.addRow("", self.browser_restore_tabs)
 
         self.import_bookmarks_btn = QPushButton("Import Bookmarks from Other Browsers...")
         self.import_bookmarks_btn.setObjectName("btn_secondary")
         self.import_bookmarks_btn.clicked.connect(self._on_import_bookmarks)
-        browser_layout.addRow("", self.import_bookmarks_btn)
+        general_layout.addRow("", self.import_bookmarks_btn)
 
-        layout.addWidget(browser_group)
+        privacy_group = QGroupBox("Privacy & Data")
+        privacy_layout = QFormLayout(privacy_group)
+        self.browser_history_enabled = QCheckBox("Keep local browsing history for address suggestions")
+        privacy_layout.addRow("", self.browser_history_enabled)
+        self.browser_history_days = QSpinBox()
+        self.browser_history_days.setRange(1, 3650)
+        self.browser_history_days.setSuffix(" days")
+        privacy_layout.addRow("History retention:", self.browser_history_days)
+
+        self.clear_history_btn = QPushButton("Clear Browsing History")
+        self.clear_history_btn.setObjectName("btn_secondary")
+        self.clear_history_btn.clicked.connect(self._clear_history)
+        privacy_layout.addRow("", self.clear_history_btn)
+        self.clear_browser_data_btn = QPushButton("Clear Cookies and Cache")
+        self.clear_browser_data_btn.setObjectName("btn_secondary")
+        self.clear_browser_data_btn.clicked.connect(self._clear_browser_data)
+        privacy_layout.addRow("", self.clear_browser_data_btn)
+        self.clear_agent_permissions_btn = QPushButton("Clear Agent Page Permissions")
+        self.clear_agent_permissions_btn.setObjectName("btn_secondary")
+        self.clear_agent_permissions_btn.clicked.connect(self._clear_agent_permissions)
+        privacy_layout.addRow("", self.clear_agent_permissions_btn)
+
+        layout.addWidget(general_group)
+        layout.addWidget(privacy_group)
+        general_group.setVisible(self._page in ("all", "general"))
+        privacy_group.setVisible(self._page in ("all", "privacy"))
+        layout.addStretch()
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._save_and_accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer.addWidget(buttons)
 
     def _load_values(self) -> None:
         self.browser_homepage.setText(self.config.browser.homepage)
+        index = self.browser_search_engine.findData(self.config.browser.search_engine)
+        self.browser_search_engine.setCurrentIndex(max(index, 0))
         self.browser_adblock_check.setChecked(self.config.browser.adblock_enabled)
         self.browser_extension_check.setChecked(self.config.browser.extension_enabled)
+        self.browser_restore_tabs.setChecked(self.config.browser.restore_tabs)
+        self.browser_history_enabled.setChecked(self.config.browser.history_enabled)
+        self.browser_history_days.setValue(self.config.browser.history_retention_days)
 
     def _save_and_accept(self) -> None:
-        self.config.browser.homepage = self.browser_homepage.text().strip()
-        self.config.browser.adblock_enabled = self.browser_adblock_check.isChecked()
-        self.config.browser.extension_enabled = self.browser_extension_check.isChecked()
+        if self._page in ("all", "general"):
+            homepage = self.browser_homepage.text().strip()
+            if homepage:
+                from urllib.parse import urlsplit
+                try:
+                    parsed = urlsplit(homepage)
+                    valid_homepage = parsed.scheme in ("http", "https") and bool(parsed.hostname)
+                except ValueError:
+                    valid_homepage = False
+                if not valid_homepage:
+                    QMessageBox.warning(self, "Browser Settings", "Homepage must be an http:// or https:// URL.")
+                    return
+            self.config.browser.homepage = homepage
+            self.config.browser.search_engine = self.browser_search_engine.currentData() or "google"
+            self.config.browser.adblock_enabled = self.browser_adblock_check.isChecked()
+            self.config.browser.extension_enabled = self.browser_extension_check.isChecked()
+            self.config.browser.restore_tabs = self.browser_restore_tabs.isChecked()
+        if self._page in ("all", "privacy"):
+            self.config.browser.history_enabled = self.browser_history_enabled.isChecked()
+            self.config.browser.history_retention_days = self.browser_history_days.value()
         self.accept()
+
+    def _clear_history(self) -> None:
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_clear_browser_history"):
+            parent._clear_browser_history()
+
+    def _clear_browser_data(self) -> None:
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_clear_browser_data"):
+            parent._clear_browser_data()
+
+    def _clear_agent_permissions(self) -> None:
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_clear_browser_agent_permissions"):
+            parent._clear_browser_agent_permissions()
 
     def _on_import_bookmarks(self) -> None:
         """Delegate to the main window's import flow (single code path)."""
@@ -450,6 +618,15 @@ def _api_hint(text: str) -> QLabel:
     return hint
 
 
+API_KEY_PAGES = [
+    ("AI Agent…", "ai"),
+    ("Torrent && Web Search…", "search"),
+    ("Movie && TV Metadata…", "media"),
+    ("Adult Metadata…", "adult"),
+    ("Subtitles…", "subtitles"),
+]
+
+
 class APIKeysDialog(QDialog):
     """Unified API keys window — every external service key in one place."""
 
@@ -457,11 +634,21 @@ class APIKeysDialog(QDialog):
     # fetch. Carries List[SourceConfig] on success, the Exception on failure.
     jkt_fetch_done = Signal(object)
 
-    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None,
+                 page: str = "all") -> None:
         super().__init__(parent)
         self.config = config
-        self.setWindowTitle("API Keys")
-        self.setMinimumWidth(560)
+        self._page = page
+        titles = {
+            "ai": "AI Agent API",
+            "search": "Torrent & Web Search APIs",
+            "media": "Movie & TV Metadata APIs",
+            "adult": "Adult Metadata APIs",
+            "subtitles": "Subtitle API",
+        }
+        self.setWindowTitle(titles.get(page, "API Keys"))
+        self.setMinimumWidth(480)
+        self.resize(600, 420)
         self.setStyleSheet(_SHARED_STYLE)
         self.jkt_fetch_done.connect(self._on_jkt_fetch_done)
         self._build_ui()
@@ -490,6 +677,10 @@ class APIKeysDialog(QDialog):
         fl.addRow("API endpoint:", self.llm_endpoint)
         self.llm_base_url = QLineEdit()
         fl.addRow("Base URL:", self.llm_base_url)
+        self.llm_model = QLineEdit()
+        fl.addRow("Model:", self.llm_model)
+        self.llm_reasoning_effort = QCheckBox("Send reasoning_effort to custom endpoint")
+        fl.addRow("", self.llm_reasoning_effort)
         self.llm_key = QLineEdit()
         self.llm_key.setEchoMode(QLineEdit.Password)
         self.llm_key.setPlaceholderText("sk-...")
@@ -497,8 +688,8 @@ class APIKeysDialog(QDialog):
         fl.addRow("", _api_hint(
             "DeepSeek or OpenRouter key — powers the conversational agent. "
             "Get one at https://platform.deepseek.com/api_keys (DeepSeek) or "
-            "https://openrouter.ai/keys (OpenRouter). Without a key the agent "
-            "runs in demo mode."))
+            "https://openrouter.ai/keys (OpenRouter). Custom OpenAI-compatible "
+            "endpoints may leave the key blank when their server allows it."))
         layout.addWidget(llm_group)
 
         # --- Jackett ---
@@ -618,6 +809,19 @@ class APIKeysDialog(QDialog):
             "Account credentials are optional and raise the daily download quota."))
         layout.addWidget(ost_group)
 
+        sections = {
+            "ai": (llm_group,),
+            "search": (jkt_group, ws_group),
+            "media": (tmdb_group, omdb_group, fanart_group),
+            "adult": (tpdb_group, stash_group),
+            "subtitles": (ost_group,),
+        }
+        visible = sections.get(self._page)
+        if visible is not None:
+            for group in (llm_group, jkt_group, ws_group, tmdb_group, omdb_group,
+                          fanart_group, tpdb_group, stash_group, ost_group):
+                group.setVisible(group in visible)
+
         layout.addStretch()
         scroll.setWidget(body)
         outer.addWidget(scroll)
@@ -633,11 +837,17 @@ class APIKeysDialog(QDialog):
 
     def _on_endpoint_changed(self, _index: int) -> None:
         """Endpoint switch: swap the base URL unless the user typed a custom one."""
-        preset = LLM_PROVIDER_PRESETS[self._selected_endpoint()]
-        self.llm_base_url.setPlaceholderText(preset["base_url"])
+        provider = self._selected_endpoint()
+        preset = LLM_PROVIDER_PRESETS[provider]
+        self.llm_base_url.setPlaceholderText(preset["base_url"] or "https://provider.example/v1")
         preset_urls = {p["base_url"] for p in LLM_PROVIDER_PRESETS.values()}
         if self.llm_base_url.text().strip() in preset_urls:
             self.llm_base_url.setText(preset["base_url"])
+        custom = provider == "custom"
+        self.llm_model.setEnabled(custom)
+        self.llm_reasoning_effort.setEnabled(custom)
+        models = preset.get("models") or []
+        self.llm_model.setPlaceholderText(models[0] if models else "provider/model-name")
 
     # -- Jackett test (moved from Jackett Settings) --------------------------
 
@@ -740,9 +950,10 @@ class APIKeysDialog(QDialog):
         self.llm_endpoint.setCurrentIndex(max(idx, 0))
         self.llm_endpoint.blockSignals(False)
         self.llm_base_url.setText(self.config.llm.base_url)
-        self.llm_base_url.setPlaceholderText(
-            LLM_PROVIDER_PRESETS[self._selected_endpoint()]["base_url"])
+        self.llm_model.setText(self.config.llm.model)
+        self.llm_reasoning_effort.setChecked(self.config.llm.custom_reasoning_effort)
         self.llm_key.setText(self.config.llm.api_key)
+        self._on_endpoint_changed(self.llm_endpoint.currentIndex())
         self.jkt_key.setText(self.config.indexer.api_key)
         self.brave_key.setText(self.config.web_search.brave_api_key)
         self.pplx_key.setText(self.config.web_search.api_key)
@@ -756,20 +967,40 @@ class APIKeysDialog(QDialog):
         self.ost_pass.setText(self.config.iptv.opensubtitles_password)
 
     def _save_and_accept(self) -> None:
-        self.config.llm.api_key = self.llm_key.text().strip()
-        self.config.llm.provider = self._selected_endpoint() if self.config.llm.api_key else "dummy"
-        self.config.llm.base_url = self.llm_base_url.text().strip()
-        self.config.indexer.api_key = self.jkt_key.text().strip()
-        self.config.web_search.brave_api_key = self.brave_key.text().strip()
-        self.config.web_search.api_key = self.pplx_key.text().strip()
-        self.config.iptv.tmdb_api_key = self.tmdb_key.text().strip()
-        self.config.iptv.omdb_api_key = self.omdb_key.text().strip()
-        self.config.iptv.fanarttv_api_key = self.fanarttv_key.text().strip()
-        self.config.iptv.tpdb_api_key = self.tpdb_key.text().strip()
-        self.config.iptv.stashdb_api_key = self.stashdb_key.text().strip()
-        self.config.iptv.opensubtitles_api_key = self.ost_key.text().strip()
-        self.config.iptv.opensubtitles_username = self.ost_user.text().strip()
-        self.config.iptv.opensubtitles_password = self.ost_pass.text()
+        if self._page in ("all", "ai"):
+            provider = self._selected_endpoint()
+            base_url = self.llm_base_url.text().strip()
+            model = self.llm_model.text().strip()
+            if provider == "custom" and (not base_url or not model):
+                QMessageBox.warning(self, "Custom LLM", "Enter both a base URL and model name for the custom endpoint.")
+                return
+            self.config.llm.api_key = self.llm_key.text().strip()
+            self.config.llm.provider = provider if self.config.llm.api_key or provider == "custom" else "dummy"
+            self.config.llm.base_url = base_url
+            if provider == "custom":
+                self.config.llm.model = model
+                self.config.llm.fast_model = ""
+            else:
+                models = LLM_PROVIDER_PRESETS[provider].get("models") or []
+                if models:
+                    self.config.llm.model = models[0]
+                    self.config.llm.fast_model = models[1] if len(models) > 1 else ""
+            self.config.llm.custom_reasoning_effort = self.llm_reasoning_effort.isChecked()
+        if self._page in ("all", "search"):
+            self.config.indexer.api_key = self.jkt_key.text().strip()
+            self.config.web_search.brave_api_key = self.brave_key.text().strip()
+            self.config.web_search.api_key = self.pplx_key.text().strip()
+        if self._page in ("all", "media"):
+            self.config.iptv.tmdb_api_key = self.tmdb_key.text().strip()
+            self.config.iptv.omdb_api_key = self.omdb_key.text().strip()
+            self.config.iptv.fanarttv_api_key = self.fanarttv_key.text().strip()
+        if self._page in ("all", "adult"):
+            self.config.iptv.tpdb_api_key = self.tpdb_key.text().strip()
+            self.config.iptv.stashdb_api_key = self.stashdb_key.text().strip()
+        if self._page in ("all", "subtitles"):
+            self.config.iptv.opensubtitles_api_key = self.ost_key.text().strip()
+            self.config.iptv.opensubtitles_username = self.ost_user.text().strip()
+            self.config.iptv.opensubtitles_password = self.ost_pass.text()
         self.accept()
 
 

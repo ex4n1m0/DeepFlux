@@ -41,7 +41,8 @@ class SourcesDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self.setWindowTitle("Sources")
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(560, 360)
+        self.resize(700, 500)
         self.setStyleSheet("""
             QDialog { background-color: #0a0a0f; color: #c8d3e0; }
             QLabel { color: #c8d3e0; }

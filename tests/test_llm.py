@@ -202,9 +202,44 @@ def test_deepseek_env_key_not_used_for_other_providers(monkeypatch):
     assert DeepSeekClient(LLMConfig(provider="openrouter")).api_key == ""
 
 
+@patch("agent.llm.requests.post")
+def test_custom_provider_omits_reasoning_effort_and_blank_authorization(mock_post):
+    mock_post.return_value = _ok_response(_chat_payload())
+    client = DeepSeekClient(LLMConfig(
+        provider="custom", api_key="", base_url="http://localhost:1234/v1/", model="local-model",
+    ))
+
+    client.chat([{"role": "user", "content": "hi"}])
+
+    payload = mock_post.call_args.kwargs["json"]
+    headers = mock_post.call_args.kwargs["headers"]
+    assert mock_post.call_args.args[0] == "http://localhost:1234/v1/chat/completions"
+    assert "reasoning_effort" not in payload
+    assert "Authorization" not in headers
+
+
+@patch("agent.llm.requests.post")
+def test_custom_provider_can_opt_into_reasoning_effort(mock_post):
+    mock_post.return_value = _ok_response(_chat_payload())
+    client = DeepSeekClient(LLMConfig(
+        provider="custom", api_key="key", base_url="https://llm.example/v1",
+        model="reasoning-model", custom_reasoning_effort=True,
+    ))
+
+    client.chat([{"role": "user", "content": "hi"}], effort="low")
+
+    assert mock_post.call_args.kwargs["json"]["reasoning_effort"] == "low"
+
+
+def test_custom_provider_requires_base_url():
+    with pytest.raises(ValueError, match="base URL"):
+        DeepSeekClient(LLMConfig(provider="custom", base_url=""))
+
+
 def test_create_llm_client_providers():
     assert isinstance(create_llm_client(LLMConfig(provider="deepseek")), DeepSeekClient)
     assert isinstance(create_llm_client(LLMConfig(provider="openrouter")), DeepSeekClient)
+    assert isinstance(create_llm_client(LLMConfig(provider="custom", base_url="http://localhost:1234/v1", model="local")), DeepSeekClient)
     assert isinstance(create_llm_client(LLMConfig(provider="dummy")), DummyLLMClient)
     with pytest.raises(ValueError):
         create_llm_client(LLMConfig(provider="bogus"))

@@ -35,7 +35,8 @@ class RSSDialog(QDialog):
         self.config = config
         self._check_requested = False
         self.setWindowTitle("RSS Feeds")
-        self.setMinimumSize(700, 400)
+        self.setMinimumSize(520, 340)
+        self.resize(700, 400)
         self.setStyleSheet("""
             QDialog { background-color: #0a0a0f; color: #c8d3e0; }
             QLabel { color: #c8d3e0; }
