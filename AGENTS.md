@@ -955,6 +955,16 @@
   ancestor filters never fire (same reason overlay hover uses a poll timer).
   Detached fullscreen views are matched via `_browser_fs_state` and zoom
   without touching the badge (it tracks the active tab only).
+- Address bar editing (`tests/test_browser_url_bar.py`): Qt sends the focus
+  widget `FocusIn(PopupFocusReason)` whenever a Qt::Popup closes — including
+  the history QCompleter's popup hiding mid-typing when the prefix stops
+  matching — so the select-all-on-focus filter (`_url_bar_event`) MUST skip
+  `PopupFocusReason`/`ActiveWindowFocusReason`, or the next keystroke
+  replaces everything typed ("letters disappear"). `_url_bar_editing()`
+  (focused + `isModified()`) gates `urlChanged`/`loadFinished` writes to the
+  bar so a redirect/pushState in the current tab can't clobber typed text;
+  `_browser_navigate` clears the modified flag so the bar follows the load
+  again, the completer's `highlighted` re-sets it, Esc reverts to the page URL.
 - DOM fullscreen (YouTube ⛶ etc.): `_BrowserPage` enables
   `FullScreenSupportEnabled` and `MainWindow._browser_fullscreen_requested`
   accepts `fullScreenRequested` — Qt WebEngine NEVER honors the Fullscreen
@@ -1002,6 +1012,17 @@
     hyperlink auditing are OFF for privacy. Fresh configs enable the compact
     ad/tracker blocker; right-click its toolbar button for per-site exceptions
     and its tooltip reports the session block count.
+    `Accept-Language` comes from `accept_language_header(QLocale.system().name())`
+    (browser_bridge.py) — a Chrome-style list of VALID BCP 47 tags
+    (`en-MO,en;q=0.9`, `pt-PT,pt;q=0.9,en;q=0.8`; fallback `en-US,en;q=0.9`).
+    QtWebEngine sends no Accept-Language at all by default, and never build
+    it from `locale.getlocale()`: on Windows that returns names like
+    `English_Macao SAR`, and the resulting `English-MacaoSAR,...` header made
+    Google answer EVERY search from the embedded browser (address bar or the
+    website's search box) with its "unusual traffic" captcha — VERIFIED live
+    2026-09-03 with a probe through the real `_BrowserPage.createWindow`
+    path: malformed header → `/sorry/`, valid header → results, same IP,
+    ad blocker on. The UA keeps only the `QtWebEngine/x.y` token stripped.
   - **Custom `deepflux://` scheme**: registered before the first profile with
     only Secure+Local flags; no local-file access, CORS, or CSP bypass. The
     built-in start page carries a strict CSP and `_display_url` hides its URL.

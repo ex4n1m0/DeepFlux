@@ -12,7 +12,7 @@ QtWidgets = pytest.importorskip("PySide6.QtWidgets")
 from PySide6.QtCore import QObject
 from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineScript
 
-from gui.browser_bridge import BrowserBridge, _PendingCall, normalize_browser_target
+from gui.browser_bridge import BrowserBridge, _PendingCall, accept_language_header, normalize_browser_target
 from dlmgr.browser_extension import inject_into_profile
 from gui.browser_channel import BrowserChannelBridge, channel_injection_script
 
@@ -35,6 +35,25 @@ def test_url_normalization_rejects_active_and_misleading_urls():
         normalize_browser_target("javascript:alert(1)")
     with pytest.raises(ValueError):
         normalize_browser_target("https://attacker@example.com")
+
+
+@pytest.mark.parametrize("locale_name, expected", [
+    ("en_US", "en-US,en;q=0.9"),
+    ("en_MO", "en-MO,en;q=0.9"),
+    ("pt_PT", "pt-PT,pt;q=0.9,en;q=0.8"),
+    ("es_419", "es-419,es;q=0.9,en;q=0.8"),
+    ("de", "de,en;q=0.9"),
+    ("en", "en"),
+])
+def test_accept_language_header_is_a_chrome_style_bcp47_list(locale_name, expected):
+    assert accept_language_header(locale_name) == expected
+
+
+@pytest.mark.parametrize("bad", ["English_Macao SAR", "Portuguese_Portugal", "C", "POSIX", "", None, "en_Latn_GB"])
+def test_accept_language_header_never_emits_malformed_tags(bad):
+    # Windows locale names / "C" are not language tags; a malformed header
+    # got every Google search answered with the "unusual traffic" captcha.
+    assert accept_language_header(bad) == "en-US,en;q=0.9"
 
 
 def test_page_content_sanitization_redacts_tokens_emails_and_link_queries():

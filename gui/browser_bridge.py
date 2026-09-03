@@ -58,6 +58,30 @@ def normalize_browser_target(text: str, search_engine: str = "google") -> str:
     return template.format(query=quote_plus(value))
 
 
+_LANG_TAG_RE = re.compile(r"^[A-Za-z]{2,3}(?:[-_](?:[A-Za-z]{2}|\d{3}))?$")
+
+
+def accept_language_header(locale_name: str) -> str:
+    """Chrome-style ``Accept-Language`` for a ``QLocale.name()`` value.
+
+    Only a well-formed ``lang`` / ``lang_REGION`` tag is accepted (``pt_PT``
+    -> ``pt-PT,pt;q=0.9,en;q=0.8``); anything else — ``C``, or a Windows
+    locale name such as ``English_Macao SAR`` — falls back to ``en-US``.
+    A malformed header is a bot signal: Google answers it with the "unusual
+    traffic" captcha on every search."""
+    tag = (locale_name or "").strip()
+    if not _LANG_TAG_RE.match(tag):
+        tag = "en-US"
+    lang, _, region = tag.replace("_", "-").partition("-")
+    lang = lang.lower()
+    parts = [f"{lang}-{region.upper()}" if region else lang]
+    if region:
+        parts.append(f"{lang};q=0.9")
+    if lang != "en":
+        parts.append(f"en;q={'0.8' if region else '0.9'}")
+    return ",".join(parts)
+
+
 class _PendingCall:
     """One-shot result slot shared between the worker thread and the GUI."""
 

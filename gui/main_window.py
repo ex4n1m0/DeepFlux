@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from PySide6.QtCore import QTimer, Qt, QRectF, Signal, QObject, QEvent, QProcess, QStringListModel
+from PySide6.QtCore import QTimer, Qt, QRectF, Signal, QObject, QEvent, QLocale, QProcess, QStringListModel
 from PySide6.QtGui import QAction, QColor, QCursor, QFont, QIcon, QKeySequence, QLinearGradient, QPainter, QPen, QPixmap, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -81,7 +81,7 @@ from gui.sources_dialog import SourcesDialog
 from gui.help_dialog import HelpDialog, AboutDialog
 from gui.downloads_tab import DownloadsTab
 from gui.commander_tab import CommanderTab
-from gui.browser_bridge import BrowserBridge, normalize_browser_target
+from gui.browser_bridge import BrowserBridge, accept_language_header, normalize_browser_target
 from gui.browser_history import BrowserHistory
 from gui.browser_channel import create_channel, channel_injection_script
 from gui.iptv_tab import AgentIPTVBridge, IPTVTab
@@ -980,7 +980,7 @@ class MainWindow(QMainWindow):
         self._jackett_timer.start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.4.2 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.4.3 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1567,15 +1567,13 @@ class MainWindow(QMainWindow):
         self.browser_profile.setHttpUserAgent(_ua)
         # Accept-Language: derive from the system locale, fall back to the
         # universal en-US,en so sites don't detect a bot / serve wrong lang.
-        try:
-            import locale as _locale
-            loc = _locale.getlocale()[0]
-            lang = "-".join(loc.split("_")) if loc else "en-US"
-            # Normalize the Macao/SAR-style names to a clean tag.
-            lang = lang.replace(" ", "")
-            self.browser_profile.setHttpAcceptLanguage(f"{lang},{lang.split('-')[0]};q=0.9,en;q=0.8")
-        except Exception:
-            self.browser_profile.setHttpAcceptLanguage("en-US,en;q=0.9")
+        # QtWebEngine sends NO Accept-Language by default, and the value
+        # must be a real BCP 47 tag — QLocale.name() ("en_MO"), never
+        # locale.getlocale() ("English_Macao SAR"): the latter produced
+        # "English-MacaoSAR,..." and Google answered every search from the
+        # embedded browser with its "unusual traffic" captcha.
+        _lang_header = accept_language_header(QLocale.system().name())
+        self.browser_profile.setHttpAcceptLanguage(_lang_header)
         # Persistent cookies (default is already AllowPersistentCookies when
         # a storage path is set, but make it explicit).
         from PySide6.QtWebEngineCore import QWebEngineProfile as _Prof
@@ -1588,12 +1586,7 @@ class MainWindow(QMainWindow):
         # Spell check on, using the system language (best-effort; Qt ships
         # a handful of dictionaries).
         self.browser_profile.setSpellCheckEnabled(True)
-        try:
-            import locale as _locale
-            sc_lang = "-".join((_locale.getlocale()[0] or "en_US").split("_"))
-            self.browser_profile.setSpellCheckLanguages([sc_lang])
-        except Exception:
-            pass
+        self.browser_profile.setSpellCheckLanguages([_lang_header.split(",")[0]])
         # --- Page-level settings applied to every page in the profile -----
         _ps = self.browser_profile.settings()
         # Disable speculative cross-origin DNS lookups for browser privacy.
@@ -1730,6 +1723,11 @@ class MainWindow(QMainWindow):
         self._browser_history_completer.setFilterMode(Qt.MatchContains)
         self.browser_url_bar.setCompleter(self._browser_history_completer)
         self.browser_url_bar.textEdited.connect(self._browser_update_history_suggestions)
+        # Arrowing through suggestions sets the text programmatically, which
+        # clears QLineEdit's modified flag — keep it "being edited" so a page
+        # URL change can't clobber the highlighted suggestion (_url_bar_editing).
+        self._browser_history_completer.highlighted[str].connect(
+            lambda _text: self.browser_url_bar.setModified(True))
         nav_layout.addWidget(self.browser_url_bar)
 
         self.browser_go_btn = QPushButton("Go")
@@ -2387,11 +2385,26 @@ class MainWindow(QMainWindow):
             if event.key() in (Qt.Key_Return, Qt.Key_Enter) and event.modifiers() & Qt.ControlModifier:
                 self._on_search_send()
                 return True
-        if obj is self.browser_url_bar and event.type() == QEvent.FocusIn:
-            # Select-all like a real browser (deferred so the click doesn't
-            # collapse the selection).
-            QTimer.singleShot(0, self.browser_url_bar.selectAll)
+        if obj is self.browser_url_bar and self._url_bar_event(event):
+            return True
         return super().eventFilter(obj, event)
+
+    def _url_bar_event(self, event) -> bool:
+        """Address-bar event policy (eventFilter helper). True = consumed."""
+        if event.type() == QEvent.FocusIn:
+            # Select-all like a real browser (deferred so the click doesn't
+            # collapse the selection) — but NOT when focus merely returns
+            # from a popup or window re-activation: the history completer's
+            # popup closing mid-typing (no more matches) hands focus back
+            # with PopupFocusReason, and selecting everything then made the
+            # next keystroke replace the whole text ("letters disappear").
+            if event.reason() not in (Qt.PopupFocusReason, Qt.ActiveWindowFocusReason):
+                QTimer.singleShot(0, self.browser_url_bar.selectAll)
+        elif event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+            # Esc drops unsubmitted edits and shows the page URL again.
+            self._browser_reset_url_bar()
+            return True
+        return False
 
     def _input_history_nav(self, delta: int) -> None:
         if not self._input_history:
@@ -3098,7 +3111,11 @@ class MainWindow(QMainWindow):
         self._browser_set_tab_loading(view, False)
         if ok and self.config.browser.history_enabled and not view.property("deepflux_private"):
             self._browser_history.record(view.url().toString(), view.title())
-            self._browser_update_history_suggestions("")
+            # Resetting the completer model mid-typing yanks the popup
+            # (and its selection) out from under the user; the next
+            # keystroke refreshes it with the real prefix anyway.
+            if not self._url_bar_editing():
+                self._browser_update_history_suggestions("")
         if view is self._current_browser_view():
             self.browser_progress.hide()
             self._browser_update_nav_buttons()
@@ -3159,7 +3176,25 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             self._browser_status_message(str(exc))
             return
+        # Submitted: the bar may follow the page's URL again (redirects,
+        # the search-engine URL a query resolves to, ...).
+        self.browser_url_bar.setModified(False)
         self._current_browser_view().load(QUrl(target))
+
+    def _url_bar_editing(self) -> bool:
+        """True while the user is typing in the address bar (focused, with
+        edits not yet submitted). Page URL changes must not clobber that
+        text — a redirect, hash change or SPA pushState in the current tab
+        used to replace what the user was typing mid-word."""
+        bar = self.browser_url_bar
+        return bar.hasFocus() and bar.isModified()
+
+    def _browser_reset_url_bar(self) -> None:
+        """Show the current tab's URL in the address bar, dropping any
+        unsubmitted edits (Esc in the bar; also clears the modified flag)."""
+        view = self._current_browser_view() if self.browser_tabs.count() else None
+        self.browser_url_bar.setText(self._display_url(view.url().toString()) if view else "")
+        self.browser_url_bar.selectAll()
 
     @staticmethod
     def _display_url(url_str: str) -> str:
@@ -3182,7 +3217,8 @@ class MainWindow(QMainWindow):
                 factor = self.config.browser.zoom_by_origin.get(origin, 1.0)
                 view.setZoomFactor(max(0.5, min(3.0, float(factor))))
             if idx == self.browser_tabs.currentIndex():
-                self.browser_url_bar.setText(self._display_url(url.toString()))
+                if not self._url_bar_editing():
+                    self.browser_url_bar.setText(self._display_url(url.toString()))
                 self.browser_zoom_label.setText(f"{round(view.zoomFactor() * 100)}%")
             self._schedule_browser_session_save()
 
