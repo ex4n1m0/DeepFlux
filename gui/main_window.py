@@ -3218,8 +3218,12 @@ class MainWindow(QMainWindow):
             idx = self.browser_tabs.indexOf(view)
             if not view.property("deepflux_private"):
                 origin = self._browser_origin(url.toString())
-                factor = self.config.browser.zoom_by_origin.get(origin, 1.0)
-                view.setZoomFactor(max(0.5, min(3.0, float(factor))))
+                factor = max(0.5, min(3.0, float(self.config.browser.zoom_by_origin.get(origin, 1.0))))
+                # Only apply when it actually differs — setZoomFactor forces a
+                # full re-render pass, and YouTube's SPA pushState fires
+                # urlChanged repeatedly during playback.
+                if abs(view.zoomFactor() - factor) > 0.001:
+                    view.setZoomFactor(factor)
             if idx == self.browser_tabs.currentIndex():
                 if not self._url_bar_editing():
                     self.browser_url_bar.setText(self._display_url(url.toString()))
@@ -4603,6 +4607,14 @@ class MainWindow(QMainWindow):
 
     def _render_torrents(self, torrents: List[Dict[str, Any]]) -> None:
         """Paint the torrent table (GUI thread, via _RefreshSignals)."""
+        # Skip the table rebuild while the Download tab is hidden — it runs
+        # every second and each setItem forces a repaint; against a window
+        # containing a native QWebEngineView child that recomposition cost
+        # shows up as flashing while watching video. Status + toasts stay live.
+        if self.main_tabs.currentWidget() is not self._torrents_tab:
+            self._update_status_bar(torrents)
+            self._notify_completed_torrents(torrents)
+            return
         self.torrent_table.setSortingEnabled(False)  # don't re-sort mid-rebuild
         self.torrent_table.setRowCount(len(torrents))
         for i, t in enumerate(torrents):
