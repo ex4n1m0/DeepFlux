@@ -103,7 +103,7 @@ class PlayerBackend:
         raise NotImplementedError
     def set_hwdec(self, mode: str) -> None:
         raise NotImplementedError
-    def set_cache(self, seconds: int) -> None:
+    def set_cache(self, seconds: int, max_bytes: Optional[int] = None) -> None:
         raise NotImplementedError
     def set_live_pause_buffer(self, seconds: int) -> None:
         """Configure a bounded in-memory live pause/rewind buffer if supported.
@@ -257,6 +257,17 @@ class MpvBackend(PlayerBackend):
                 if self.on_state:
                     self.on_state("paused" if value else "playing")
 
+            @self._mpv.property_observer("paused-for-cache")
+            def _cache_stall(_name, value):
+                # Cache starvation is mid-playback buffering, not a user
+                # pause. On refill, only report "playing" when the user
+                # hasn't paused — the pause observer owns that state.
+                if self.on_state:
+                    if value:
+                        self.on_state("buffering")
+                    elif not self._mpv.pause:
+                        self.on_state("playing")
+
             @self._mpv.property_observer("eof-reached")
             def _eof(_name, value):
                 if value and self.on_state:
@@ -367,11 +378,16 @@ class MpvBackend(PlayerBackend):
             except Exception:
                 pass
 
-    def set_cache(self, seconds: int) -> None:
+    def set_cache(self, seconds: int, max_bytes: Optional[int] = None) -> None:
+        """Set the forward cache target; ``max_bytes`` optionally raises the
+        demuxer byte ceiling so a large ``cache-secs`` isn't byte-capped
+        below it (the adaptive ramp passes it; normal calls don't)."""
         if self._mpv is not None:
             try:
                 self._mpv["cache-secs"] = max(1, int(seconds))
                 self._mpv["cache"] = "yes"
+                if max_bytes:
+                    self._mpv["demuxer-max-bytes"] = int(max_bytes)
             except Exception:
                 pass
 
@@ -843,7 +859,7 @@ class LibVLCBackend(PlayerBackend):
     def set_hwdec(self, mode: str) -> None:
         pass
 
-    def set_cache(self, seconds: int) -> None:
+    def set_cache(self, seconds: int, max_bytes: Optional[int] = None) -> None:
         pass
 
     def set_aspect(self, mode: str) -> None:

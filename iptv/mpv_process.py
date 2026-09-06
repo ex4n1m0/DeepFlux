@@ -293,6 +293,13 @@ class MpvProcessBackend(PlayerBackend):
                     self.on_state("paused" if data else "playing")
         elif name == "paused-for-cache":
             self._paused_for_cache = data is True or str(data).lower() == "yes"
+            # Cache starvation is mid-playback buffering, not a user pause;
+            # the "pause" observer owns the user-pause state.
+            if self.on_state:
+                if self._paused_for_cache:
+                    self.on_state("buffering")
+                elif not self._paused:
+                    self.on_state("playing")
         elif name == "eof-reached":
             if data and self.on_state:
                 self.on_state("stopped")
@@ -349,9 +356,12 @@ class MpvProcessBackend(PlayerBackend):
         # VapourSynth chain cannot take zero-copy GPU frames.
         self._set("hwdec", "auto-copy")
 
-    def set_cache(self, seconds: int) -> None:
+    def set_cache(self, seconds: int, max_bytes: Optional[int] = None) -> None:
         self._set("cache", "yes")
         self._set("cache-secs", max(1, int(seconds)))
+        if max_bytes:
+            # Raise the byte ceiling so a large cache-secs isn't byte-capped.
+            self._set("demuxer-max-bytes", int(max_bytes))
 
     def set_aspect(self, mode: str) -> None:
         self._set("video-aspect-override", mode if mode and mode != "auto" else "no")

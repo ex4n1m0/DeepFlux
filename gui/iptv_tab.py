@@ -424,6 +424,19 @@ class PlayerWidget(QWidget):
         self._loading_timer.timeout.connect(self._update_loading)
         self._loading_started = 0.0
 
+        # Mid-playback stall badge: once the startup overlay is gone, a
+        # cache starvation pause still needs a visible cue (and feeds the
+        # adaptive cache ramp below).
+        self.buffer_badge = QLabel("⏳ Buffering…", self.surface)
+        self.buffer_badge.setAlignment(Qt.AlignCenter)
+        self.buffer_badge.setStyleSheet(
+            "background-color: rgba(10,10,15,0.82); color: #e67e22; "
+            "border-radius: 12px; padding: 6px 18px; font-size: 13px; "
+            "font-weight: bold;")
+        self.buffer_badge.hide()
+        self._stall_count = 0
+        self._adaptive_cache_secs = 0
+
     # -- backend lifecycle ---------------------------------------------------
     def _ensure_backend(self) -> bool:
         """Create the media backend (mpv/VLC). MilkDrop is a second, lazily
@@ -712,6 +725,7 @@ class PlayerWidget(QWidget):
         self._watched_marked = False
         self._playback_active = True
         self._langs_applied_url = ""  # new file — re-apply preferred languages
+        self._reset_stall_state()
         self.error_overlay.hide()
         if allow_milkdrop and self._play_with_milkdrop(item):
             return
@@ -1246,6 +1260,7 @@ class PlayerWidget(QWidget):
                 self._playback_active = False
                 self._stop_recording()
                 self._hide_loading()
+                self.buffer_badge.hide()
                 self.play_btn.setText("▶")
                 self._restore_torrent_rates()
         elif state == "playing":
@@ -1259,6 +1274,13 @@ class PlayerWidget(QWidget):
             # The overlay is already shown by play(); keep the pause icon so
             # the user can hit space to pause once playback starts.
             self.play_btn.setText("⏸")
+            # A stall after the startup overlay is gone is a mid-playback
+            # rebuffer — surface it with the badge (never a full overlay,
+            # which would blank the frozen last frame).
+            if self._playback_active and not self.loading_overlay.isVisible():
+                self._on_midplayback_stall()
+        elif state == "playing":
+            self.buffer_badge.hide()
 
     def _on_position(self, pos: float, dur: float) -> None:
         self._last_position = max(0.0, float(pos or 0.0))
@@ -1422,9 +1444,52 @@ class PlayerWidget(QWidget):
         self._loading_timer.start()
 
     def _hide_loading(self) -> None:
-        """Hide the loading overlay and stop polling."""
+        """Hide the overlay and stop polling."""
         self._loading_timer.stop()
         self.loading_overlay.hide()
+
+    # -- mid-playback stall badge / adaptive cache ----------------------------
+    def _on_midplayback_stall(self) -> None:
+        """A cache-starvation pause hit after playback had started.
+
+        Shows the badge, and from the second stall in the same playback
+        ramps mpv's forward cache (cache-secs) up so bursts of repeated
+        stalls grow the buffer instead of pausing the video each time.
+        Live channels with a pause/rewind buffer are skipped: their
+        cache-secs already tracks the (larger) live-pause setting, and a
+        small ramp value would shrink it.
+        """
+        self._stall_count += 1
+        detail = "waiting for data"
+        base = int(self._config.iptv.cache_seconds)
+        is_live = self._manager.is_live_item(self._current_item)
+        has_live_pause = (is_live
+                          and int(self._config.iptv.live_pause_buffer_seconds) > 0)
+        if self._stall_count >= 2 and base >= 2 and not has_live_pause:
+            target = min(base * min(self._stall_count, 4), 240)
+            if target > self._adaptive_cache_secs:
+                self._adaptive_cache_secs = target
+                if self._backend is not None:
+                    # 3 MiB/s covers ~24 Mbit/s streams without being byte-
+                    # capped below the requested seconds.
+                    self._backend.set_cache(target, max_bytes=target * 3 * 1024 * 1024)
+                detail = f"raised buffer to {target}s"
+        self.buffer_badge.setText(f"⏳ Buffering… {detail}")
+        self._layout_buffer_badge()
+        self.buffer_badge.show()
+        self.buffer_badge.raise_()  # above the native mpv/VLC window
+
+    def _layout_buffer_badge(self) -> None:
+        """Center the stall badge near the top of the video surface."""
+        self.buffer_badge.adjustSize()
+        w = self.surface.width()
+        self.buffer_badge.move(max(0, (w - self.buffer_badge.width()) // 2), 12)
+
+    def _reset_stall_state(self) -> None:
+        """Forget stall history / adaptive cache for a new playback."""
+        self._stall_count = 0
+        self._adaptive_cache_secs = 0
+        self.buffer_badge.hide()
 
     def _update_loading(self) -> None:
         """Poll the backend and update the overlay text/progress.
@@ -1544,6 +1609,9 @@ class PlayerWidget(QWidget):
             # hwdec) — rebuild the backend when the next file plays.
             self._backend_recreate_on_play = True
         if self._media_backend is not None:
+            # Re-applying the base cache drops any adaptive ramp from
+            # mid-playback stalls — restart it from the configured value.
+            self._adaptive_cache_secs = 0
             self._media_backend.set_cache(self._config.iptv.cache_seconds)
             self._media_backend.set_live_pause_buffer(
                 self._config.iptv.live_pause_buffer_seconds
@@ -1572,6 +1640,9 @@ class PlayerWidget(QWidget):
         if self.loading_overlay.isVisible():
             self.loading_overlay.resize(self.surface.size())
             self.loading_overlay.raise_()
+        if self.buffer_badge.isVisible():
+            self._layout_buffer_badge()
+            self.buffer_badge.raise_()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
         # Any key press in fullscreen reveals the controls briefly.

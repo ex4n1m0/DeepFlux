@@ -283,7 +283,7 @@ class MilkdropBackend(PlayerBackend):
     def set_hwdec(self, mode: str) -> None:
         pass
 
-    def set_cache(self, seconds: int) -> None:
+    def set_cache(self, seconds: int, max_bytes=None) -> None:
         pass
 
     def set_aspect(self, mode: str) -> None:
