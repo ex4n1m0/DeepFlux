@@ -640,12 +640,13 @@ BROWSER_EXTENSION_JS = r"""
     statusBadge.appendChild(dot);
     statusBadge.appendChild(labelText);
 
-    // Highlight border when videos are available.
+    // Highlight border when videos are available. Static style only — an
+    // infinite box-shadow keyframe animation forces continuous compositor
+    // repaints, which showed up as visible flashing during YouTube playback.
     if (detectedVideos.length > 0 && apiConnected) {
       statusBadge.style.borderColor = '#00ff9d';
       statusBadge.style.color = '#00ff9d';
-      // Subtle pulse animation to draw attention.
-      statusBadge.style.animation = 'deeptorrent-pulse 2s ease-in-out infinite';
+      statusBadge.style.animation = '';
     } else if (apiConnected === false) {
       statusBadge.style.borderColor = '#ff4444';
       statusBadge.style.color = '#ff8888';
@@ -657,7 +658,9 @@ BROWSER_EXTENSION_JS = r"""
     }
   }
 
-  // Inject pulse keyframes once.
+  // Inject pulse keyframes once (kept for backward compatibility; the badge
+  // no longer applies the animation — infinite keyframes caused continuous
+  // repaints / flashing during video playback).
   function injectPulseStyle() {
     if (document.getElementById('deeptorrent-pulse-style')) return;
     var style = document.createElement('style');
@@ -1003,11 +1006,18 @@ BROWSER_EXTENSION_JS = r"""
   scanPlayerGlobals();
   scanYouTube();
   scanMissAV();
-  // Rescan periodically — YouTube and MissAV load player data dynamically.
+  // Rescan periodically until the page yields videos — YouTube and MissAV
+  // load player data dynamically AFTER first paint. Once anything is
+  // detected, stop polling: scanning every <script> tag every 5s burns the
+  // renderer main thread and starves the frame scheduler (visible as
+  // flashing/jank during video playback). New navigations reset the list
+  // and restart scanning via onNavigate().
   setInterval(function() {
-    scanForVideoElements();
-    scanYouTube();
-    scanMissAV();
+    if (detectedVideos.length === 0) {
+      scanForVideoElements();
+      scanYouTube();
+      scanMissAV();
+    }
   }, 5000);
 })();
 """

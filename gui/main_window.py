@@ -980,7 +980,7 @@ class MainWindow(QMainWindow):
         self._jackett_timer.start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.4.3 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.4.4 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1769,10 +1769,10 @@ class MainWindow(QMainWindow):
         nav_layout.addWidget(self.browser_adblock_btn)
 
         # Video grabber toggle button — the injected extension monitors for
-        # downloadable videos on every page. Its MutationObserver +
-        # PerformanceObserver + CSS pulse animation cause continuous
-        # repaints (visible as flashing during video playback on YouTube
-        # etc.). This button lets the user turn it off when watching.
+        # downloadable videos on every page. It once caused continuous
+        # repaints (flashing during video playback) via a CSS pulse
+        # animation + unconditional 5s DOM rescans; both are gone now, the
+        # button remains as a plain on/off for video detection.
         self.browser_extension_btn = QPushButton()
         self.browser_extension_btn.setObjectName("btn_secondary")
         self.browser_extension_btn.setCheckable(True)
@@ -1780,7 +1780,7 @@ class MainWindow(QMainWindow):
         self.browser_extension_btn.setIcon(self._load_browser_icon("adblock"))
         self.browser_extension_btn.setToolTip(
             "Toggle video grabber (off by default — turn on to detect "
-            "downloadable videos; may cause flashing during video playback)")
+            "downloadable videos)")
         self.browser_extension_btn.setFixedWidth(34)
         self._update_extension_button_style()
         self.browser_extension_btn.clicked.connect(self._toggle_extension)
@@ -2768,6 +2768,10 @@ class MainWindow(QMainWindow):
         else:
             profile = self.browser_profile
         page = _BrowserPage(profile, view)
+        # Chromium's first composited frame paints the page background —
+        # unset, that is white, which flashes on every load / tab switch
+        # against the dark theme. Set the app background explicitly.
+        page.setBackgroundColor(QColor("#0d1117"))
         view.setPage(page)
         view.setProperty("deepflux_private", private)
         # QWebChannel: each persistent page gets the isolated application bridge.
