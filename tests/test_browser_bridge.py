@@ -131,3 +131,63 @@ def test_channel_download_requires_browser_authorization(app):
 
     assert bridge.sendDownload("https://source.example/file.zip", "file", "File") is False
     window._dl_engine.add_job.assert_not_called()
+
+
+def _routable_window():
+    window = QObject()
+    window._confirm_browser_action = MagicMock(return_value=True)
+    current = MagicMock()
+    current.url.return_value.toString.return_value = "https://source.example/page"
+    window._current_browser_view = MagicMock(return_value=current)
+    window._browser_cookies_for = MagicMock(return_value="")
+    window._notify = MagicMock()
+    window.main_tabs = MagicMock()
+    window._torrents_tab = MagicMock()
+    window._dl_engine = MagicMock()
+    return window
+
+
+def test_channel_download_routes_youtube_to_ytdlp(app):
+    # The watch page must go to yt-dlp — the plain HTTP downloader saves
+    # YouTube's HTML page as a small unplayable "video" (regression, 3.4.7).
+    window = _routable_window()
+    bridge = BrowserChannelBridge(window, parent=window)
+
+    assert bridge.sendDownload(
+        "https://www.youtube.com/watch?v=abc123", "youtube", "My Video") is True
+    window._dl_engine.add_youtube_job.assert_called_once_with(
+        url="https://www.youtube.com/watch?v=abc123",
+        filename="My Video",
+        source_url="https://source.example/page",
+    )
+    window._dl_engine.add_job.assert_not_called()
+
+
+def test_channel_download_routes_youtube_by_url_even_without_type(app):
+    window = _routable_window()
+    bridge = BrowserChannelBridge(window, parent=window)
+
+    assert bridge.sendDownload("https://youtu.be/abc123", "file", "") is True
+    window._dl_engine.add_youtube_job.assert_called_once()
+    window._dl_engine.add_job.assert_not_called()
+
+
+def test_channel_download_routes_playlists_by_extension(app):
+    window = _routable_window()
+    bridge = BrowserChannelBridge(window, parent=window)
+
+    assert bridge.sendDownload(
+        "https://cdn.example/stream.m3u8?tok=1", "hls", "Stream") is True
+    window._dl_engine.add_stream_job.assert_called_once()
+    window._dl_engine.add_job.assert_not_called()
+    window._dl_engine.add_youtube_job.assert_not_called()
+
+
+def test_channel_download_plain_file_uses_http_job(app):
+    window = _routable_window()
+    bridge = BrowserChannelBridge(window, parent=window)
+
+    assert bridge.sendDownload(
+        "https://source.example/file.zip", "file", "File") is True
+    window._dl_engine.add_job.assert_called_once()
+    window._dl_engine.add_youtube_job.assert_not_called()

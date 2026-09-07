@@ -169,7 +169,19 @@ class BrowserChannelBridge(QObject):
             cookies = self._window._browser_cookies_for(url, source_url)
             referrer = source_url
             low = url.lower().split("?", 1)[0]
-            if low.endswith((".m3u8", ".mpd")):
+            is_youtube = (
+                stream_type == "youtube"
+                or "youtube.com/watch" in url.lower()
+                or "youtu.be/" in url.lower()
+            )
+            if is_youtube:
+                # yt-dlp resolves the watch URL into real media streams —
+                # the plain HTTP downloader would just save the HTML page
+                # (a ~1.5 MB "video" that nothing can play).
+                job = self._window._dl_engine.add_youtube_job(
+                    url=url, filename=title or "", source_url=referrer,
+                )
+            elif low.endswith((".m3u8", ".mpd")):
                 job = self._window._dl_engine.add_stream_job(
                     url=url, filename=title or "", cookies=cookies,
                     referrer=referrer, source_url=referrer,
