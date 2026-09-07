@@ -296,6 +296,8 @@ class DownloadConfig:
     youtube_max_height: int = 1080
     youtube_subtitles: bool = False
     youtube_playlists: bool = False
+    youtube_update_check: bool = True           # warn when yt-dlp is outdated (dlmgr/ytdlp_update.py)
+    ytdlp_last_check: float = 0.0               # epoch of last freshness probe; 0 = never
     categories: List[DownloadCategory] = field(default_factory=list)
 
 
@@ -891,6 +893,8 @@ class DeeptorrentConfig:
                 youtube_max_height=max(144, int(data.get("download", {}).get("youtube_max_height", 1080) or 1080)),
                 youtube_subtitles=bool(data.get("download", {}).get("youtube_subtitles", False)),
                 youtube_playlists=bool(data.get("download", {}).get("youtube_playlists", False)),
+                youtube_update_check=bool(data.get("download", {}).get("youtube_update_check", True)),
+                ytdlp_last_check=float(data.get("download", {}).get("ytdlp_last_check", 0.0) or 0.0),
                 categories=[DownloadCategory(**c) for c in data.get("download", {}).get("categories", [])],
             ),
             torrents=TorrentsConfig(**data.get("torrents", {})),

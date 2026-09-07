@@ -95,6 +95,17 @@
   ranks user-added sources by `id`. If a built-in source is ever added back
   to `DEFAULT_SOURCES`, `from_file` merges it into existing user configs
   (match by `id`, Jackett-style).
+- YouTube downloads run yt-dlp (`add_youtube_job` in dlmgr/engine.py).
+  YouTube breaks older yt-dlp releases with mid-download HTTP 403s from the
+  googlevideo CDN (verified 2026-09: 2026.07.04 died at 8% of a real video,
+  2026.8.19 downloaded it clean) — requirements.txt keeps a recent floor,
+  so bump it on release rebuilds. `dlmgr/ytdlp_update.py` probes PyPI at
+  startup (daily-gated, `download.youtube_update_check`, off-switch on the
+  Download Manager settings page) and warns via a dim Agent-tab event (GUI)
+  or a console notice (CLI); the frozen build bundles yt-dlp inside
+  `_internal`, so it can only tell the user to update DeepFlux — never try
+  a runtime pip swap there. YouTube job errors carrying 403/Forbidden get
+  the same hint appended to `job.error_message`.
 - Jackett service + source sync live in `infra/jackett.py`: at startup (GUI
   background thread + CLI) and then hourly, `maybe_auto_sync` pings Jackett
   (`t=caps`), starts it when down (`indexer.auto_start`, default on —

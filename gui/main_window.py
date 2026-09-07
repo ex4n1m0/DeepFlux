@@ -978,9 +978,12 @@ class MainWindow(QMainWindow):
         self._jackett_timer.setInterval(3600_000)  # 1h; sync itself is daily-gated
         self._jackett_timer.timeout.connect(self._start_jackett_sync)
         self._jackett_timer.start()
+        self._ytdlp_notice_shown = False  # outdated notice: once per session
+        threading.Thread(target=self._ytdlp_update_worker, daemon=True,
+                         name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.4.6 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.4.7 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -3629,6 +3632,20 @@ class MainWindow(QMainWindow):
             self._agent_signals.event.emit({"type": "jackett_sync", **result})
 
     # ------------------------------------------------------------------
+    # yt-dlp freshness check (startup only — the probe itself is daily-gated)
+    # ------------------------------------------------------------------
+
+    def _ytdlp_update_worker(self) -> None:
+        from dlmgr import ytdlp_update
+        try:
+            result = ytdlp_update.maybe_check_update(self.config, self.config_path)
+        except Exception as exc:
+            logger.debug("yt-dlp update check failed: %s", exc, exc_info=True)
+            return
+        if result:
+            self._agent_signals.event.emit({"type": "ytdlp_update", **result})
+
+    # ------------------------------------------------------------------
     # Tool event formatting helpers
     # ------------------------------------------------------------------
 
@@ -3901,6 +3918,21 @@ class MainWindow(QMainWindow):
                         parts.append(f"fetched {total} indexer(s) from Jackett ({enabled} enabled)")
                 if parts:
                     self._append_event("🧩 " + "; ".join(parts) + ".")
+            elif etype == "ytdlp_update":
+                if self._ytdlp_notice_shown:
+                    return
+                self._ytdlp_notice_shown = True
+                installed = event.get("installed", "?")
+                latest = event.get("latest", "?")
+                if event.get("frozen"):
+                    hint = ("YouTube downloads may fail part-way. "
+                            "Update DeepFlux to pick up a newer bundled downloader.")
+                else:
+                    hint = ("YouTube downloads may fail part-way. "
+                            "Run: python -m pip install --upgrade yt-dlp")
+                self._append_event(
+                    f"📼 YouTube downloader (yt-dlp {installed}) is outdated — "
+                    f"{latest} is available. {hint}")
         except Exception:
             logger.debug("event handler failed", exc_info=True)
 

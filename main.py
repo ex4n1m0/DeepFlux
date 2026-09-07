@@ -92,6 +92,20 @@ class Repl:
         # Keep the Jackett source list fresh / start Jackett if needed (no-op
         # when Jackett isn't configured). Background — never blocks the REPL.
         threading.Thread(target=self._jackett_sync, daemon=True).start()
+        # Daily-gated yt-dlp freshness probe (outdated = partial downloads).
+        threading.Thread(target=self._ytdlp_update_check, daemon=True).start()
+
+    def _ytdlp_update_check(self) -> None:
+        from dlmgr import ytdlp_update
+        try:
+            result = ytdlp_update.maybe_check_update(self.config, self.config_path)
+        except Exception:
+            logger.debug("yt-dlp update check failed", exc_info=True)
+            return
+        if result:
+            print(f"\n[yt-dlp] YouTube downloader {result['installed']} is outdated "
+                  f"(latest {result['latest']}) — YouTube downloads may fail part-way. "
+                  f"Run: python -m pip install --upgrade yt-dlp")
 
     def _jackett_sync(self) -> None:
         from infra import jackett

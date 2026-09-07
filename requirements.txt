@@ -10,6 +10,8 @@ pydantic>=2.0.0
 beautifulsoup4>=4.12.0
 m3u8>=3.0.0
 pycryptodome>=3.19.0
-yt-dlp>=2024.0.0
+# YouTube breaks older yt-dlp constantly (mid-download 403s on the signed
+# googlevideo URLs) — keep the floor at a recent known-good release.
+yt-dlp>=2026.8.19
 irc>=20.4.0,<21
 faster-whisper>=1.1.0,<2

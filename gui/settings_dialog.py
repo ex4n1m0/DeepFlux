@@ -330,6 +330,9 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_youtube_playlists = QCheckBox("Allow complete YouTube playlists")
         dm_layout.addRow("", self.dm_youtube_playlists)
 
+        self.dm_youtube_update_check = QCheckBox("Warn when the YouTube downloader (yt-dlp) is outdated")
+        dm_layout.addRow("", self.dm_youtube_update_check)
+
         self.dm_categories = QPlainTextEdit()
         self.dm_categories.setMaximumHeight(90)
         self.dm_categories.setPlaceholderText("Videos|D:\\Media\\Videos|mp4,mkv,webm")
@@ -377,6 +380,7 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_youtube_height.setValue(self.config.download.youtube_max_height)
         self.dm_youtube_subtitles.setChecked(self.config.download.youtube_subtitles)
         self.dm_youtube_playlists.setChecked(self.config.download.youtube_playlists)
+        self.dm_youtube_update_check.setChecked(self.config.download.youtube_update_check)
         self.dm_categories.setPlainText("\n".join(
             f"{category.name}|{category.folder}|{','.join(category.extensions)}"
             for category in self.config.download.categories
@@ -431,6 +435,7 @@ class DownloadsSettingsDialog(QDialog):
             self.config.download.youtube_max_height = self.dm_youtube_height.value()
             self.config.download.youtube_subtitles = self.dm_youtube_subtitles.isChecked()
             self.config.download.youtube_playlists = self.dm_youtube_playlists.isChecked()
+            self.config.download.youtube_update_check = self.dm_youtube_update_check.isChecked()
             self.config.download.categories = categories
         self.accept()
 

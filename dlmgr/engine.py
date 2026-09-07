@@ -825,6 +825,13 @@ class DownloadEngine:
                     return
                 job.status = JobStatus.ERROR
                 job.error_message = str(exc)
+                # The classic outdated-yt-dlp failure: YouTube's CDN accepts
+                # the start of the transfer then starts answering 403, so the
+                # user gets a small partial file. Point them at the fix.
+                if "403" in str(exc) or "forbidden" in str(exc).lower():
+                    job.error_message += (
+                        " — YouTube often rejects downloads from an outdated "
+                        "yt-dlp; update it (or DeepFlux) and retry")
                 logger.warning("YouTube job %s error: %s", job.id, exc)
 
         def _on_progress(d):
