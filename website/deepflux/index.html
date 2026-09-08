@@ -76,48 +76,9 @@
     color: rgba(255, 255, 255, 0.85);
     line-height: 1.6;
   }
-  header.search {
-    width: 100%;
-    max-width: 768px;
-    padding: 16px 24px 48px;
-    margin: 0 auto;
-  }
-  header.search form {
-    display: flex;
-    gap: 8px;
-    width: 100%;
-  }
-  header.search input[type="search"] {
-    flex: 1;
-    background: #000;
-    color: #fff;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 999px;
-    padding: 12px 20px;
-    font-size: 0.95rem;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 0.25s;
-  }
-  header.search input[type="search"]::placeholder { color: rgba(255, 255, 255, 0.4); }
-  header.search input[type="search"]:focus { border-color: rgba(255, 255, 255, 0.7); }
-  header.search button {
-    background: #000;
-    color: #fff;
-    border: 1px solid rgba(255, 255, 255, 0.3);
-    border-radius: 999px;
-    padding: 12px 24px;
-    font-size: 0.95rem;
-    font-family: inherit;
-    letter-spacing: 0.08em;
-    cursor: pointer;
-    transition: background 0.25s, color 0.25s;
-  }
-  header.search button:hover,
-  header.search button:focus-visible { background: #fff; color: #000; }
   footer.social {
-    /* Mirror the tagline's distance above the search box (48 + 16 = 64px). */
-    padding: 16px 24px 64px;
+    /* Directly below the tagline, with page-bottom breathing room. */
+    padding: 28px 24px 64px;
     display: flex;
     justify-content: center;
     gap: 20px;
@@ -144,24 +105,12 @@
     <img src="DeepFlux4.webp" alt="DeepFlux logo">
   </main>
   <section class="dl-wrap">
-    <a class="dl" href="DeepFlux3.4.8Setup.exe" download>Download</a>
-    <p class="meta">DeepFlux 3.4.8 · Windows 10/11 64-bit · posted 2026-09-07</p>
+    <a class="dl" href="DeepFlux3.4.9Setup.exe" download>Download</a>
+    <p class="meta">DeepFlux 3.4.9 · Windows 10/11 64-bit · posted 2026-09-08</p>
   </section>
   <section class="info">
     <p class="tagline">DeepFlux — LLM-Powered Browser, Downloader, File Manager &amp; Player</p>
   </section>
-  <header class="search">
-    <form action="https://www.google.com/search" method="get" target="_blank">
-      <input
-        type="search"
-        name="q"
-        placeholder="Search the web…"
-        aria-label="Search the web"
-        required
-      />
-      <button type="submit">Search</button>
-    </form>
-  </header>
   <footer class="social">
     <a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener" aria-label="GitHub">
       <img src="GitHub.png" alt="GitHub">

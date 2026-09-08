@@ -84,6 +84,7 @@ from iptv.models import (
     Series,
 )
 from iptv.player import PlayerBackend, create_backend
+from gui.multiview import MultiViewGrid, build_playback_headers
 from dlmgr.ffmpeg import StreamRecorder, find_ffmpeg, is_network_stream_url
 
 logger = logging.getLogger(__name__)
@@ -208,6 +209,7 @@ class PlayerWidget(QWidget):
         self._compact_geometry = None
         self._compact_minimum_size: Optional[QSize] = None
         self._compact_control_visibility: Dict[QWidget, bool] = {}
+        self._multiview_grid: Optional[MultiViewGrid] = None
         self._build_ui()
         self._checkpoint_timer = QTimer(self)
         self._checkpoint_timer.setInterval(15_000)
@@ -348,6 +350,14 @@ class PlayerWidget(QWidget):
             "Compact always-on-top host mode (keeps the native player surface in place)")
         self.compact_btn.clicked.connect(self._toggle_compact)
         tools.addWidget(self.compact_btn)
+
+        self.mv_btn = QPushButton("▦ 4×4")
+        self.mv_btn.setToolTip(
+            "Multiview grid: up to 16 tiles (local files + one IPTV stream), "
+            "each with its own audio")
+        self.mv_btn.setCheckable(True)
+        self.mv_btn.toggled.connect(self._on_multiview_toggled)
+        tools.addWidget(self.mv_btn)
 
         self.fs_btn = QPushButton("⛶ Full")
         self.fs_btn.setToolTip("Fullscreen (F or double-click)")
@@ -547,6 +557,48 @@ class PlayerWidget(QWidget):
         self.preset_btn.setVisible(on_milkdrop)
         self._backend = backend
 
+    # -- multiview grid --------------------------------------------------------
+    def _ensure_multiview(self) -> MultiViewGrid:
+        """The 4×4 tile grid, created on first use as another video_stack
+        page (sibling of the surface — never a child of it, see _build_ui)."""
+        if self._multiview_grid is None:
+            grid = MultiViewGrid(self._manager, self._config)
+            grid.sig_promote_requested.connect(self._promote_from_grid)
+            self.video_stack.addWidget(grid)
+            self._multiview_grid = grid
+        return self._multiview_grid
+
+    def _on_multiview_toggled(self, on: bool) -> None:
+        if on:
+            self.video_stack.setCurrentWidget(self._ensure_multiview())
+        else:
+            self._set_multiview(False, force=True)
+
+    def _set_multiview(self, on: bool, force: bool = False) -> None:
+        if on:
+            self.video_stack.setCurrentWidget(self._ensure_multiview())
+            self.mv_btn.blockSignals(True)
+            self.mv_btn.setChecked(True)
+            self.mv_btn.blockSignals(False)
+            return
+        grid = self._multiview_grid
+        if grid is None:
+            return
+        showing = self.video_stack.currentWidget() is grid
+        if force or showing:
+            grid.shutdown()
+        if showing:
+            self.video_stack.setCurrentWidget(self.surface)
+        self.mv_btn.blockSignals(True)
+        self.mv_btn.setChecked(False)
+        self.mv_btn.blockSignals(False)
+
+    def _promote_from_grid(self, channel: Any) -> None:
+        """A tile asked for the full player: leave grid mode (stopping all
+        tiles) and play the item in the main PlayerWidget."""
+        self._set_multiview(False, force=True)
+        self.play(channel)
+
     def _play_with_milkdrop(self, item: Any) -> bool:
         """Route audio files to the Butterchurn visualizer.
 
@@ -686,6 +738,10 @@ class PlayerWidget(QWidget):
     _MAX_RETRIES = 5      # total attempts before giving up
 
     def play(self, item: Any, allow_milkdrop: bool = True) -> None:
+        # Starting playback in the main player means leaving multiview mode —
+        # the tiles' decoders/connections are freed for the new stream.
+        if self._multiview_grid is not None:
+            self._set_multiview(False, force=True)
         # Persist the outgoing VOD/episode before any backend stop callback can
         # race with the item switch. Live channels are ignored by the manager.
         if self._current_item is not None:
@@ -748,29 +804,7 @@ class PlayerWidget(QWidget):
         QTimer.singleShot(2500, self._apply_preferred_languages)
 
     def _playback_headers(self, item: Any) -> Dict[str, str]:
-        headers: Dict[str, str] = {}
-        src = self._manager.active_source()
-        if src and src.user_agent:
-            headers["User-Agent"] = src.user_agent
-        if src and src.referer:
-            headers["Referer"] = src.referer
-        # Per-entry #EXTVLCOPT headers from the playlist override source-level
-        # ones (some streams require a specific UA/Referer).
-        opts = (getattr(item, "extra", None) or {}).get("extvlcopt", [])
-        if isinstance(opts, str):
-            opts = [opts]
-        for opt in opts:
-            k, _, v = str(opt).partition("=")
-            k = k.strip().lower()
-            if k == "http-user-agent" and v.strip():
-                headers["User-Agent"] = v.strip()
-            elif k == "http-referrer" and v.strip():
-                headers["Referer"] = v.strip()
-        # Arbitrary headers passed by web-stream playback (cookies, origin...).
-        extra_headers = (getattr(item, "extra", None) or {}).get("headers")
-        if isinstance(extra_headers, dict):
-            headers.update({str(k): str(v) for k, v in extra_headers.items() if v})
-        return headers
+        return build_playback_headers(item, self._manager.active_source())
 
     def _start_playback(self, generation: Optional[int] = None) -> None:
         """Start one uniquely numbered backend attempt for this generation."""
@@ -1680,6 +1714,8 @@ class PlayerWidget(QWidget):
             super().keyPressEvent(event)
 
     def shutdown(self) -> None:
+        if self._multiview_grid is not None:
+            self._multiview_grid.shutdown()
         self._checkpoint_timer.stop()
         self._checkpoint_current()
         self._cancel_sleep_timer()
@@ -3386,6 +3422,30 @@ class IPTVTab(QWidget):
         splitter.setStretchFactor(1, 4)
         splitter.setStretchFactor(2, 5)
         splitter.setSizes([160, 560, 720])
+        self._splitter = splitter
+
+        # Show/hide toggles for the two browser panes — dragging the splitter
+        # all the way left used to be the only way to close them. Wired after
+        # the panes exist, so the initial setChecked(True) emits nothing.
+        self._pane_widths: Dict[QWidget, int] = {}
+        self._sidebar_btn = QPushButton("🗂 Tree")
+        self._sidebar_btn.setCheckable(True)  # unchecked = hidden (default below)
+        self._sidebar_btn.setToolTip("Show/hide the category tree (left pane)")
+        self._content_btn = QPushButton("🖼 Content")
+        self._content_btn.setCheckable(True)
+        self._content_btn.setToolTip("Show/hide the channels/posters area")
+        idx = toolbar.indexOf(self._view_grid_btn)
+        toolbar.insertWidget(idx, self._sidebar_btn)
+        toolbar.insertWidget(idx + 1, self._content_btn)
+        self._sidebar_btn.toggled.connect(self._toggle_sidebar)
+        self._content_btn.toggled.connect(self._toggle_content)
+        # Player-first layout: both browser panes start CLOSED — the toolbar
+        # toggles re-open them at the default widths (seeded below, since a
+        # pane hidden from birth has never reported a width to remember).
+        self._pane_widths[self._sidebar] = 160
+        self._pane_widths[self._content] = 560
+        self._sidebar.setVisible(False)
+        self._content.setVisible(False)
 
         layout.addWidget(splitter, 1)
 
@@ -3921,6 +3981,33 @@ class IPTVTab(QWidget):
             self._view_list_btn.setObjectName("btn_accent")
         self._view_grid_btn.style().polish(self._view_grid_btn)
         self._view_list_btn.style().polish(self._view_list_btn)
+
+    def _toggle_sidebar(self, on: bool) -> None:
+        self._set_pane_visible(self._sidebar, on)
+
+    def _toggle_content(self, on: bool) -> None:
+        self._set_pane_visible(self._content, on)
+
+    def _set_pane_visible(self, pane: QWidget, on: bool) -> None:
+        """Hide/show a splitter pane, remembering that pane's own width so it
+        returns at its dragged size instead of collapsed.
+
+        Per-pane (not one saved layout): splitter.sizes() reports a HIDDEN
+        pane as 0, so a shared snapshot taken while the other pane was
+        hidden would restore this pane to zero width — the tree reopened
+        as a collapsed sliver after both panes had been toggled."""
+        sizes = self._splitter.sizes()
+        idx = self._splitter.indexOf(pane)
+        if not on:
+            if 0 <= idx < len(sizes) and sizes[idx] > 0:
+                self._pane_widths[pane] = sizes[idx]
+            pane.setVisible(False)
+            return
+        pane.setVisible(True)
+        remembered = self._pane_widths.get(pane, 0)
+        if remembered > 0 and 0 <= idx < len(sizes):
+            sizes[idx] = remembered
+            self._splitter.setSizes(sizes)
 
     def _on_search(self, text: str) -> None:
         text = text.strip()

@@ -4311,6 +4311,53 @@ def test_local_folder_shows_in_the_sidebar_tree(tmp_path):
     _close_tab(tab)
 
 
+def test_browser_pane_toggle_buttons(tmp_path):
+    """🗂 Tree / 🖼 Content toolbar toggles show/hide the two browser panes.
+    Both start HIDDEN (player-first layout) and open at their seeded default
+    widths — a pane hidden from birth never reported a width to remember."""
+    tab = _iptv_tab_with_two_sources(tmp_path)
+    try:
+        # Default: closed, buttons unchecked.
+        assert tab._sidebar.isHidden()
+        assert tab._content.isHidden()
+        assert not tab._sidebar_btn.isChecked()
+        assert not tab._content_btn.isChecked()
+
+        tab._sidebar_btn.setChecked(True)
+        assert not tab._sidebar.isHidden()
+        assert tab._splitter.sizes()[tab._splitter.indexOf(tab._sidebar)] > 0
+
+        tab._content_btn.setChecked(True)
+        assert not tab._content.isHidden()
+        sizes = tab._splitter.sizes()
+        assert sizes[tab._splitter.indexOf(tab._sidebar)] > 0
+        assert sizes[tab._splitter.indexOf(tab._content)] > 0
+
+        # Hide both again, then re-show: each pane comes back with a real
+        # (non-zero) width. A shared saved layout used to restore the tree
+        # to a 0-width sliver here, because sizes() reports the hidden pane
+        # as 0.
+        tab._sidebar_btn.setChecked(False)
+        tab._content_btn.setChecked(False)
+        assert tab._sidebar.isHidden()
+        assert tab._content.isHidden()
+
+        tab._sidebar_btn.setChecked(True)
+        tab._content_btn.setChecked(True)
+        assert not tab._sidebar.isHidden()
+        assert not tab._content.isHidden()
+        sizes = tab._splitter.sizes()
+        assert sizes[tab._splitter.indexOf(tab._sidebar)] > 0
+        assert sizes[tab._splitter.indexOf(tab._content)] > 0
+
+        # Toggling again still restores widths (per-pane memory, reusable).
+        tab._sidebar_btn.setChecked(False)
+        tab._sidebar_btn.setChecked(True)
+        assert tab._splitter.sizes()[tab._splitter.indexOf(tab._sidebar)] > 0
+    finally:
+        _close_tab(tab)
+
+
 def test_error_and_watchdog_share_one_retry_for_an_attempt():
     """The backend callback and watchdog cannot both consume attempt 1."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

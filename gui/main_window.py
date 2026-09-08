@@ -983,7 +983,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.4.8 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.4.9 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1987,12 +1987,14 @@ class MainWindow(QMainWindow):
         self.setMenuBar(menubar)
         file_menu = menubar.addMenu("File")
 
-        self._api_keys_menu = file_menu.addMenu("API Keys")
+        # Flat menu: labeled section instead of a submenu — every entry is
+        # one click deep (user request 3.4.9: no nested settings submenus).
+        file_menu.addSection("API Keys")
         for label, page in API_KEY_PAGES:
             action = QAction(label, self)
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_api_keys(selected))
-            self._api_keys_menu.addAction(action)
+            file_menu.addAction(action)
 
         export_action = QAction("Export Settings...", self)
         export_action.triggered.connect(self._export_settings)
@@ -2017,12 +2019,12 @@ class MainWindow(QMainWindow):
         # Browse menu — title jumps to the tab; items below once there.
         browse_menu = menubar.addMenu("Browse")
 
-        self._browser_settings_menu = browse_menu.addMenu("Browser Settings")
+        browse_menu.addSection("Browser Settings")
         for label, page in BROWSER_SETTINGS_PAGES:
             action = QAction(label, self)
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_browser_settings(selected))
-            self._browser_settings_menu.addAction(action)
+            browse_menu.addAction(action)
 
         browse_menu.addSeparator()
 
@@ -2064,12 +2066,15 @@ class MainWindow(QMainWindow):
         indexer_settings_action.triggered.connect(self._open_indexer_settings)
         download_menu.addAction(indexer_settings_action)
 
-        self._download_settings_menu = download_menu.addMenu("Download Settings")
+        # Formerly the "Download Settings" submenu — flat, directly under
+        # Jackett so the settings block reads as one group.
         for label, page in DOWNLOAD_SETTINGS_PAGES:
             action = QAction(label, self)
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_downloads_settings(selected))
-            self._download_settings_menu.addAction(action)
+            download_menu.addAction(action)
+
+        download_menu.addSeparator()
 
         sources_action = QAction("Sources...", self)
         sources_action.triggered.connect(self._open_sources)
