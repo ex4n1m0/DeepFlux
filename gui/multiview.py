@@ -115,6 +115,7 @@ class GridTile(QWidget):
         self._pick_files_cb: Any = None
         self._pick_folder_cb: Any = None
         self._stopping = False  # user-initiated stop — don't emit its event
+        self._paused = False    # tile play/pause state (button + rotation)
         self._full_name = "—"
 
         layout = QVBoxLayout(self)
@@ -152,6 +153,12 @@ class GridTile(QWidget):
         self.mute_btn.setToolTip("Unmute/mute this tile")
         self.mute_btn.clicked.connect(self._toggle_mute)
         row.addWidget(self.mute_btn)
+        self.play_btn = QPushButton("⏸")
+        self.play_btn.setFixedWidth(26)
+        self.play_btn.setToolTip("Play/pause this tile")
+        self.play_btn.setEnabled(False)
+        self.play_btn.clicked.connect(self._toggle_pause)
+        row.addWidget(self.play_btn)
         self.vol = QSlider(Qt.Horizontal)
         self.vol.setMaximum(100)
         self.vol.setValue(100)
@@ -173,6 +180,9 @@ class GridTile(QWidget):
 
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(lambda _pos: self._show_menu())
+        # Backend "paused"/"playing" events (queued onto the GUI thread) keep
+        # the play/pause button honest — including mpv's own keep-open pause.
+        self.sig_state.connect(self._on_own_state)
 
     # -- geometry ------------------------------------------------------------
     def _set_tile_name(self, text: str) -> None:
@@ -242,8 +252,15 @@ class GridTile(QWidget):
         self.mute_btn.setText("🔇")
         self._set_tile_name(channel.name or channel.url)
         self._empty_lbl.hide()
+        self.play_btn.setEnabled(True)
         backend.set_mute(True)
         backend.play(channel.url, headers=headers or {})
+        # mpv's pause property SURVIVES loadfile: a tile that just ended
+        # under keep-open sits paused, so without this the folder rotation
+        # (and any re-assign) would load the next video paused.
+        backend.resume()
+        self._paused = False
+        self._update_play_btn()
         return True
 
     def clear(self, clear_backend: bool = True) -> None:
@@ -264,11 +281,37 @@ class GridTile(QWidget):
             except Exception:
                 logger.debug("tile backend destroy failed", exc_info=True)
             self._backend = None
+        self._paused = False
+        self._update_play_btn()
+        self.play_btn.setEnabled(False)
         self._set_tile_name("—")
         self._empty_lbl.show()
 
     def shutdown(self) -> None:
         self.clear(clear_backend=True)
+
+    # -- transport ------------------------------------------------------------
+    def _toggle_pause(self) -> None:
+        if self._backend is None or self._channel is None:
+            return
+        self._paused = not self._paused
+        self._update_play_btn()
+        if self._paused:
+            self._backend.pause()
+        else:
+            self._backend.resume()
+
+    def _update_play_btn(self) -> None:
+        self.play_btn.setText("▶" if self._paused else "⏸")
+
+    def _on_own_state(self, state: str) -> None:
+        """Track the backend's own pause transitions (keep-open EOF pause,
+        user toggle) so the button never lies."""
+        if state == "paused":
+            self._paused = True
+        elif state in ("playing", "buffering"):
+            self._paused = False
+        self._update_play_btn()
 
     # -- audio ---------------------------------------------------------------
     def _toggle_mute(self) -> None:

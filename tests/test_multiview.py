@@ -33,6 +33,12 @@ class FakeBackend:
     def stop(self) -> None:
         self.calls.append(("stop",))
 
+    def pause(self) -> None:
+        self.calls.append(("pause",))
+
+    def resume(self) -> None:
+        self.calls.append(("resume",))
+
     def seek_by(self, delta: float) -> None:
         self.calls.append(("seek_by", delta))
 
@@ -259,6 +265,51 @@ def test_skip_all_seeks_every_loaded_tile(qapp, fake_backends, tmp_path):
         btn.click()
     grid.skip_all = orig  # type: ignore[method-assign]
     assert fired == [-60, -10, 10, 60]
+
+
+def test_assign_resumes_even_when_backend_sits_paused(qapp, fake_backends):
+    """mpv's pause property survives loadfile: a tile that ended under
+    keep-open stays paused, so every assign() must explicitly resume or the
+    folder rotation loads the next video paused (reported bug)."""
+    from iptv.models import Channel
+    made, _ = fake_backends
+    grid = _grid(qapp, fake_backends)
+    tile = grid.tiles[0]
+    tile.assign(Channel(id="a", name="A", url="a.mkv"), is_stream=False)
+    calls = [c[0] for c in made[0].calls]
+    assert "resume" in calls
+    assert calls.index("play") < calls.index("resume") < len(calls)
+
+
+def test_tile_play_pause_button(qapp, fake_backends, tmp_path):
+    from iptv.models import Channel
+    made, _ = fake_backends
+    grid = _grid(qapp, fake_backends)
+    tile = grid.tiles[0]
+    # Empty tile: button disabled and toggling is a no-op.
+    assert not tile.play_btn.isEnabled()
+    tile._toggle_pause()
+    assert all(("pause",) not in b.calls for b in made)
+
+    f = tmp_path / "v.mp4"
+    f.write_bytes(b"0" * 8)
+    grid.assign_file(tile, str(f))
+    assert tile.play_btn.isEnabled()
+    assert tile.play_btn.text() == "⏸"
+
+    tile._toggle_pause()
+    assert ("pause",) in made[0].calls
+    assert tile.play_btn.text() == "▶"
+    tile._toggle_pause()
+    assert ("resume",) in made[0].calls
+    assert tile.play_btn.text() == "⏸"
+
+    # Backend-driven transitions update the button too (mpv's own pause
+    # observer): a stray "paused" flips it to ▶, "playing" flips it back.
+    tile.backend.on_state("paused")
+    assert tile.play_btn.text() == "▶"
+    tile.backend.on_state("playing")
+    assert tile.play_btn.text() == "⏸"
 
 
 def test_folder_mode_rotates_ended_tiles_until_exhausted(qapp, fake_backends, tmp_path):

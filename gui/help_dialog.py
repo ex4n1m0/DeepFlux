@@ -42,7 +42,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.4.9 — User Guide</h1>
+<h1>DeepFlux 3.4.10 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -53,9 +53,10 @@ files, and chat on IRC, all with your confirmation for sensitive actions.</p>
 <h2>Getting Started</h2>
 
 <ol>
-  <li><b>Add your API key:</b> File → API Keys → pick an endpoint (DeepSeek
-      direct, or DeepSeek via OpenRouter), adjust the base URL if needed, and
-      paste your key. Without one, the agent runs in offline demo mode.</li>
+  <li><b>Add your API key:</b> File → API Keys: <i>AI Agent…</i> (pick the
+      DeepSeek endpoint, or DeepSeek via OpenRouter), adjust the base URL if
+      needed, and paste your key. Without one, the agent runs in offline
+      demo mode.</li>
   <li><b>Set up Jackett (optional but recommended):</b> Download → Jackett Settings.
       Jackett connects to torrent indexers and gives the agent structured search results.
       DeepFlux starts it automatically when it's not running.</li>
@@ -166,6 +167,10 @@ the torrent engine on completion.</p>
 <h2>Play Tab (IPTV &amp; Media Library)</h2>
 
 <ul>
+  <li><b>Layout:</b> the tab opens player-first — the video area gets the
+      full width. The <b>🗂 Tree</b> and <b>🖼 Content</b> toolbar buttons
+      show/hide the category tree and the posters/channels pane; each pane
+      reopens at the width you last dragged it to.</li>
   <li><b>Sources:</b> Play → Playlist Sources — an M3U URL or file, an Xtream
       Codes login, or a local media folder (your own movies/series library,
       scanned and poster-matched like any provider). All enabled sources load at
@@ -185,6 +190,41 @@ the torrent engine on completion.</p>
 </ul>
 
 <h2>Media Player</h2>
+
+<h3>Multiview — 4×4 grid</h3>
+<p>The <b>▦ 4×4</b> button on the player's tool row replaces the video area
+with a 4×4 grid of independent tiles. Each tile plays its own clip with its
+own audio — every tile starts <b>muted</b>, so nothing blasts when you fill
+the grid; unmute the ones you want with the 🔇 in the tile's strip.</p>
+<ul>
+  <li><b>Load a tile:</b> right-click an empty tile → <i>Assign local
+      file…</i>, or <i>Assign IPTV channel…</i> (searches your playlists).
+      Only <b>one</b> tile can carry a live stream at a time — providers
+      reject multiple simultaneous connections; the other 15 are local
+      files.</li>
+  <li><b>Bulk fill:</b> right-click an empty tile → <i>Fill empty tiles with
+      files…</i> — multi-select files and they're dealt to the empty squares
+      in alphabetical order (numbered episodes line up).</li>
+  <li><b>Folder auto-rotate:</b> right-click any tile → <i>Play folder
+      (auto-rotate)…</i> — the folder's first 16 videos fill the grid, and
+      whenever a tile's clip ends it automatically starts the next unplayed
+      video from the folder. Every video plays exactly once; when the folder
+      is exhausted, each tile frees itself as its last clip ends.</li>
+  <li><b>Per-tile controls</b> (the strip under each tile): ⏸/▶ play/pause,
+      🔇 mute, a volume slider, ⛶ to move that clip to the main player
+      (full controls: tracks, subtitles, recording), and ✕ to clear the
+      tile. A manually cleared tile stays empty; the rotation only reacts
+      to clips that actually end.</li>
+  <li><b>Skip all:</b> the bar under the grid has ⏪ −60s / ⏪ −10s /
+      ⏩ +10s / ⏩ +60s buttons — every loaded clip jumps by that amount,
+      and repeated presses keep going (each clip is clamped to its own
+      start/end).</li>
+  <li>Tiles run with no post-processing and minimal buffering, so sixteen
+      play at once without weighing each other down. Starting playback in
+      the main player (or promoting a tile) leaves grid mode and stops all
+      tiles.</li>
+</ul>
+
 <ul>
   <li><b>Dolby Vision &amp; HDR:</b> Dolby Vision (profiles 5/7/8) and HDR10 play
       with correct colors and dynamic tone mapping out of the box (mpv backend).
@@ -247,10 +287,20 @@ directory (Chrome → <code>chrome://extensions</code> → Developer mode → Lo
 
 <h2>Settings</h2>
 
+<p>Menus are flat — grouped under bold section headers in the menu itself
+(no submenus to dig through).</p>
+
 <table>
   <tr><th>Menu</th><th>What to configure</th></tr>
-  <tr><td><b>File</b></td><td><b>API Keys</b> — every service key in one window: LLM endpoint, base URL and key, Jackett, Brave, Perplexity, TMDb, OpenSubtitles. Plus file associations, and <b>Export/Import Settings</b> — a passphrase-encrypted <code>.dfc</code> backup of everything (keys, sources, all settings) to keep safe or move to another PC. Import applies after a restart; your previous settings are kept as <code>config.json.bak</code>.</td></tr>
-  <tr><td><b>Download</b></td><td><b>Jackett Settings</b> (URL; Test Connection syncs your indexer list), <b>Downloads Settings</b> (save paths, bandwidth limits, connections), <b>Sources</b> (which sites the agent searches), and <b>RSS Feeds</b> (subscriptions — or just ask the agent).</td></tr>
+  <tr><td><b>File</b></td><td><b>API Keys</b> — one page per service (AI
+      Agent, Torrent &amp; Web Search, Movie &amp; TV Metadata, Adult
+      Metadata, Subtitles): LLM endpoint, base URL and key, Jackett, Brave,
+      Perplexity, TMDb, OpenSubtitles. Plus file associations, and
+      <b>Export/Import Settings</b> — a passphrase-encrypted
+      <code>.dfc</code> backup of everything (keys, sources, all settings)
+      to keep safe or move to another PC. Import applies after a restart;
+      your previous settings are kept as <code>config.json.bak</code>.</td></tr>
+  <tr><td><b>Download</b></td><td><b>Jackett Settings</b> (URL; Test Connection syncs your indexer list), the Download Settings pages (Torrent Downloads, Torrent Queue, Download Manager — save paths, bandwidth limits, connections), <b>Sources</b> (which sites the agent searches), and <b>RSS Feeds</b> (subscriptions — or just ask the agent).</td></tr>
   <tr><td><b>Browse</b></td><td><b>Browser Settings</b> (homepage, ad blocking) and bookmark import.</td></tr>
   <tr><td><b>Play</b></td><td>Four small pages: Playlist Sources, Metadata &amp; Cache (artwork cache, EPG), Subtitles &amp; Languages (preferred audio/subtitle language), and Playback (backend, decoding, buffer, smooth motion, SVP interpolation, throttling).</td></tr>
   <tr><td><b>Command</b></td><td>—</td></tr>
@@ -304,7 +354,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.4.9 — AI Deep Search</p>
+<p>DeepFlux 3.4.10 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -372,7 +422,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 24px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.4.9 — AI Deep Search")
+        version = QLabel("3.4.10 — AI Deep Search")
         version.setStyleSheet("color: #c8d3e0; font-size: 14px;")
         layout.addWidget(version)
 
