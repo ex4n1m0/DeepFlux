@@ -32,7 +32,7 @@
   main {
     display: flex;
     justify-content: center;
-    padding: 64px 16px 16px;
+    padding: 64px 16px 38px;
     flex-shrink: 0;
   }
   main img {
@@ -60,34 +60,24 @@
   }
   a.dl:hover, a.dl:focus-visible { background: #fff; color: #000; }
   p.meta {
-    margin-top: 14px;
+    margin-top: 38px;
     font-size: 0.75rem;
     letter-spacing: 0.12em;
     color: rgba(255, 255, 255, 0.45);
   }
-  section.info {
-    text-align: center;
-    padding: 0 24px 48px;
-    max-width: 720px;
-  }
-  p.tagline {
-    font-size: clamp(0.8rem, 2vw, 1.05rem);
-    font-weight: 300;
-    color: rgba(255, 255, 255, 0.85);
-    line-height: 1.6;
-  }
   footer.social {
-    /* Directly below the tagline, with page-bottom breathing room. */
-    padding: 28px 24px 64px;
+    /* Directly below the download block (tagline removed), with the same
+       38px rhythm as the gaps above it and page-bottom breathing room. */
+    padding: 38px 24px 64px;
     display: flex;
     justify-content: center;
     gap: 20px;
   }
   footer.social a {
     display: block;
-    width: 36px;
-    height: 36px;
-    border-radius: 9px;
+    width: 48px;
+    height: 48px;
+    border-radius: 12px;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.15);
     transition: transform 0.25s, border-color 0.25s;
@@ -107,9 +97,6 @@
   <section class="dl-wrap">
     <a class="dl" href="DeepFlux3.5Setup.exe" download>Download</a>
     <p class="meta">DeepFlux 3.5 · Windows 10/11 64-bit · posted 2026-09-09</p>
-  </section>
-  <section class="info">
-    <p class="tagline">DeepFlux — LLM-Powered Browser, Downloader, File Manager &amp; Player</p>
   </section>
   <footer class="social">
     <a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener" aria-label="GitHub">

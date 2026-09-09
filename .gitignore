@@ -41,3 +41,6 @@ Git/
 _repro*.py
 _*_probe*.py
 torrent file/
+
+# Local agent session data (ZCode CLI)
+.zcode/
