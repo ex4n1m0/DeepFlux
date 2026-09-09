@@ -1006,25 +1006,33 @@ def test_jackett_env_var_never_clobbers_saved_key(monkeypatch):
 
 
 def test_fresh_install_has_no_api_keys(monkeypatch):
-    """No built-in/shared keys: a fresh install (no config file, no env vars)
-    must come up with every API key field empty — the app never injects one."""
+    """Since 3.5 the shared DeepSeek key ships in the box so the agent works
+    out of the box; every OTHER key field must still come up empty and a
+    user-saved or env-provided key always wins over the shared one."""
     import os
     import tempfile
 
-    from config import DeeptorrentConfig
+    from config import DeeptorrentConfig, _SHARED_DEEPSEEK_API_KEY
 
     for var in ("DEEPSEEK_API_KEY", "JACKETT_API_KEY", "BRAVE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
     with tempfile.TemporaryDirectory() as td:
         cfg = DeeptorrentConfig.from_file(os.path.join(td, "missing.json"))
-    assert cfg.llm.api_key == ""
+    assert cfg.llm.api_key == _SHARED_DEEPSEEK_API_KEY
     assert cfg.indexer.api_key == ""
     assert cfg.web_search.api_key == ""
     assert cfg.web_search.brave_api_key == ""
     assert cfg.iptv.tmdb_api_key == ""
 
-    # Bare defaults are keyless too.
+    # The shared key never overrides a user-saved one.
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "config.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"llm": {"api_key": "sk-my-own"}}, fh)
+        assert DeeptorrentConfig.from_file(path).llm.api_key == "sk-my-own"
+
+    # Bare defaults stay keyless (only from_file injects the shared key).
     plain = DeeptorrentConfig()
     assert plain.llm.api_key == ""
     assert plain.indexer.api_key == ""

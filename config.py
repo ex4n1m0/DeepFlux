@@ -18,16 +18,19 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
-# No built-in/shared API keys are shipped: every key field defaults to empty
-# and the user enters their own (GUI settings dialogs or config.json). The
-# DEEPSEEK_API_KEY / JACKETT_API_KEY / BRAVE_API_KEY env vars are honored as
-# user-provided fallbacks in DeeptorrentConfig.from_file.
+# Since 3.5 ONE shared key is shipped: the DeepSeek agent key below, so the
+# app works out of the box for every download. All other key fields still
+# default to empty and the user enters their own (GUI settings dialogs or
+# config.json). The DEEPSEEK_API_KEY / JACKETT_API_KEY / BRAVE_API_KEY env
+# vars are honored as user-provided fallbacks in DeeptorrentConfig.from_file;
+# the env var and a user-saved key always override the shared key, which is
+# only injected when the provider is deepseek and no key was ever saved.
+_SHARED_DEEPSEEK_API_KEY = ""
 
 
 # DeepFlux is DeepSeek-native and also supports OpenAI-compatible endpoints.
 # Provider capability metadata controls payload differences instead of assuming
 # every endpoint accepts DeepSeek-specific fields.
-# No keys are shipped — the user brings their own.
 LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     "deepseek": {
         "label": "DeepSeek API (direct)",
@@ -669,9 +672,12 @@ class DeeptorrentConfig:
         # by a machine-level env var on every launch.
         # The DeepSeek env var only fills the key slot when DeepSeek is the
         # configured provider — it must not leak into OpenRouter calls.
-        if (not data.get("llm", {}).get("api_key") and os.environ.get("DEEPSEEK_API_KEY")
+        # Since 3.5 the shared DeepSeek key (see _SHARED_DEEPSEEK_API_KEY) is
+        # the last-resort fallback for the same slot, under the same gate.
+        if (not data.get("llm", {}).get("api_key")
                 and data.get("llm", {}).get("provider", "deepseek") in ("", "deepseek")):
-            data.setdefault("llm", {})["api_key"] = os.environ["DEEPSEEK_API_KEY"]
+            data.setdefault("llm", {})["api_key"] = (
+                os.environ.get("DEEPSEEK_API_KEY") or _SHARED_DEEPSEEK_API_KEY)
         if not data.get("indexer", {}).get("api_key") and os.environ.get("JACKETT_API_KEY"):
             data.setdefault("indexer", {})["api_key"] = os.environ["JACKETT_API_KEY"]
         if not data.get("web_search", {}).get("brave_api_key") and os.environ.get("BRAVE_API_KEY"):
@@ -687,9 +693,10 @@ class DeeptorrentConfig:
         if not data.get("iptv", {}).get("fanarttv_api_key") and os.environ.get("FANARTTV_API_KEY"):
             data.setdefault("iptv", {})["fanarttv_api_key"] = os.environ["FANARTTV_API_KEY"]
 
-        # No built-in API keys: anything still empty here stays empty. The
-        # GUI/CLI notice the missing LLM key and run the agent in offline
-        # dummy mode until the user enters their own key.
+        # No OTHER built-in API keys: everything still empty here stays empty.
+        # The GUI/CLI notice a missing LLM key and run the agent in offline
+        # dummy mode until the user enters their own key (the shared DeepSeek
+        # key was already filled in above when applicable).
         llm_data = data.setdefault("llm", {})
 
         # Web search: Perplexity is the last-resort backup provider (only

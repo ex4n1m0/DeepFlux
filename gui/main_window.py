@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
-    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -80,6 +79,7 @@ from gui.settings_dialog import (
 from gui.sources_dialog import SourcesDialog
 from gui.help_dialog import HelpDialog, AboutDialog
 from gui.downloads_tab import DownloadsTab
+from gui.column_sizing import AutoColumnSizer
 from gui.commander_tab import CommanderTab
 from gui.browser_bridge import BrowserBridge, accept_language_header, normalize_browser_target
 from gui.browser_history import BrowserHistory
@@ -983,7 +983,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.4.10 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.5 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1500,7 +1500,6 @@ class MainWindow(QMainWindow):
         self.torrent_table.setHorizontalHeaderLabels(
             ["Name", "State", "Progress", "Down", "Up", "ETA", "Seeds", "Peers", "Size", "Health"]
         )
-        self.torrent_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.torrent_table.setAlternatingRowColors(True)
         self.torrent_table.setSortingEnabled(True)
         self.torrent_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -1508,6 +1507,9 @@ class MainWindow(QMainWindow):
         self.torrent_table.itemSelectionChanged.connect(self._on_torrent_selection_changed)
         self.torrent_table.itemDoubleClicked.connect(self._on_torrent_double_clicked)
         self.torrent_table.verticalHeader().setDefaultSectionSize(20)
+        # Name column auto-fits so torrent names are always fully visible and
+        # absorbs leftover width; every column stays user-draggable.
+        self._torrent_sizer = AutoColumnSizer(self.torrent_table, fill_column=0)
         torrents_tab_layout.addWidget(self.torrent_table)
 
         # --- Downloads panel (bottom-right of the Agent tab) ---
@@ -4674,8 +4676,17 @@ class MainWindow(QMainWindow):
             ]
             for j, val in enumerate(items):
                 self.torrent_table.setItem(i, j, QTableWidgetItem(val))
-            self.torrent_table.item(i, 0).setData(Qt.UserRole, t.get("info_hash"))
+            name_item = self.torrent_table.item(i, 0)
+            name_item.setToolTip(items[0])  # full name survives manual narrowing
+            name_item.setData(Qt.UserRole, t.get("info_hash"))
         self.torrent_table.setSortingEnabled(True)
+        # Re-fit columns when the torrent set changes (names never change
+        # afterwards; per-second value columns would jitter if fitted each
+        # tick).
+        hashes = {t.get("info_hash") for t in torrents}
+        if hashes != getattr(self, "_torrent_autofit_hashes", None):
+            self._torrent_autofit_hashes = hashes
+            self._torrent_sizer.auto_fit()
         # If the selected torrent disappeared (removed/completed-and-cleared),
         # drop the stale selection — itemSelectionChanged doesn't always
         # fire when the rebuild wipes the selection.

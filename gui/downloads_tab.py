@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -47,6 +46,7 @@ from PySide6.QtWidgets import (
 
 from dlmgr.engine import DownloadEngine
 from dlmgr.job import JobStatus, SegmentStatus
+from gui.column_sizing import AutoColumnSizer
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,9 @@ class DownloadsTableModel(QAbstractTableModel):
     def job_at(self, row: int):
         return self._jobs[row] if 0 <= row < len(self._jobs) else None
 
-    def update_jobs(self, jobs) -> None:
+    def update_jobs(self, jobs) -> bool:
+        """Swap in the latest job list; returns True when the membership
+        changed (model reset) — the caller then re-fits column widths."""
         jobs = list(jobs)
         old_ids = [job.id for job in self._jobs]
         new_ids = [job.id for job in jobs]
@@ -152,12 +154,13 @@ class DownloadsTableModel(QAbstractTableModel):
             self.beginResetModel()
             self._jobs = jobs
             self.endResetModel()
-        else:
-            self._jobs = jobs
-            if jobs:
-                self.dataChanged.emit(
-                    self.index(0, 0), self.index(len(jobs) - 1, len(self.COLUMNS) - 1), []
-                )
+            return True
+        self._jobs = jobs
+        if jobs:
+            self.dataChanged.emit(
+                self.index(0, 0), self.index(len(jobs) - 1, len(self.COLUMNS) - 1), []
+            )
+        return False
 
     def data(self, index: QModelIndex, role=Qt.DisplayRole):
         if not index.isValid() or not 0 <= index.row() < len(self._jobs):
@@ -187,6 +190,8 @@ class DownloadsTableModel(QAbstractTableModel):
         if role == Qt.ForegroundRole and column == 4:
             return QColor(_STATUS_COLORS.get(job.status, "#ffffff"))
         if role == Qt.ToolTipRole:
+            if column == 0:
+                return job.filename
             if column == 4 and job.error_message:
                 return job.error_message
             if column == 6:
@@ -466,8 +471,6 @@ class DownloadsTab(QWidget):
         self.table = QTableView()
         self.table.setModel(self._proxy)
         self.table.setItemDelegateForColumn(1, ProgressDelegate(self.table))
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -479,6 +482,11 @@ class DownloadsTab(QWidget):
         self.table.doubleClicked.connect(lambda _index: self._on_double_click())
         self.table.selectionModel().selectionChanged.connect(self._on_selection_changed)
         self.table.verticalHeader().setDefaultSectionSize(20)
+        # Columns auto-fit to content (filename column always fully shows and
+        # absorbs leftover width) yet stay user-draggable; error/URL columns
+        # are capped because their full text lives in tooltips.
+        self._column_sizer = AutoColumnSizer(
+            self.table, fill_column=0, max_widths={4: 260, 6: 380})
         self.search_edit.textChanged.connect(self._set_search_filter)
         self.status_filter.currentIndexChanged.connect(self._set_status_filter)
         layout.addWidget(self.table)
@@ -495,10 +503,10 @@ class DownloadsTab(QWidget):
         self.segment_table = QTableWidget()
         self.segment_table.setColumnCount(5)
         self.segment_table.setHorizontalHeaderLabels(["#", "Range", "Downloaded", "Progress", "Status"])
-        self.segment_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.segment_table.setMaximumHeight(110)
         self.segment_table.setAlternatingRowColors(True)
         self.segment_table.verticalHeader().setDefaultSectionSize(18)
+        self._segment_sizer = AutoColumnSizer(self.segment_table, fill_column=1)
         details_layout.addWidget(self.segment_table)
         self.details_group.setVisible(False)
 
@@ -525,12 +533,15 @@ class DownloadsTab(QWidget):
         known_ids = {job.id for job in jobs}
         selected_ids = self._selection_job_ids & known_ids
         current_id = self._current_job_id if self._current_job_id in known_ids else None
+        membership_changed = False
         self._restoring_selection = True
         try:
-            self._model.update_jobs(jobs)
+            membership_changed = self._model.update_jobs(jobs)
             self._restore_selection(selected_ids, current_id)
         finally:
             self._restoring_selection = False
+        if membership_changed:
+            self._column_sizer.auto_fit()
         self._selection_job_ids = selected_ids
         self._current_job_id = current_id if current_id in selected_ids else next(iter(selected_ids), None)
 
@@ -564,6 +575,8 @@ class DownloadsTab(QWidget):
             self._restore_selection(selected_ids, current_id)
         finally:
             self._restoring_selection = False
+        # The visible row set changed — re-fit widths to what's on screen.
+        self._column_sizer.auto_fit()
         self._update_summary(self._engine.list_jobs())
         self._update_details()
         self._update_action_states()
@@ -646,6 +659,7 @@ class DownloadsTab(QWidget):
 
         if job is None or job.job_type in ("hls", "dash", "youtube"):
             self.details_group.setVisible(False)
+            self._segment_fit_job_id = None
             return
         self.details_group.setVisible(True)
 
@@ -668,6 +682,11 @@ class DownloadsTab(QWidget):
             self.segment_table.setItem(i, 3, QTableWidgetItem(
                 "—" if streaming and seg.status != SegmentStatus.DONE else f"{seg.progress * 100:.1f}%"))
             self.segment_table.setItem(i, 4, QTableWidgetItem(seg.status.value))
+        # Per-second values ("3.2%" → "100.0%") would jitter the widths if
+        # fitted on every tick — fit once per selected job instead.
+        if job_id != getattr(self, "_segment_fit_job_id", None):
+            self._segment_fit_job_id = job_id
+            self._segment_sizer.auto_fit()
 
     # ------------------------------------------------------------------
     # Toolbar actions

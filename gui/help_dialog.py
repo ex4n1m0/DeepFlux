@@ -42,7 +42,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.4.10 — User Guide</h1>
+<h1>DeepFlux 3.5 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -155,6 +155,13 @@ your indexers in Download → Sources → Fetch from Jackett.
       animated busy bar and a live "downloaded so far" counter.</li>
   <li>Interrupted downloads resume automatically.</li>
 </ul>
+
+<h3>List Columns</h3>
+<p>In the torrent, download and segment lists, columns auto-size so file names are
+always fully visible, and the name column stretches to fill the window. Every
+column is also draggable — drag any column edge to your preferred width and it
+stays put; double-click a column edge to hand it back to auto-sizing. Hover a
+name for the full text as a tooltip.</p>
 
 <h3>Browser Downloads</h3>
 <p>The built-in browser intercepts downloads automatically and routes them to the
@@ -354,7 +361,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.4.10 — AI Deep Search</p>
+<p>DeepFlux 3.5 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -422,7 +429,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 24px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.4.10 — AI Deep Search")
+        version = QLabel("3.5 — AI Deep Search")
         version.setStyleSheet("color: #c8d3e0; font-size: 14px;")
         layout.addWidget(version)
 
