@@ -32,22 +32,11 @@
   header.banner {
     display: flex;
     justify-content: center;
-    padding: 64px 16px 20px; /* small gap below the banner, before the logo */
+    padding: 64px 16px 38px; /* 38px rhythm: banner -> download button */
     flex-shrink: 0;
   }
   header.banner img {
     width: min(78vw, 560px);
-    height: auto;
-    display: block;
-  }
-  main {
-    display: flex;
-    justify-content: center;
-    padding: 0 16px 38px;
-    flex-shrink: 0;
-  }
-  main img {
-    width: min(33.5vmin, 268px);
     height: auto;
     display: block;
   }
@@ -105,9 +94,6 @@
   <header class="banner">
     <img src="DeepFluxBanner.webp" alt="DeepFlux wordmark artwork">
   </header>
-  <main>
-    <img src="DeepFluxLogo.webp" alt="DeepFlux logo">
-  </main>
   <section class="dl-wrap">
     <a class="dl" href="DeepFlux3.5Setup.exe" download>Download</a>
     <p class="meta">DeepFlux 3.5 · Windows 10/11 64-bit · posted 2026-09-09</p>
