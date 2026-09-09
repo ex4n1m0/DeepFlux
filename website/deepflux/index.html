@@ -29,10 +29,21 @@
     flex-direction: column;
     align-items: center;
   }
+  header.banner {
+    display: flex;
+    justify-content: center;
+    padding: 64px 16px 38px; /* 38px gap below the banner, before the logo */
+    flex-shrink: 0;
+  }
+  header.banner img {
+    width: min(78vw, 560px);
+    height: auto;
+    display: block;
+  }
   main {
     display: flex;
     justify-content: center;
-    padding: 64px 16px 38px;
+    padding: 0 16px 38px;
     flex-shrink: 0;
   }
   main img {
@@ -91,6 +102,9 @@
 </style>
 </head>
 <body>
+  <header class="banner">
+    <img src="DeepFluxBanner.jpg" alt="DeepFlux wordmark artwork">
+  </header>
   <main>
     <img src="DeepFlux4.webp" alt="DeepFlux logo">
   </main>
