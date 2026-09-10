@@ -1032,6 +1032,12 @@ def _playlist_from_cache(source_id: str, data: Dict[str, Any]) -> Playlist:
         pl.channels.append(Channel(**_filter_fields(Channel, c)))
     for m in data.get("movies", []):
         pl.movies.append(Movie(**_filter_fields(Movie, m)))
+    # Migration (post-3.5.3): cached playlists from before the JAV-split
+    # removal carry synthetic "<group> JAV" folders — merge them back into
+    # the base group so all adult content shares one folder structure.
+    for m in pl.movies:
+        if m.group and m.group.lower().endswith(" jav") and len(m.group) > 4:
+            m.group = m.group[:-4].rstrip()
     for s in data.get("series", []):
         eps = s.pop("episodes", [])
         series = Series(**_filter_fields(Series, s))

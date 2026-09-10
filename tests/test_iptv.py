@@ -269,96 +269,51 @@ def test_populate_years_non_adult_ignores_2_digit_dates():
     assert pl.movies[0].year == ""
 
 
-def test_is_jav_entry_detects_studio_prefix():
-    """JAV entries are detected by their studio prefix."""
-    from iptv.classify import _is_jav_entry
-    assert _is_jav_entry("JapanHDV 26 08 28 Reika Ayano") is True
-    assert _is_jav_entry("LittleAsians 26 08 27 Sarina Namiki") is True
-    assert _is_jav_entry("Manko88 26 08 28 Yuri Sato") is True
-    assert _is_jav_entry("Erito 26 08 28 Reika Ayano") is True
-
-
-def test_is_jav_entry_detects_jav_code():
-    """JAV catalogue codes (ABC-123, abc00123) are detected."""
-    from iptv.classify import _is_jav_entry
-    assert _is_jav_entry("ABP-123 Some Title") is True
-    assert _is_jav_entry("SSNI-456 Some Title") is True
-    assert _is_jav_entry("abp00123 Some Title") is True
-
-
-def test_is_jav_entry_rejects_western_adult():
-    """Western adult studios are NOT JAV."""
-    from iptv.classify import _is_jav_entry
-    assert _is_jav_entry("Tushy 26 08 09 Kubera Fortuna") is False
-    assert _is_jav_entry("Blacked 26 08 11 Dolly Dyson") is False
-    assert _is_jav_entry("Brazzers 26 08 01 Some Title") is False
-
-
-def test_is_jav_entry_rejects_generic_asian_terms():
-    """Generic Asian-themed words must NOT trigger JAV classification —
-    western adult content also uses 'asian', 'thai', 'japanese', 'cosplay',
-    'hentai', 'anime', 'bangkok' in titles."""
-    from iptv.classify import _is_jav_entry
-    assert _is_jav_entry("Asian Obsession 26 08 15 Title") is False
-    assert _is_jav_entry("Cosplay 26 08 15 Title") is False
-    assert _is_jav_entry("Hentai 26 08 15 Title") is False
-    assert _is_jav_entry("Anime 26 08 15 Title") is False
-    assert _is_jav_entry("Bangkok 26 08 15 Title") is False
-    assert _is_jav_entry("Japanese 26 08 15 Title") is False
-    assert _is_jav_entry("JAV 26 08 15 Title") is False
-
-
-def test_is_jav_entry_rejects_western_code_patterns():
-    """Western naming patterns like 'PH 245' (PornHub series) or
-    'Beauty-Angels' must NOT be mistaken for JAV codes."""
-    from iptv.classify import _is_jav_entry
-    assert _is_jav_entry("PH 245 Mom Comes First") is False
-    assert _is_jav_entry("Beauty-Angels 26 08 27 Roxy Muray") is False
-    assert _is_jav_entry("PORNBOX: BRAZZERS") is False
-    assert _is_jav_entry("Bride4K 26 08 19 Victoria Benz") is False
-    assert _is_jav_entry("Daddy4K 26 08 24 Ema Rebeiro") is False
-    assert _is_jav_entry("X4 Cum in Mouth") is False
-
-
-def test_is_jav_entry_rejects_date_as_code():
-    """YY MM DD dates must not be misinterpreted as JAV codes."""
-    from iptv.classify import _is_jav_entry
-    # "26 08 09" is a date, not a JAV code (no letter prefix, no dash).
-    assert _is_jav_entry("Tushy 26 08 09 Kubera Fortuna") is False
-
-
-def test_populate_years_separates_jav_into_own_group():
-    """JAV entries get re-grouped into 'XXX VOD JAV' so they appear as a
-    separate category in the sidebar."""
+def test_populate_years_keeps_jav_in_same_group():
+    """All adult content shares ONE folder structure (user decision
+    2026-09-10): JAV-looking entries are NOT re-grouped — they stay in
+    the same group as western adult content."""
     pl = Playlist(source_id="src1")
     pl.movies.append(Movie(
         id=make_id("src1", "m1"), name="JapanHDV 26 08 28 Reika Ayano",
         url="http://x/1", group="XXX VOD", section=SECTION_MOVIES,
     ))
     pl.movies.append(Movie(
-        id=make_id("src1", "m2"), name="Tushy 26 08 09 Kubera Fortuna",
+        id=make_id("src1", "m2"), name="ABP-123 Some Title",
         url="http://x/2", group="XXX VOD", section=SECTION_MOVIES,
     ))
-    populate_years(pl)
-    by_name = {m.name: m.group for m in pl.movies}
-    # JAV entry is re-grouped.
-    assert by_name["JapanHDV 26 08 28 Reika Ayano"] == "XXX VOD JAV"
-    # Western adult entry keeps its original group.
-    assert by_name["Tushy 26 08 09 Kubera Fortuna"] == "XXX VOD"
-
-
-def test_populate_years_jav_category_appears_in_categories():
-    """The synthetic 'XXX VOD JAV' category is added to the playlist's
-    category list so the sidebar shows it."""
-    from iptv.models import SECTION_MOVIES
-    pl = Playlist(source_id="src1")
     pl.movies.append(Movie(
-        id=make_id("src1", "m1"), name="JapanHDV 26 08 28 Reika Ayano",
-        url="http://x/1", group="XXX VOD", section=SECTION_MOVIES,
+        id=make_id("src1", "m3"), name="Tushy 26 08 09 Kubera Fortuna",
+        url="http://x/3", group="XXX VOD", section=SECTION_MOVIES,
     ))
     populate_years(pl)
+    assert {m.group for m in pl.movies} == {"XXX VOD"}
+    # No synthetic "XXX VOD JAV" category either.
     cat_names = [c.name for c in pl.categories if c.section == SECTION_MOVIES]
-    assert "XXX VOD JAV" in cat_names
+    assert "XXX VOD JAV" not in cat_names
+
+
+def test_playlist_from_cache_merges_legacy_jav_groups():
+    """Playlists cached before the JAV-split removal carry synthetic
+    '<group> JAV' folders — the cache loader merges them back so all adult
+    content shows under one folder."""
+    from iptv.manager import _playlist_from_cache
+    data = {
+        "movies": [
+            {"id": "a", "name": "JapanHDV 26 08 28 Reika Ayano",
+             "url": "http://x/1", "group": "XXX VOD JAV", "section": SECTION_MOVIES},
+            {"id": "b", "name": "Tushy 26 08 09 Kubera Fortuna",
+             "url": "http://x/2", "group": "XXX VOD", "section": SECTION_MOVIES},
+        ],
+        "categories": [
+            {"name": "XXX VOD JAV", "section": SECTION_MOVIES, "count": 1},
+            {"name": "XXX VOD", "section": SECTION_MOVIES, "count": 1},
+        ],
+    }
+    pl = _playlist_from_cache("src1", data)
+    assert {m.group for m in pl.movies} == {"XXX VOD"}
+    cat_names = [c.name for c in pl.categories if c.section == SECTION_MOVIES]
+    assert cat_names == ["XXX VOD"]
 
 
 # ---------------------------------------------------------------------------

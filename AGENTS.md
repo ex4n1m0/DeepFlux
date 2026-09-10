@@ -444,7 +444,11 @@
   `TPDB_API_KEY`). TMDb filters adult titles out of search entirely, so those
   entries can never resolve through it. `looks_adult(group, name)` routes
   them — provider order ONLY, there is no `SECTION_ADULT` and no UI gating;
-  adult entries stay in Movies. Ambiguous words (`adult`, `erotic`) are
+  adult entries stay in Movies. All adult content shares ONE folder
+  structure (user decision 2026-09-10): the old JAV sub-category split
+  (synthetic "<group> JAV" renaming in classify.populate_years) was removed;
+  `_playlist_from_cache` merges any cached legacy "<group> JAV" groups back
+  into the base group. Ambiguous words (`adult`, `erotic`) are
   trusted only on a group-title, never on a name, or films like "Adults in
   the Room" get diverted off TMDb.
   `/movies`, `/scenes` and `/jav` share one response shape
