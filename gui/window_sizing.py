@@ -32,10 +32,12 @@ from PySide6.QtWidgets import QApplication, QWidget
 
 
 def _apply(
-    widget: QWidget, headroom: float, screen_fraction: float, avail: Optional[QRect]
+    widget: QWidget, headroom: float, screen_fraction: float, avail: Optional[QRect],
+    floor_fraction: float,
 ) -> None:
-    """Size AND place: fit content with headroom, cap at the screen
-    fraction, then move to the top-center of the available desktop."""
+    """Size AND place: fit content with headroom, floored at
+    ``floor_fraction`` and capped at ``screen_fraction`` of the available
+    desktop, then move to the top-center."""
     if avail is None:
         screen = widget.screen() if hasattr(widget, "screen") else None
         if screen is None:
@@ -48,7 +50,13 @@ def _apply(
     if avail is not None:
         cap = QSize(max(1, round(avail.width() * screen_fraction)),
                     max(1, round(avail.height() * screen_fraction)))
-        target = target.boundedTo(cap)
+        # Content hints can be deceptively small (a bare QListWidget hints
+        # ~280px no matter how many rows it holds — the History dialog opened
+        # at 320x289 because of it). A floor keeps dialogs substantial on
+        # big screens: "only small windows on small screens".
+        floor = QSize(max(1, round(avail.width() * floor_fraction)),
+                      max(1, round(avail.height() * floor_fraction)))
+        target = target.expandedTo(floor).boundedTo(cap)
     widget.resize(target)
     if avail is not None:
         # Top-center placement, inset by the same margin the 90% cap leaves
@@ -65,16 +73,17 @@ def roomy(
     headroom: float = 1.15,
     screen_fraction: float = 0.9,
     avail: Optional[QRect] = None,
+    floor_fraction: float = 0.5,
 ) -> None:
-    """Size and place ``widget`` — content sizeHint with headroom, capped at
-    ``screen_fraction`` of the available screen, positioned top-center —
-    now and again on the next event-loop turn, when subclass content is
-    laid out."""
-    _apply(widget, headroom, screen_fraction, avail)
+    """Size and place ``widget`` — content sizeHint with headroom, at least
+    ``floor_fraction`` of the available screen and never more than
+    ``screen_fraction`` of it, positioned top-center — now and again on the
+    next event-loop turn, when subclass content is laid out."""
+    _apply(widget, headroom, screen_fraction, avail, floor_fraction)
 
     def _refit() -> None:
         # The closure keeps the widget's wrapper alive until the shot
         # fires, so the second pass always sees a live Python object.
-        _apply(widget, headroom, screen_fraction, avail)
+        _apply(widget, headroom, screen_fraction, avail, floor_fraction)
 
     QTimer.singleShot(0, _refit)

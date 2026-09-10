@@ -79,7 +79,8 @@ def test_roomy_sizes_content_with_headroom_and_caps_at_90pct():
     the available geometry on small ones; refit also on first show so
     subclass content added after super().__init__() is accounted for."""
     from PySide6.QtCore import QRect
-    from PySide6.QtWidgets import QApplication, QDialog, QLabel, QVBoxLayout
+    from PySide6.QtWidgets import (QApplication, QDialog, QLabel, QListWidget,
+                                   QVBoxLayout)
 
     app = QApplication.instance() or QApplication([])
     from gui.window_sizing import roomy
@@ -94,6 +95,15 @@ def test_roomy_sizes_content_with_headroom_and_caps_at_90pct():
     assert dlg.height() >= dlg.sizeHint().height()
     assert dlg.x() == (1920 - dlg.width()) // 2
     assert dlg.y() == round(1080 * 0.05)
+    dlg.deleteLater()
+
+    # Deceptively small content hint (a bare QListWidget hints ~280px no
+    # matter how many rows): the floor keeps the window substantial.
+    dlg = QDialog()
+    QVBoxLayout(dlg).addWidget(QListWidget())
+    roomy(dlg, avail=QRect(0, 0, 1920, 1080))
+    assert dlg.width() >= round(1920 * 0.5)
+    assert dlg.height() >= round(1080 * 0.5)
     dlg.deleteLater()
 
     # Small screen: hard cap at 90% even when content wants more; still
