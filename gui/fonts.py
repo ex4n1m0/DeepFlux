@@ -33,9 +33,11 @@ MONO_STACK = f"'{MONO_FONT}', 'Cascadia Code', 'Cascadia Mono', Consolas, monosp
 
 _FONT_FILES = ("Inter.ttf", "JetBrainsMono.ttf")
 
-# UI point size chosen to match Segoe UI 9pt (the classic Windows default)
-# in x-height and average advance width.
-_UI_POINT_SIZE = 15
+# UI point size: 13pt is the everywhere base (user request 2026-09-10,
+# after 15pt read too big); the stylesheet "big" tiers (20-21px ≈ 15pt)
+# carry headings and prominent labels, and anything that inherits this
+# font — menus included — renders at 13pt.
+_UI_POINT_SIZE = 13
 
 
 def _fonts_dir() -> Path:
