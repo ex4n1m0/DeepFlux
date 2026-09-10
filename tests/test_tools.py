@@ -1006,13 +1006,23 @@ def test_jackett_env_var_never_clobbers_saved_key(monkeypatch):
 
 
 def test_fresh_install_has_no_api_keys(monkeypatch):
-    """Since 3.5 the shared DeepSeek key ships in the box so the agent works
+    """Since 3.5.2 a set of shared keys ships in the box so the app works
     out of the box; every OTHER key field must still come up empty and a
     user-saved or env-provided key always wins over the shared one."""
     import os
     import tempfile
 
-    from config import DeeptorrentConfig, _SHARED_DEEPSEEK_API_KEY
+    from config import (
+        DeeptorrentConfig,
+        _SHARED_DEEPSEEK_API_KEY,
+        _SHARED_PERPLEXITY_API_KEY,
+        _SHARED_TMDB_API_KEY,
+        _SHARED_OPENSUBTITLES_API_KEY,
+        _SHARED_TPDB_API_KEY,
+        _SHARED_STASHDB_API_KEY,
+        _SHARED_OMDB_API_KEY,
+        _SHARED_FANARTTV_API_KEY,
+    )
 
     for var in ("DEEPSEEK_API_KEY", "JACKETT_API_KEY", "BRAVE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
@@ -1020,19 +1030,24 @@ def test_fresh_install_has_no_api_keys(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         cfg = DeeptorrentConfig.from_file(os.path.join(td, "missing.json"))
     assert cfg.llm.api_key == _SHARED_DEEPSEEK_API_KEY
+    assert cfg.web_search.api_key == _SHARED_PERPLEXITY_API_KEY
+    assert cfg.iptv.tmdb_api_key == _SHARED_TMDB_API_KEY
+    assert cfg.iptv.opensubtitles_api_key == _SHARED_OPENSUBTITLES_API_KEY
+    assert cfg.iptv.tpdb_api_key == _SHARED_TPDB_API_KEY
+    assert cfg.iptv.stashdb_api_key == _SHARED_STASHDB_API_KEY
+    assert cfg.iptv.omdb_api_key == _SHARED_OMDB_API_KEY
+    assert cfg.iptv.fanarttv_api_key == _SHARED_FANARTTV_API_KEY
     assert cfg.indexer.api_key == ""
-    assert cfg.web_search.api_key == ""
     assert cfg.web_search.brave_api_key == ""
-    assert cfg.iptv.tmdb_api_key == ""
 
-    # The shared key never overrides a user-saved one.
+    # The shared key never overrides a user-specified one.
     with tempfile.TemporaryDirectory() as td:
         path = os.path.join(td, "config.json")
         with open(path, "w", encoding="utf-8") as fh:
             json.dump({"llm": {"api_key": "sk-my-own"}}, fh)
         assert DeeptorrentConfig.from_file(path).llm.api_key == "sk-my-own"
 
-    # Bare defaults stay keyless (only from_file injects the shared key).
+    # Bare defaults stay keyless (only from_file injects the shared keys).
     plain = DeeptorrentConfig()
     assert plain.llm.api_key == ""
     assert plain.indexer.api_key == ""

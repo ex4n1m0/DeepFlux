@@ -198,23 +198,25 @@
   key exists (0.2s otherwise). (Scraped-Google stage tried & dropped:
   anonymous requests get JS-only shell pages with zero parsable results —
   2026 Google.)
-- Built-in keys: since 3.5 (owner's explicit decision, 2026-09-09, refined
-  2026-09-10) ONE shared DeepSeek key ships in the SETUP FILE ONLY — never in
-  git. `config.py` loads `_SHARED_DEEPSEEK_API_KEY` at import time from the
-  UNTRACKED repo-root module `_embedded_keys.py` (gitignored; exists only on
-  build machines; PyInstaller bundles it like any import) or the
-  `DEEPFLUX_SHARED_DEEPSEEK_KEY` env var; without either the key is empty and
-  nothing breaks. The key is injected by `from_file` only when the provider
-  is deepseek AND no key was ever saved (env `DEEPSEEK_API_KEY` and
-  user-saved keys still win; it never leaks into OpenRouter/custom calls).
-  History was rewritten (git-filter-repo) to purge the literal from all
-  pushed commits — NEVER paste the key value into any tracked file, commit
-  message, or this file. Every OTHER key field stays empty by design and only
-  the user's own env vars (`JACKETT_API_KEY`, `BRAVE_API_KEY`, …) fill empty
-  slots. Without an LLM key the GUI/CLI run the agent in dummy mode; without
-  TMDb/Jackett keys those integrations degrade gracefully. The system prompt
-  fixes the agent's identity as "DeepFlux" (never "DeepTorrent" — that name
-  only survives in legacy paths).
+- Built-in keys: since 3.5.2 (owner decision 2026-09-09, extended and
+  moved out of git 2026-09-10) a SET of shared keys ships in the SETUP FILE
+  ONLY — never in git: DeepSeek (agent), Perplexity (web search), TMDb,
+  OpenSubtitles, TPDB, StashDB, OMDb, Fanart.tv. Jackett and Brave stay
+  env-only by decision. `config.py` loads each `_SHARED_*_API_KEY` at import
+  time from the UNTRACKED repo-root module `_embedded_keys.py` (gitignored;
+  exists only on build machines; PyInstaller bundles it like any import via
+  app.spec's conditional hiddenimport); without the file every shared key is
+  empty and nothing breaks. Each is injected by `from_file` as the
+  LAST-resort fallback for its slot — a saved user key wins, then the slot's
+  env var (`DEEPSEEK_API_KEY`, `PERPLEXITY_API_KEY`, `TMDB_API_KEY`,
+  `OPENSUBTITLES_API_KEY`, `TPDB_API_KEY`, `STASHDB_API_KEY`, `OMDB_API_KEY`,
+  `FANARTTV_API_KEY`), then the shared key; DeepSeek additionally only when
+  the provider is deepseek. History was rewritten (git-filter-repo) to purge
+  the literals from all pushed commits — NEVER paste a key value into any
+  tracked file, commit message, or this file. Without an LLM key the GUI/CLI
+  run the agent in dummy mode; missing metadata keys degrade gracefully. The
+  system prompt fixes the agent's identity as "DeepFlux" (never
+  "DeepTorrent" — that name only survives in legacy paths).
 - Adding a tool: register schema+handler in `tools.py`, classify it in the
   centralized policy sets there (`READ_ONLY_TOOL_NAMES` can run concurrently /
   `CONFIRMATION_TOOL_NAMES` need approval), include it in context routing, and

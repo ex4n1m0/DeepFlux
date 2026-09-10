@@ -18,30 +18,33 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
-# Since 3.5 ONE shared key is shipped: the DeepSeek agent key, so the app
-# works out of the box for every download. The VALUE never lives in git —
-# it is loaded at import time from the untracked repo-root module
-# ``_embedded_keys.py`` (present only on build machines; PyInstaller bundles
-# it into the frozen app like any import) or from the
-# DEEPFLUX_SHARED_DEEPSEEK_KEY env var. Without either, the shared key is
-# simply empty and the app runs keyless. All other key fields still default
-# to empty and the user enters their own (GUI settings dialogs or
-# config.json). The DEEPSEEK_API_KEY / JACKETT_API_KEY / BRAVE_API_KEY env
-# vars are honored as user-provided fallbacks in DeeptorrentConfig.from_file;
-# the env var and a user-saved key always override the shared key, which is
-# only injected when the provider is deepseek and no key was ever saved.
-def _load_shared_deepseek_key() -> str:
-    env = os.environ.get("DEEPFLUX_SHARED_DEEPSEEK_KEY")
-    if env:
-        return env
+# Since 3.5.2 a SET of shared keys ships in the setup file so the app works
+# out of the box for every download: the DeepSeek agent key plus the metadata/
+# search provider keys (Perplexity, TMDb, OpenSubtitles, TPDB, StashDB, OMDb,
+# Fanart.tv). The VALUES never live in git — they are loaded at import time
+# from the untracked repo-root module ``_embedded_keys.py`` (present only on
+# build machines; PyInstaller bundles it into the frozen app like any import);
+# without it every shared key is simply empty and the app runs keyless.
+# Precedence per slot: a saved user key, then the slot's own env var, then the
+# shared key (DeepSeek additionally gated on the deepseek provider). Jackett
+# stays env-only by decision. All other key fields still default to empty and
+# the user enters their own (GUI settings dialogs or config.json).
+def _load_shared_key(attr: str) -> str:
     try:
-        from _embedded_keys import SHARED_DEEPSEEK_API_KEY  # local-only, gitignored
-        return SHARED_DEEPSEEK_API_KEY
+        import _embedded_keys  # local-only, gitignored
+        return getattr(_embedded_keys, attr, "") or ""
     except Exception:
         return ""
 
 
-_SHARED_DEEPSEEK_API_KEY = _load_shared_deepseek_key()
+_SHARED_DEEPSEEK_API_KEY = _load_shared_key("SHARED_DEEPSEEK_API_KEY")
+_SHARED_PERPLEXITY_API_KEY = _load_shared_key("SHARED_PERPLEXITY_API_KEY")
+_SHARED_TMDB_API_KEY = _load_shared_key("SHARED_TMDB_API_KEY")
+_SHARED_OPENSUBTITLES_API_KEY = _load_shared_key("SHARED_OPENSUBTITLES_API_KEY")
+_SHARED_TPDB_API_KEY = _load_shared_key("SHARED_TPDB_API_KEY")
+_SHARED_STASHDB_API_KEY = _load_shared_key("SHARED_STASHDB_API_KEY")
+_SHARED_OMDB_API_KEY = _load_shared_key("SHARED_OMDB_API_KEY")
+_SHARED_FANARTTV_API_KEY = _load_shared_key("SHARED_FANARTTV_API_KEY")
 
 
 # DeepFlux is DeepSeek-native and also supports OpenAI-compatible endpoints.
@@ -698,21 +701,36 @@ class DeeptorrentConfig:
             data.setdefault("indexer", {})["api_key"] = os.environ["JACKETT_API_KEY"]
         if not data.get("web_search", {}).get("brave_api_key") and os.environ.get("BRAVE_API_KEY"):
             data.setdefault("web_search", {})["brave_api_key"] = os.environ["BRAVE_API_KEY"]
-        if not data.get("iptv", {}).get("opensubtitles_api_key") and os.environ.get("OPENSUBTITLES_API_KEY"):
-            data.setdefault("iptv", {})["opensubtitles_api_key"] = os.environ["OPENSUBTITLES_API_KEY"]
-        if not data.get("iptv", {}).get("tpdb_api_key") and os.environ.get("TPDB_API_KEY"):
-            data.setdefault("iptv", {})["tpdb_api_key"] = os.environ["TPDB_API_KEY"]
-        if not data.get("iptv", {}).get("stashdb_api_key") and os.environ.get("STASHDB_API_KEY"):
-            data.setdefault("iptv", {})["stashdb_api_key"] = os.environ["STASHDB_API_KEY"]
-        if not data.get("iptv", {}).get("omdb_api_key") and os.environ.get("OMDB_API_KEY"):
-            data.setdefault("iptv", {})["omdb_api_key"] = os.environ["OMDB_API_KEY"]
-        if not data.get("iptv", {}).get("fanarttv_api_key") and os.environ.get("FANARTTV_API_KEY"):
-            data.setdefault("iptv", {})["fanarttv_api_key"] = os.environ["FANARTTV_API_KEY"]
+        # Since 3.5.2 the remaining shared keys (see _embedded_keys.py) are
+        # last-resort fallbacks for their slots under the same rules: a saved
+        # user key always wins, then the machine-level env var, then the
+        # shared in-box key. Jackett stays env-only by decision.
+        if not data.get("web_search", {}).get("api_key"):
+            data.setdefault("web_search", {})["api_key"] = (
+                os.environ.get("PERPLEXITY_API_KEY") or _SHARED_PERPLEXITY_API_KEY)
+        if not data.get("iptv", {}).get("tmdb_api_key"):
+            data.setdefault("iptv", {})["tmdb_api_key"] = (
+                os.environ.get("TMDB_API_KEY") or _SHARED_TMDB_API_KEY)
+        if not data.get("iptv", {}).get("opensubtitles_api_key"):
+            data.setdefault("iptv", {})["opensubtitles_api_key"] = (
+                os.environ.get("OPENSUBTITLES_API_KEY") or _SHARED_OPENSUBTITLES_API_KEY)
+        if not data.get("iptv", {}).get("tpdb_api_key"):
+            data.setdefault("iptv", {})["tpdb_api_key"] = (
+                os.environ.get("TPDB_API_KEY") or _SHARED_TPDB_API_KEY)
+        if not data.get("iptv", {}).get("stashdb_api_key"):
+            data.setdefault("iptv", {})["stashdb_api_key"] = (
+                os.environ.get("STASHDB_API_KEY") or _SHARED_STASHDB_API_KEY)
+        if not data.get("iptv", {}).get("omdb_api_key"):
+            data.setdefault("iptv", {})["omdb_api_key"] = (
+                os.environ.get("OMDB_API_KEY") or _SHARED_OMDB_API_KEY)
+        if not data.get("iptv", {}).get("fanarttv_api_key"):
+            data.setdefault("iptv", {})["fanarttv_api_key"] = (
+                os.environ.get("FANARTTV_API_KEY") or _SHARED_FANARTTV_API_KEY)
 
-        # No OTHER built-in API keys: everything still empty here stays empty.
-        # The GUI/CLI notice a missing LLM key and run the agent in offline
-        # dummy mode until the user enters their own key (the shared DeepSeek
-        # key was already filled in above when applicable).
+        # No OTHER built-in API keys: everything still empty here stays empty
+        # (Jackett and Brave are env-only by decision). The GUI/CLI notice a
+        # missing LLM key and run the agent in offline dummy mode until the
+        # user enters their own key.
         llm_data = data.setdefault("llm", {})
 
         # Web search: Perplexity is the last-resort backup provider (only
