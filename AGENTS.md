@@ -911,11 +911,16 @@
   The six page titles — Browse, Agent, Download, Play, Command, IRC — are
   PURE tab buttons (menu-less QActions on the bar; a click always switches
   the page, `triggered` also switches for keyboard activation). Everything
-  the old per-tab menus carried lives under File in flat labeled sections:
+  the old per-tab menus carried lives under File in flat labeled zones:
   API Keys, Export/Import Settings + file associations, Browser Settings
   (pages, History, Save PDF, DevTools), Download
   (Add Magnet/Torrent, Jackett, Download Settings pages, Sources, RSS),
   Play (the four IPTV_SETTINGS_PAGES), IRC (Networks), and Exit.
+  Zones are built with `_file_zone` (separator line + bold disabled header)
+  + `_file_item` (small text indent) — `QMenu.addSection()` must NOT be
+  used: its text does not render under the app stylesheet (verified
+  offscreen 2026-09-10 — only an unlabeled thin line appeared, so the
+  shipped menu had invisible zones until then).
   Bookmarks are NOT in File (3.5.6): the browser toolbar's Bookmarks
   button (left of Private) owns a STANDALONE QMenu with Import/Export +
   the folder tree (`_rebuild_bookmarks_bar` repopulates it; never

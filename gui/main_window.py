@@ -876,6 +876,36 @@ class _TabMenuBar(QMenuBar):
         super().mouseMoveEvent(event)
 
 
+# Small text indent that marks a File-menu row as belonging to a zone
+# (headers sit flush left, items are pushed in — see _file_zone/_file_item).
+_FILE_ITEM_INDENT = "    "
+
+
+def _file_zone(menu: QMenu, title: str, first: bool = False) -> None:
+    """Open a labeled zone in the flat File menu: a separator line followed
+    by a bold disabled header row. QMenu.addSection() must NOT be used for
+    this — its text does not render under the app stylesheet (verified
+    offscreen 2026-09-10: only an unlabeled line appeared), so zones were
+    invisible in the shipped menu."""
+    if not first:
+        menu.addSeparator()
+    header = QAction(title, menu)
+    font = header.font()
+    font.setBold(True)
+    header.setFont(font)
+    header.setEnabled(False)
+    menu.addAction(header)
+
+
+def _file_item(menu: QMenu, text: str, *, indent: bool = True) -> QAction:
+    """Add a clickable row to the File menu. Zone items carry the small
+    _FILE_ITEM_INDENT so each zone reads as a block under its header; rows
+    outside any zone (Exit) pass indent=False."""
+    action = QAction(_FILE_ITEM_INDENT + text if indent else text, menu)
+    menu.addAction(action)
+    return action
+
+
 class MainWindow(QMainWindow):
     # Merged Agents-tab input: Enter/Agent = conversational torrent agent,
     # Ctrl+Enter/Search = instant web sweep.
@@ -984,7 +1014,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.5.7 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.5.8 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -2014,35 +2044,36 @@ class MainWindow(QMainWindow):
         self.setMenuBar(menubar)
         file_menu = menubar.addMenu("File")
 
-        # Flat menu: labeled sections instead of submenus — every entry is
-        # one click deep (user request 3.4.9: no nested settings submenus).
-        file_menu.addSection("API Keys")
+        # Flat menu: labeled zones instead of submenus — every entry is
+        # one click deep (user request 3.5.4: no nested settings submenus).
+        # Zones get a separator line + a bold header row, and their items a
+        # small indent, so each group reads as a distinct block (user
+        # request 2026-09-10). QMenu.addSection() is NOT usable here: its
+        # text does not render under the app stylesheet (verified offscreen
+        # — the menu showed only thin unlabeled lines), so zones are built
+        # from addSeparator() + a disabled bold QAction instead.
+        _file_zone(file_menu, "API Keys", first=True)
         for label, page in API_KEY_PAGES:
-            action = QAction(label, self)
+            action = _file_item(file_menu, label)
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_api_keys(selected))
-            file_menu.addAction(action)
 
-        export_action = QAction("Back Up All Settings...", self)
+        export_action = _file_item(file_menu, "Back Up All Settings...")
         export_action.triggered.connect(self._export_settings)
-        file_menu.addAction(export_action)
 
-        import_action = QAction("Restore Settings from Backup...", self)
+        import_action = _file_item(file_menu, "Restore Settings from Backup...")
         import_action.triggered.connect(self._import_settings)
-        file_menu.addAction(import_action)
 
         file_menu.addSeparator()
-        assoc_action = QAction("Set as Default App for Magnets && Media...", self)
+        assoc_action = _file_item(file_menu, "Set as Default App for Magnets && Media...")
         assoc_action.triggered.connect(self._register_file_associations)
-        file_menu.addAction(assoc_action)
 
         # --- Former Browse menu ---
-        file_menu.addSection("Browser Settings")
+        _file_zone(file_menu, "Browser Settings")
         for label, page in BROWSER_SETTINGS_PAGES:
-            action = QAction(label, self)
+            action = _file_item(file_menu, label)
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_browser_settings(selected))
-            file_menu.addAction(action)
 
         # Bookmarks live ONLY under the browser toolbar's Bookmarks button
         # (import/export + the folder tree) — nothing bookmark-related in
@@ -2050,61 +2081,49 @@ class MainWindow(QMainWindow):
         self._bookmarks_menu = QMenu("Bookmarks", self)
         self._rebuild_bookmarks_bar()
 
-        history_action = QAction("Browser History...", self)
+        history_action = _file_item(file_menu, "Browser History...")
         history_action.triggered.connect(self._show_browser_history)
-        file_menu.addAction(history_action)
-        save_pdf_action = QAction("Save Page as PDF...", self)
+        save_pdf_action = _file_item(file_menu, "Save Page as PDF...")
         save_pdf_action.triggered.connect(self._browser_save_pdf)
-        file_menu.addAction(save_pdf_action)
-        devtools_action = QAction("Browser Developer Tools", self)
+        devtools_action = _file_item(file_menu, "Browser Developer Tools")
         devtools_action.triggered.connect(self._browser_open_devtools)
-        file_menu.addAction(devtools_action)
 
         # --- Former Download menu ---
-        file_menu.addSection("Download")
-        add_magnet_action = QAction("Add Magnet Link...", self)
+        _file_zone(file_menu, "Download")
+        add_magnet_action = _file_item(file_menu, "Add Magnet Link...")
         add_magnet_action.triggered.connect(self._add_magnet_dialog)
-        file_menu.addAction(add_magnet_action)
 
-        add_torrent_action = QAction("Add .torrent File...", self)
+        add_torrent_action = _file_item(file_menu, "Add .torrent File...")
         add_torrent_action.triggered.connect(self._add_torrent_file_dialog)
-        file_menu.addAction(add_torrent_action)
 
-        indexer_settings_action = QAction("Jackett Indexer Settings...", self)
+        indexer_settings_action = _file_item(file_menu, "Jackett Indexer Settings...")
         indexer_settings_action.triggered.connect(self._open_indexer_settings)
-        file_menu.addAction(indexer_settings_action)
 
         for label, page in DOWNLOAD_SETTINGS_PAGES:
-            action = QAction(label, self)
+            action = _file_item(file_menu, label)
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_downloads_settings(selected))
-            file_menu.addAction(action)
 
-        sources_action = QAction("Torrent Search Sources...", self)
+        sources_action = _file_item(file_menu, "Torrent Search Sources...")
         sources_action.triggered.connect(self._open_sources)
-        file_menu.addAction(sources_action)
 
-        rss_action2 = QAction("RSS Feed Subscriptions...", self)
+        rss_action2 = _file_item(file_menu, "RSS Feed Subscriptions...")
         rss_action2.triggered.connect(self._open_rss_dialog)
-        file_menu.addAction(rss_action2)
 
         # --- Former Play menu ---
-        file_menu.addSection("Play")
+        _file_zone(file_menu, "Play")
         for label, _cls in IPTV_SETTINGS_PAGES:
-            action = QAction(label, self)
+            action = _file_item(file_menu, label)
             action.triggered.connect(lambda _c=False, page_cls=_cls: self._open_iptv_page(page_cls))
-            file_menu.addAction(action)
 
         # --- Former IRC menu ---
-        file_menu.addSection("IRC")
-        irc_networks_action = QAction("IRC Networks...", self)
+        _file_zone(file_menu, "IRC")
+        irc_networks_action = _file_item(file_menu, "IRC Networks...")
         irc_networks_action.triggered.connect(lambda: self.irc_tab._on_manage_networks())
-        file_menu.addAction(irc_networks_action)
 
         file_menu.addSeparator()
-        exit_action = QAction("Exit", self)
+        exit_action = _file_item(file_menu, "Exit", indent=False)
         exit_action.triggered.connect(self._tray_quit)
-        file_menu.addAction(exit_action)
 
         # The six page titles: pure tab buttons — a click always switches
         # the page, and they never open a menu.

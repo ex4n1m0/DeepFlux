@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.5.7 — User Guide</h1>
+<h1>DeepFlux 3.5.8 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -298,9 +298,11 @@ directory (Chrome → <code>chrome://extensions</code> → Developer mode → Lo
 
 <h2>Settings</h2>
 
-<p>Everything lives in the <b>File</b> menu, flat — grouped under bold section
-headers named after the old per-page menus (no submenus to dig through; the
-Bookmarks folder tree is the one exception).</p>
+<p>Everything lives in the <b>File</b> menu, flat — grouped into zones, each
+opened by a separator line and a bold header (API Keys, Browser Settings,
+Download, Play, IRC) with its items slightly indented; no submenus to dig
+through. The Bookmarks folder tree is the one exception — it lives on the
+browser toolbar's Bookmarks button.</p>
 
 <table>
   <tr><th>File section</th><th>What to configure</th></tr>
@@ -366,7 +368,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.5.7 — AI Deep Search</p>
+<p>DeepFlux 3.5.8 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -434,7 +436,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.5.7 — AI Deep Search")
+        version = QLabel("3.5.8 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 
