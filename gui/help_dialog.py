@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.5.3 — User Guide</h1>
+<h1>DeepFlux 3.5.4 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -84,9 +84,10 @@ files, and chat on IRC, all with your confirmation for sensitive actions.</p>
   <tr><td><b>IRC</b></td><td>IRC client.</td><td>Read channels, send messages, join/part, connect, nick, LIST</td></tr>
 </table>
 
-<p>Switch tabs with <code>Ctrl+1</code>–<code>Ctrl+6</code>, or click a menu title:
-menu titles double as tab buttons — click one to jump to its tab, click it again
-once you're there to open the menu.</p>
+<p>Switch tabs with <code>Ctrl+1</code>–<code>Ctrl+6</code>, or click a page button in the
+menu bar: <b>Browse</b>, <b>Agent</b>, <b>Download</b>, <b>Play</b>, <b>Command</b> and
+<b>IRC</b> are pure page buttons — a click always takes you to that page. All commands
+live under the two real menus, <b>File</b> and <b>Help</b>.</p>
 
 <h2>Using the Agent</h2>
 
@@ -297,23 +298,23 @@ directory (Chrome → <code>chrome://extensions</code> → Developer mode → Lo
 
 <h2>Settings</h2>
 
-<p>Menus are flat — grouped under bold section headers in the menu itself
-(no submenus to dig through).</p>
+<p>Everything lives in the <b>File</b> menu, flat — grouped under bold section
+headers named after the old per-page menus (no submenus to dig through; the
+Bookmarks folder tree is the one exception).</p>
 
 <table>
-  <tr><th>Menu</th><th>What to configure</th></tr>
-  <tr><td><b>File</b></td><td><b>API Keys</b> — one page per service (AI
-      Agent, Torrent &amp; Web Search, Movie &amp; TV Metadata, Adult
-      Metadata, Subtitles): LLM endpoint, base URL and key, Jackett, Brave,
-      Perplexity, TMDb, OpenSubtitles. Plus file associations, and
-      <b>Export/Import Settings</b> — a passphrase-encrypted
-      <code>.dfc</code> backup of everything (keys, sources, all settings)
-      to keep safe or move to another PC. Import applies after a restart;
-      your previous settings are kept as <code>config.json.bak</code>.</td></tr>
-  <tr><td><b>Download</b></td><td><b>Jackett Settings</b> (URL; Test Connection syncs your indexer list), the Download Settings pages (Torrent Downloads, Torrent Queue, Download Manager — save paths, bandwidth limits, connections), <b>Sources</b> (which sites the agent searches), and <b>RSS Feeds</b> (subscriptions — or just ask the agent).</td></tr>
-  <tr><td><b>Browse</b></td><td><b>Browser Settings</b> (homepage, ad blocking) and bookmark import.</td></tr>
+  <tr><th>File section</th><th>What to configure</th></tr>
+  <tr><td><b>API Keys</b></td><td>One page per service (AI Agent, Torrent &amp;
+      Web Search, Movie &amp; TV Metadata, Adult Metadata, Subtitles): LLM
+      endpoint, base URL and key, Jackett, Brave, Perplexity, TMDb,
+      OpenSubtitles. Plus file associations, and <b>Export/Import
+      Settings</b> — a passphrase-encrypted <code>.dfc</code> backup of
+      everything (keys, sources, all settings) to keep safe or move to
+      another PC. Import applies after a restart; your previous settings are
+      kept as <code>config.json.bak</code>.</td></tr>
+  <tr><td><b>Browser Settings</b></td><td>Homepage, privacy/data, bookmark import &amp; export, History, Save Page as PDF, Developer Tools, and the <b>Bookmarks</b> folder tree.</td></tr>
+  <tr><td><b>Download</b></td><td>Add Magnet / Add Torrent File, <b>Jackett Settings</b> (URL; Test Connection syncs your indexer list), the Download Settings pages (Torrent Downloads, Torrent Queue, Download Manager — save paths, bandwidth limits, connections), <b>Sources</b> (which sites the agent searches), and <b>RSS Feeds</b> (subscriptions — or just ask the agent).</td></tr>
   <tr><td><b>Play</b></td><td>Four small pages: Playlist Sources, Metadata &amp; Cache (artwork cache, EPG), Subtitles &amp; Languages (preferred audio/subtitle language), and Playback (backend, decoding, buffer, smooth motion, SVP interpolation, throttling).</td></tr>
-  <tr><td><b>Command</b></td><td>—</td></tr>
   <tr><td><b>IRC</b></td><td><b>Networks</b> — servers, channels, SASL.</td></tr>
 </table>
 
@@ -364,7 +365,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.5.3 — AI Deep Search</p>
+<p>DeepFlux 3.5.4 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -432,7 +433,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.5.3 — AI Deep Search")
+        version = QLabel("3.5.4 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

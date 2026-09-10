@@ -907,29 +907,35 @@
   scrollable, and save only the selected section so hidden fields cannot
   overwrite unrelated settings. Menu-launched scalable viewers cap their
   defaults/minimums to fit within an 800×600 desktop.
-- Menu bar layout: File (API Keys submenu, file associations) | Browse (Browser
-  Settings submenu, Import Bookmarks) | Agent | Download (Add Magnet/Torrent,
-  Jackett Settings, Download Settings submenu, Sources, RSS Feeds) | Play (the
-  four IPTV_SETTINGS_PAGES) | Command | IRC (Networks) | Help | Bookmarks.
-  `_TabMenuBar` (gui/main_window.py) makes the six tab-linked titles double
-  as tab buttons: a click from another tab switches tabs (menu doesn't open),
-  a click while on the tab opens the menu; empty linked menus (Agent,
-  Command) swallow clicks entirely so no empty popup appears. The tab index
-  is stored as a dynamic property on each menu's QAction — do NOT key a dict
-  by QMenu/QObject wrappers: sip may hand out a fresh wrapper for the same
-  C++ object in the full app, and `in`/`dict` lookups then silently fail
-  (bare-widget tests won't catch it). `_TabMenuBar.addMenu` keeps every menu
-  in `self._menus`: PySide returns PYTHON-OWNED QMenus from `addMenu()`, so
-  losing the last Python reference destroys the C++ menu and its title
-  silently vanishes from the bar on the next GC (this bit us when the
-  `_tab_links` dict — the only thing holding them — was removed). Menus open on
-  CLICK only — mouseMoveEvent is swallowed while any popup is visible, so
-  hovering across titles never tears down/switches the open menu (Qt's
-  default menu-mode mouse tracking). Click-opened popups auto-close when the
-  cursor leaves the popup/submenus and the bar for ~450ms (`_auto_close_check`
+- Menu bar layout (3.5.4): **File** and **Help** are the only real menus.
+  The six page titles — Browse, Agent, Download, Play, Command, IRC — are
+  PURE tab buttons (menu-less QActions on the bar; a click always switches
+  the page, `triggered` also switches for keyboard activation). Everything
+  the old per-tab menus carried lives under File in flat labeled sections:
+  API Keys, Export/Import Settings + file associations, Browser Settings
+  (pages, bookmark import/export, History, Save PDF, DevTools), Download
+  (Add Magnet/Torrent, Jackett, Download Settings pages, Sources, RSS),
+  Play (the four IPTV_SETTINGS_PAGES), IRC (Networks), then the Bookmarks
+  submenu (folder tree — the one submenu exemption) and Exit. The app
+  STARTS on the Agent tab (set in `MainWindow.__init__` right after
+  `_build_ui()` — NOT inside `_build_ui`, which runs first; don't re-add a
+  tab selection there, __init__ runs after and would override it).
+  `_TabMenuBar` (gui/main_window.py) paints the active page's button with
+  the turquoise box. The tab index is stored as a dynamic property on each
+  action — do NOT key a dict by QMenu/QObject wrappers: shiboken may hand
+  out a fresh wrapper for the same C++ object in the full app, and
+  `in`/`dict` lookups then silently fail (bare-widget tests won't catch
+  it). `_TabMenuBar.addMenu` keeps every menu in `self._menus`: PySide
+  returns PYTHON-OWNED QMenus from `addMenu()`, so losing the last Python
+  reference destroys the C++ menu and its title silently vanishes from the
+  bar on the next GC (this bit us when the `_tab_links` dict — the only
+  thing holding them — was removed). Menus open on CLICK only —
+  mouseMoveEvent is swallowed while any popup is visible, so hovering
+  across titles never tears down/switches the open menu (Qt's default
+  menu-mode mouse tracking). Click-opened popups auto-close when the cursor
+  leaves the popup/submenus and the bar for ~450ms (`_auto_close_check`
   poll, 3×150ms ticks); keyboard-opened menus are never armed so arrow-key
-  nav survives. There are no
-  "Go to X" items anymore. All keys live in `APIKeysDialog` (File → API
+  nav survives. All keys live in `APIKeysDialog` (File → API
   Keys); there is no AI Settings dialog or WebSearchSettingsDialog anymore.
 - `gui/iptv_tab.py::AgentIPTVBridge` — thread-safe bridge between the agent's
   `iptv_*` tools (AgentLoop worker threads) and the Play tab: playback actions

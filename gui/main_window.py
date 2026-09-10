@@ -774,12 +774,16 @@ class _TabMenuBar(QMenuBar):
         self._mouse_menu = None
 
     def link_tabs(self, links: Dict[Any, int], tabs: Any) -> None:
-        # Tab index is a dynamic property on each menu's QAction (the C++
-        # object), NOT a Python-side dict keyed by QMenu — a fresh sip wrapper
-        # for the same C++ menu would silently break dict lookups.
+        # Tab index is a dynamic property on the action (the C++ object),
+        # NOT a Python-side dict keyed by QMenu/QAction — a fresh wrapper
+        # for the same C++ object would silently break dict lookups.
+        # Keys are plain actions now (3.5.4: the six page titles are pure
+        # buttons), but menus are accepted too for compatibility.
         self._tabs = tabs
-        for menu, idx in links.items():
-            menu.menuAction().setProperty("tab_index", int(idx))
+        for action_or_menu, idx in links.items():
+            action = (action_or_menu.menuAction() if hasattr(action_or_menu, "menuAction")
+                      else action_or_menu)
+            action.setProperty("tab_index", int(idx))
         tabs.currentChanged.connect(lambda *_: self.update())
 
     def _active_action(self) -> Any:
@@ -823,15 +827,11 @@ class _TabMenuBar(QMenuBar):
         action = self.actionAt(event.position().toPoint())
         idx = action.property("tab_index") if action is not None else None
         if idx is not None and self._tabs is not None:
-            idx = int(idx)
-            if self._tabs.currentIndex() != idx:
-                self._tabs.setCurrentIndex(idx)
-                event.accept()
-                return
-            menu = action.menu()
-            if menu is not None and menu.isEmpty():
-                event.accept()
-                return
+            # Pure tab button (3.5.4): a click ALWAYS switches the page —
+            # the page titles carry no menus any more.
+            self._tabs.setCurrentIndex(int(idx))
+            event.accept()
+            return
         super().mousePressEvent(event)
         # Click-opened popup → arm auto-close-on-mouse-away. Keyboard-opened
         # menus are never armed, so arrow-key navigation survives with the
@@ -984,7 +984,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.5.3 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.5.4 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1243,13 +1243,13 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
 
         # Restore window geometry from the previous session; always start
-        # on the Browse tab.
+        # on the Agent tab (user request 3.5.4).
         if self.config.ui_geometry:
             try:
                 self.restoreGeometry(QByteArray.fromBase64(self.config.ui_geometry.encode("ascii")))
             except Exception:
                 pass
-        self.main_tabs.setCurrentWidget(self._browser_tab)
+        self.main_tabs.setCurrentWidget(self._agents_tab)
 
         # Check for incomplete torrents from a previous session.
         QTimer.singleShot(1000, self._check_incomplete_torrents)
@@ -1997,15 +1997,15 @@ class MainWindow(QMainWindow):
         # Restore saved splitter positions (user-adjusted sizes persist).
         self._restore_splitters()
 
-        # Default to the Browse tab
-        self.main_tabs.setCurrentWidget(self._browser_tab)
-
-        # Menu bar — tab-linked titles double as tab buttons (see _TabMenuBar).
+        # Menu bar — File and Help are the only real menus; the six page
+        # titles are pure tab buttons (see _TabMenuBar). Everything the old
+        # per-tab menus carried lives under File in labeled sections
+        # (user request 3.5.4: one menu to rule them all, buttons for pages).
         menubar = _TabMenuBar(self)
         self.setMenuBar(menubar)
         file_menu = menubar.addMenu("File")
 
-        # Flat menu: labeled section instead of a submenu — every entry is
+        # Flat menu: labeled sections instead of submenus — every entry is
         # one click deep (user request 3.4.9: no nested settings submenus).
         file_menu.addSection("API Keys")
         for label, page in API_KEY_PAGES:
@@ -2023,102 +2023,96 @@ class MainWindow(QMainWindow):
         file_menu.addAction(import_action)
 
         file_menu.addSeparator()
-
         assoc_action = QAction("Set as Default App (File Associations)...", self)
         assoc_action.triggered.connect(self._register_file_associations)
         file_menu.addAction(assoc_action)
 
-        file_menu.addSeparator()
-
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self._tray_quit)
-        file_menu.addAction(exit_action)
-
-        # Browse menu — title jumps to the tab; items below once there.
-        browse_menu = menubar.addMenu("Browse")
-
-        browse_menu.addSection("Browser Settings")
+        # --- Former Browse menu ---
+        file_menu.addSection("Browser Settings")
         for label, page in BROWSER_SETTINGS_PAGES:
             action = QAction(label, self)
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_browser_settings(selected))
-            browse_menu.addAction(action)
-
-        browse_menu.addSeparator()
+            file_menu.addAction(action)
 
         import_bookmarks_action = QAction("Import Bookmarks...", self)
         import_bookmarks_action.triggered.connect(self._import_bookmarks)
-        browse_menu.addAction(import_bookmarks_action)
+        file_menu.addAction(import_bookmarks_action)
         export_bookmarks_action = QAction("Export Bookmarks...", self)
         export_bookmarks_action.triggered.connect(self._export_bookmarks)
-        browse_menu.addAction(export_bookmarks_action)
+        file_menu.addAction(export_bookmarks_action)
 
-        browse_menu.addSeparator()
         history_action = QAction("History...", self)
         history_action.triggered.connect(self._show_browser_history)
-        browse_menu.addAction(history_action)
+        file_menu.addAction(history_action)
         save_pdf_action = QAction("Save Page as PDF...", self)
         save_pdf_action.triggered.connect(self._browser_save_pdf)
-        browse_menu.addAction(save_pdf_action)
+        file_menu.addAction(save_pdf_action)
         devtools_action = QAction("Developer Tools", self)
         devtools_action.triggered.connect(self._browser_open_devtools)
-        browse_menu.addAction(devtools_action)
+        file_menu.addAction(devtools_action)
 
-        # Agent menu — no items left; the title is a pure tab button.
-        agent_menu = menubar.addMenu("Agent")
-
-        # Download menu — title jumps to the tab; items below once there.
-        download_menu = menubar.addMenu("Download")
-
+        # --- Former Download menu ---
+        file_menu.addSection("Download")
         add_magnet_action = QAction("Add Magnet...", self)
         add_magnet_action.triggered.connect(self._add_magnet_dialog)
-        download_menu.addAction(add_magnet_action)
+        file_menu.addAction(add_magnet_action)
 
         add_torrent_action = QAction("Add Torrent File...", self)
         add_torrent_action.triggered.connect(self._add_torrent_file_dialog)
-        download_menu.addAction(add_torrent_action)
-
-        download_menu.addSeparator()
+        file_menu.addAction(add_torrent_action)
 
         indexer_settings_action = QAction("Jackett Settings...", self)
         indexer_settings_action.triggered.connect(self._open_indexer_settings)
-        download_menu.addAction(indexer_settings_action)
+        file_menu.addAction(indexer_settings_action)
 
-        # Formerly the "Download Settings" submenu — flat, directly under
-        # Jackett so the settings block reads as one group.
         for label, page in DOWNLOAD_SETTINGS_PAGES:
             action = QAction(label, self)
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_downloads_settings(selected))
-            download_menu.addAction(action)
-
-        download_menu.addSeparator()
+            file_menu.addAction(action)
 
         sources_action = QAction("Sources...", self)
         sources_action.triggered.connect(self._open_sources)
-        download_menu.addAction(sources_action)
+        file_menu.addAction(sources_action)
 
         rss_action2 = QAction("RSS Feeds...", self)
         rss_action2.triggered.connect(self._open_rss_dialog)
-        download_menu.addAction(rss_action2)
+        file_menu.addAction(rss_action2)
 
-        # Play menu — title jumps to the tab; items below once there.
-        play_menu = menubar.addMenu("Play")
-
+        # --- Former Play menu ---
+        file_menu.addSection("Play")
         for label, _cls in IPTV_SETTINGS_PAGES:
             action = QAction(label, self)
             action.triggered.connect(lambda _c=False, page_cls=_cls: self._open_iptv_page(page_cls))
-            play_menu.addAction(action)
+            file_menu.addAction(action)
 
-        # Command menu — no items; the title is a pure tab button.
-        command_menu = menubar.addMenu("Command")
-
-        # IRC menu — title jumps to the tab; items below once there.
-        irc_menu = menubar.addMenu("IRC")
-
+        # --- Former IRC menu ---
+        file_menu.addSection("IRC")
         irc_networks_action = QAction("Networks...", self)
         irc_networks_action.triggered.connect(lambda: self.irc_tab._on_manage_networks())
-        irc_menu.addAction(irc_networks_action)
+        file_menu.addAction(irc_networks_action)
+
+        # --- Bookmarks (former standalone menu; folder submenus stay) ---
+        file_menu.addSeparator()
+        self._bookmarks_menu = file_menu.addMenu("Bookmarks")
+        self._rebuild_bookmarks_bar()
+
+        file_menu.addSeparator()
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self._tray_quit)
+        file_menu.addAction(exit_action)
+
+        # The six page titles: pure tab buttons — a click always switches
+        # the page, and they never open a menu.
+        tab_buttons: List[QAction] = []
+        for title, idx in (("Browse", 0), ("Agent", 1), ("Download", 2),
+                           ("Play", 3), ("Command", 4), ("IRC", 5)):
+            action = QAction(title, self)
+            action.triggered.connect(
+                lambda _checked=False, i=idx: self.main_tabs.setCurrentIndex(i))
+            menubar.addAction(action)
+            tab_buttons.append(action)
 
         # Help dropdown menu
         help_menu = menubar.addMenu("Help")
@@ -2131,22 +2125,9 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self._open_about)
         help_menu.addAction(about_action)
 
-        # Bookmarks menu — right of Help, only visible on the Browse tab.
-        self._bookmarks_menu = menubar.addMenu("Bookmarks")
-        self._rebuild_bookmarks_bar()
-        self.main_tabs.currentChanged.connect(self._update_bookmarks_menu_visibility)
-        self._update_bookmarks_menu_visibility(self.main_tabs.currentIndex())
-
-        # Tab-linked menu titles act as buttons: a click from another tab
-        # switches tabs; a click while on the tab opens the menu.
-        menubar.link_tabs({
-            browse_menu: 0,
-            agent_menu: 1,
-            download_menu: 2,
-            play_menu: 3,
-            command_menu: 4,
-            irc_menu: 5,
-        }, self.main_tabs)
+        # Tab buttons carry the tab_index property (see link_tabs) so the
+        # active page's title is boxed in the bar.
+        menubar.link_tabs(dict(zip(tab_buttons, (0, 1, 2, 3, 4, 5))), self.main_tabs)
 
         # Right-click context menu on the torrent table
         self.torrent_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -3511,10 +3492,6 @@ class MainWindow(QMainWindow):
                 "Import Bookmarks",
                 f"Imported {added} new bookmark(s); organized {updated} existing one(s) into folders.",
             )
-
-    def _update_bookmarks_menu_visibility(self, idx: int) -> None:
-        """Show the Bookmarks menu only when the Browse tab is active."""
-        self._bookmarks_menu.menuAction().setVisible(idx == 0)
 
     def _rebuild_bookmarks_bar(self) -> None:
         """Rebuild the Bookmarks menu from config.
