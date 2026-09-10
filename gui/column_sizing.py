@@ -3,9 +3,9 @@
 QHeaderView.Stretch fills leftover viewport space but ignores cell content
 (long file names get cut) and locks the section against dragging — the
 user cannot resize it at all. ResizeToContents tracks content but is
-equally undraggable. The download tables want both behaviours at once:
-names must always be fully visible AND every column must stay
-user-resizable.
+equally undraggable. The download tables and the Commander's file panes
+want both behaviours at once: names must always be fully visible AND every
+column must stay user-resizable.
 
 AutoColumnSizer keeps every section Interactive (draggable) and resizes
 them programmatically instead:
@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
-from PySide6.QtWidgets import QHeaderView, QTableView
+from PySide6.QtWidgets import QHeaderView, QTableView, QTreeView, QWidget
 
 # Cell-text scan cap per column: content sizing stays cheap even on a
 # queue left accumulating for weeks; beyond this, widths settle at the
@@ -42,14 +42,17 @@ class AutoColumnSizer(QObject):
 
     def __init__(
         self,
-        table: QTableView,
+        table: QWidget,
         fill_column: Optional[int] = 0,
         padding: int = 12,
         max_widths: Optional[dict[int, int]] = None,
     ) -> None:
         super().__init__(table)
         self._table = table
-        self._header = table.horizontalHeader()
+        # QTableView exposes horizontalHeader(); QTreeView (Commander's file
+        # panes) only has header().
+        self._header = (table.horizontalHeader() if isinstance(table, QTableView)
+                        else table.header())
         self._fill_column = fill_column
         self._padding = padding
         self._max_widths = max_widths or {}
@@ -131,13 +134,18 @@ class AutoColumnSizer(QObject):
         return self._header.count()
 
     def _content_width(self, column: int) -> int:
-        """Widest of header hint and cell display texts, plus padding."""
+        """Widest of header hint and cell display texts, plus padding.
+
+        Rows are read under the view's ROOT index: tables have an invalid
+        root (top-level rows), while a tree view (Commander's file panes)
+        shows the children of its current folder."""
         model = self._table.model()
         metrics = self._table.fontMetrics()
         width = 0
         if model is not None:
-            for row in range(min(model.rowCount(), _MAX_SCAN_ROWS)):
-                text = model.index(row, column).data(Qt.DisplayRole)
+            root = self._table.rootIndex()
+            for row in range(min(model.rowCount(root), _MAX_SCAN_ROWS)):
+                text = model.index(row, column, root).data(Qt.DisplayRole)
                 if text:
                     width = max(width, metrics.horizontalAdvance(str(text)))
         width = max(width, self._header.sectionSizeHint(column)) + self._padding

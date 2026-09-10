@@ -157,11 +157,12 @@ your indexers in Download → Sources → Fetch from Jackett.
 </ul>
 
 <h3>List Columns</h3>
-<p>In the torrent, download and segment lists, columns auto-size so file names are
-always fully visible, and the name column stretches to fill the window. Every
-column is also draggable — drag any column edge to your preferred width and it
-stays put; double-click a column edge to hand it back to auto-sizing. Hover a
-name for the full text as a tooltip.</p>
+<p>In the torrent, download and segment lists — and in the Command tab's dual
+file panes — columns auto-size so file names are always fully visible, and the
+name column stretches to fill the window. Every column is also draggable — drag
+any column edge to your preferred width and it stays put; double-click a column
+edge to hand it back to auto-sizing. Hover a name for the full text as a
+tooltip.</p>
 
 <h3>Browser Downloads</h3>
 <p>The built-in browser intercepts downloads automatically and routes them to the

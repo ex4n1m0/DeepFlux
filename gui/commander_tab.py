@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QDir, QEvent, QModelIndex, Qt, Signal
+from PySide6.QtCore import QDir, QEvent, QModelIndex, QTimer, Qt, Signal
 from PySide6.QtGui import QImage, QImageReader, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -37,7 +37,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFileSystemModel,
     QHBoxLayout,
-    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -52,6 +51,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from gui.column_sizing import AutoColumnSizer
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +225,19 @@ class FilePane(QWidget):
         self._view.setAnimated(False)
         self._view.setSortingEnabled(True)
         self._view.sortByColumn(0, Qt.SortOrder.AscendingOrder)
-        self._view.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # Same column behaviour as the download tables: file names always
+        # fully readable (name column fits its content and absorbs leftover
+        # viewport width), every column user-draggable, a drag never
+        # stomped, double-click a separator to re-enable auto-fit.
+        self._column_sizer = AutoColumnSizer(self._view, fill_column=0, padding=24)
+        # QFileSystemModel populates directories asynchronously in batches,
+        # so refit whenever rows land or details (size/date) fill in.
+        self._fit_timer = QTimer(self._view)
+        self._fit_timer.setSingleShot(True)
+        self._fit_timer.setInterval(250)
+        self._fit_timer.timeout.connect(self._column_sizer.auto_fit)
+        self._model.rowsInserted.connect(lambda *_: self._fit_timer.start())
+        self._model.dataChanged.connect(lambda *_: self._fit_timer.start())
         self._view.activated.connect(self._on_activated)
         self._view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._view.customContextMenuRequested.connect(self._context_menu)
@@ -276,6 +289,10 @@ class FilePane(QWidget):
 
     def _show_path(self, path: str) -> None:
         self._view.setRootIndex(self._model.index(path))
+        # Columns sized for the new folder right away (header hints), then
+        # again as the async listing lands rows via _fit_timer.
+        self._column_sizer.auto_fit()
+        self._fit_timer.start()
         self._path_edit.setText(QDir.toNativeSeparators(path))
         if sys.platform == "win32":
             drive = os.path.splitdrive(path)[0] + "\\"

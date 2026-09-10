@@ -216,3 +216,65 @@ def test_update_jobs_reports_membership_change(qapp):
     job = make_job("a", JobStatus.DOWNLOADING)
     assert model.update_jobs([job]) is True
     assert model.update_jobs([job]) is False
+
+
+# ---------------------------------------------------------------------------
+# Commander file panes (QTreeView + async QFileSystemModel)
+# ---------------------------------------------------------------------------
+
+def test_sizer_sizes_tree_view_under_root_index(qapp, tmp_path):
+    """AutoColumnSizer reads rows under the view's ROOT index (a tree view
+    shows the current folder's children, not the model root), so the name
+    column fits the longest file name and every section is draggable."""
+    from PySide6.QtWidgets import QTreeView
+    from PySide6.QtGui import QStandardItemModel, QStandardItem
+
+    view = QTreeView()
+    model = QStandardItemModel(0, 3, view)
+    view.setModel(model)
+    # A branch node whose children are what the pane "shows".
+    folder = QStandardItem("folder")
+    model.appendRow(folder)
+    names = ["a.txt", "a-much-longer-file-name-here.mkv", "z.png"]
+    for name in names:
+        folder.appendRow([QStandardItem(name), QStandardItem("1.0 GiB"),
+                          QStandardItem("2026")])
+    # Rows directly under the model root (NOT visible) must not drive widths.
+    model.appendRow([QStandardItem("extremely-long-name-not-visible" * 3),
+                     QStandardItem(""), QStandardItem("")])
+    view.setRootIndex(folder.index())
+
+    sizer = AutoColumnSizer(view, fill_column=0, padding=24)
+    view.resize(900, 400)
+    sizer.auto_fit()
+
+    header = view.header()
+    metrics = view.fontMetrics()
+    for column in range(3):
+        assert header.sectionResizeMode(column) == QHeaderView.Interactive
+    longest = max(metrics.horizontalAdvance(n) for n in names)
+    assert header.sectionSize(0) >= longest + 24
+    # Fill column absorbed the leftover VIEWPORT width (the view is not
+    # shown here, so ask the viewport itself rather than assuming 900).
+    fixed = header.sectionSize(1) + header.sectionSize(2)
+    assert header.sectionSize(0) >= view.viewport().width() - fixed
+    view.deleteLater()
+
+
+def test_commander_tab_panes_use_auto_column_sizer(qapp, tmp_path):
+    """Both Commander panes: no Stretch anywhere, name column is the fill
+    column, and a navigation schedules an auto-fit."""
+    from gui.commander_tab import CommanderTab
+
+    tab = CommanderTab(SimpleNamespace())
+    tab.close()
+    try:
+        for pane in (tab.left_pane, tab.right_pane):
+            header = pane._view.header()
+            assert hasattr(pane, "_column_sizer")
+            for column in range(header.count()):
+                assert header.sectionResizeMode(column) == QHeaderView.Interactive
+            pane._show_path(str(tmp_path))
+            assert pane._fit_timer.isActive()
+    finally:
+        tab.deleteLater()
