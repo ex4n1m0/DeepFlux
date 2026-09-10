@@ -984,7 +984,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.5.6 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.5.7 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -2023,16 +2023,16 @@ class MainWindow(QMainWindow):
                 lambda _checked=False, selected=page: self._open_api_keys(selected))
             file_menu.addAction(action)
 
-        export_action = QAction("Export Settings...", self)
+        export_action = QAction("Back Up All Settings...", self)
         export_action.triggered.connect(self._export_settings)
         file_menu.addAction(export_action)
 
-        import_action = QAction("Import Settings...", self)
+        import_action = QAction("Restore Settings from Backup...", self)
         import_action.triggered.connect(self._import_settings)
         file_menu.addAction(import_action)
 
         file_menu.addSeparator()
-        assoc_action = QAction("Set as Default App (File Associations)...", self)
+        assoc_action = QAction("Set as Default App for Magnets && Media...", self)
         assoc_action.triggered.connect(self._register_file_associations)
         file_menu.addAction(assoc_action)
 
@@ -2050,27 +2050,27 @@ class MainWindow(QMainWindow):
         self._bookmarks_menu = QMenu("Bookmarks", self)
         self._rebuild_bookmarks_bar()
 
-        history_action = QAction("History...", self)
+        history_action = QAction("Browser History...", self)
         history_action.triggered.connect(self._show_browser_history)
         file_menu.addAction(history_action)
         save_pdf_action = QAction("Save Page as PDF...", self)
         save_pdf_action.triggered.connect(self._browser_save_pdf)
         file_menu.addAction(save_pdf_action)
-        devtools_action = QAction("Developer Tools", self)
+        devtools_action = QAction("Browser Developer Tools", self)
         devtools_action.triggered.connect(self._browser_open_devtools)
         file_menu.addAction(devtools_action)
 
         # --- Former Download menu ---
         file_menu.addSection("Download")
-        add_magnet_action = QAction("Add Magnet...", self)
+        add_magnet_action = QAction("Add Magnet Link...", self)
         add_magnet_action.triggered.connect(self._add_magnet_dialog)
         file_menu.addAction(add_magnet_action)
 
-        add_torrent_action = QAction("Add Torrent File...", self)
+        add_torrent_action = QAction("Add .torrent File...", self)
         add_torrent_action.triggered.connect(self._add_torrent_file_dialog)
         file_menu.addAction(add_torrent_action)
 
-        indexer_settings_action = QAction("Jackett Settings...", self)
+        indexer_settings_action = QAction("Jackett Indexer Settings...", self)
         indexer_settings_action.triggered.connect(self._open_indexer_settings)
         file_menu.addAction(indexer_settings_action)
 
@@ -2080,11 +2080,11 @@ class MainWindow(QMainWindow):
                 lambda _checked=False, selected=page: self._open_downloads_settings(selected))
             file_menu.addAction(action)
 
-        sources_action = QAction("Sources...", self)
+        sources_action = QAction("Torrent Search Sources...", self)
         sources_action.triggered.connect(self._open_sources)
         file_menu.addAction(sources_action)
 
-        rss_action2 = QAction("RSS Feeds...", self)
+        rss_action2 = QAction("RSS Feed Subscriptions...", self)
         rss_action2.triggered.connect(self._open_rss_dialog)
         file_menu.addAction(rss_action2)
 
@@ -2097,7 +2097,7 @@ class MainWindow(QMainWindow):
 
         # --- Former IRC menu ---
         file_menu.addSection("IRC")
-        irc_networks_action = QAction("Networks...", self)
+        irc_networks_action = QAction("IRC Networks...", self)
         irc_networks_action.triggered.connect(lambda: self.irc_tab._on_manage_networks())
         file_menu.addAction(irc_networks_action)
 

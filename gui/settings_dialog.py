@@ -145,9 +145,9 @@ class IndexerSettingsDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 DOWNLOAD_SETTINGS_PAGES = [
-    ("Torrent Downloads…", "torrent"),
-    ("Torrent Queue…", "queue"),
-    ("Download Manager…", "manager"),
+    ("Torrent Download Settings…", "torrent"),
+    ("Torrent Queue Settings…", "queue"),
+    ("Download Manager Settings…", "manager"),
 ]
 
 
@@ -446,8 +446,8 @@ class DownloadsSettingsDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 BROWSER_SETTINGS_PAGES = [
-    ("General…", "general"),
-    ("Privacy && Data…", "privacy"),
+    ("Browser General Settings…", "general"),
+    ("Browser Privacy && Data…", "privacy"),
 ]
 
 
@@ -625,11 +625,11 @@ def _api_hint(text: str) -> QLabel:
 
 
 API_KEY_PAGES = [
-    ("AI Agent…", "ai"),
-    ("Torrent && Web Search…", "search"),
-    ("Movie && TV Metadata…", "media"),
-    ("Adult Metadata…", "adult"),
-    ("Subtitles…", "subtitles"),
+    ("AI Agent Key…", "ai"),
+    ("Search Keys (Jackett, Brave, Perplexity)…", "search"),
+    ("Movie && TV Metadata Keys (TMDb, OMDb)…", "media"),
+    ("Adult Metadata Keys (TPDB, StashDB)…", "adult"),
+    ("OpenSubtitles Key…", "subtitles"),
 ]
 
 

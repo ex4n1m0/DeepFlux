@@ -789,8 +789,8 @@ class IPTVPlaybackDialog(_SettingsPage):
 # (menu label, dialog class) — Config → IPTV submenu and the Play tab's gear
 # picker are both built from this list.
 IPTV_SETTINGS_PAGES = [
-    ("Playlist Sources…", IPTVSourcesDialog),
-    ("Metadata && Cache…", IPTVMetadataDialog),
+    ("IPTV Playlist Sources…", IPTVSourcesDialog),
+    ("Artwork, Metadata && Cache…", IPTVMetadataDialog),
     ("Subtitles && Languages…", IPTVSubtitlesDialog),
-    ("Playback…", IPTVPlaybackDialog),
+    ("Playback && Video Settings…", IPTVPlaybackDialog),
 ]
