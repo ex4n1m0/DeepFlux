@@ -9,7 +9,10 @@ rule ``roomy()`` implements:
   cramped and nothing clips;
 * only shrink below that on small screens, and never below 90% of the
   available desktop — a capped dialog relies on its scroll areas (every
-  settings page is a QScrollArea) rather than hiding content.
+  settings page is a QScrollArea) rather than hiding content;
+* place the window TOP-CENTER of the available desktop, inset by the same
+  margin the 90% cap leaves, so dialogs land predictably instead of
+  wherever the parent happened to be (user request 3.5.5).
 
 ``roomy()`` fits immediately (best effort with whatever is laid out at the
 call site) and again via a zero-timeout single shot, which fires once the
@@ -28,8 +31,11 @@ from PySide6.QtCore import QRect, QSize, QTimer
 from PySide6.QtWidgets import QApplication, QWidget
 
 
-def _target_size(widget: QWidget, headroom: float, screen_fraction: float,
-                 avail: Optional[QRect]) -> Optional[QSize]:
+def _apply(
+    widget: QWidget, headroom: float, screen_fraction: float, avail: Optional[QRect]
+) -> None:
+    """Size AND place: fit content with headroom, cap at the screen
+    fraction, then move to the top-center of the available desktop."""
     if avail is None:
         screen = widget.screen() if hasattr(widget, "screen") else None
         if screen is None:
@@ -43,7 +49,15 @@ def _target_size(widget: QWidget, headroom: float, screen_fraction: float,
         cap = QSize(max(1, round(avail.width() * screen_fraction)),
                     max(1, round(avail.height() * screen_fraction)))
         target = target.boundedTo(cap)
-    return target
+    widget.resize(target)
+    if avail is not None:
+        # Top-center placement, inset by the same margin the 90% cap leaves
+        # (e.g. 5% each side at fraction=0.9), so the window sits inside the
+        # usable region instead of wherever the parent happened to be.
+        margin = round(avail.height() * (1.0 - screen_fraction) / 2)
+        x = avail.x() + max(0, (avail.width() - target.width()) // 2)
+        y = avail.y() + max(0, margin)
+        widget.move(x, y)
 
 
 def roomy(
@@ -52,18 +66,15 @@ def roomy(
     screen_fraction: float = 0.9,
     avail: Optional[QRect] = None,
 ) -> None:
-    """Resize ``widget`` to fit its content with headroom, capped at
-    ``screen_fraction`` of the available screen — now and again on the
-    next event-loop turn, when subclass content is laid out."""
-    size = _target_size(widget, headroom, screen_fraction, avail)
-    if size is not None:
-        widget.resize(size)
+    """Size and place ``widget`` — content sizeHint with headroom, capped at
+    ``screen_fraction`` of the available screen, positioned top-center —
+    now and again on the next event-loop turn, when subclass content is
+    laid out."""
+    _apply(widget, headroom, screen_fraction, avail)
 
     def _refit() -> None:
         # The closure keeps the widget's wrapper alive until the shot
         # fires, so the second pass always sees a live Python object.
-        delayed = _target_size(widget, headroom, screen_fraction, avail)
-        if delayed is not None:
-            widget.resize(delayed)
+        _apply(widget, headroom, screen_fraction, avail)
 
     QTimer.singleShot(0, _refit)

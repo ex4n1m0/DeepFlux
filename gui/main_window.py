@@ -984,7 +984,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.5.4 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.5.5 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1722,6 +1722,14 @@ class MainWindow(QMainWindow):
         self.browser_new_tab_btn.clicked.connect(lambda: self._browser_new_tab())
         nav_layout.addWidget(self.browser_new_tab_btn)
 
+        # Bookmarks button — pops the bookmark folder tree (the same menu
+        # that lives under File → Bookmarks).
+        self.browser_bookmarks_btn = QPushButton("Bookmarks")
+        self.browser_bookmarks_btn.setObjectName("btn_secondary")
+        self.browser_bookmarks_btn.setToolTip("Open your bookmarks")
+        self.browser_bookmarks_btn.clicked.connect(self._browser_show_bookmarks)
+        nav_layout.addWidget(self.browser_bookmarks_btn)
+
         self.browser_private_btn = QPushButton("Private")
         self.browser_private_btn.setObjectName("btn_secondary")
         self.browser_private_btn.setToolTip("Open an off-the-record tab")
@@ -1825,6 +1833,7 @@ class MainWindow(QMainWindow):
             (self.browser_reload_btn, "Reload page"),
             (self.browser_home_btn, "Browser home"),
             (self.browser_new_tab_btn, "New browser tab"),
+            (self.browser_bookmarks_btn, "Open bookmarks"),
             (self.browser_private_btn, "New private tab"),
             (self.browser_devtools_btn, "Open developer tools"),
             (self.browser_url_bar, "Browser address and search"),
@@ -2292,6 +2301,12 @@ class MainWindow(QMainWindow):
         menu.addAction("Reset to 100%  (Ctrl+0)", lambda: self._browser_set_zoom(1.0))
         menu.exec(self.browser_zoom_label.mapToGlobal(
             self.browser_zoom_label.rect().bottomLeft()))
+
+    def _browser_show_bookmarks(self) -> None:
+        """Pop the bookmark folder tree under the toolbar Bookmarks button
+        (same menu as File → Bookmarks)."""
+        btn = self.browser_bookmarks_btn
+        self._bookmarks_menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
     def _browser_open_devtools(self) -> None:
         inspected = self._current_browser_view()

@@ -85,21 +85,26 @@ def test_roomy_sizes_content_with_headroom_and_caps_at_90pct():
     from gui.window_sizing import roomy
 
     # Roomy screen: window grows past the raw content size (headroom) and
-    # never exceeds 90% of the screen.
+    # never exceeds 90% of the screen — and sits top-center.
     dlg = QDialog()
     QVBoxLayout(dlg).addWidget(QLabel("short content"))
     roomy(dlg, avail=QRect(0, 0, 1920, 1080))
     assert dlg.width() >= dlg.sizeHint().width()
     assert dlg.width() <= round(1920 * 0.9)
     assert dlg.height() >= dlg.sizeHint().height()
+    assert dlg.x() == (1920 - dlg.width()) // 2
+    assert dlg.y() == round(1080 * 0.05)
     dlg.deleteLater()
 
-    # Small screen: hard cap at 90% even when content wants more.
+    # Small screen: hard cap at 90% even when content wants more; still
+    # top-centered within the 90% region.
     dlg = QDialog()
     QVBoxLayout(dlg).addWidget(QLabel("x" * 400))
     roomy(dlg, avail=QRect(0, 0, 800, 600))
     assert dlg.width() == round(800 * 0.9)
     assert dlg.height() <= round(600 * 0.9)
+    assert dlg.x() == (800 - dlg.width()) // 2
+    assert dlg.y() == round(600 * 0.05)
     dlg.deleteLater()
 
     # First-show refit: content added AFTER roomy() was called is fitted.

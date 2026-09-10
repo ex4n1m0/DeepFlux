@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.5.4 — User Guide</h1>
+<h1>DeepFlux 3.5.5 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -312,7 +312,7 @@ Bookmarks folder tree is the one exception).</p>
       everything (keys, sources, all settings) to keep safe or move to
       another PC. Import applies after a restart; your previous settings are
       kept as <code>config.json.bak</code>.</td></tr>
-  <tr><td><b>Browser Settings</b></td><td>Homepage, privacy/data, bookmark import &amp; export, History, Save Page as PDF, Developer Tools, and the <b>Bookmarks</b> folder tree.</td></tr>
+  <tr><td><b>Browser Settings</b></td><td>Homepage, privacy/data, bookmark import &amp; export, History, Save Page as PDF, Developer Tools, and the <b>Bookmarks</b> folder tree — also reachable from the <b>Bookmarks</b> button in the browser toolbar (left of Private).</td></tr>
   <tr><td><b>Download</b></td><td>Add Magnet / Add Torrent File, <b>Jackett Settings</b> (URL; Test Connection syncs your indexer list), the Download Settings pages (Torrent Downloads, Torrent Queue, Download Manager — save paths, bandwidth limits, connections), <b>Sources</b> (which sites the agent searches), and <b>RSS Feeds</b> (subscriptions — or just ask the agent).</td></tr>
   <tr><td><b>Play</b></td><td>Four small pages: Playlist Sources, Metadata &amp; Cache (artwork cache, EPG), Subtitles &amp; Languages (preferred audio/subtitle language), and Playback (backend, decoding, buffer, smooth motion, SVP interpolation, throttling).</td></tr>
   <tr><td><b>IRC</b></td><td><b>Networks</b> — servers, channels, SASL.</td></tr>
@@ -365,7 +365,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.5.4 — AI Deep Search</p>
+<p>DeepFlux 3.5.5 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -433,7 +433,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.5.4 — AI Deep Search")
+        version = QLabel("3.5.5 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 
