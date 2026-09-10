@@ -13,6 +13,9 @@ anything destructive.
 
 Website and installer: **https://deepflux.space**
 
+**Current version: 3.5.1** (2026-09-10) — kept in sync with
+`packaging/installer.iss` by the pre-commit hook in `.git/hooks/`.
+
 ## Features
 
 - **Agent** (`agent/`): ReAct loop with JSON-schema tools, OpenAI-compatible

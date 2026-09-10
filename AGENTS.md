@@ -64,7 +64,10 @@
   project.json` does not resolve to the CLI's default personal scope).
   Version bumps touch: installer.iss (MyAppVersion + OutputBaseFilename),
   main_window title, help_dialog (H1/Version/About), opensubtitles UA,
-  website index.html.
+  website index.html, README.md ("Current version" line — a pre-commit hook
+  in .git/hooks/ re-syncs it from installer.iss MyAppVersion on every commit
+  and auto-stages the change; if the hook is missing on a fresh clone,
+  reinstall it from this note).
 
 ## Conventions
 - Settings backup: File → Export/Import Settings (`infra/config_backup.py`)
