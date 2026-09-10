@@ -44,3 +44,6 @@ torrent file/
 
 # Local agent session data (ZCode CLI)
 .zcode/
+
+# Local-only build secrets (bundled into releases, never committed)
+_embedded_keys.py

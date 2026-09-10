@@ -198,17 +198,23 @@
   key exists (0.2s otherwise). (Scraped-Google stage tried & dropped:
   anonymous requests get JS-only shell pages with zero parsable results —
   2026 Google.)
-- Built-in keys: since 3.5 (owner's explicit decision, 2026-09-09) ONE shared
-  key ships in the box — `_SHARED_DEEPSEEK_API_KEY` in `config.py`, injected
-  by `from_file` only when the provider is deepseek AND no key was ever
-  saved (env `DEEPSEEK_API_KEY` and user-saved keys still win; it never
-  leaks into OpenRouter/custom provider calls). Every OTHER key field stays
-  empty by design and only the user's own env vars
-  (`JACKETT_API_KEY`, `BRAVE_API_KEY`, …) fill empty slots. Without an LLM
-  key the GUI/CLI run the agent in dummy mode; without TMDb/Jackett keys
-  those integrations degrade gracefully. The system prompt fixes the agent's
-  identity as "DeepFlux" (never "DeepTorrent" — that name only survives in
-  legacy paths).
+- Built-in keys: since 3.5 (owner's explicit decision, 2026-09-09, refined
+  2026-09-10) ONE shared DeepSeek key ships in the SETUP FILE ONLY — never in
+  git. `config.py` loads `_SHARED_DEEPSEEK_API_KEY` at import time from the
+  UNTRACKED repo-root module `_embedded_keys.py` (gitignored; exists only on
+  build machines; PyInstaller bundles it like any import) or the
+  `DEEPFLUX_SHARED_DEEPSEEK_KEY` env var; without either the key is empty and
+  nothing breaks. The key is injected by `from_file` only when the provider
+  is deepseek AND no key was ever saved (env `DEEPSEEK_API_KEY` and
+  user-saved keys still win; it never leaks into OpenRouter/custom calls).
+  History was rewritten (git-filter-repo) to purge the literal from all
+  pushed commits — NEVER paste the key value into any tracked file, commit
+  message, or this file. Every OTHER key field stays empty by design and only
+  the user's own env vars (`JACKETT_API_KEY`, `BRAVE_API_KEY`, …) fill empty
+  slots. Without an LLM key the GUI/CLI run the agent in dummy mode; without
+  TMDb/Jackett keys those integrations degrade gracefully. The system prompt
+  fixes the agent's identity as "DeepFlux" (never "DeepTorrent" — that name
+  only survives in legacy paths).
 - Adding a tool: register schema+handler in `tools.py`, classify it in the
   centralized policy sets there (`READ_ONLY_TOOL_NAMES` can run concurrently /
   `CONFIRMATION_TOOL_NAMES` need approval), include it in context routing, and

@@ -18,14 +18,30 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
-# Since 3.5 ONE shared key is shipped: the DeepSeek agent key below, so the
-# app works out of the box for every download. All other key fields still
-# default to empty and the user enters their own (GUI settings dialogs or
+# Since 3.5 ONE shared key is shipped: the DeepSeek agent key, so the app
+# works out of the box for every download. The VALUE never lives in git —
+# it is loaded at import time from the untracked repo-root module
+# ``_embedded_keys.py`` (present only on build machines; PyInstaller bundles
+# it into the frozen app like any import) or from the
+# DEEPFLUX_SHARED_DEEPSEEK_KEY env var. Without either, the shared key is
+# simply empty and the app runs keyless. All other key fields still default
+# to empty and the user enters their own (GUI settings dialogs or
 # config.json). The DEEPSEEK_API_KEY / JACKETT_API_KEY / BRAVE_API_KEY env
 # vars are honored as user-provided fallbacks in DeeptorrentConfig.from_file;
 # the env var and a user-saved key always override the shared key, which is
 # only injected when the provider is deepseek and no key was ever saved.
-_SHARED_DEEPSEEK_API_KEY = ""
+def _load_shared_deepseek_key() -> str:
+    env = os.environ.get("DEEPFLUX_SHARED_DEEPSEEK_KEY")
+    if env:
+        return env
+    try:
+        from _embedded_keys import SHARED_DEEPSEEK_API_KEY  # local-only, gitignored
+        return SHARED_DEEPSEEK_API_KEY
+    except Exception:
+        return ""
+
+
+_SHARED_DEEPSEEK_API_KEY = _load_shared_deepseek_key()
 
 
 # DeepFlux is DeepSeek-native and also supports OpenAI-compatible endpoints.
