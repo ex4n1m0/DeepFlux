@@ -42,7 +42,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.5 — User Guide</h1>
+<h1>DeepFlux 3.5.1 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -361,7 +361,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.5 — AI Deep Search</p>
+<p>DeepFlux 3.5.1 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -429,7 +429,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.5 — AI Deep Search")
+        version = QLabel("3.5.1 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 
