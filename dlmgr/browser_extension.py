@@ -624,7 +624,7 @@ BROWSER_EXTENSION_JS = r"""
       color = '#00e5ff';
       label = 'DeepFlux: watching for videos';
     } else {
-      color = '#4dd2ff';
+      color = '#86e3ff';
       // Clear call-to-action when videos are available.
       label = '⬇ Download ' + detectedVideos.length + ' video' + (detectedVideos.length > 1 ? 's' : '') + ' — click here';
     }
@@ -644,8 +644,8 @@ BROWSER_EXTENSION_JS = r"""
     // infinite box-shadow keyframe animation forces continuous compositor
     // repaints, which showed up as visible flashing during YouTube playback.
     if (detectedVideos.length > 0 && apiConnected) {
-      statusBadge.style.borderColor = '#4dd2ff';
-      statusBadge.style.color = '#4dd2ff';
+      statusBadge.style.borderColor = '#86e3ff';
+      statusBadge.style.color = '#86e3ff';
       statusBadge.style.animation = '';
     } else if (apiConnected === false) {
       statusBadge.style.borderColor = '#ff4444';
@@ -855,7 +855,7 @@ BROWSER_EXTENSION_JS = r"""
         var playBtn = document.createElement('button');
         playBtn.textContent = '▶ Play';
         playBtn.title = 'Play in the DeepFlux player (mpv)';
-        playBtn.style.cssText = 'flex-shrink: 0; background: transparent; color: #4dd2ff; border: 3px solid #4dd2ff; border-radius: 4px; padding: 4px 10px; font-size: 18px; font-weight: 600; cursor: pointer;';
+        playBtn.style.cssText = 'flex-shrink: 0; background: transparent; color: #86e3ff; border: 3px solid #86e3ff; border-radius: 4px; padding: 4px 10px; font-size: 18px; font-weight: 600; cursor: pointer;';
         playBtn.addEventListener('click', function() {
           sendPlay(video.url, video.type, video.title);
           menu.remove();
@@ -892,8 +892,8 @@ BROWSER_EXTENSION_JS = r"""
       'right: 20px',
       'z-index: 2147483647',
       'background: #0a0a0f',
-      'color: #4dd2ff',
-      'border: 3px solid #4dd2ff',
+      'color: #86e3ff',
+      'border: 3px solid #86e3ff',
       'border-radius: 8px',
       'padding: 10px 18px',
       'font-family: Segoe UI, Arial, sans-serif',

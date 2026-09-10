@@ -105,7 +105,7 @@ def _redact_url(url: str) -> str:
 
 _STATUS_COLORS = {
     JobStatus.QUEUED: "#ffcc00",
-    JobStatus.DOWNLOADING: "#4dd2ff",
+    JobStatus.DOWNLOADING: "#86e3ff",
     JobStatus.PROCESSING: "#c084fc",
     JobStatus.PAUSED: "#8a9ab0",
     JobStatus.COMPLETED: "#2a7abf",

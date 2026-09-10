@@ -210,7 +210,7 @@ p { padding: 2px 4px; }
     padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 .msg-agent {
-    border-left: 3px solid #4dd2ff;
+    border-left: 3px solid #86e3ff;
     padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 .msg-event {
@@ -724,7 +724,7 @@ class _TabMenuBar(QMenuBar):
     cursor has left the popup/submenus and the bar for ~450ms."""
 
     # Active-tab box (see paintEvent) — turquoise against the blue accent.
-    _ACTIVE_COLOR = QColor("#4dd2ff")
+    _ACTIVE_COLOR = QColor("#86e3ff")
     _ACTIVE_FILL = QColor(46, 230, 200, 34)
     _ACTIVE_BG = QColor("#0d1117")  # matches the QMenuBar background
 
@@ -1340,6 +1340,21 @@ class MainWindow(QMainWindow):
                 return os.path.abspath(path)
         return ""
 
+    def _resolve_banner_path(self) -> str:
+        """Find the wordmark banner (the website's hero art) for the Agent
+        tab watermark. Same file as deepflux.space's banner; a square icon
+        fallback keeps the tab usable if the art is ever removed."""
+        candidates = [
+            os.path.join(os.path.dirname(__file__), "..", "website", "deepflux", "DeepFluxBanner.webp"),
+            os.path.join(sys._MEIPASS, "DeepFluxBanner.webp") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(os.path.dirname(__file__), "..", "DeepFlux4.png"),
+            os.path.join(sys._MEIPASS, "DeepFlux4.png") if hasattr(sys, "_MEIPASS") else "",
+        ]
+        for path in candidates:
+            if path and os.path.isfile(path):
+                return os.path.abspath(path)
+        return ""
+
     def _resolve_watermark_path(self) -> str:
         """Find the full-size logo PNG for the chat watermark (prefers high-res)."""
         candidates = [
@@ -1410,7 +1425,7 @@ class MainWindow(QMainWindow):
         agents_tab_layout = QVBoxLayout(agents_tab)
         agents_tab_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.chat_history = _ChatHistoryEdit(self._resolve_watermark_path())
+        self.chat_history = _ChatHistoryEdit(self._resolve_banner_path())
         self.chat_history.setReadOnly(True)
         self.chat_history.setOpenLinks(False)
         # Bottom dead-zone (~2 rows): at max scroll the viewport fold lands in
