@@ -990,7 +990,11 @@ class APIKeysDialog(QDialog):
                 models = LLM_PROVIDER_PRESETS[provider].get("models") or []
                 if models:
                     self.config.llm.model = models[0]
-                    self.config.llm.fast_model = models[1] if len(models) > 1 else ""
+                    # Fast model = the cheap flash tier when the preset has
+                    # one, not merely the second list entry (v4-pro would be
+                    # 4x the price for summaries).
+                    flash = next((m for m in models[1:] if "flash" in m.lower()), None)
+                    self.config.llm.fast_model = flash or (models[1] if len(models) > 1 else "")
             self.config.llm.custom_reasoning_effort = self.llm_reasoning_effort.isChecked()
         if self._page in ("all", "search"):
             self.config.indexer.api_key = self.jkt_key.text().strip()

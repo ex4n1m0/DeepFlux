@@ -217,6 +217,41 @@
   run the agent in dummy mode; missing metadata keys degrade gracefully. The
   system prompt fixes the agent's identity as "DeepFlux" (never
   "DeepTorrent" — that name only survives in legacy paths).
+  KEY HYGIENE (since 3.5.9 — audit demanded no extractable key in the
+  installer/installed app):
+  * `_embedded_keys.py` stores each value OBFUSCATED as a
+    `(salt_b64, blob_b64)` pair (`blob = value XOR sha256(salt+counter)`
+    keystream) — no plaintext constant exists anywhere in the repo or the
+    frozen PYZ, so pyinstxtractor + a pyc constants dump comes up empty.
+    `config._decode_shared_value` decodes (fails closed to "" on tamper);
+    regenerate the file after changing a key with
+    `python packaging/gen_embedded_keys.py` (never prints values). The
+    scheme is obfuscation, not crypto — that is the ceiling for any
+    client-side embedded key.
+  * Shared keys are NEVER persisted: `from_file` records the slots it
+    filled (`_SHARED_KEY_SLOTS`) and `to_file()`/`sanitized_dict()` blank
+    them again (they re-inject on every load). Before 3.5.9 the injected
+    values were serialized straight into `~/.deeptorrent/config.json` by
+    every save — `from_file` also scrubs saved values that equal a current
+    shared key, so upgrades self-heal on first save. Settings Export uses
+    `sanitized_dict()` for the same reason (a .dfc backup must not carry
+    the shared keys out of the app).
+  * Residual, accepted: a determined user can still recover a key at
+    runtime from process memory or by MITM-ing their own machine's TLS —
+    impossible to prevent for an embedded key; the goal was no trivially
+    extractable static artifact. The API Keys dialogs show password-masked
+    fields only.
+- DeepSeek model lineup (checked against the pricing page 2026-09-10):
+  `deepseek-flash` (= V4.1-Flash, DeepSeek's own current default — cheaper
+  AND better than v4-pro per their page; 1M ctx) is the default for BOTH
+  `llm.model` and `llm.fast_model`; `deepseek-v4-pro` stays selectable but
+  auto-routes to Flash at Flash pricing from 2026-09-14. The retired names
+  `deepseek-v4-flash` / `-vision-exp` (and V3-era `deepseek-chat` /
+  `-reasoner`) are remapped by `from_file` per provider (custom providers
+  are NEVER remapped — they may legitimately serve those names). OpenRouter
+  slugs differ: `deepseek/deepseek-v4.1-flash` (versioned! a bare
+  `deepseek/deepseek-flash` does NOT exist there) — `DeepSeekClient`
+  maps bare direct names to OR slugs instead of blind-prefixing.
 - Adding a tool: register schema+handler in `tools.py`, classify it in the
   centralized policy sets there (`READ_ONLY_TOOL_NAMES` can run concurrently /
   `CONFIRMATION_TOOL_NAMES` need approval), include it in context routing, and

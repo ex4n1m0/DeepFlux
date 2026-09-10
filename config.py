@@ -1,6 +1,8 @@
 """Configuration loading and defaults for Deeptorrent."""
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -29,12 +31,54 @@ logger = logging.getLogger(__name__)
 # shared key (DeepSeek additionally gated on the deepseek provider). Jackett
 # stays env-only by decision. All other key fields still default to empty and
 # the user enters their own (GUI settings dialogs or config.json).
+#
+# Since 3.5.9 the values in _embedded_keys.py are OBFUSCATED, never plaintext:
+# each is a (salt_b64, blob_b64) pair where blob = key XOR sha256(salt+counter)
+# keystream. That is obfuscation, not cryptography — the goal is that no key
+# exists as a plaintext constant anywhere in the repo, the frozen PYZ or the
+# installer, so a pyinstxtractor + constants dump comes up empty. Regenerate
+# the file with ``python packaging/gen_embedded_keys.py``. Additionally,
+# from_file remembers which config slots it filled with a shared key and
+# to_file()/sanitized_dict() blank those slots again — the shared keys must
+# never be persisted to config.json or a settings backup; they are re-injected
+# from the bundle on every load instead.
+def _decode_shared_value(raw: object) -> str:
+    if isinstance(raw, str):  # legacy plaintext form (pre-3.5.9 file)
+        return raw
+    if not isinstance(raw, tuple) or len(raw) != 2:
+        return ""
+    try:
+        salt = base64.b64decode(raw[0], validate=True)
+        blob = base64.b64decode(raw[1], validate=True)
+    except Exception:
+        return ""
+    pad = bytearray()
+    counter = 0
+    while len(pad) < len(blob):
+        pad.extend(hashlib.sha256(salt + counter.to_bytes(4, "big")).digest())
+        counter += 1
+    value = bytes(b ^ p for b, p in zip(blob, bytes(pad))).decode("utf-8", "replace")
+    # Fail closed: a wrong/tampered pair decodes to non-printable garbage.
+    return value if value and all(32 <= ord(c) < 127 for c in value) else ""
+
+
 def _load_shared_key(attr: str) -> str:
     try:
         import _embedded_keys  # local-only, gitignored
-        return getattr(_embedded_keys, attr, "") or ""
+        return _decode_shared_value(getattr(_embedded_keys, attr, ""))
     except Exception:
         return ""
+
+
+# Config slots (dotted path) that from_file filled with a SHARED key value in
+# this process. to_file()/sanitized_dict() blank them again unless the user
+# has since typed a different key into the slot (value mismatch = user-owned).
+_SHARED_KEY_SLOTS: Dict[str, str] = {}
+
+
+def _remember_shared_slot(path: str, value: str, shared: str) -> None:
+    if shared and value == shared:
+        _SHARED_KEY_SLOTS[path] = value
 
 
 _SHARED_DEEPSEEK_API_KEY = _load_shared_key("SHARED_DEEPSEEK_API_KEY")
@@ -54,7 +98,7 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     "deepseek": {
         "label": "DeepSeek API (direct)",
         "base_url": "https://api.deepseek.com",
-        "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        "models": ["deepseek-flash", "deepseek-v4-pro"],
         "reasoning_effort": True,
         "effort_map": {},
         "streaming": True,
@@ -65,7 +109,7 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     "openrouter": {
         "label": "DeepSeek via OpenRouter",
         "base_url": "https://openrouter.ai/api/v1",
-        "models": ["deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-flash"],
+        "models": ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-pro"],
         "reasoning_effort": True,
         "effort_map": {"max": "xhigh"},
         "streaming": True,
@@ -91,10 +135,14 @@ class LLMConfig:
     provider: str = "deepseek"  # deepseek (direct API) or openrouter
     api_key: str = ""
     base_url: str = ""
-    model: str = "deepseek-v4-pro"       # main agent model — locked to DeepSeek
+    # Model lineup per DeepSeek's pricing page (2026-09): deepseek-flash is
+    # V4.1-Flash — DeepSeek's own current default, surpassing the retiring
+    # deepseek-v4-pro in performance, cost and speed (v4-pro requests are
+    # auto-routed to Flash from 2026-09-14). Both slots default to flash.
+    model: str = "deepseek-flash"        # main agent model — locked to DeepSeek
     reasoning_effort: str = "high"       # planning turns; summaries always use "low"
     custom_reasoning_effort: bool = False
-    fast_model: str = "deepseek-v4-flash"  # summaries/quick replies
+    fast_model: str = "deepseek-flash"   # summaries/quick replies
     max_turns: int = 40             # ReAct loop cap per user message; the loop self-terminates when the model stops calling tools
     max_llm_calls: int = 50
     max_tool_calls: int = 100
@@ -686,6 +734,27 @@ class DeeptorrentConfig:
             except Exception as exc:
                 logger.warning("Failed to load config from %s: %s", path, exc)
 
+        # Builds before 3.5.9 persisted the shared keys into config.json
+        # (to_file serialized what from_file had injected). Forget any saved
+        # value that IS a current shared key: the slots below re-inject it in
+        # memory, and the next save scrubs the file for good. A genuinely
+        # user-typed key never matches and is kept.
+        for _path, _shared in (
+            (("llm", "api_key"), _SHARED_DEEPSEEK_API_KEY),
+            (("web_search", "api_key"), _SHARED_PERPLEXITY_API_KEY),
+            (("iptv", "tmdb_api_key"), _SHARED_TMDB_API_KEY),
+            (("iptv", "opensubtitles_api_key"), _SHARED_OPENSUBTITLES_API_KEY),
+            (("iptv", "tpdb_api_key"), _SHARED_TPDB_API_KEY),
+            (("iptv", "stashdb_api_key"), _SHARED_STASHDB_API_KEY),
+            (("iptv", "omdb_api_key"), _SHARED_OMDB_API_KEY),
+            (("iptv", "fanarttv_api_key"), _SHARED_FANARTTV_API_KEY),
+        ):
+            _node: Any = data
+            for _key in _path[:-1]:
+                _node = _node.get(_key, {}) if isinstance(_node, dict) else {}
+            if _shared and isinstance(_node, dict) and _node.get(_path[-1]) == _shared:
+                _node[_path[-1]] = ""
+
         # Environment variables fill in secrets only when the config file
         # doesn't already set them — a saved GUI edit must never be clobbered
         # by a machine-level env var on every launch.
@@ -697,6 +766,7 @@ class DeeptorrentConfig:
                 and data.get("llm", {}).get("provider", "deepseek") in ("", "deepseek")):
             data.setdefault("llm", {})["api_key"] = (
                 os.environ.get("DEEPSEEK_API_KEY") or _SHARED_DEEPSEEK_API_KEY)
+            _remember_shared_slot("llm.api_key", data["llm"]["api_key"], _SHARED_DEEPSEEK_API_KEY)
         if not data.get("indexer", {}).get("api_key") and os.environ.get("JACKETT_API_KEY"):
             data.setdefault("indexer", {})["api_key"] = os.environ["JACKETT_API_KEY"]
         if not data.get("web_search", {}).get("brave_api_key") and os.environ.get("BRAVE_API_KEY"):
@@ -708,24 +778,31 @@ class DeeptorrentConfig:
         if not data.get("web_search", {}).get("api_key"):
             data.setdefault("web_search", {})["api_key"] = (
                 os.environ.get("PERPLEXITY_API_KEY") or _SHARED_PERPLEXITY_API_KEY)
+            _remember_shared_slot("web_search.api_key", data["web_search"]["api_key"], _SHARED_PERPLEXITY_API_KEY)
         if not data.get("iptv", {}).get("tmdb_api_key"):
             data.setdefault("iptv", {})["tmdb_api_key"] = (
                 os.environ.get("TMDB_API_KEY") or _SHARED_TMDB_API_KEY)
+            _remember_shared_slot("iptv.tmdb_api_key", data["iptv"]["tmdb_api_key"], _SHARED_TMDB_API_KEY)
         if not data.get("iptv", {}).get("opensubtitles_api_key"):
             data.setdefault("iptv", {})["opensubtitles_api_key"] = (
                 os.environ.get("OPENSUBTITLES_API_KEY") or _SHARED_OPENSUBTITLES_API_KEY)
+            _remember_shared_slot("iptv.opensubtitles_api_key", data["iptv"]["opensubtitles_api_key"], _SHARED_OPENSUBTITLES_API_KEY)
         if not data.get("iptv", {}).get("tpdb_api_key"):
             data.setdefault("iptv", {})["tpdb_api_key"] = (
                 os.environ.get("TPDB_API_KEY") or _SHARED_TPDB_API_KEY)
+            _remember_shared_slot("iptv.tpdb_api_key", data["iptv"]["tpdb_api_key"], _SHARED_TPDB_API_KEY)
         if not data.get("iptv", {}).get("stashdb_api_key"):
             data.setdefault("iptv", {})["stashdb_api_key"] = (
                 os.environ.get("STASHDB_API_KEY") or _SHARED_STASHDB_API_KEY)
+            _remember_shared_slot("iptv.stashdb_api_key", data["iptv"]["stashdb_api_key"], _SHARED_STASHDB_API_KEY)
         if not data.get("iptv", {}).get("omdb_api_key"):
             data.setdefault("iptv", {})["omdb_api_key"] = (
                 os.environ.get("OMDB_API_KEY") or _SHARED_OMDB_API_KEY)
+            _remember_shared_slot("iptv.omdb_api_key", data["iptv"]["omdb_api_key"], _SHARED_OMDB_API_KEY)
         if not data.get("iptv", {}).get("fanarttv_api_key"):
             data.setdefault("iptv", {})["fanarttv_api_key"] = (
                 os.environ.get("FANARTTV_API_KEY") or _SHARED_FANARTTV_API_KEY)
+            _remember_shared_slot("iptv.fanarttv_api_key", data["iptv"]["fanarttv_api_key"], _SHARED_FANARTTV_API_KEY)
 
         # No OTHER built-in API keys: everything still empty here stays empty
         # (Jackett and Brave are env-only by decision). The GUI/CLI notice a
@@ -872,6 +949,31 @@ class DeeptorrentConfig:
         # toggle them anymore) — normalize stale configs that saved them off.
         llm_clean["stream"] = True
         llm_clean["memory_enabled"] = True
+
+        # Migration (2026-09, DeepSeek V4.1): the direct API renamed its lineup —
+        # deepseek-flash (V4.1-Flash) replaces the retired deepseek-v4-flash /
+        # -vision-exp aliases, and the V3-era deepseek-chat / -reasoner names
+        # are gone from the lineup. Remap saved configs per provider (custom
+        # endpoints can legitimately serve models with these exact names, so
+        # they are never touched). deepseek-v4-pro stays a valid, auto-routed
+        # name and is left alone.
+        _provider_now = llm_clean.get("provider", "deepseek")
+        _direct_aliases = {
+            "deepseek-v4-flash": "deepseek-flash",
+            "deepseek-v4-flash-vision-exp": "deepseek-flash",
+            "deepseek-chat": "deepseek-flash",
+            "deepseek-reasoner": "deepseek-flash",
+        }
+        _openrouter_aliases = {
+            "deepseek/deepseek-v4-flash": "deepseek/deepseek-v4.1-flash",
+            "deepseek/deepseek-v4-flash-vision-exp": "deepseek/deepseek-v4.1-flash",
+        }
+        for _field in ("model", "fast_model"):
+            _saved = llm_clean.get(_field)
+            if _provider_now == "deepseek" and _saved in _direct_aliases:
+                llm_clean[_field] = _direct_aliases[_saved]
+            elif _provider_now == "openrouter" and _saved in _openrouter_aliases:
+                llm_clean[_field] = _openrouter_aliases[_saved]
 
         # Migration: a switch to OpenRouter/custom keeps the DeepSeek fast-model
         # default, which may not exist there — clear it so summary
@@ -1026,10 +1128,29 @@ class DeeptorrentConfig:
             ui_agent_debug=True,  # assumed always-on (no UI toggle anymore)
         )
 
+    def sanitized_dict(self) -> Dict[str, Any]:
+        """asdict() with process-injected shared keys blanked.
+
+        The shared in-box keys are re-injected by from_file on every load, so
+        they must never be persisted (config.json, settings backups) — that
+        would drop a plaintext copy of them on every installed machine. A slot
+        whose value no longer matches the injected one carries a user-typed
+        key and is kept.
+        """
+        data = asdict(self)
+        for path, value in _SHARED_KEY_SLOTS.items():
+            node: Any = data
+            keys = path.split(".")
+            for key in keys[:-1]:
+                node = node.get(key, {}) if isinstance(node, dict) else {}
+            if isinstance(node, dict) and node.get(keys[-1]) == value:
+                node[keys[-1]] = ""
+        return data
+
     def to_file(self, path: str) -> None:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(asdict(self), f, indent=2)
+            json.dump(self.sanitized_dict(), f, indent=2)
 
     def default_config_path() -> str:
         return str(Path.home() / ".deeptorrent" / "config.json")

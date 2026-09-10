@@ -95,11 +95,11 @@ def test_per_call_model_and_effort_override(mock_post):
     mock_post.return_value = _ok_response(_chat_payload())
     _client().chat(
         [{"role": "user", "content": "hi"}],
-        model="deepseek-v4-flash",
+        model="deepseek-flash",
         effort="low",
     )
     payload = mock_post.call_args.kwargs["json"]
-    assert payload["model"] == "deepseek-v4-flash"
+    assert payload["model"] == "deepseek-flash"
     assert payload["reasoning_effort"] == "low"
     assert "stream" not in payload  # non-streaming without on_delta
 
@@ -146,7 +146,7 @@ def test_openrouter_sends_reasoning_effort_normalized(mock_post):
     url = mock_post.call_args.args[0]
     payload = mock_post.call_args.kwargs["json"]
     assert url == "https://openrouter.ai/api/v1/chat/completions"
-    assert payload["model"] == "deepseek/deepseek-v4-pro"
+    assert payload["model"] == "deepseek/deepseek-v4.1-flash"
     assert payload["reasoning_effort"] == "low"  # OpenRouter supports this natively
 
 @patch("agent.llm.requests.post")

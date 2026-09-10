@@ -1014,7 +1014,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.5.8 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.5.9 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -5392,9 +5392,11 @@ class MainWindow(QMainWindow):
         if pw is None:
             return
         try:
-            import dataclasses
+            # sanitized_dict: the shared in-box keys are re-injected from the
+            # bundle on load — a backup file must not carry them out of the
+            # app (they'd survive as plaintext once restored to config.json).
             payload = json.dumps(
-                dataclasses.asdict(self.config), ensure_ascii=False).encode("utf-8")
+                self.config.sanitized_dict(), ensure_ascii=False).encode("utf-8")
             Path(path).write_bytes(encrypt_settings(payload, pw))
         except OSError as exc:
             QMessageBox.warning(self, "Export Settings",

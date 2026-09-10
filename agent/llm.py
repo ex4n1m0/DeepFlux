@@ -82,12 +82,17 @@ class DeepSeekClient(LLMClient):
         if self.provider == "custom" and not config.base_url.strip():
             raise ValueError("Custom LLM provider requires a base URL")
         self.base_url = (config.base_url or preset.get("base_url") or "https://api.deepseek.com").rstrip("/")
-        model = config.model or (preset_models[0] if preset_models else "deepseek-v4-pro")
-        # OpenRouter needs vendor-prefixed model slugs (deepseek/deepseek-v4-pro).
-        # The config stores bare names — normalise here so switching endpoints
-        # Just Works without the user needing to know about OR's naming convention.
+        model = config.model or (preset_models[0] if preset_models else "deepseek-flash")
+        # OpenRouter needs vendor-prefixed model slugs. The config stores bare
+        # DeepSeek names — normalise here so switching endpoints Just Works.
+        # The V4.1-Flash slug is versioned on OpenRouter, so a bare name is
+        # never prefixed blindly (deepseek/deepseek-flash does not exist).
+        _openrouter_slugs = {
+            "deepseek-flash": "deepseek/deepseek-v4.1-flash",
+            "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
+        }
         if self.provider == "openrouter" and "/" not in model:
-            model = f"deepseek/{model}"
+            model = _openrouter_slugs.get(model) or f"deepseek/{model}"
         self.model = model
         self.reasoning_effort = config.reasoning_effort or "high"
         self.send_reasoning_effort = bool(

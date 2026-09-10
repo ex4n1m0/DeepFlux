@@ -97,7 +97,7 @@ def test_add_magnet_confirmation(mock_engine):
     assert r2["content"].startswith("- Executed")
     mock_engine.add_magnet.assert_called_once()
     # The post-execution summary runs on the fast model with low effort.
-    assert any(c["effort"] == "low" and c["model"] == "deepseek-v4-flash" for c in llm.calls)
+    assert any(c["effort"] == "low" and c["model"] == "deepseek-flash" for c in llm.calls)
 
 
 def test_pause_over_50gb(mock_engine):

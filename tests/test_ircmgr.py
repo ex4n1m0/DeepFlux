@@ -745,7 +745,9 @@ class TestIRCClientCore:
 
         def _joined() -> Optional[str]:
             texts = " | ".join(m["text"] for m in client.get_messages("test", limit=50))
-            return texts if "End of /WHOIS list." in texts else None
+            # Gate on the LAST line sent: waiting for 318 alone races the
+            # trailing 306/305 acks (snapshot taken before they land).
+            return texts if "You are no longer marked as being away" in texts else None
 
         assert _wait_for(lambda: _joined() is not None)
         texts = _joined()
