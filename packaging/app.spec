@@ -183,6 +183,11 @@ a = Analysis(
         "infra",
         "infra.file_associations",
         "config",
+        # Local-only build secret (see AGENTS.md): bundle the untracked
+        # shared-key module when it exists on this machine — the setup exe
+        # ships the key, the git tree never does. Fresh clones without the
+        # file simply build keyless.
+        *(["_embedded_keys"] if os.path.exists(os.path.join(project_root, "_embedded_keys.py")) else []),
         "libtorrent",
         "PySide6",
         "PySide6.QtCore",
