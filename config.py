@@ -98,7 +98,7 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     "deepseek": {
         "label": "DeepSeek API (direct)",
         "base_url": "https://api.deepseek.com",
-        "models": ["deepseek-flash", "deepseek-v4-pro"],
+        "models": ["deepseek-flash"],
         "reasoning_effort": True,
         "effort_map": {},
         "streaming": True,
@@ -109,7 +109,7 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
     "openrouter": {
         "label": "DeepSeek via OpenRouter",
         "base_url": "https://openrouter.ai/api/v1",
-        "models": ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-pro"],
+        "models": ["deepseek/deepseek-v4.1-flash"],
         "reasoning_effort": True,
         "effort_map": {"max": "xhigh"},
         "streaming": True,
@@ -952,21 +952,25 @@ class DeeptorrentConfig:
 
         # Migration (2026-09, DeepSeek V4.1): the direct API renamed its lineup —
         # deepseek-flash (V4.1-Flash) replaces the retired deepseek-v4-flash /
-        # -vision-exp aliases, and the V3-era deepseek-chat / -reasoner names
-        # are gone from the lineup. Remap saved configs per provider (custom
-        # endpoints can legitimately serve models with these exact names, so
-        # they are never touched). deepseek-v4-pro stays a valid, auto-routed
-        # name and is left alone.
+        # -vision-exp aliases and the V3-era deepseek-chat / -reasoner names.
+        # deepseek-v4-pro is ALSO migrated: DeepSeek's pricing page says Flash
+        # surpasses it in performance/cost/speed and auto-routes v4-pro to
+        # Flash from 2026-09-14, so configs saved on the old preset default
+        # (written by <=3.5.8 settings saves) move to Flash now instead of
+        # showing/being billed as the outgoing model. Custom endpoints are
+        # never remapped — they may legitimately serve these exact names.
         _provider_now = llm_clean.get("provider", "deepseek")
         _direct_aliases = {
             "deepseek-v4-flash": "deepseek-flash",
             "deepseek-v4-flash-vision-exp": "deepseek-flash",
             "deepseek-chat": "deepseek-flash",
             "deepseek-reasoner": "deepseek-flash",
+            "deepseek-v4-pro": "deepseek-flash",
         }
         _openrouter_aliases = {
             "deepseek/deepseek-v4-flash": "deepseek/deepseek-v4.1-flash",
             "deepseek/deepseek-v4-flash-vision-exp": "deepseek/deepseek-v4.1-flash",
+            "deepseek/deepseek-v4-pro": "deepseek/deepseek-v4.1-flash",
         }
         for _field in ("model", "fast_model"):
             _saved = llm_clean.get(_field)

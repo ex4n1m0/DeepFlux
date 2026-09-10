@@ -163,25 +163,22 @@ def test_model_defaults_are_current():
     ("deepseek", "deepseek-v4-flash-vision-exp", "deepseek-flash"),
     ("deepseek", "deepseek-chat", "deepseek-flash"),
     ("deepseek", "deepseek-reasoner", "deepseek-flash"),
-    ("deepseek", "deepseek-v4-pro", "deepseek-v4-pro"),      # still valid
-    ("deepseek", "some-custom-name", "some-custom-name"),    # unknown -> kept
+    ("deepseek", "deepseek-v4-pro", "deepseek-flash"),   # old preset default, retired
+    ("deepseek", "some-custom-name", "some-custom-name"),  # unknown -> kept
     ("openrouter", "deepseek/deepseek-v4-flash", "deepseek/deepseek-v4.1-flash"),
-    ("openrouter", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4-pro"),
-    ("custom", "deepseek-chat", "deepseek-chat"),            # custom never remapped
+    ("openrouter", "deepseek/deepseek-v4-pro", "deepseek/deepseek-v4.1-flash"),
+    ("custom", "deepseek-chat", "deepseek-chat"),        # custom never remapped
 ])
 def test_model_alias_migration(tmp_path, provider, saved, expected):
     path = str(tmp_path / "config.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"llm": {"provider": provider, "model": saved, "fast_model": saved}}, f)
     cfg = DeeptorrentConfig.from_file(path)
-    if provider == "custom":
-        assert cfg.llm.model == expected
-    else:
-        assert cfg.llm.model == expected
-        # fast_model follows the same remap, except the stale-direct-name
-        # clear on openrouter (handled separately below)
-        if not (provider == "openrouter" and expected == "deepseek-flash"):
-            assert cfg.llm.fast_model == expected
+    assert cfg.llm.model == expected
+    # fast_model follows the same remap when the result is valid where used
+    # (a stale DIRECT-preset name on openrouter is cleared instead — below).
+    if not (provider == "openrouter" and expected == "deepseek-flash"):
+        assert cfg.llm.fast_model == expected
 
 
 def test_openrouter_stale_direct_fast_model_cleared(tmp_path):

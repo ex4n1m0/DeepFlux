@@ -250,13 +250,14 @@
     `config.json.bak-stalekey`).
 - DeepSeek model lineup (checked against the pricing page 2026-09-10):
   `deepseek-flash` (= V4.1-Flash, DeepSeek's own current default — cheaper
-  AND better than v4-pro per their page; 1M ctx) is the default for BOTH
-  `llm.model` and `llm.fast_model`; `deepseek-v4-pro` stays selectable but
-  auto-routes to Flash at Flash pricing from 2026-09-14. The retired names
-  `deepseek-v4-flash` / `-vision-exp` (and V3-era `deepseek-chat` /
-  `-reasoner`) are remapped by `from_file` per provider (custom providers
-  are NEVER remapped — they may legitimately serve those names). OpenRouter
-  slugs differ: `deepseek/deepseek-v4.1-flash` (versioned! a bare
+  AND better than v4-pro per their page; 1M ctx) is the ONLY preset model
+  and the default for BOTH `llm.model` and `llm.fast_model`. `deepseek-v4-pro`
+  is outgoing (auto-routes to Flash at Flash pricing from 2026-09-14) —
+  SAVED configs carrying it (or the retired `deepseek-v4-flash` /
+  `-vision-exp` / V3-era `deepseek-chat` / `-reasoner`) are remapped by
+  `from_file` to flash per provider (custom providers are NEVER remapped —
+  they may legitimately serve those names). OpenRouter slugs differ:
+  `deepseek/deepseek-v4.1-flash` (versioned! a bare
   `deepseek/deepseek-flash` does NOT exist there) — `DeepSeekClient`
   maps bare direct names to OR slugs instead of blind-prefixing.
 - Adding a tool: register schema+handler in `tools.py`, classify it in the
