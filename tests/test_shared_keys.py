@@ -191,3 +191,20 @@ def test_openrouter_stale_direct_fast_model_cleared(tmp_path):
                            "fast_model": "deepseek-flash"}}, f)
     cfg = DeeptorrentConfig.from_file(path)
     assert cfg.llm.fast_model == ""
+
+
+def test_bundle_walker_descends_into_tuple_constants():
+    """The obfuscated (salt, blob) pairs are TUPLE constants in the pyc — the
+    release-gate walker must yield strings inside tuples or it would miss a
+    key hidden there (blind spot found while verifying the 3.5.9 build)."""
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "_vb", Path(__file__).resolve().parents[1] / "packaging" / "verify_bundle_keys.py")
+    vb = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(vb)
+    code = compile("PAIR = ('sk-hidden-inside-a-tuple-constant-12345', 'benign')", "<t>", "exec")
+    strings = list(vb._walk_code_strings(code))
+    assert any("sk-hidden-inside-a-tuple-constant-12345" in s for s in strings)
+    hit = vb._match_markers("<t>", " ".join(strings), [])
+    assert hit and hit[0] == "REVIEW"

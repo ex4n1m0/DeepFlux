@@ -241,6 +241,13 @@
     impossible to prevent for an embedded key; the goal was no trivially
     extractable static artifact. The API Keys dialogs show password-masked
     fields only.
+  * Rotation gotcha: the load-time scrub matches only CURRENT shared
+    values, so a rotated-out key saved into a config.json by a ≤3.5.8
+    build keeps winning (saved keys beat the shared fallback) and the
+    agent 401s. End users are covered (the installer deletes config.json
+    every install); a dev machine needs the stale `llm.api_key` cleared
+    once by hand (done on this machine 2026-09-10, backup at
+    `config.json.bak-stalekey`).
 - DeepSeek model lineup (checked against the pricing page 2026-09-10):
   `deepseek-flash` (= V4.1-Flash, DeepSeek's own current default — cheaper
   AND better than v4-pro per their page; 1M ctx) is the default for BOTH

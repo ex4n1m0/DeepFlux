@@ -106,13 +106,18 @@ def _walk_code_strings(code, stack: list | None = None):
     stack = stack or [code]
     while stack:
         obj = stack.pop()
+        if isinstance(obj, str):
+            yield obj
+            continue
+        if isinstance(obj, (tuple, frozenset, list)):
+            # Tuple constants: obfuscated (salt, blob) pairs — and any key
+            # hidden inside a tuple/list constant must be walked too.
+            stack.extend(obj)
+            continue
         if not hasattr(obj, "co_consts"):
             continue
         for const in obj.co_consts:
-            if isinstance(const, str):
-                yield const
-            elif hasattr(const, "co_consts"):
-                stack.append(const)
+            stack.append(const)
 
 
 def _match_markers(name: str, s: str, markers: list[bytes]) -> tuple[str, str] | None:
