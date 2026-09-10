@@ -32,7 +32,7 @@ HELP_HTML = r"""
   p { margin: 4px 0; }
   ul { margin: 4px 0; padding-left: 20px; }
   li { margin: 2px 0; }
-  code { color: #86e3ff; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
+  code { color: #a8edff; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
   table { border-collapse: collapse; width: 100%; margin: 6px 0; }
   th { color: #2a7abf; text-align: left; border-bottom: 3px solid #1a2a4a; padding: 4px 6px; }
   td { border-bottom: 3px solid #111827; padding: 4px 6px; }

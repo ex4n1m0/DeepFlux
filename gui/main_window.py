@@ -210,7 +210,7 @@ p { padding: 2px 4px; }
     padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 .msg-agent {
-    border-left: 3px solid #86e3ff;
+    border-left: 3px solid #a8edff;
     padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 .msg-event {
@@ -724,7 +724,7 @@ class _TabMenuBar(QMenuBar):
     cursor has left the popup/submenus and the bar for ~450ms."""
 
     # Active-tab box (see paintEvent) — turquoise against the blue accent.
-    _ACTIVE_COLOR = QColor("#86e3ff")
+    _ACTIVE_COLOR = QColor("#a8edff")
     _ACTIVE_FILL = QColor(46, 230, 200, 34)
     _ACTIVE_BG = QColor("#0d1117")  # matches the QMenuBar background
 

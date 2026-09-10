@@ -902,7 +902,7 @@ class APIKeysDialog(QDialog):
             self.jkt_test_result.setStyleSheet("color: #ff3366;")
         elif root.tag == "caps":
             self.jkt_test_result.setText("Connection successful! Fetching indexer list…")
-            self.jkt_test_result.setStyleSheet("color: #86e3ff;")
+            self.jkt_test_result.setStyleSheet("color: #a8edff;")
             # Fetch with the TYPED (not yet saved) key via a probe config, so
             # cancelling the dialog leaves the saved key untouched. The fetched
             # sources land in the live config either way — same as the Fetch
@@ -946,7 +946,7 @@ class APIKeysDialog(QDialog):
         self.jkt_test_result.setText(
             f"Connection successful! Synced {len(outcome)} indexer(s) from Jackett ({enabled} enabled)."
         )
-        self.jkt_test_result.setStyleSheet("color: #86e3ff;")
+        self.jkt_test_result.setStyleSheet("color: #a8edff;")
 
     def _load_values(self) -> None:
         provider = self.config.llm.provider

@@ -294,7 +294,7 @@ class PlayerWidget(QWidget):
         self.time_lbl.setStyleSheet("color: #ffffff;")
         ctrl.addWidget(self.time_lbl)
 
-        self.mute_btn = QPushButton("�" if self._config.iptv.muted else "�🔊")
+        self.mute_btn = QPushButton("🔇" if self._config.iptv.muted else "🔊")
         self.mute_btn.setToolTip("Mute (M)")
         self.mute_btn.clicked.connect(self._toggle_mute)
         ctrl.addWidget(self.mute_btn)
