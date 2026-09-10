@@ -105,7 +105,7 @@ def _redact_url(url: str) -> str:
 
 _STATUS_COLORS = {
     JobStatus.QUEUED: "#ffcc00",
-    JobStatus.DOWNLOADING: "#00ff9d",
+    JobStatus.DOWNLOADING: "#4dd2ff",
     JobStatus.PROCESSING: "#c084fc",
     JobStatus.PAUSED: "#8a9ab0",
     JobStatus.COMPLETED: "#2a7abf",
@@ -497,7 +497,7 @@ class DownloadsTab(QWidget):
         details_layout.setContentsMargins(6, 2, 6, 4)
         details_layout.setSpacing(2)
         self.details_label = QLabel("Select a download to see segment details.")
-        self.details_label.setStyleSheet("color: #8a9ab0; font-size: 11px;")
+        self.details_label.setStyleSheet("color: #8a9ab0; font-size: 17px;")
         details_layout.addWidget(self.details_label)
 
         self.segment_table = QTableWidget()

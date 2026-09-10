@@ -537,11 +537,11 @@ BROWSER_EXTENSION_JS = r"""
       'z-index: 2147483647',
       'background: linear-gradient(135deg, #011d3e, #001431)',
       'color: #2a7abf',
-      'border: 1px solid #2a7abf',
+      'border: 3px solid #2a7abf',
       'border-radius: 5px',
       'padding: 4px 7px',
       'font-family: Segoe UI, Arial, sans-serif',
-      'font-size: 7px',
+      'font-size: 11px',
       'font-weight: 600',
       'cursor: pointer',
       'box-shadow: 0 2px 6px rgba(42, 122, 191, 0.3)',
@@ -624,7 +624,7 @@ BROWSER_EXTENSION_JS = r"""
       color = '#00e5ff';
       label = 'DeepFlux: watching for videos';
     } else {
-      color = '#00ff9d';
+      color = '#4dd2ff';
       // Clear call-to-action when videos are available.
       label = '⬇ Download ' + detectedVideos.length + ' video' + (detectedVideos.length > 1 ? 's' : '') + ' — click here';
     }
@@ -644,8 +644,8 @@ BROWSER_EXTENSION_JS = r"""
     // infinite box-shadow keyframe animation forces continuous compositor
     // repaints, which showed up as visible flashing during YouTube playback.
     if (detectedVideos.length > 0 && apiConnected) {
-      statusBadge.style.borderColor = '#00ff9d';
-      statusBadge.style.color = '#00ff9d';
+      statusBadge.style.borderColor = '#4dd2ff';
+      statusBadge.style.color = '#4dd2ff';
       statusBadge.style.animation = '';
     } else if (apiConnected === false) {
       statusBadge.style.borderColor = '#ff4444';
@@ -768,7 +768,7 @@ BROWSER_EXTENSION_JS = r"""
       'right: 20px',
       'z-index: 2147483647',
       'background: #0a0a0f',
-      'border: 1px solid #1a2a4a',
+      'border: 3px solid #1a2a4a',
       'border-radius: 10px',
       'padding: 8px',
       'min-width: 280px',
@@ -783,17 +783,17 @@ BROWSER_EXTENSION_JS = r"""
 
     var title = document.createElement('div');
     title.textContent = 'Download with DeepFlux';
-    title.style.cssText = 'color: #00e5ff; font-size: 13px; font-weight: 700; padding: 6px 10px; border-bottom: 1px solid #1a2a4a; margin-bottom: 4px;';
+    title.style.cssText = 'color: #00e5ff; font-size: 20px; font-weight: 700; padding: 6px 10px; border-bottom: 3px solid #1a2a4a; margin-bottom: 4px;';
     menu.appendChild(title);
 
     if (apiConnected === false) {
       var offline = document.createElement('div');
       offline.textContent = 'DeepFlux app is not running. Start the desktop app to enable downloads.';
-      offline.style.cssText = 'color: #ff8888; font-size: 12px; padding: 10px; line-height: 1.4;';
+      offline.style.cssText = 'color: #ff8888; font-size: 18px; padding: 10px; line-height: 1.4;';
       menu.appendChild(offline);
     } else if (detectedVideos.length === 0) {
       var empty = document.createElement('div');
-      empty.style.cssText = 'color: #8a9aaa; font-size: 12px; padding: 10px; line-height: 1.5;';
+      empty.style.cssText = 'color: #8a9aaa; font-size: 18px; padding: 10px; line-height: 1.5;';
       // Use DOM nodes instead of innerHTML — YouTube enforces Trusted Types CSP.
       empty.appendChild(document.createTextNode('No downloadable videos detected on this page yet.'));
       empty.appendChild(document.createElement('br'));
@@ -807,7 +807,7 @@ BROWSER_EXTENSION_JS = r"""
       // Manual URL entry option.
       var manualLabel = document.createElement('div');
       manualLabel.textContent = 'Or paste a video URL manually:';
-      manualLabel.style.cssText = 'color: #c8d3e0; font-size: 12px; padding: 8px 10px 4px; border-top: 1px solid #1a2a4a; margin-top: 6px;';
+      manualLabel.style.cssText = 'color: #ffffff; font-size: 18px; padding: 8px 10px 4px; border-top: 3px solid #1a2a4a; margin-top: 6px;';
       menu.appendChild(manualLabel);
 
       var inputRow = document.createElement('div');
@@ -815,10 +815,10 @@ BROWSER_EXTENSION_JS = r"""
       var input = document.createElement('input');
       input.type = 'text';
       input.placeholder = 'https://.../video.m3u8';
-      input.style.cssText = 'flex: 1; background: #1a1a2a; border: 1px solid #2a3a5a; border-radius: 4px; padding: 6px 8px; color: #e0e0e0; font-size: 12px; outline: none;';
+      input.style.cssText = 'flex: 1; background: #1a1a2a; border: 3px solid #2a3a5a; border-radius: 4px; padding: 6px 8px; color: #e0e0e0; font-size: 18px; outline: none;';
       var submitBtn = document.createElement('button');
       submitBtn.textContent = 'Download';
-      submitBtn.style.cssText = 'background: #00e5ff; color: #001431; border: none; border-radius: 4px; padding: 6px 12px; font-size: 12px; font-weight: 600; cursor: pointer;';
+      submitBtn.style.cssText = 'background: #00e5ff; color: #001431; border: none; border-radius: 4px; padding: 6px 12px; font-size: 18px; font-weight: 600; cursor: pointer;';
       submitBtn.addEventListener('click', function() {
         var url = input.value.trim();
         if (url) {
@@ -842,9 +842,9 @@ BROWSER_EXTENSION_JS = r"""
         var item = document.createElement('div');
         item.textContent = (video.title || 'Video ' + (i + 1)) + ' [' + video.type.toUpperCase() + ']';
         // Wrap long titles across lines instead of truncating with ellipsis.
-        item.style.cssText = 'flex: 1; color: #c8d3e0; font-size: 13px; padding: 4px; cursor: pointer; white-space: normal; word-break: break-word; overflow-wrap: anywhere; line-height: 1.4;';
+        item.style.cssText = 'flex: 1; color: #ffffff; font-size: 20px; padding: 4px; cursor: pointer; white-space: normal; word-break: break-word; overflow-wrap: anywhere; line-height: 1.4;';
         item.addEventListener('mouseenter', function() { item.style.color = '#00e5ff'; });
-        item.addEventListener('mouseleave', function() { item.style.color = '#c8d3e0'; });
+        item.addEventListener('mouseleave', function() { item.style.color = '#ffffff'; });
         item.title = 'Download';
         item.addEventListener('click', function() {
           sendDownload(video.url, video.type, video.title);
@@ -855,7 +855,7 @@ BROWSER_EXTENSION_JS = r"""
         var playBtn = document.createElement('button');
         playBtn.textContent = '▶ Play';
         playBtn.title = 'Play in the DeepFlux player (mpv)';
-        playBtn.style.cssText = 'flex-shrink: 0; background: transparent; color: #00ff9d; border: 1px solid #00ff9d; border-radius: 4px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer;';
+        playBtn.style.cssText = 'flex-shrink: 0; background: transparent; color: #4dd2ff; border: 3px solid #4dd2ff; border-radius: 4px; padding: 4px 10px; font-size: 18px; font-weight: 600; cursor: pointer;';
         playBtn.addEventListener('click', function() {
           sendPlay(video.url, video.type, video.title);
           menu.remove();
@@ -868,7 +868,7 @@ BROWSER_EXTENSION_JS = r"""
 
     var closeBtn = document.createElement('div');
     closeBtn.textContent = 'Cancel';
-    closeBtn.style.cssText = 'color: #4a6a8a; font-size: 12px; padding: 6px 10px; text-align: center; cursor: pointer; margin-top: 4px; border-top: 1px solid #1a2a4a;';
+    closeBtn.style.cssText = 'color: #4a6a8a; font-size: 18px; padding: 6px 10px; text-align: center; cursor: pointer; margin-top: 4px; border-top: 3px solid #1a2a4a;';
     closeBtn.addEventListener('click', function() { menu.remove(); });
     menu.appendChild(closeBtn);
 
@@ -892,12 +892,12 @@ BROWSER_EXTENSION_JS = r"""
       'right: 20px',
       'z-index: 2147483647',
       'background: #0a0a0f',
-      'color: #00ff9d',
-      'border: 1px solid #00ff9d',
+      'color: #4dd2ff',
+      'border: 3px solid #4dd2ff',
       'border-radius: 8px',
       'padding: 10px 18px',
       'font-family: Segoe UI, Arial, sans-serif',
-      'font-size: 14px',
+      'font-size: 21px',
       'font-weight: 600',
       'box-shadow: 0 4px 12px rgba(0, 255, 157, 0.3)'
     ].join(';');

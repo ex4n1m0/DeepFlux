@@ -42,19 +42,19 @@ from config import BROWSER_SEARCH_ENGINES, DeeptorrentConfig, DownloadCategory, 
 logger = logging.getLogger(__name__)
 
 _SHARED_STYLE = """
-    QDialog { background-color: #0a0a0f; color: #c8d3e0; }
-    QLabel { color: #c8d3e0; }
-    QGroupBox { color: #c8d3e0; border: 1px solid #1a2a4a; border-radius: 4px; margin-top: 10px; padding-top: 8px; }
+    QDialog { background-color: #0a0a0f; color: #ffffff; }
+    QLabel { color: #ffffff; }
+    QGroupBox { color: #ffffff; border: 3px solid #1a2a4a; border-radius: 4px; margin-top: 10px; padding-top: 8px; }
     QGroupBox::title { color: #2a7abf; subcontrol-origin: margin; left: 10px; padding: 0 5px; font-weight: 600; }
-    QLineEdit, QSpinBox, QComboBox { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
-    QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border: 1px solid #2a7abf; }
-    QComboBox QAbstractItemView { background-color: #0d1117; color: #c8d3e0; selection-background-color: #1a2a4a; }
-    QCheckBox { color: #c8d3e0; }
-    QCheckBox::indicator { border: 1px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
+    QLineEdit, QSpinBox, QComboBox { background-color: #0d1117; color: #ffffff; border: 3px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
+    QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border: 3px solid #2a7abf; }
+    QComboBox QAbstractItemView { background-color: #0d1117; color: #ffffff; selection-background-color: #1a2a4a; }
+    QCheckBox { color: #ffffff; }
+    QCheckBox::indicator { border: 3px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
     QCheckBox::indicator:checked { background-color: #2a7abf; border-color: #2a7abf; }
-    QPushButton { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
-    QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #2a7abf; }
-    QLabel#hint { color: #4a6a8a; font-size: 11px; }
+    QPushButton { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
+    QPushButton:hover { background-color: #1a2a4a; border: 3px solid #2a7abf; color: #2a7abf; }
+    QLabel#hint { color: #4a6a8a; font-size: 17px; }
 """
 
 
@@ -902,7 +902,7 @@ class APIKeysDialog(QDialog):
             self.jkt_test_result.setStyleSheet("color: #ff3366;")
         elif root.tag == "caps":
             self.jkt_test_result.setText("Connection successful! Fetching indexer list…")
-            self.jkt_test_result.setStyleSheet("color: #00ff9d;")
+            self.jkt_test_result.setStyleSheet("color: #4dd2ff;")
             # Fetch with the TYPED (not yet saved) key via a probe config, so
             # cancelling the dialog leaves the saved key untouched. The fetched
             # sources land in the live config either way — same as the Fetch
@@ -946,7 +946,7 @@ class APIKeysDialog(QDialog):
         self.jkt_test_result.setText(
             f"Connection successful! Synced {len(outcome)} indexer(s) from Jackett ({enabled} enabled)."
         )
-        self.jkt_test_result.setStyleSheet("color: #00ff9d;")
+        self.jkt_test_result.setStyleSheet("color: #4dd2ff;")
 
     def _load_values(self) -> None:
         provider = self.config.llm.provider

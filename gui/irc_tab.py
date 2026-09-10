@@ -73,8 +73,8 @@ ROLE_NICK = Qt.ItemDataRole.UserRole + 3
 
 # Nick-color palette tuned for the app's dark theme.
 _NICK_COLORS = [
-    "#ff6e6e", "#ffa94d", "#ffd43b", "#8ce99a", "#63e6be", "#4dd2ff",
-    "#74c0fc", "#b197fc", "#f783ac", "#e9c46a", "#90e0ef", "#a9e34b",
+    "#ff6e6e", "#ffa94d", "#ffd43b", "#a5d8ff", "#15aabf", "#4dd2ff",
+    "#74c0fc", "#b197fc", "#f783ac", "#e9c46a", "#90e0ef", "#1971c2",
 ]
 _SELF_COLOR = "#2a6aaf"
 _MUTED_COLOR = "#5b6b7c"
@@ -663,7 +663,7 @@ class IRCTab(QWidget):
         if networks:
             connected = sum(1 for net in networks if self._client.is_connected(net.id))
             base = f"{connected}/{len(networks)} connected"
-            color = "#8ce99a" if connected else _MUTED_COLOR
+            color = "#4dd2ff" if connected else _MUTED_COLOR
         else:
             base = "no networks configured"
             color = _MUTED_COLOR
@@ -1528,7 +1528,7 @@ class IRCTab(QWidget):
         if item:
             dot = {"connected": "●", "connecting": "◌", "disconnected": "○",
                    "error": "✕"}.get(state, "○")
-            color = {"connected": "#8ce99a", "connecting": "#ffd43b",
+            color = {"connected": "#4dd2ff", "connecting": "#ffd43b",
                      "disconnected": "#5b6b7c", "error": "#ff6e6e"}.get(state, "#5b6b7c")
             base = f"{dot} {host}"
             item.setData(0, ROLE_BASE_LABEL, base)

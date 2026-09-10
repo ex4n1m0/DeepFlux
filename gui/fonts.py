@@ -35,7 +35,7 @@ _FONT_FILES = ("Inter.ttf", "JetBrainsMono.ttf")
 
 # UI point size chosen to match Segoe UI 9pt (the classic Windows default)
 # in x-height and average advance width.
-_UI_POINT_SIZE = 10
+_UI_POINT_SIZE = 15
 
 
 def _fonts_dir() -> Path:

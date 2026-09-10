@@ -44,21 +44,21 @@ class SourcesDialog(QDialog):
         self.setMinimumSize(560, 360)
         self.resize(700, 500)
         self.setStyleSheet("""
-            QDialog { background-color: #0a0a0f; color: #c8d3e0; }
-            QLabel { color: #c8d3e0; }
-            QTableWidget { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a; border-radius: 6px; gridline-color: #1a2a4a; }
+            QDialog { background-color: #0a0a0f; color: #ffffff; }
+            QLabel { color: #ffffff; }
+            QTableWidget { background-color: #0d1117; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; gridline-color: #1a2a4a; }
             QTableWidget::item { padding: 1px 4px; }
             QTableWidget::item:selected { background-color: #1a2a4a; color: #2a7abf; }
-            QHeaderView::section { background-color: #0a0a0f; color: #2a7abf; border: none; border-bottom: 1px solid #1a2a4a; padding: 2px 4px; font-weight: 600; }
-            QLineEdit { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
-            QLineEdit:focus { border: 1px solid #2a7abf; }
-            QCheckBox { color: #c8d3e0; }
-            QCheckBox::indicator { border: 1px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
+            QHeaderView::section { background-color: #0a0a0f; color: #2a7abf; border: none; border-bottom: 3px solid #1a2a4a; padding: 2px 4px; font-weight: 600; }
+            QLineEdit { background-color: #0d1117; color: #ffffff; border: 3px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
+            QLineEdit:focus { border: 3px solid #2a7abf; }
+            QCheckBox { color: #ffffff; }
+            QCheckBox::indicator { border: 3px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
             QCheckBox::indicator:checked { background-color: #2a7abf; border-color: #2a7abf; }
-            QPushButton { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
-            QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #2a7abf; }
+            QPushButton { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
+            QPushButton:hover { background-color: #1a2a4a; border: 3px solid #2a7abf; color: #2a7abf; }
             QPushButton:disabled { color: #4a6a8a; border-color: #1a2a4a; }
-            QLabel#hint { color: #4a6a8a; font-size: 11px; }
+            QLabel#hint { color: #4a6a8a; font-size: 17px; }
         """)
 
         self._build_ui()
@@ -69,7 +69,7 @@ class SourcesDialog(QDialog):
 
         # Header
         header = QLabel("Search Sources")
-        header.setStyleSheet("color: #2a7abf; font-size: 16px; font-weight: 600;")
+        header.setStyleSheet("color: #2a7abf; font-size: 24px; font-weight: 600;")
         layout.addWidget(header)
 
         hint = QLabel(

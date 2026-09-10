@@ -38,25 +38,25 @@ logger = logging.getLogger(__name__)
 _THUMB_W, _THUMB_H = 96, 54
 
 _STYLE = """
-    QDialog { background-color: #0a0a0f; color: #c8d3e0; }
-    QLabel { color: #c8d3e0; }
-    QListWidget { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a;
+    QDialog { background-color: #0a0a0f; color: #ffffff; }
+    QLabel { color: #ffffff; }
+    QListWidget { background-color: #0d1117; color: #ffffff; border: 3px solid #1a2a4a;
                   border-radius: 6px; selection-background-color: #1a2a4a; }
-    QLineEdit { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a;
+    QLineEdit { background-color: #0d1117; color: #ffffff; border: 3px solid #1a2a4a;
                 padding: 4px 8px; border-radius: 3px; }
-    QLineEdit:focus { border: 1px solid #2a7abf; }
-    QPushButton { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a;
+    QLineEdit:focus { border: 3px solid #2a7abf; }
+    QPushButton { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a;
                   padding: 4px 12px; border-radius: 3px; }
-    QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #2a7abf; }
+    QPushButton:hover { background-color: #1a2a4a; border: 3px solid #2a7abf; color: #2a7abf; }
     QPushButton:disabled { color: #4a5568; }
     QPushButton#btn_accent { color: #2a7abf; font-weight: 600; }
-    QCheckBox { color: #c8d3e0; }
+    QCheckBox { color: #ffffff; }
     QCheckBox::indicator { width: 14px; height: 14px; }
-    QSpinBox { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a;
+    QSpinBox { background-color: #0d1117; color: #ffffff; border: 3px solid #1a2a4a;
                padding: 2px 6px; border-radius: 3px; }
     QLabel#status { color: #7a8aa0; }
     QLabel#status_error { color: #ff3366; }
-    QLabel#hint { color: #5a6a80; font-size: 11px; }
+    QLabel#hint { color: #5a6a80; font-size: 17px; }
 """
 
 

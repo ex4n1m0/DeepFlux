@@ -291,7 +291,7 @@ class PlayerWidget(QWidget):
         ctrl.addWidget(self.seek, 1)
 
         self.time_lbl = QLabel("00:00 / 00:00")
-        self.time_lbl.setStyleSheet("color: #c8d3e0;")
+        self.time_lbl.setStyleSheet("color: #ffffff;")
         ctrl.addWidget(self.time_lbl)
 
         self.mute_btn = QPushButton("�" if self._config.iptv.muted else "�🔊")
@@ -335,7 +335,7 @@ class PlayerWidget(QWidget):
         tools.addWidget(self.record_btn)
 
         self.record_status_lbl = QLabel("")
-        self.record_status_lbl.setStyleSheet("color: #e67e22; font-size: 11px;")
+        self.record_status_lbl.setStyleSheet("color: #e67e22; font-size: 17px;")
         self.record_status_lbl.setMaximumWidth(180)
         self.record_status_lbl.hide()
         tools.addWidget(self.record_status_lbl, 1)
@@ -373,20 +373,20 @@ class PlayerWidget(QWidget):
         el = QVBoxLayout(self.error_overlay)
         el.setSpacing(12)
         self.error_icon = QLabel("⚠")
-        self.error_icon.setStyleSheet("color: #e67e22; font-size: 48px; font-weight: bold;")
+        self.error_icon.setStyleSheet("color: #e67e22; font-size: 72px; font-weight: bold;")
         self.error_icon.setAlignment(Qt.AlignCenter)
         el.addWidget(self.error_icon)
         self.error_title = QLabel("Stream Unavailable")
-        self.error_title.setStyleSheet("color: #ff6b6b; font-size: 18px; font-weight: bold;")
+        self.error_title.setStyleSheet("color: #ff6b6b; font-size: 27px; font-weight: bold;")
         self.error_title.setAlignment(Qt.AlignCenter)
         el.addWidget(self.error_title)
         self.error_lbl = QLabel("")
-        self.error_lbl.setStyleSheet("color: #c8d3e0; font-size: 13px;")
+        self.error_lbl.setStyleSheet("color: #ffffff; font-size: 20px;")
         self.error_lbl.setAlignment(Qt.AlignCenter)
         self.error_lbl.setWordWrap(True)
         el.addWidget(self.error_lbl)
         self.error_hint = QLabel("")
-        self.error_hint.setStyleSheet("color: #8a9ab0; font-size: 12px;")
+        self.error_hint.setStyleSheet("color: #8a9ab0; font-size: 18px;")
         self.error_hint.setAlignment(Qt.AlignCenter)
         self.error_hint.setWordWrap(True)
         el.addWidget(self.error_hint)
@@ -394,7 +394,7 @@ class PlayerWidget(QWidget):
         self.retry_btn.setStyleSheet(
             "QPushButton { background-color: #2a7abf; color: white; "
             "border: none; border-radius: 6px; padding: 8px 24px; "
-            "font-size: 14px; font-weight: bold; }\n"
+            "font-size: 21px; font-weight: bold; }\n"
             "QPushButton:hover { background-color: #e67e22; }"
         )
         self.retry_btn.clicked.connect(self._retry)
@@ -408,7 +408,7 @@ class PlayerWidget(QWidget):
         ll = QVBoxLayout(self.loading_overlay)
         self.loading_lbl = QLabel("Opening stream…")
         self.loading_lbl.setStyleSheet(
-            "color: #2a7abf; font-size: 20px; font-weight: bold;")
+            "color: #2a7abf; font-size: 30px; font-weight: bold;")
         self.loading_lbl.setAlignment(Qt.AlignCenter)
         ll.addWidget(self.loading_lbl)
         self.loading_progress = QProgressBar()
@@ -417,14 +417,14 @@ class PlayerWidget(QWidget):
         self.loading_progress.setTextVisible(True)
         self.loading_progress.setAlignment(Qt.AlignCenter)
         self.loading_progress.setStyleSheet(
-            "QProgressBar { color: #c8d3e0; background-color: #1a2a4a; "
-            "border: 1px solid #2a7abf; border-radius: 6px; text-align: center; "
-            "font-size: 12px; }\n"
+            "QProgressBar { color: #ffffff; background-color: #1a2a4a; "
+            "border: 3px solid #2a7abf; border-radius: 6px; text-align: center; "
+            "font-size: 18px; }\n"
             "QProgressBar::chunk { background-color: #2a7abf; border-radius: 5px; }"
         )
         ll.addWidget(self.loading_progress, 0, Qt.AlignCenter)
         self.loading_detail = QLabel("")
-        self.loading_detail.setStyleSheet("color: #8a9ab0; font-size: 13px;")
+        self.loading_detail.setStyleSheet("color: #8a9ab0; font-size: 20px;")
         self.loading_detail.setAlignment(Qt.AlignCenter)
         ll.addWidget(self.loading_detail)
         self.loading_overlay.hide()
@@ -441,7 +441,7 @@ class PlayerWidget(QWidget):
         self.buffer_badge.setAlignment(Qt.AlignCenter)
         self.buffer_badge.setStyleSheet(
             "background-color: rgba(10,10,15,0.82); color: #e67e22; "
-            "border-radius: 12px; padding: 6px 18px; font-size: 13px; "
+            "border-radius: 12px; padding: 6px 18px; font-size: 20px; "
             "font-weight: bold;")
         self.buffer_badge.hide()
         self._stall_count = 0
@@ -902,7 +902,7 @@ class PlayerWidget(QWidget):
             self.record_btn.setText("Start Recording")
             self.record_btn.setEnabled(True)
             colour = "#7fd1b9"
-        self.record_status_lbl.setStyleSheet(f"color: {colour}; font-size: 11px;")
+        self.record_status_lbl.setStyleSheet(f"color: {colour}; font-size: 17px;")
         self.record_status_lbl.setText(message)
         self.record_status_lbl.setToolTip(message)
         self.record_status_lbl.setVisible(bool(message))
@@ -1631,7 +1631,7 @@ class PlayerWidget(QWidget):
             detail = ""
 
         self.loading_lbl.setStyleSheet(
-            f"color: {colour}; font-size: 20px; font-weight: bold;")
+            f"color: {colour}; font-size: 30px; font-weight: bold;")
         self.loading_lbl.setText(f"{label}  {int(elapsed)}s")
         self.loading_detail.setText(detail)
 
@@ -1758,13 +1758,13 @@ class _SubtitleSearchDialog(QDialog):
         self.setMinimumSize(520, 340)
         self.resize(640, 420)
         self.setStyleSheet(
-            "QDialog { background-color: #0a0a0f; color: #c8d3e0; }"
-            "QLabel { color: #c8d3e0; }"
-            "QLineEdit, QComboBox { background-color: #0d1117; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 3px 8px; border-radius: 3px; }"
-            "QTableWidget { background-color: #0d1117; color: #c8d3e0; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; }"
-            "QPushButton { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a; padding: 3px 12px; border-radius: 3px; }"
+            "QDialog { background-color: #0a0a0f; color: #ffffff; }"
+            "QLabel { color: #ffffff; }"
+            "QLineEdit, QComboBox { background-color: #0d1117; color: #ffffff; border: 3px solid #1a2a4a; padding: 3px 8px; border-radius: 3px; }"
+            "QTableWidget { background-color: #0d1117; color: #ffffff; gridline-color: #1a2a4a; border: 3px solid #1a2a4a; border-radius: 6px; }"
+            "QPushButton { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; padding: 3px 12px; border-radius: 3px; }"
             "QPushButton:hover { border-color: #2a7abf; color: #2a7abf; }"
-            "QLabel#hint { color: #4a6a8a; font-size: 11px; }"
+            "QLabel#hint { color: #4a6a8a; font-size: 17px; }"
         )
         self._build_ui(query_hint)
         self.results_ready.connect(self._on_results)
@@ -2944,7 +2944,7 @@ class DetailPanel(QScrollArea):
         self.setWidgetResizable(True)
         self.setStyleSheet(
             "QScrollArea { background-color: rgba(10,10,15,0.96); "
-            "border: 1px solid #1a2a4a; border-radius: 6px; }"
+            "border: 3px solid #1a2a4a; border-radius: 6px; }"
         )
         inner = QWidget()
         self._layout = QVBoxLayout(inner)
@@ -2956,7 +2956,7 @@ class DetailPanel(QScrollArea):
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(8)
         self.title = QLabel("")
-        self.title.setStyleSheet("color: #2a7abf; font-size: 18px; font-weight: 700;")
+        self.title.setStyleSheet("color: #2a7abf; font-size: 27px; font-weight: 700;")
         self.title.setWordWrap(True)
         header.addWidget(self.title, 1)
         self.close_btn = QPushButton("✕")
@@ -2965,8 +2965,8 @@ class DetailPanel(QScrollArea):
         self.close_btn.setCursor(Qt.PointingHandCursor)
         self.close_btn.setStyleSheet(
             "QPushButton { background-color: rgba(42,122,191,0.25); "
-            "border: 1px solid #2a7abf; border-radius: 4px; "
-            "color: #c8d3e0; font-size: 14px; font-weight: bold; }\n"
+            "border: 3px solid #2a7abf; border-radius: 4px; "
+            "color: #ffffff; font-size: 21px; font-weight: bold; }\n"
             "QPushButton:hover { background-color: rgba(230,126,34,0.85); "
             "border-color: #e67e22; color: white; }"
         )
@@ -2975,13 +2975,13 @@ class DetailPanel(QScrollArea):
         self._layout.addLayout(header)
 
         self.meta_lbl = QLabel("")
-        self.meta_lbl.setStyleSheet("color: #8a9ab0; font-size: 12px;")
+        self.meta_lbl.setStyleSheet("color: #8a9ab0; font-size: 18px;")
         self.meta_lbl.setWordWrap(True)
         self._layout.addWidget(self.meta_lbl)
 
         self.backdrop = QLabel("")
         self.backdrop.setMinimumHeight(220)
-        self.backdrop.setStyleSheet("background-color: #111827; border: 1px solid #1a2a4a; border-radius: 6px;")
+        self.backdrop.setStyleSheet("background-color: #111827; border: 3px solid #1a2a4a; border-radius: 6px;")
         self.backdrop.setAlignment(Qt.AlignCenter)
         self.backdrop.setScaledContents(False)
         # Preferred height (not Fixed) so the label grows to fit the scaled
@@ -2990,7 +2990,7 @@ class DetailPanel(QScrollArea):
         self._layout.addWidget(self.backdrop)
 
         self.synopsis = QLabel("")
-        self.synopsis.setStyleSheet("color: #c8d3e0; font-size: 13px;")
+        self.synopsis.setStyleSheet("color: #ffffff; font-size: 20px;")
         self.synopsis.setWordWrap(True)
         self._layout.addWidget(self.synopsis)
 
@@ -3454,14 +3454,14 @@ class IPTVTab(QWidget):
         status = QHBoxLayout(self._status_w)
         status.setContentsMargins(0, 0, 0, 0)
         self._status_lbl = QLabel("Ready")
-        self._status_lbl.setStyleSheet("color: #8a9ab0; font-size: 11px;")
+        self._status_lbl.setStyleSheet("color: #8a9ab0; font-size: 17px;")
         status.addWidget(self._status_lbl)
         status.addStretch()
         # Artwork sweep indicator — the lookups are deliberately slow (rate
         # limited), so show the progress rather than leaving the user
         # wondering whether the blank tiles are ever going to fill in.
         self._art_lbl = QLabel("")
-        self._art_lbl.setStyleSheet("color: #6f7f95; font-size: 11px;")
+        self._art_lbl.setStyleSheet("color: #6f7f95; font-size: 17px;")
         self._art_lbl.hide()
         status.addWidget(self._art_lbl)
         self._art_progress = QProgressBar()

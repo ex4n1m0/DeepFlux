@@ -130,7 +130,7 @@ class GridTile(QWidget):
         self._empty_lbl = QLabel("＋")
         self._empty_lbl.setAlignment(Qt.AlignCenter)
         self._empty_lbl.setStyleSheet(
-            "color: #3a465a; font-size: 28px; background-color: #0b0e14;")
+            "color: #3a465a; font-size: 42px; background-color: #0b0e14;")
         self._empty_lbl.setParent(self.surface)
 
         strip = QWidget()
@@ -139,7 +139,7 @@ class GridTile(QWidget):
         row.setContentsMargins(4, 1, 4, 1)
         row.setSpacing(4)
         self.name_lbl = QLabel("—")
-        self.name_lbl.setStyleSheet("color: #c8d3e0; font-size: 11px;")
+        self.name_lbl.setStyleSheet("color: #ffffff; font-size: 17px;")
         # A QLabel's minimumSizeHint is its full text width, so a long scene
         # filename here would inflate the tile's (and thus the whole 4-column
         # grid's) minimum size — the grid blew up past the viewport the first

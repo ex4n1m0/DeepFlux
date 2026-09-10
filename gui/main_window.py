@@ -203,49 +203,49 @@ CHAT_CSS = """
 /* Note: text background bands are applied programmatically per block in
    MainWindow._insert_html (opaque black) because CSS backgrounds on
    container elements are unreliable for block-level children. */
-body { font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 12px; color: #c8d3e0; background-color: transparent; }
+body { font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 18px; color: #ffffff; background-color: transparent; }
 p { padding: 2px 4px; }
 .msg-user {
-    border-left: 4px solid #2a7abf;
-    padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #c8d3e0;
+    border-left: 3px solid #2a7abf;
+    padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 .msg-agent {
-    border-left: 4px solid #00ff9d;
-    padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #c8d3e0;
+    border-left: 3px solid #4dd2ff;
+    padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 .msg-event {
     border-left: 3px solid #1a2a4a;
     padding: 4px 10px; margin: 3px 0; border-radius: 4px;
-    color: #4a6a8a; font-size: 12px;
+    color: #4a6a8a; font-size: 18px;
 }
 .msg-debug {
     border-left: 3px solid #2a2a3a;
     padding: 4px 10px; margin: 3px 0; border-radius: 4px;
-    color: #5a7a6a; font-size: 11px;
+    color: #5a7a6a; font-size: 17px;
     font-family: 'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace;
     white-space: pre-wrap;
 }
 .msg-error {
-    border-left: 4px solid #ff3366;
+    border-left: 3px solid #ff3366;
     padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ff8080;
 }
 .msg-pending {
-    border-left: 4px solid #ffcc00;
-    padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #c8d3e0;
+    border-left: 3px solid #ffcc00;
+    padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 table { border-collapse: collapse; width: 100%; margin: 8px 0; border-radius: 6px; overflow: hidden; }
-th { color: #2a7abf; padding: 2px 8px; text-align: left; font-size: 12px; font-weight: 600; border-bottom: 1px solid #1a2a4a; }
-td { border: none; border-bottom: 1px solid #1a2a4a; padding: 2px 8px; font-size: 12px; color: #c8d3e0; }
-h2 { color: #2a7abf; font-size: 14px; margin: 12px 0 6px 0; font-weight: 700; }
-h3 { color: #2a7abf; font-size: 13px; margin: 10px 0 4px 0; font-weight: 600; }
-h4 { color: #8a9ab0; font-size: 12px; margin: 8px 0 4px 0; }
-code { background-color: #000000; padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: 12px; color: #2a7abf; }
-hr { border: none; border-top: 1px solid #1a2a4a; margin: 12px 0; }
+th { color: #2a7abf; padding: 2px 8px; text-align: left; font-size: 18px; font-weight: 600; border-bottom: 3px solid #1a2a4a; }
+td { border: none; border-bottom: 3px solid #1a2a4a; padding: 2px 8px; font-size: 18px; color: #ffffff; }
+h2 { color: #2a7abf; font-size: 21px; margin: 12px 0 6px 0; font-weight: 700; }
+h3 { color: #2a7abf; font-size: 20px; margin: 10px 0 4px 0; font-weight: 600; }
+h4 { color: #8a9ab0; font-size: 18px; margin: 8px 0 4px 0; }
+code { background-color: #000000; padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: 18px; color: #2a7abf; }
+hr { border: none; border-top: 3px solid #1a2a4a; margin: 12px 0; }
 a { color: #2a7abf; text-decoration: none; }
 a:hover { color: #80f0ff; }
 ul { margin: 4px 0 4px 20px; }
 ol { margin: 4px 0 4px 20px; }
-li { margin: 2px 0; color: #c8d3e0; }
+li { margin: 2px 0; color: #ffffff; }
 b { color: #e8f0f8; }
 i { color: #8a9ab0; }
 blockquote { border-left: 3px solid #1a2a4a; margin: 6px 0; padding: 4px 12px; color: #4a6a8a; }
@@ -724,7 +724,7 @@ class _TabMenuBar(QMenuBar):
     cursor has left the popup/submenus and the bar for ~450ms."""
 
     # Active-tab box (see paintEvent) — turquoise against the blue accent.
-    _ACTIVE_COLOR = QColor("#2ee6c8")
+    _ACTIVE_COLOR = QColor("#4dd2ff")
     _ACTIVE_FILL = QColor(46, 230, 200, 34)
     _ACTIVE_BG = QColor("#0d1117")  # matches the QMenuBar background
 
@@ -1003,26 +1003,26 @@ class MainWindow(QMainWindow):
             /* === Global === */
             QMainWindow, QWidget {
                 background-color: #0a0a0f;
-                color: #c8d3e0;
+                color: #ffffff;
                 font-family: "Inter", "Segoe UI", "Helvetica Neue", sans-serif;
             }
             QLabel {
-                color: #c8d3e0;
+                color: #ffffff;
             }
 
             /* === Menu bar === */
             QMenuBar {
                 background-color: #0d1117;
-                color: #c8d3e0;
-                border-bottom: 1px solid #1a2a4a;
+                color: #ffffff;
+                border-bottom: 3px solid #1a2a4a;
                 padding: 0px;
             }
             QMenuBar::item { padding: 2px 10px; }
             QMenuBar::item:selected { background-color: #1a2a4a; border-radius: 4px; }
             QMenu {
                 background-color: #111827;
-                color: #c8d3e0;
-                border: 1px solid #1a2a4a;
+                color: #ffffff;
+                border: 3px solid #1a2a4a;
                 border-radius: 6px;
                 padding: 4px;
             }
@@ -1032,14 +1032,14 @@ class MainWindow(QMainWindow):
             /* === Tables === */
             QTableWidget {
                 background-color: #0d1117;
-                color: #c8d3e0;
+                color: #ffffff;
                 gridline-color: #1a2a4a;
-                border: 1px solid #1a2a4a;
+                border: 3px solid #1a2a4a;
                 border-radius: 6px;
                 selection-background-color: #1a2a4a;
                 selection-color: #2a7abf;
                 alternate-background-color: #0f1520;
-                font-size: 12px;
+                font-size: 18px;
             }
             QTableWidget::item { padding: 1px 4px; }
             QTableWidget::item:selected { background-color: #1a2a4a; color: #2a7abf; }
@@ -1047,25 +1047,25 @@ class MainWindow(QMainWindow):
                 background-color: #111827;
                 color: #2a7abf;
                 border: none;
-                border-bottom: 1px solid #1a2a4a;
+                border-bottom: 3px solid #1a2a4a;
                 padding: 2px 4px;
                 font-weight: 600;
-                font-size: 11px;
+                font-size: 17px;
             }
 
             /* === Buttons === */
             QPushButton {
                 background-color: #111827;
-                color: #c8d3e0;
-                border: 1px solid #1a2a4a;
+                color: #ffffff;
+                border: 3px solid #1a2a4a;
                 border-radius: 3px;
                 padding: 2px 10px;
-                font-size: 12px;
+                font-size: 18px;
                 font-weight: 500;
             }
             QPushButton:hover {
                 background-color: #1a2a4a;
-                border: 1px solid #2a7abf;
+                border: 3px solid #2a7abf;
                 color: #2a7abf;
             }
             QPushButton:pressed {
@@ -1080,7 +1080,7 @@ class MainWindow(QMainWindow):
             /* === Primary action buttons (accent) === */
             QPushButton#btn_accent {
                 background-color: #0a1a2e;
-                border: 1px solid #2a7abf;
+                border: 3px solid #2a7abf;
                 color: #2a7abf;
             }
             QPushButton#btn_accent:hover {
@@ -1091,33 +1091,33 @@ class MainWindow(QMainWindow):
             /* === Secondary buttons (subtle) === */
             QPushButton#btn_secondary {
                 background-color: #111827;
-                border: 1px solid #1a2a4a;
+                border: 3px solid #1a2a4a;
                 color: #8a9ab0;
             }
             QPushButton#btn_secondary:hover {
                 background-color: #1a2a4a;
-                color: #c8d3e0;
+                color: #ffffff;
             }
 
             /* === Inputs === */
             QLineEdit {
                 background-color: #0d1117;
-                color: #c8d3e0;
-                border: 1px solid #1a2a4a;
+                color: #ffffff;
+                border: 3px solid #1a2a4a;
                 border-radius: 3px;
                 padding: 2px 8px;
-                font-size: 12px;
+                font-size: 18px;
                 selection-background-color: #1a2a4a;
             }
             QLineEdit:focus {
-                border: 1px solid #2a7abf;
+                border: 3px solid #2a7abf;
             }
             QLineEdit::placeholder {
                 color: #3a4a5a;
             }
             /* Large hero inputs: Agent chat + Browser web search. */
             QLineEdit#big_input {
-                font-size: 12px;
+                font-size: 18px;
                 padding: 6px 12px;
                 border-radius: 6px;
             }
@@ -1125,15 +1125,15 @@ class MainWindow(QMainWindow):
             /* === Chat panel === */
             QTextEdit {
                 background-color: #0a0a0f;
-                color: #c8d3e0;
+                color: #ffffff;
                 border: none;
-                font-size: 12px;
+                font-size: 18px;
                 line-height: 1.4;
             }
 
             /* === Tabs === */
             QTabWidget::pane {
-                border: 1px solid #1a2a4a;
+                border: 3px solid #1a2a4a;
                 background-color: #000000;
             }
             /* Main tab bar is hidden — navigation lives in the menus. */
@@ -1166,15 +1166,15 @@ class MainWindow(QMainWindow):
             QWidget#browser_overlay QPushButton,
             QWidget#browser_overlay QToolButton {
                 background-color: #0d1117;
-                color: #c8d3e0;
-                border: 1px solid #1a2a4a;
+                color: #ffffff;
+                border: 3px solid #1a2a4a;
                 border-radius: 3px;
                 padding: 2px 8px;
             }
             QWidget#browser_overlay QPushButton:hover,
             QWidget#browser_overlay QToolButton:hover {
                 background-color: #1a2a4a;
-                border: 1px solid #2a7abf;
+                border: 3px solid #2a7abf;
                 color: #2a7abf;
             }
             QTabBar::tab {
@@ -1182,7 +1182,7 @@ class MainWindow(QMainWindow):
                 color: #8a9ab0;
                 padding: 2px 12px;
                 margin-right: 2px;
-                border: 1px solid #1a2a4a;
+                border: 3px solid #1a2a4a;
                 border-bottom: none;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
@@ -1193,7 +1193,7 @@ class MainWindow(QMainWindow):
                 border-color: #2a7abf;
             }
             QTabBar::tab:hover:!selected {
-                color: #c8d3e0;
+                color: #ffffff;
             }
 
             /* === Scroll bars === */
@@ -1228,7 +1228,7 @@ class MainWindow(QMainWindow):
             /* === Section labels === */
             QLabel#section_label {
                 color: #2a7abf;
-                font-size: 11px;
+                font-size: 17px;
                 font-weight: 600;
                 padding: 0px;
             }
@@ -1419,7 +1419,7 @@ class MainWindow(QMainWindow):
         self.chat_history.setViewportMargins(0, 0, 0, 28)
         self.chat_history.anchorClicked.connect(self._on_chat_link_clicked)
         self.chat_history.document().setDefaultStyleSheet(CHAT_CSS)
-        self.chat_history.setStyleSheet("QTextBrowser { background-color: transparent; color: #c8d3e0; border: 1px solid #1a2a4a; border-radius: 3px; padding: 2px; }")
+        self.chat_history.setStyleSheet("QTextBrowser { background-color: transparent; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 3px; padding: 2px; }")
         agents_tab_layout.addWidget(self.chat_history)
 
         agent_input_layout = QHBoxLayout()
@@ -2160,14 +2160,14 @@ class MainWindow(QMainWindow):
 
     def _setup_status_bar(self) -> None:
         """Status strip: hover URL on the left, live transfer summary right."""
-        self.statusBar().setStyleSheet("QStatusBar { background: #0d1117; border-top: 1px solid #1a2a4a; }")
+        self.statusBar().setStyleSheet("QStatusBar { background: #0d1117; border-top: 3px solid #1a2a4a; }")
         # Left: hovered link URL (browser linkHovered).
         self._hover_label = QLabel("")
-        self._hover_label.setStyleSheet("color: #8a9ab0; font-size: 11px; padding: 2px 8px;")
+        self._hover_label.setStyleSheet("color: #8a9ab0; font-size: 17px; padding: 2px 8px;")
         self.statusBar().addWidget(self._hover_label, 1)
         # Right: permanent transfer summary.
         self._status_label = QLabel("Ready")
-        self._status_label.setStyleSheet("color: #8a9ab0; font-size: 11px; padding: 2px 8px;")
+        self._status_label.setStyleSheet("color: #8a9ab0; font-size: 17px; padding: 2px 8px;")
         self._status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.statusBar().addPermanentWidget(self._status_label)
 
@@ -3040,14 +3040,14 @@ class MainWindow(QMainWindow):
             is_active = i == current
             chip.setStyleSheet(
                 f"background: {'#1a2a4a' if is_active else '#0d1117'};"
-                f" border: 1px solid {'#2a7abf' if is_active else '#1a2a4a'};"
+                f" border: 3px solid {'#2a7abf' if is_active else '#1a2a4a'};"
                 " border-radius: 3px;")
             cl = QHBoxLayout(chip)
             cl.setContentsMargins(6, 1, 2, 1)
             cl.setSpacing(2)
             lbl = QLabel(self.browser_tabs.tabText(i))
             lbl.setStyleSheet(
-                f"background: transparent; color: {'#2a7abf' if is_active else '#8a9ab0'}; font-size: 11px;")
+                f"background: transparent; color: {'#2a7abf' if is_active else '#8a9ab0'}; font-size: 17px;")
             lbl.setCursor(Qt.PointingHandCursor)
             lbl.mousePressEvent = lambda _e, idx=i: self.browser_tabs.setCurrentIndex(idx)
             cl.addWidget(lbl)
@@ -3056,7 +3056,7 @@ class MainWindow(QMainWindow):
                 x.setFixedSize(14, 14)
                 x.setAttribute(Qt.WA_StyledBackground)
                 x.setStyleSheet(
-                    "QPushButton { background: transparent; color: #ff6666; border: none; font-size: 12px; font-weight: 700; }"
+                    "QPushButton { background: transparent; color: #ff6666; border: none; font-size: 18px; font-weight: 700; }"
                     "QPushButton:hover { color: #ff3366; background: #3a1a2a; border-radius: 3px; }")
                 x.clicked.connect(lambda _c, idx=i: self._browser_close_tab(idx))
                 cl.addWidget(x)
@@ -3279,8 +3279,8 @@ class MainWindow(QMainWindow):
             "<style>"
             "#df-clock { position:fixed; top:10px; left:10px; "
             "background:linear-gradient(135deg, #011d3e, #001431); color:#2a7abf; "
-            "border:1px solid #2a7abf; border-radius:5px; padding:4px 7px; "
-            "font-family:'Segoe UI', Arial, sans-serif; font-size:7px; font-weight:600; "
+            "border:3px solid #2a7abf; border-radius:5px; padding:4px 7px; "
+            "font-family:'Segoe UI', Arial, sans-serif; font-size:11px; font-weight:600; "
             "box-shadow:0 2px 6px rgba(42, 122, 191, 0.3); user-select:none; "
             "display:flex; align-items:center; gap:4px; }"
             "#df-clock .dot { display:inline-block; width:5px; height:5px; "
@@ -3371,7 +3371,7 @@ class MainWindow(QMainWindow):
         """Update the AdBlock button appearance based on its state."""
         if self.browser_adblock_btn.isChecked():
             self.browser_adblock_btn.setStyleSheet(
-                "QPushButton { background: #00ff9d; color: #001431; font-weight: 600; }"
+                "QPushButton { background: #2a7abf; color: #ffffff; font-weight: 600; }"
             )
         else:
             self.browser_adblock_btn.setStyleSheet("")
@@ -3959,12 +3959,12 @@ class MainWindow(QMainWindow):
             safe = safe[lead_m.end():]
         if kind == "reasoning":
             if not self._stream_reasoning_started:
-                self._stream_append('<span style="color:#8a7aaa; font-size:12px">🧠 ')
+                self._stream_append('<span style="color:#8a7aaa; font-size:18px">🧠 ')
                 self._stream_reasoning_started = True
             if lead:
                 self._stream_insert_text(lead)
             if safe:
-                self._stream_append(f'<span style="color:#8a7aaa; font-size:12px">{safe}</span>')
+                self._stream_append(f'<span style="color:#8a7aaa; font-size:18px">{safe}</span>')
             return
         if self._stream_reasoning_started and self._stream_content_start is None:
             self._stream_append("<br><br>")  # separate thinking from the answer
@@ -4851,7 +4851,7 @@ class MainWindow(QMainWindow):
         if not info_hash:
             return
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
+        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
 
         act_remove = menu.addAction("Remove from list (keep files)")
         act_delete = menu.addAction("Remove and delete files")
@@ -5242,7 +5242,7 @@ class MainWindow(QMainWindow):
         self._tray = QSystemTrayIcon(icon, self)
         self._tray.setToolTip("DeepFlux")
         menu = QMenu()
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
+        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
         menu.addAction("Show DeepFlux", self._tray_restore)
         menu.addAction("Quit", self._tray_quit)
         self._tray.setContextMenu(menu)
@@ -5530,7 +5530,7 @@ class MainWindow(QMainWindow):
         """Play-tab gear button: IPTV settings are split into focused pages —
         show a picker menu at the cursor."""
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #c8d3e0; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
+        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
         chosen: Dict[str, Any] = {}
         for label, cls in IPTV_SETTINGS_PAGES:
             menu.addAction(label, lambda _c=False, page_cls=cls: chosen.update(cls=page_cls))

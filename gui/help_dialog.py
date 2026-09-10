@@ -20,22 +20,22 @@ HELP_HTML = r"""
 <style>
   body {
     font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
-    color: #c8d3e0;
+    color: #ffffff;
     background-color: #0a0a0f;
-    font-size: 13px;
+    font-size: 20px;
     line-height: 1.6;
     padding: 8px;
   }
-  h1 { color: #2a7abf; font-size: 20px; border-bottom: 1px solid #1a2a4a; padding-bottom: 6px; }
-  h2 { color: #2a7abf; font-size: 16px; margin-top: 20px; }
-  h3 { color: #80f0ff; font-size: 13px; margin-top: 12px; }
+  h1 { color: #2a7abf; font-size: 30px; border-bottom: 3px solid #1a2a4a; padding-bottom: 6px; }
+  h2 { color: #2a7abf; font-size: 24px; margin-top: 20px; }
+  h3 { color: #80f0ff; font-size: 20px; margin-top: 12px; }
   p { margin: 4px 0; }
   ul { margin: 4px 0; padding-left: 20px; }
   li { margin: 2px 0; }
-  code { color: #00ff9d; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 12px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
+  code { color: #4dd2ff; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
   table { border-collapse: collapse; width: 100%; margin: 6px 0; }
-  th { color: #2a7abf; text-align: left; border-bottom: 1px solid #1a2a4a; padding: 4px 6px; }
-  td { border-bottom: 1px solid #111827; padding: 4px 6px; }
+  th { color: #2a7abf; text-align: left; border-bottom: 3px solid #1a2a4a; padding: 4px 6px; }
+  td { border-bottom: 3px solid #111827; padding: 4px 6px; }
   .note { background-color: #0d1117; border-left: 3px solid #2a7abf; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
   .warn { background-color: #0d1117; border-left: 3px solid #ffcc00; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
 </style>
@@ -387,7 +387,7 @@ class HelpDialog(QDialog):
         browser.setStyleSheet("""
             QTextBrowser {
                 background-color: #0a0a0f;
-                color: #c8d3e0;
+                color: #ffffff;
                 border: none;
             }
         """)
@@ -398,15 +398,15 @@ class HelpDialog(QDialog):
         close_btn.setStyleSheet("""
             QPushButton {
                 background-color: #111827;
-                color: #c8d3e0;
-                border: 1px solid #1a2a4a;
+                color: #ffffff;
+                border: 3px solid #1a2a4a;
                 padding: 2px 16px;
                 border-radius: 6px;
-                font-size: 13px;
+                font-size: 20px;
             }
             QPushButton:hover {
                 background-color: #1a2a4a;
-                border: 1px solid #2a7abf;
+                border: 3px solid #2a7abf;
                 color: #2a7abf;
             }
         """)
@@ -420,17 +420,17 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("About DeepFlux")
         self.setMinimumWidth(400)
-        self.setStyleSheet("QDialog { background-color: #0a0a0f; color: #c8d3e0; }")
+        self.setStyleSheet("QDialog { background-color: #0a0a0f; color: #ffffff; }")
 
         layout = QVBoxLayout(self)
 
         from PySide6.QtWidgets import QLabel
         title = QLabel("DeepFlux")
-        title.setStyleSheet("color: #2a7abf; font-size: 24px; font-weight: 700;")
+        title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
         version = QLabel("3.5 — AI Deep Search")
-        version.setStyleSheet("color: #c8d3e0; font-size: 14px;")
+        version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 
         desc = QLabel(
@@ -438,7 +438,7 @@ class AboutDialog(QDialog):
             "AI via DeepSeek / OpenRouter / custom\n"
             "Web search via DuckDuckGo, Brave, Perplexity (parallel)"
         )
-        desc.setStyleSheet("color: #8a9ab0; font-size: 12px;")
+        desc.setStyleSheet("color: #8a9ab0; font-size: 18px;")
         layout.addWidget(desc)
 
         close_btn = QPushButton("Close")
@@ -446,15 +446,15 @@ class AboutDialog(QDialog):
         close_btn.setStyleSheet("""
             QPushButton {
                 background-color: #111827;
-                color: #c8d3e0;
-                border: 1px solid #1a2a4a;
+                color: #ffffff;
+                border: 3px solid #1a2a4a;
                 padding: 2px 16px;
                 border-radius: 6px;
                 margin-top: 12px;
             }
             QPushButton:hover {
                 background-color: #1a2a4a;
-                border: 1px solid #2a7abf;
+                border: 3px solid #2a7abf;
                 color: #2a7abf;
             }
         """)
