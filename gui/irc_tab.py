@@ -63,6 +63,7 @@ from PySide6.QtWidgets import (
 from config import DeeptorrentConfig, IRCNetworkConfig
 from ircmgr.client import IRCClientCore
 from ircmgr.state import CHANNEL_PREFIXES, irc_casefold
+from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +303,7 @@ class IRCSettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
-        self.resize(520, 260)
+        roomy(self)
 
     def _clear_history(self) -> None:
         answer = QMessageBox.question(
@@ -364,7 +365,7 @@ class NetworkManagerDialog(QDialog):
         close_buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         close_buttons.rejected.connect(self.reject)
         layout.addWidget(close_buttons)
-        self.resize(480, 300)
+        roomy(self)
         self._refresh()
 
     def _refresh(self, selected_id: str = "") -> None:

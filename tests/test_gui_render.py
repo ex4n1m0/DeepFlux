@@ -50,6 +50,7 @@ def test_settings_menu_pages_fit_low_resolution():
         BrowserSettingsDialog,
         DownloadsSettingsDialog,
     )
+    from gui.window_sizing import roomy
 
     app = QApplication.instance() or QApplication([])
     config = DeeptorrentConfig()
@@ -63,9 +64,54 @@ def test_settings_menu_pages_fit_low_resolution():
             dialog = dialog_class(config, page=page)
             dialog.show()
             app.processEvents()
-            assert dialog.width() <= 760
-            assert dialog.height() <= 520
+            # Policy (2026-09-10): dialogs open roomy — content sizeHint +
+            # 15% headroom, never above 90% of the available screen.
+            screen = dialog.screen() or app.primaryScreen()
+            avail = screen.availableGeometry()
+            assert dialog.width() <= round(avail.width() * 0.9) + 1
+            assert dialog.height() <= round(avail.height() * 0.9) + 1
+            assert dialog.width() >= dialog.minimumSizeHint().width()
             dialog.close()
+
+
+def test_roomy_sizes_content_with_headroom_and_caps_at_90pct():
+    """roomy(): content + 15% headroom on roomy screens; capped at 90% of
+    the available geometry on small ones; refit also on first show so
+    subclass content added after super().__init__() is accounted for."""
+    from PySide6.QtCore import QRect
+    from PySide6.QtWidgets import QApplication, QDialog, QLabel, QVBoxLayout
+
+    app = QApplication.instance() or QApplication([])
+    from gui.window_sizing import roomy
+
+    # Roomy screen: window grows past the raw content size (headroom) and
+    # never exceeds 90% of the screen.
+    dlg = QDialog()
+    QVBoxLayout(dlg).addWidget(QLabel("short content"))
+    roomy(dlg, avail=QRect(0, 0, 1920, 1080))
+    assert dlg.width() >= dlg.sizeHint().width()
+    assert dlg.width() <= round(1920 * 0.9)
+    assert dlg.height() >= dlg.sizeHint().height()
+    dlg.deleteLater()
+
+    # Small screen: hard cap at 90% even when content wants more.
+    dlg = QDialog()
+    QVBoxLayout(dlg).addWidget(QLabel("x" * 400))
+    roomy(dlg, avail=QRect(0, 0, 800, 600))
+    assert dlg.width() == round(800 * 0.9)
+    assert dlg.height() <= round(600 * 0.9)
+    dlg.deleteLater()
+
+    # First-show refit: content added AFTER roomy() was called is fitted.
+    dlg = QDialog()
+    roomy(dlg, avail=QRect(0, 0, 1920, 1080))
+    small = dlg.width()
+    QVBoxLayout(dlg).addWidget(QLabel("y" * 400))
+    dlg.show()
+    app.processEvents()
+    assert dlg.width() > small
+    dlg.close()
+    dlg.deleteLater()
 
 
 def test_download_settings_pages_save_only_their_section():

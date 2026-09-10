@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import DeeptorrentConfig, RSSFeed
+from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class RSSDialog(QDialog):
         self._check_requested = False
         self.setWindowTitle("RSS Feeds")
         self.setMinimumSize(520, 340)
-        self.resize(700, 400)
+        roomy(self)
         self.setStyleSheet("""
             QDialog { background-color: #0a0a0f; color: #ffffff; }
             QLabel { color: #ffffff; }

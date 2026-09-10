@@ -39,6 +39,7 @@ from config import DeeptorrentConfig
 from iptv.local_folder import VIDEO_EXTS
 from iptv.models import Channel, SECTION_LIVE, SECTION_MOVIES
 from iptv.player import create_backend
+from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
 
@@ -355,7 +356,7 @@ class ChannelPickDialog(QDialog):
     def __init__(self, manager: Any, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Pick a channel for the tile")
-        self.resize(480, 420)
+        roomy(self)
         self._manager = manager
         layout = QVBoxLayout(self)
         self.search = QLineEdit()

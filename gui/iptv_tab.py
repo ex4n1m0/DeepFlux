@@ -86,6 +86,7 @@ from iptv.models import (
 from iptv.player import PlayerBackend, create_backend
 from gui.multiview import MultiViewGrid, build_playback_headers
 from dlmgr.ffmpeg import StreamRecorder, find_ffmpeg, is_network_stream_url
+from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
 
@@ -1756,7 +1757,7 @@ class _SubtitleSearchDialog(QDialog):
         self._results: List[dict] = []
         self.setWindowTitle("Find Subtitles — OpenSubtitles")
         self.setMinimumSize(520, 340)
-        self.resize(640, 420)
+        roomy(self)
         self.setStyleSheet(
             "QDialog { background-color: #0a0a0f; color: #ffffff; }"
             "QLabel { color: #ffffff; }"

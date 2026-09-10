@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.window_sizing import roomy
+
 
 HELP_HTML = r"""
 <!DOCTYPE html>
@@ -377,7 +379,7 @@ class HelpDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("DeepFlux — User Guide")
         self.setMinimumSize(520, 360)
-        self.resize(760, 520)
+        roomy(self)
         self.setStyleSheet("QDialog { background-color: #0a0a0f; }")
 
         layout = QVBoxLayout(self)

@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from dlmgr.site_grabber import GrabberError, GrabberVideo, SiteGrabber
+from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class SiteGrabberDialog(QDialog):
         self._page = 1
         self._busy = False
         self.setWindowTitle("Site Grabber")
-        self.resize(820, 580)
+        roomy(self)
         self.setStyleSheet(_STYLE)
         self._build_ui()
         self._search_done.connect(self._on_search_done)

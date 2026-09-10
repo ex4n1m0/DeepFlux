@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import BROWSER_SEARCH_ENGINES, DeeptorrentConfig, DownloadCategory, IndexerConfig, LLM_PROVIDER_PRESETS
+from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +166,7 @@ class DownloadsSettingsDialog(QDialog):
         }
         self.setWindowTitle(titles.get(page, "Downloads Settings"))
         self.setMinimumWidth(480)
-        self.resize(600, 440)
+        roomy(self)
         self.setStyleSheet(_SHARED_STYLE)
         self._build_ui()
         self._load_values()
@@ -464,7 +465,7 @@ class BrowserSettingsDialog(QDialog):
         }
         self.setWindowTitle(titles.get(page, "Browser Settings"))
         self.setMinimumWidth(440)
-        self.resize(580, 420)
+        roomy(self)
         self.setStyleSheet(_SHARED_STYLE)
         self._build_ui()
         self._load_values()
@@ -653,7 +654,7 @@ class APIKeysDialog(QDialog):
         }
         self.setWindowTitle(titles.get(page, "API Keys"))
         self.setMinimumWidth(480)
-        self.resize(600, 420)
+        roomy(self)
         self.setStyleSheet(_SHARED_STYLE)
         self.jkt_fetch_done.connect(self._on_jkt_fetch_done)
         self._build_ui()

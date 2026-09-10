@@ -91,6 +91,7 @@ from gui.voice_input import MIN_SECONDS, SAMPLE_RATE as VOICE_SAMPLE_RATE, Voice
 from ircmgr.client import IRCClientCore
 from dlmgr.engine import DownloadEngine
 from dlmgr.control_api import ControlAPI
+from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
 
@@ -3470,7 +3471,7 @@ class MainWindow(QMainWindow):
     def _show_browser_history(self) -> None:
         dialog = QDialog(self)
         dialog.setWindowTitle("Browser History")
-        dialog.resize(720, 500)
+        roomy(dialog)
         layout = QVBoxLayout(dialog)
         items = QListWidget()
         for entry in self._browser_history.suggestions("", 100):

@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 
 from config import DeeptorrentConfig, IPTVSourceConfig
 from gui.milkdrop import list_presets, preset_name
+from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +141,7 @@ class _SettingsPage(QDialog):
         self.config = config
         self.setWindowTitle(title)
         self.setMinimumWidth(480)
-        self.resize(600, 400)
+        roomy(self)
         self.setStyleSheet(_SHARED_STYLE)
 
         outer = QVBoxLayout(self)
@@ -307,7 +308,6 @@ class IPTVSourcesDialog(_SettingsPage):
 
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(config, "IPTV — Playlist Sources", parent)
-        self.resize(640, 420)
 
         src_group = QGroupBox("Playlist Sources")
         sl = QVBoxLayout(src_group)
@@ -334,6 +334,8 @@ class IPTVSourcesDialog(_SettingsPage):
         sl.addLayout(btns)
         self.body.addWidget(src_group)
         self._load_sources()
+        # The base page sized itself before this table existed — refit now.
+        roomy(self)
 
     def _load_sources(self) -> None:
         self.table.setRowCount(len(self.config.iptv.sources))

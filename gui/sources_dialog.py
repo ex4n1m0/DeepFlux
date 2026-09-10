@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import DeeptorrentConfig, SourceConfig
+from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class SourcesDialog(QDialog):
         self.config = config
         self.setWindowTitle("Sources")
         self.setMinimumSize(560, 360)
-        self.resize(700, 500)
+        roomy(self)
         self.setStyleSheet("""
             QDialog { background-color: #0a0a0f; color: #ffffff; }
             QLabel { color: #ffffff; }
