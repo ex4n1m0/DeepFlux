@@ -984,7 +984,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.5.5 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.5.6 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -2044,12 +2044,11 @@ class MainWindow(QMainWindow):
                 lambda _checked=False, selected=page: self._open_browser_settings(selected))
             file_menu.addAction(action)
 
-        import_bookmarks_action = QAction("Import Bookmarks...", self)
-        import_bookmarks_action.triggered.connect(self._import_bookmarks)
-        file_menu.addAction(import_bookmarks_action)
-        export_bookmarks_action = QAction("Export Bookmarks...", self)
-        export_bookmarks_action.triggered.connect(self._export_bookmarks)
-        file_menu.addAction(export_bookmarks_action)
+        # Bookmarks live ONLY under the browser toolbar's Bookmarks button
+        # (import/export + the folder tree) — nothing bookmark-related in
+        # File (user request 3.5.6).
+        self._bookmarks_menu = QMenu("Bookmarks", self)
+        self._rebuild_bookmarks_bar()
 
         history_action = QAction("History...", self)
         history_action.triggered.connect(self._show_browser_history)
@@ -2101,11 +2100,6 @@ class MainWindow(QMainWindow):
         irc_networks_action = QAction("Networks...", self)
         irc_networks_action.triggered.connect(lambda: self.irc_tab._on_manage_networks())
         file_menu.addAction(irc_networks_action)
-
-        # --- Bookmarks (former standalone menu; folder submenus stay) ---
-        file_menu.addSeparator()
-        self._bookmarks_menu = file_menu.addMenu("Bookmarks")
-        self._rebuild_bookmarks_bar()
 
         file_menu.addSeparator()
         exit_action = QAction("Exit", self)
@@ -3509,12 +3503,31 @@ class MainWindow(QMainWindow):
             )
 
     def _rebuild_bookmarks_bar(self) -> None:
-        """Rebuild the Bookmarks menu from config.
+        """Rebuild the Bookmarks button popup from config.
 
-        Folders become submenus; plain bookmarks are actions that open the URL.
+        Import/Export lead (the button always does something, even with an
+        empty bookmark list), then the folder tree: folders become submenus,
+        plain bookmarks are actions that open the URL. The menu is never
+        disabled — an exec() on a disabled QMenu silently does nothing,
+        which is why the button could look dead (3.5.6 fix).
         """
         menu = self._bookmarks_menu
         menu.clear()
+
+        import_action = QAction("Import Bookmarks...", self)
+        import_action.triggered.connect(self._import_bookmarks)
+        menu.addAction(import_action)
+        export_action = QAction("Export Bookmarks...", self)
+        export_action.triggered.connect(self._export_bookmarks)
+        menu.addAction(export_action)
+
+        if not self.config.browser.bookmarks:
+            empty = QAction("(no bookmarks yet — import some)", self)
+            empty.setEnabled(False)
+            menu.addAction(empty)
+            return
+
+        menu.addSeparator()
 
         # Build the folder tree: node = {"folders": {name: node}, "items": [Bookmark]}.
         tree: dict = {"folders": {}, "items": []}
@@ -3543,8 +3556,6 @@ class MainWindow(QMainWindow):
                 name, node = entry[1], entry[2]
                 submenu = menu.addMenu(name)
                 self._fill_bookmark_menu(submenu, node)
-
-        menu.setEnabled(bool(self.config.browser.bookmarks))
 
     def _fill_bookmark_menu(self, menu: QMenu, node: dict) -> None:
         """Fill a folder menu with subfolder submenus and bookmark rows."""

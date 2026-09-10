@@ -913,10 +913,14 @@
   the page, `triggered` also switches for keyboard activation). Everything
   the old per-tab menus carried lives under File in flat labeled sections:
   API Keys, Export/Import Settings + file associations, Browser Settings
-  (pages, bookmark import/export, History, Save PDF, DevTools), Download
+  (pages, History, Save PDF, DevTools), Download
   (Add Magnet/Torrent, Jackett, Download Settings pages, Sources, RSS),
-  Play (the four IPTV_SETTINGS_PAGES), IRC (Networks), then the Bookmarks
-  submenu (folder tree — the one submenu exemption) and Exit. The app
+  Play (the four IPTV_SETTINGS_PAGES), IRC (Networks), and Exit.
+  Bookmarks are NOT in File (3.5.6): the browser toolbar's Bookmarks
+  button (left of Private) owns a STANDALONE QMenu with Import/Export +
+  the folder tree (`_rebuild_bookmarks_bar` repopulates it; never
+  `setEnabled(False)` it — exec() on a disabled menu silently does
+  nothing, which made the button look dead in 3.5.5). The app
   STARTS on the Agent tab (set in `MainWindow.__init__` right after
   `_build_ui()` — NOT inside `_build_ui`, which runs first; don't re-add a
   tab selection there, __init__ runs after and would override it).
