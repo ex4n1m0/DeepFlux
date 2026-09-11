@@ -890,6 +890,29 @@
   `isHidden()`/`not isHidden()` for setVisible state instead).
 
 ## IPTV + filesystem agent tools (Play / Command tabs)
+- Play-tab folder search: the search box has a 📍 Folder scope toggle.
+  Scoped queries run only inside the tree node recorded in
+  `IPTVTab._scope_key` (set on tree click, source-combo jump and group-mode
+  change; `_scope_label` drives the placeholder text), and while scoped,
+  `_show_section` re-filters every opened folder through `_folder_filter` —
+  one query can be carried across folders by clicking around. The toggle
+  swaps its objectName to `btn_accent` while checked: the global QSS has no
+  `QPushButton:checked` rule, so without that a checked toggle is visually
+  indistinguishable from unchecked.
+- Play-tab VOD downloads (movies / series / adult — adult is just Movies):
+  DetailPanel's ⬇ button, the grid AND list context menus, and the
+  episode-list right-click (single episode or whole season) all funnel into
+  `IPTVTab._download_batch` → the dlmgr DownloadEngine (injected via
+  `set_download_engine` in MainWindow). Rules: engine calls run on ONE daemon
+  thread per batch — `add_stream_job` parses the HLS/DASH manifest over the
+  network and must never run on the GUI thread; `.m3u8`/`.mpd` URLs →
+  `add_stream_job`, everything else → `add_job`; episodes land in
+  `<download default_folder>/<series name>/` and the folder is passed with a
+  TRAILING `os.sep` — that's how `_prepare_save_path` knows it's a directory,
+  not a file path; request headers come from `build_playback_headers(item,
+  owning source)` so source-level UA/Referer survive. Whole series/seasons
+  confirm first (count + destination); single items queue immediately. Live
+  channels are never offered a download (endless streams).
 - IPTV settings are SPLIT into small scrollable pages in
   `gui/iptv_settings_dialog.py` — `IPTV_SETTINGS_PAGES` (label, class) drives
   both the top-level IPTV menu and the Play-tab gear's picker popup

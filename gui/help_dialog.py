@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.5.10 — User Guide</h1>
+<h1>DeepFlux 3.6 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -191,6 +191,21 @@ the torrent engine on completion.</p>
       "Others". The "Group" picker above the tree switches back to flat categories.</li>
   <li><b>Browsing:</b> single click opens the info panel; double-click plays.
       Grid and list views, and a search box that filters across everything.</li>
+  <li><b>Folder search:</b> toggle <b>📍 Folder</b> next to the search box and
+      the query runs only inside the tree folder you clicked last (a category,
+      year, section, or a whole source — subfolders included). The placeholder
+      shows the active folder, and while scoped, clicking other folders
+      re-filters them with the same query. Toggle off for playlist-wide
+      search.</li>
+  <li><b>Downloading VOD:</b> movies and series from your IPTV sources can be
+      saved to disk. Right-click a movie or series (grid or list view), or use
+      the <b>⬇ Download</b> button in the info panel; in a series' episode
+      list, right-click an episode to download it or its whole season. Whole
+      series/seasons ask first. Downloads run in the Download Manager (same
+      place as browser and agent downloads): single files go to its default
+      folder, episodes into a folder named after the series. HLS/DASH streams
+      are captured and remuxed to MP4; the source's User-Agent/Referer
+      settings are applied.</li>
   <li><b>Covers:</b> posters and channel logos fill in automatically while you
       browse, and a deliberately slow background sweep looks up the rest (the
       "Finding artwork n/N" counter in the status bar) to stay within API limits.</li>
@@ -368,7 +383,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.5.10 — AI Deep Search</p>
+<p>DeepFlux 3.6 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -436,7 +451,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.5.10 — AI Deep Search")
+        version = QLabel("3.6 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

@@ -98,6 +98,23 @@ logger = logging.getLogger(__name__)
 BULK_SIZE = 500
 
 
+def _safe_folder_name(name: str) -> str:
+    """Folder-safe form of a title (series download subfolders)."""
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name or "").strip(" .")
+    return (cleaned[:120] or "Series")
+
+
+def _episode_filename(series_name: str, ep: Any) -> str:
+    """'Show S01E05 — Episode Title' — series-prefixed so episodes sort and
+    stay together in the download folder; the engine adds the extension (from
+    the URL for direct files, .mp4 for HLS/DASH remuxes)."""
+    tag = f"S{int(getattr(ep, 'season', 0) or 0):02d}E{int(getattr(ep, 'episode', 0) or 0):02d}"
+    title = (getattr(ep, "title", "") or getattr(ep, "name", "") or "").strip()
+    title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", title)[:80].strip(" .")
+    base = _safe_folder_name(series_name)
+    return f"{base} {tag} — {title}" if title else f"{base} {tag}"
+
+
 def _source_empty_message(source: Any, playlist: Any) -> str:
     """Describe an empty source without guessing for non-Xtream loaders."""
     name = getattr(source, "name", "") or getattr(playlist, "source_id", "source")
@@ -2203,6 +2220,7 @@ class ContentGrid(QListWidget):
 
     itemActivated = Signal(object)  # double click / context Play -> play it
     itemSelected = Signal(object)   # single click -> show the info panel
+    download_requested = Signal(object)  # context Download -> VOD download
     sweep_progress = Signal(int, int)  # (resolved, total) artwork lookups
     sig_artwork = Signal(str, object)  # (url, path) — marshals worker -> GUI
     sig_artwork_failed = Signal(str)   # (url) — fetch gave up, worker -> GUI
@@ -2828,12 +2846,18 @@ class ContentGrid(QListWidget):
         menu = QMenu(self)
         act_play = menu.addAction("Play")
         act_fav = menu.addAction("Remove from Favorites" if getattr(it, "favorite", False) else "Add to Favorites")
+        act_dl = None
+        if getattr(it, "section", "") in (SECTION_MOVIES, SECTION_SERIES):
+            act_dl = menu.addAction(
+                "⬇ Download Series" if isinstance(it, Series) else "⬇ Download")
         chosen = menu.exec(event.globalPos())
         if chosen == act_play:
             self.itemActivated.emit(it)
         elif chosen == act_fav:
             self._manager.toggle_favorite(it)
             self.viewport().update()
+        elif act_dl is not None and chosen == act_dl:
+            self.download_requested.emit(it)
 
 
 def _fmt_prog(title: str, start: int, end: int) -> str:
@@ -2862,6 +2886,7 @@ class ContentList(QTableWidget):
     """List view alternative with columns: name, category, EPG now-playing."""
 
     itemActivated = Signal(object)
+    download_requested = Signal(object)  # context Download -> VOD download
 
     def __init__(self, manager: IPTVManager, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -2921,6 +2946,30 @@ class ContentList(QTableWidget):
         if it is not None:
             self.itemActivated.emit(it)
 
+    def contextMenuEvent(self, event) -> None:  # noqa: N802
+        """Right-click row menu — mirrors the grid's (Play / Favorites /
+        Download), which the list view never had."""
+        row_item = self.itemAt(event.pos())
+        if row_item is None:
+            return
+        it = self.item(row_item.row(), 0).data(Qt.UserRole)
+        if it is None:
+            return
+        menu = QMenu(self)
+        act_play = menu.addAction("Play")
+        act_fav = menu.addAction("Remove from Favorites" if getattr(it, "favorite", False) else "Add to Favorites")
+        act_dl = None
+        if getattr(it, "section", "") in (SECTION_MOVIES, SECTION_SERIES):
+            act_dl = menu.addAction(
+                "⬇ Download Series" if isinstance(it, Series) else "⬇ Download")
+        chosen = menu.exec(event.globalPos())
+        if chosen == act_play:
+            self.itemActivated.emit(it)
+        elif chosen == act_fav:
+            self._manager.toggle_favorite(it)
+        elif act_dl is not None and chosen == act_dl:
+            self.download_requested.emit(it)
+
 
 # ---------------------------------------------------------------------------
 # Detail panel for movies/series
@@ -2930,6 +2979,10 @@ class DetailPanel(QScrollArea):
     """Shows backdrop, synopsis, year, rating, genres, and episode list."""
 
     play_requested = Signal(object)  # an Episode or the parent item
+    # VOD downloads (Download Manager): the item itself (movie/series), an
+    # (episode, series) pair, or a series + season number.
+    download_requested = Signal(object)
+    download_season_requested = Signal(object, int)
     artwork_found = Signal(object, str)  # (item, poster url) — feeds the grid
     sig_artwork = Signal(str, object)    # (url, path) — marshals worker -> GUI
     sig_artwork_failed = Signal(str)     # (url) — fetch gave up, worker -> GUI
@@ -2973,6 +3026,22 @@ class DetailPanel(QScrollArea):
         )
         self.close_btn.clicked.connect(self._on_close)
         header.addWidget(self.close_btn, 0, Qt.AlignTop)
+        # VOD download — movies download directly, series queue every
+        # episode (after a confirmation in the tab). Hidden for channels.
+        self.download_btn = QPushButton("⬇ Download")
+        self.download_btn.setToolTip(
+            "Download to the Download Manager's default folder")
+        self.download_btn.setCursor(Qt.PointingHandCursor)
+        self.download_btn.setStyleSheet(
+            "QPushButton { background-color: rgba(42,122,191,0.25); "
+            "border: 3px solid #2a7abf; border-radius: 4px; "
+            "color: #ffffff; font-size: 19px; font-weight: bold; }\n"
+            "QPushButton:hover { background-color: rgba(46,164,79,0.85); "
+            "border-color: #2ea44f; color: white; }"
+        )
+        self.download_btn.clicked.connect(
+            lambda: self._on_download_clicked())
+        header.insertWidget(1, self.download_btn, 0, Qt.AlignTop)
         self._layout.addLayout(header)
 
         self.meta_lbl = QLabel("")
@@ -3006,6 +3075,10 @@ class DetailPanel(QScrollArea):
         # double-click too for habit's sake.
         self.episodes.itemClicked.connect(self._on_episode)
         self.episodes.itemDoubleClicked.connect(self._on_episode)
+        # Right-click an episode: download it (or its whole season) instead
+        # of playing it. Season context lives on UserRole+1 of each row.
+        self.episodes.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.episodes.customContextMenuRequested.connect(self._episode_menu)
         self._layout.addWidget(self.episodes)
         self.episodes.hide()
 
@@ -3043,6 +3116,10 @@ class DetailPanel(QScrollArea):
 
         # Episodes for series.
         if isinstance(item, Series):
+            self.download_btn.setText("⬇ Download Series")
+            self.download_btn.setToolTip(
+                "Download every episode (asks for confirmation first)")
+            self.download_btn.show()
             self.episodes_label.show()
             self.episodes.show()
             self.episodes.clear()
@@ -3055,9 +3132,17 @@ class DetailPanel(QScrollArea):
                 for ep in item.episodes_for(s):
                     li = QListWidgetItem(f"S{ep.season:02d}E{ep.episode:02d}  {ep.title or ep.name}")
                     li.setData(Qt.UserRole, ep)
+                    li.setData(Qt.UserRole + 1, s)
                     self.episodes.addItem(li)
                     self._episodes.append(ep)
         else:
+            if getattr(item, "section", "") in (SECTION_MOVIES, SECTION_SERIES):
+                self.download_btn.setText("⬇ Download")
+                self.download_btn.setToolTip(
+                    "Download to the Download Manager's default folder")
+                self.download_btn.setVisible(bool(getattr(item, "url", "")))
+            else:
+                self.download_btn.hide()
             self.episodes_label.hide()
             self.episodes.hide()
 
@@ -3094,6 +3179,15 @@ class DetailPanel(QScrollArea):
                                               nn.get("next_start") or 0,
                                               nn.get("next_end") or 0))
         self.meta_lbl.setText(ch.group or "Live TV")
+        if getattr(ch, "section", "") in (SECTION_MOVIES, SECTION_SERIES) and ch.url:
+            # Recent-list VOD rows are transient Channel objects — they're
+            # still downloadable even though they render via this path.
+            self.download_btn.setText("⬇ Download")
+            self.download_btn.setToolTip(
+                "Download to the Download Manager's default folder")
+            self.download_btn.show()
+        else:
+            self.download_btn.hide()  # live channels are endless streams
         self.synopsis.setText("\n".join(parts))
         rows = guide["programmes"]
         self.episodes.clear()
@@ -3223,6 +3317,29 @@ class DetailPanel(QScrollArea):
         if ep is not None:
             self.play_requested.emit(ep)
 
+    def _on_download_clicked(self) -> None:
+        if self._current is not None:
+            self.download_requested.emit(self._current)
+
+    def _episode_menu(self, pos: QPoint) -> None:
+        """Right-click an episode row: download that episode or the whole
+        season it belongs to (season stored on the row at build time)."""
+        li = self.episodes.itemAt(pos)
+        if li is None:
+            return
+        ep = li.data(Qt.UserRole)
+        season = li.data(Qt.UserRole + 1)
+        if ep is None:
+            return  # season header / guide row — nothing to download
+        menu = QMenu(self.episodes)
+        act_ep = menu.addAction("⬇ Download episode")
+        act_season = menu.addAction(f"⬇ Download Season {season:02d}")
+        chosen = menu.exec(self.episodes.viewport().mapToGlobal(pos))
+        if chosen == act_ep:
+            self.download_requested.emit((ep, self._current))
+        elif chosen == act_season:
+            self.download_season_requested.emit(self._current, season)
+
     def _on_close(self) -> None:
         """Hide the panel — the host tab also clears the grid selection."""
         self.hide()
@@ -3282,6 +3399,14 @@ class IPTVTab(QWidget):
         # Which source the content pane is showing. Every enabled source is
         # loaded and listed in the tree; this is just the current view.
         self._current_source_id = ""
+        # Folder-scoped search: the tree key of the last node the user actually
+        # entered (source/section/category/year/bulk). When the scope toggle is
+        # on, the search box filters only the items under this node.
+        self._scope_key: Optional[tuple] = None
+        self._scope_label: str = ""
+        # Download Manager engine (wired by MainWindow via set_download_engine)
+        # — VOD downloads from the grid/detail panel go through it.
+        self._dl_engine: Any = None
         self._build_ui()
         self._populate_source_dropdown()
         # Show the source tree straight away (nodes read "loading…" until
@@ -3321,6 +3446,18 @@ class IPTVTab(QWidget):
         self._search_timer.setInterval(300)
         self._search_timer.timeout.connect(lambda: self._on_search(self._search.text()))
         self._search.textChanged.connect(lambda _t: self._search_timer.start())
+
+        # Folder scope for the search box. With 50k-entry providers a global
+        # search buries the handful of hits inside the folder the user is
+        # browsing — toggled on, the query runs only within the tree node
+        # clicked last (source, section, category, year or bulk slice).
+        self._scope_btn = QPushButton("📍 Folder")
+        self._scope_btn.setCheckable(True)
+        self._scope_btn.setToolTip(
+            "Search only inside the folder selected in the tree (subfolders "
+            "included). Off = search the whole playlist.")
+        self._scope_btn.toggled.connect(self._on_scope_toggled)
+        toolbar.addWidget(self._scope_btn)
         toolbar.addWidget(self._search, 1)
 
         self._view_grid_btn = QPushButton("▦ Grid")
@@ -3414,6 +3551,10 @@ class IPTVTab(QWidget):
         self._detail.play_requested.connect(self._play_item)
         self._detail.artwork_found.connect(self._grid.apply_external_artwork)
         self._detail.closed.connect(self._on_detail_closed)
+        self._detail.download_requested.connect(self._on_download_requested)
+        self._detail.download_season_requested.connect(self._download_season)
+        self._grid.download_requested.connect(self._on_download_requested)
+        self._list.download_requested.connect(self._on_download_requested)
         self._detail.setParent(self._player)
         self._detail.hide()
         self._player.installEventFilter(self)
@@ -3508,6 +3649,11 @@ class IPTVTab(QWidget):
         self._manager.set_active_source(sid)
         self._current_category = ""
         self._current_year = ""
+        # Folder-search scope follows the jump: it now points at this
+        # source's current section, not a folder of the previous source.
+        self._scope_key = (sid, self._current_section, "")
+        self._scope_label = self._scope_label_for(sid, self._current_section)
+        self._update_search_placeholder()
         self._select_tree_node((sid, self._current_section, ""))
         self._show_section(self._current_section, "", sid)
 
@@ -3752,6 +3898,11 @@ class IPTVTab(QWidget):
         # the whole section under the new grouping.
         self._current_category = ""
         self._current_year = ""
+        # The old scope node no longer exists under the new grouping.
+        self._scope_key = (self._current_source_id or "", self._current_section, "")
+        self._scope_label = self._scope_label_for(self._current_source_id,
+                                                  self._current_section)
+        self._update_search_placeholder()
         self._rebuild_sidebar()
         self._show_section(self._current_section,
                            source_id=self._current_source_id or None)
@@ -3920,6 +4071,13 @@ class IPTVTab(QWidget):
         self._current_section = section
         self._current_category = category
         self._current_year = year
+        # Remember the entered node as the folder-search scope (label minus
+        # its trailing count, e.g. "Movies (1234)" -> "Movies").
+        self._scope_key = (source_id, section, category, year, bulk)[:5] \
+            if year or bulk else (source_id, section, category)
+        self._scope_label = re.sub(r"\s*\([^()]*\)\s*$", "",
+                                   item.text(0)).strip() or item.text(0)
+        self._update_search_placeholder()
         self._show_section(section, category, source_id, year=year, bulk=bulk)
 
     @staticmethod
@@ -3952,6 +4110,7 @@ class IPTVTab(QWidget):
         if bulk > 0:
             start = (bulk - 1) * BULK_SIZE
             items = items[start:start + BULK_SIZE]
+        items = self._folder_filter(items)
         self._set_content_items(items)
 
     def _set_content_items(self, items: List[Any]) -> None:
@@ -4016,11 +4175,91 @@ class IPTVTab(QWidget):
             self._show_section(self._current_section, self._current_category,
                                year=self._current_year)
             return
+        if self._scope_btn.isChecked() and self._scope_key:
+            q = text.lower()
+            hits = [i for i in self._scope_items() if self._matches_query(i, q)]
+            self._set_content_items(hits)
+            self._set_status(
+                f"{len(hits)} match(es) in {self._scope_label or 'folder'}")
+            return
         results = self._manager.search(text)
         items: List[Any] = []
         for section in (SECTION_LIVE, SECTION_MOVIES, SECTION_SERIES):
             items.extend(results.get(section, []))
         self._set_content_items(items)
+
+    @staticmethod
+    def _matches_query(item: Any, q: str) -> bool:
+        """Case-insensitive name/group match (same semantics as
+        IPTVManager.search, plus the channel display name)."""
+        return (q in (getattr(item, "name", "") or "").lower()
+                or q in (getattr(item, "display_name", "") or "").lower()
+                or q in (getattr(item, "group", "") or "").lower())
+
+    def _on_scope_toggled(self, on: bool) -> None:
+        # Accent while active — same visual language as the Grid/List view
+        # buttons (the global stylesheet has no :checked rule, so a checked
+        # toggle would otherwise look identical to unchecked).
+        self._scope_btn.setObjectName("btn_accent" if on else "")
+        self._scope_btn.style().polish(self._scope_btn)
+        self._update_search_placeholder()
+        # Re-run the box immediately so toggling switches between the scoped
+        # and global result sets without retyping.
+        self._on_search(self._search.text())
+
+    def _update_search_placeholder(self) -> None:
+        if self._scope_btn.isChecked() and self._scope_label:
+            self._search.setPlaceholderText(f"Search in {self._scope_label}…")
+        else:
+            self._search.setPlaceholderText("Search channels, movies, series…")
+
+    def _scope_label_for(self, source_id: str, section: str) -> str:
+        """Human label for a scope set programmatically (source jump / group
+        mode change) — tree clicks use the node's own text instead."""
+        src = self._source_name(source_id) if source_id else ""
+        sec = next((label for sid, label in self._SECTIONS
+                    if sid == section), "")
+        return " · ".join(p for p in (src, sec) if p)
+
+    def _scope_items(self) -> List[Any]:
+        """Every item under the last-entered tree node — the domain of the
+        folder-scoped search. A source node means the whole source; a category
+        or year node means everything beneath it (bulk children included)."""
+        key = self._scope_key or ()
+        source_id, section, category = (key + ("", "", ""))[:3]
+        year = key[3] if len(key) > 3 else ""
+        bulk = key[4] if len(key) > 4 else 0
+        if not source_id:
+            return []
+        if not section:  # the source node itself — everything it provides
+            pl = self._manager.playlist_for(source_id)
+            if pl is None:
+                return []
+            return pl.channels + pl.movies + pl.series
+        if section == SECTION_FAVORITES:
+            return self._manager.favorites(source_id)
+        if section == SECTION_RECENT:
+            # Recent rows are dicts; surface them as lightweight playable
+            # objects, same as _show_section does for the content pane.
+            return [Channel(id=r["item_id"], name=r["name"], url=r["url"],
+                            section=r["section"])
+                    for r in self._manager.recent(source_id)]
+        items = self._manager.items_for(section, category, source_id=source_id,
+                                        year=year)
+        if bulk > 0:
+            start = (bulk - 1) * BULK_SIZE
+            items = items[start:start + BULK_SIZE]
+        return items
+
+    def _folder_filter(self, items: List[Any]) -> List[Any]:
+        """Apply the search text to a folder's items when the scope toggle is
+        on — tree clicks then re-filter the newly opened folder, so one query
+        can be carried across folders."""
+        text = self._search.text().strip()
+        if not text or not self._scope_btn.isChecked():
+            return items
+        q = text.lower()
+        return [i for i in items if self._matches_query(i, q)]
 
     def _on_item_selected(self, item: Any) -> None:
         """Single click (or Select button): info only, never playback."""
@@ -4117,6 +4356,141 @@ class IPTVTab(QWidget):
     def set_engine(self, engine: Any) -> None:
         """Give the player access to the torrent engine for QoS throttling."""
         self._player.set_engine(engine)
+
+    def set_download_engine(self, engine: Any) -> None:
+        """Give VOD downloads access to the Download Manager (dlmgr)."""
+        self._dl_engine = engine
+
+    # -- VOD downloads --------------------------------------------------------
+    def _on_download_requested(self, payload: Any) -> None:
+        """Route a download request from the grid / detail panel / episode
+        menu: a Movie downloads directly; a Series queues every episode after
+        a confirmation; an (episode, series) pair downloads that episode."""
+        if isinstance(payload, tuple):
+            ep, series = payload
+            if series is not None:
+                self._download_batch(series, [ep])
+            return
+        item = payload
+        if isinstance(item, Series):
+            episodes = list(item.episodes)
+            if not episodes:
+                self._set_status(f"No episodes listed for {item.name}")
+                return
+            folder = os.path.join(self._download_root(),
+                                  _safe_folder_name(item.name))
+            ans = QMessageBox.question(
+                self, "Download Series",
+                f"Download all {len(episodes)} episodes of\n\"{item.name}\"?\n\n"
+                f"Files go to:\n{folder}",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if ans != QMessageBox.Yes:
+                return
+            self._download_batch(item, episodes)
+        else:
+            self._download_batch(item, [item])
+
+    def _download_season(self, series: Any, season: int) -> None:
+        """Queue one season of a series (episode-list context menu)."""
+        if series is None:
+            return
+        episodes = list(series.episodes_for(season))
+        if not episodes:
+            self._set_status(f"No episodes in season {season:02d}")
+            return
+        folder = os.path.join(self._download_root(),
+                              _safe_folder_name(series.name))
+        ans = QMessageBox.question(
+            self, "Download Season",
+            f"Download all {len(episodes)} episodes of "
+            f"{series.name} Season {season:02d}?\n\nFiles go to:\n{folder}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if ans != QMessageBox.Yes:
+            return
+        self._download_batch(series, episodes)
+
+    def _download_root(self) -> str:
+        return getattr(self._config.download, "default_folder", "") or ""
+
+    def _source_of(self, item: Any) -> Any:
+        """The PlaylistSource an item came from (for UA/Referer headers)."""
+        sid = self._manager.source_id_of(item) or self._current_source_id
+        for s in self._manager.sources:
+            if s.id == sid:
+                return s
+        return None
+
+    def _download_batch(self, parent: Any, entries: List[Any]) -> None:
+        """Queue VOD entries (a movie, or episodes of a series) into the
+        Download Manager.
+
+        The engine calls run on ONE worker thread: add_stream_job parses the
+        HLS/DASH manifest over the network and must never block the GUI
+        thread, and a series batch keeps its provider load serialized (same
+        pattern as the Site Grabber dialog)."""
+        engine = self._dl_engine
+        if engine is None:
+            self._set_status("Download engine unavailable")
+            return
+        headers = build_playback_headers(parent, self._source_of(parent))
+        referrer = headers.get("Referer", "")
+        is_series = isinstance(parent, Series)
+        # Episodes land in a per-series subfolder; single movies go straight
+        # to the Download Manager's default folder. (With no configured root,
+        # skip the subfolder too — a relative path would land in the CWD.)
+        root = self._download_root()
+        series_dir = ""
+        if is_series and root:
+            series_dir = os.path.join(root, _safe_folder_name(parent.name))
+        base_name = getattr(parent, "name", "") or "vod"
+        total = len(entries)
+        single = total == 1
+        self._set_status(
+            f"Queuing {total} VOD download{'s' if not single else ''}…")
+
+        def _worker() -> None:
+            queued = 0
+            failures: List[str] = []
+            for entry in entries:
+                url = (getattr(entry, "url", "") or "").strip()
+                if not url:
+                    failures.append(getattr(entry, "name", "") or "no url")
+                    continue
+                if is_series:
+                    title = _episode_filename(base_name, entry)
+                    save_path = os.path.join(series_dir, "")
+                else:
+                    title = (getattr(entry, "name", "") or
+                             getattr(entry, "display_name", "") or "vod")
+                    save_path = ""
+                try:
+                    low = url.lower().split("?", 1)[0]
+                    if low.endswith((".m3u8", ".mpd")):
+                        job = engine.add_stream_job(
+                            url=url, filename=title, save_path=save_path,
+                            headers=headers, referrer=referrer)
+                    else:
+                        job = engine.add_job(
+                            url=url, filename=title, save_path=save_path,
+                            headers=headers, referrer=referrer)
+                    if getattr(job, "error_message", ""):
+                        failures.append(f"{title}: {job.error_message}")
+                    else:
+                        queued += 1
+                except Exception as exc:  # provider/parse failure on one item
+                    logger.warning("VOD download failed for %s: %s", title, exc)
+                    failures.append(f"{title}: {exc}")
+            if queued:
+                where = series_dir or self._download_root() or "the default folder"
+                self._signals.status.emit(
+                    f"⬇ {queued} download{'s' if not single else ''} queued "
+                    f"({where}) — see the Download tab")
+            if failures:
+                self._signals.status.emit(
+                    f"⬇ {len(failures)} download(s) failed: {failures[0]}")
+
+        threading.Thread(target=_worker, daemon=True,
+                         name="iptv-vod-download").start()
 
     def reload_config(self, config: DeeptorrentConfig) -> None:
         """Re-apply config after the user edits IPTV settings."""

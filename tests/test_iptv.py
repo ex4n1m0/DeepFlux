@@ -4313,6 +4313,137 @@ def test_browser_pane_toggle_buttons(tmp_path):
         _close_tab(tab)
 
 
+def _wait_for(cond, timeout=5.0):
+    """Poll until cond() is true (download batches run on a worker thread)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if cond():
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_folder_scoped_search_filters_within_selected_folder(tmp_path):
+    """The 📍 Folder toggle scopes the search box to the tree node entered
+    last (category/year/section/source) instead of the whole playlist, and
+    tree clicks re-filter the opened folder while a query is active."""
+    tab = _iptv_tab_with_two_sources(tmp_path)
+    try:
+        # Provider A: one channel per category, both names match "chan".
+        pla = tab._manager._playlists["a"]
+        pla.channels.append(Channel(id=make_id("a", "sport"), name="Sport Chan B",
+                                     url="http://a/2.ts", group="Sport",
+                                     section=SECTION_LIVE))
+        pla.categories.append(Category(name="Sport", section=SECTION_LIVE, count=1))
+        tab._rebuild_sidebar()
+
+        live = _child_by_key(tab._tree.topLevelItem(0), ("a", SECTION_LIVE, ""))
+        news = _child_by_key(live, ("a", SECTION_LIVE, "News"))
+        sport = _child_by_key(live, ("a", SECTION_LIVE, "Sport"))
+
+        # Entering a folder records it as the search scope.
+        tab._on_tree_click(news, 0)
+        assert tab._scope_key == ("a", SECTION_LIVE, "News")
+        assert tab._scope_label == "News"
+
+        # Scope OFF (default): the query runs over the whole playlist.
+        tab._on_search("chan")
+        assert [c.name for c in tab._current_items] == ["a chan", "Sport Chan B"]
+
+        # Scope ON: only matches inside the selected folder.
+        tab._scope_btn.setChecked(True)
+        tab._on_search("chan")
+        assert [c.name for c in tab._current_items] == ["a chan"]
+        assert "News" in tab._search.placeholderText()
+
+        # A query with no hits in the folder finds nothing scoped…
+        tab._on_search("zzz")
+        assert tab._current_items == []
+        # …and tree clicks re-filter the newly opened folder while scoped.
+        tab._on_search("chan")
+        tab._on_tree_click(sport, 0)
+        assert [c.name for c in tab._current_items] == ["Sport Chan B"]
+
+        # Scope OFF again: back to playlist-wide results.
+        tab._scope_btn.setChecked(False)
+        tab._on_search("chan")
+        assert len(tab._current_items) == 2
+    finally:
+        _close_tab(tab)
+
+
+def test_vod_download_queues_into_download_engine(tmp_path):
+    """Play-tab downloads: a movie goes straight to the Download Manager as
+    a file job; a series (confirmed) queues one job per episode into a
+    per-series subfolder, with HLS episodes routed to add_stream_job."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    QApplication.instance() or QApplication([])
+    from iptv.models import Episode
+
+    tab = _iptv_tab_with_two_sources(tmp_path)
+    try:
+        calls = []
+
+        class _FakeEngine:
+            def add_job(self, url, filename="", save_path="", headers=None,
+                        referrer="", **kw):
+                calls.append(("file", url, filename, save_path))
+                return mock.MagicMock(error_message="")
+
+            def add_stream_job(self, url, filename="", save_path="",
+                               headers=None, referrer="", **kw):
+                calls.append(("hls", url, filename, save_path))
+                return mock.MagicMock(error_message="")
+
+        tab.set_download_engine(_FakeEngine())
+
+        pla = tab._manager._playlists["a"]
+        pla.movies.append(Movie(id=make_id("a", "m1"), name="Dune",
+                                url="http://a/dune.mkv", group="VOD",
+                                section=SECTION_MOVIES))
+        pla.series.append(Series(
+            id=make_id("a", "sr1"), name="Henry", group="TV",
+            section=SECTION_SERIES,
+            episodes=[
+                Episode(season=1, episode=1, name="Pilot", url="http://a/s01e01.mp4"),
+                Episode(season=1, episode=2, name="Solo", url="http://a/s01e02.m3u8"),
+            ]))
+
+        # Single movie: no confirmation, direct file job in the default folder.
+        tab._on_download_requested(pla.movies[0])
+        assert _wait_for(lambda: len(calls) >= 1)
+        kind, url, fname, path = calls[0]
+        assert (kind, url) == ("file", "http://a/dune.mkv")
+        assert "Dune" in fname and path == ""
+
+        # Whole series: one job per episode, per-series subfolder, m3u8
+        # episodes become stream jobs.
+        with mock.patch("gui.iptv_tab.QMessageBox.question",
+                        return_value=QMessageBox.Yes):
+            tab._on_download_requested(pla.series[0])
+        assert _wait_for(lambda: len(calls) >= 3)
+        assert calls[1][0] == "file" and "S01E01" in calls[1][2]
+        assert calls[2][0] == "hls" and "S01E02" in calls[2][2]
+        for _k, _u, _f, p in calls[1:]:
+            assert p.endswith((os.sep, "/")) and "Henry" in p
+
+        # Declining the confirmation queues nothing.
+        calls.clear()
+        with mock.patch("gui.iptv_tab.QMessageBox.question",
+                        return_value=QMessageBox.No):
+            tab._on_download_requested(pla.series[0])
+        assert not _wait_for(lambda: bool(calls), timeout=0.5)
+
+        # Season path (episode-list context menu) queues just that season.
+        with mock.patch("gui.iptv_tab.QMessageBox.question",
+                        return_value=QMessageBox.Yes):
+            tab._download_season(pla.series[0], 1)
+        assert _wait_for(lambda: len(calls) == 2)
+    finally:
+        _close_tab(tab)
+
+
 def test_error_and_watchdog_share_one_retry_for_an_attempt():
     """The backend callback and watchdog cannot both consume attempt 1."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")

@@ -1014,7 +1014,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.5.10 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.6 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -2017,6 +2017,8 @@ class MainWindow(QMainWindow):
         self.iptv_tab = IPTVTab(self.config, self)
         self.iptv_tab.set_settings_callback(self._open_iptv_settings)
         self.iptv_tab.set_engine(self.engine)
+        # VOD downloads (movies/series from the Play tab) queue into dlmgr.
+        self.iptv_tab.set_download_engine(self._dl_engine)
         self.main_tabs.addTab(self.iptv_tab, "Play")
         # Let the agent's iptv_* tools drive playback (queued onto the GUI
         # thread) and read the playlist/player state.
