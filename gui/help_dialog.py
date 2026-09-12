@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.6 — User Guide</h1>
+<h1>DeepFlux 3.6.1 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -77,7 +77,7 @@ files, and chat on IRC, all with your confirmation for sensitive actions.</p>
   <tr><th>Tab</th><th>What it does</th><th>Agent control</th></tr>
   <tr><td><b>Browse</b></td><td>Full Chromium browser (HTML5 fullscreen video works — ESC exits).
       Downloads route to the download manager with a notification; <code>.torrent</code> links add automatically.</td><td>Navigate, tabs, read pages, click, fill forms, bookmarks</td></tr>
-  <tr><td><b>Agent</b></td><td>AI chat with voice input (🎤). <code>Enter</code> = agent search; <code>Ctrl+Enter</code> = quick web search.</td><td>—</td></tr>
+  <tr><td><b>Agent</b></td><td>AI chat with voice input (🎤). The agent greets you automatically on every start. <code>Enter</code> = agent search; <code>Ctrl+Enter</code> = quick web search.</td><td>—</td></tr>
   <tr><td><b>Download</b></td><td>Torrents on top, download manager below. Auto-focused whenever a transfer is added.</td><td>Full queue control: list, pause, resume, retry, cancel</td></tr>
   <tr><td><b>Play</b></td><td>IPTV and media player — live TV, movies, series, and your own local media folders.</td><td>Search playlist, play, pause, stop, volume, EPG</td></tr>
   <tr><td><b>Command</b></td><td>Dual-pane file manager (Double Commander style).</td><td>Browse, copy, move, rename, delete, new folder</td></tr>
@@ -383,7 +383,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.6 — AI Deep Search</p>
+<p>DeepFlux 3.6.1 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -451,7 +451,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.6 — AI Deep Search")
+        version = QLabel("3.6.1 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

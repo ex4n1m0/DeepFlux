@@ -28,6 +28,10 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+    /* Vertically center the stack on tall viewports; "safe center" keeps
+       normal top-anchored scrolling when the content is taller (mobile). */
+    justify-content: flex-start;
+    justify-content: safe center;
   }
   header.banner {
     display: flex;
@@ -65,6 +69,41 @@
     letter-spacing: 0.12em;
     color: rgba(255, 255, 255, 0.45);
   }
+  section.features {
+    /* Same 38px rhythm: sits between the download block and the social icons. */
+    padding: 38px 24px 0;
+    flex-shrink: 0;
+    display: flex;
+    justify-content: center;
+  }
+  section.features ul {
+    list-style: none;
+    display: grid;
+    grid-template-columns: repeat(2, max-content);
+    gap: 12px 64px;
+    font-size: 0.9rem;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.75);
+  }
+  section.features li {
+    position: relative;
+    padding-left: 20px;
+    white-space: nowrap;
+  }
+  section.features li::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 0.5em;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.45);
+  }
+  @media (max-width: 840px) {
+    section.features ul { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    section.features li { white-space: normal; }
+  }
   footer.social {
     /* Directly below the download block (tagline removed), with the same
        38px rhythm as the gaps above it and page-bottom breathing room. */
@@ -95,8 +134,20 @@
     <img src="DeepFluxBanner.webp" alt="DeepFlux wordmark artwork">
   </header>
   <section class="dl-wrap">
-    <a class="dl" href="DeepFlux3.6Setup.exe" download>Download</a>
-    <p class="meta">DeepFlux 3.6 · Windows 10/11 64-bit · posted 2026-09-12</p>
+    <a class="dl" href="DeepFlux3.6.1Setup.exe" download>Download</a>
+    <p class="meta">DeepFlux 3.6.1 · Windows 10/11 64-bit · posted 2026-09-12</p>
+  </section>
+  <section class="features" aria-label="What DeepFlux can do">
+    <ul>
+      <li>AI agent — find, download &amp; manage by chat</li>
+      <li>Torrent engine with stream while downloading</li>
+      <li>IPTV: live TV, movies &amp; series with EPG guide</li>
+      <li>Embedded Chromium browser with agent control</li>
+      <li>Download manager: HTTP, HLS/DASH &amp; YouTube</li>
+      <li>Player: Dolby Vision, SVP &amp; online subtitles</li>
+      <li>Audio player with MilkDrop visualizer</li>
+      <li>IRC, RSS, offline voice input &amp; file manager</li>
+    </ul>
   </section>
   <footer class="social">
     <a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener" aria-label="GitHub">

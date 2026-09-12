@@ -1014,7 +1014,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.6 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.6.1 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1286,6 +1286,10 @@ class MainWindow(QMainWindow):
 
         # System tray icon (minimize-to-tray + completion toasts).
         self._setup_tray()
+
+        # Startup greeting (2026-09-12): auto-send "Hello" shortly after
+        # launch so the agent always welcomes the user.
+        QTimer.singleShot(1500, self._send_startup_greeting)
 
     def changeEvent(self, event) -> None:  # noqa: N802
         # Single source of truth for video-fullscreen chrome: the window can
@@ -2579,6 +2583,18 @@ class MainWindow(QMainWindow):
 
         self._agent_thread = threading.Thread(target=_worker, daemon=True)
         self._agent_thread.start()
+
+    def _send_startup_greeting(self) -> None:
+        """Auto-send "Hello" once after startup so the agent greets the user.
+
+        Skipped when the agent is already busy or the user beat the timer to
+        the input box (typing, voice dictation) — never clobbers real input."""
+        if self._agent_thread and self._agent_thread.is_alive():
+            return
+        if self.chat_input.text().strip():
+            return
+        self.chat_input.setText("Hello")
+        self._on_send()
 
     # ------------------------------------------------------------------
     # Voice input (mic button next to the agent input)
