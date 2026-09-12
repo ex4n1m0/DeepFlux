@@ -744,6 +744,40 @@ class TestIRCTabRoom:
             client.shutdown()
             app.processEvents()
 
+    def test_positional_parent_construction_matches_main_window(self):
+        """Regression (3.9 hotfix): MainWindow calls
+        ``IRCTab(config, client, self)`` — the third POSITIONAL argument is
+        the parent QWidget. A parameter inserted before it bound the window
+        to ``room`` and crashed startup for every user; no test built the
+        real MainWindow, so the suite stayed green."""
+        pytest.importorskip("PySide6")
+        import os
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PySide6.QtWidgets import QApplication, QWidget
+        from gui.irc_tab import IRCTab
+        from ircmgr.client import IRCClientCore
+
+        app = QApplication.instance() or QApplication([])
+        config = DeeptorrentConfig()
+        client = IRCClientCore(config.irc)
+        parent = QWidget()
+
+        class StubRoom:
+            encrypted, role, nick = True, "left", ""
+
+            def add_listener(self, cb):
+                pass
+
+        tab = IRCTab(config, client, parent, StubRoom())
+        try:
+            assert tab.parent() is parent          # parent bound, not room
+            assert isinstance(tab._room, StubRoom)  # room bound where expected
+        finally:
+            tab.deleteLater()
+            parent.deleteLater()
+            client.shutdown()
+            app.processEvents()
+
     def test_join_bar_flow_and_message_rendering(self):
         app, tab, client, stub = self._make_tab()
         try:

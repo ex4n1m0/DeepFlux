@@ -437,8 +437,10 @@ class IRCTab(QWidget):
     tests."""
 
     def __init__(self, config: DeeptorrentConfig, irc_client: IRCClientCore,
-                 room: Optional[RoomController] = None,
-                 parent: Optional[QWidget] = None) -> None:
+                 parent: Optional[QWidget] = None,
+                 room: Optional[RoomController] = None) -> None:
+        # CAUTION: MainWindow passes ``parent`` POSITIONALLY
+        # (IRCTab(config, client, self)) — keep it third or startup breaks.
         super().__init__(parent)
         self._config = config
         _dedupe_network_ids(self._config.irc.networks)
