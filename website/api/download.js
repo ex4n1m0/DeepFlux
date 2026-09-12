@@ -9,8 +9,13 @@
 const FILE_RE = /^DeepFlux[0-9.]+Setup\.exe$/;
 const TOTAL_KEY = 'df:dl:total';
 
+// Accept both naming schemes: UPSTASH_REDIS_REST_* (a manual Upstash token)
+// and KV_REST_API_* (what the Vercel Marketplace integration sets).
+const REST_URL = () => process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+const REST_TOKEN = () => process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+
 function creds() {
-  return process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN;
+  return REST_URL() && REST_TOKEN();
 }
 
 module.exports = async (req, res) => {
@@ -20,10 +25,10 @@ module.exports = async (req, res) => {
 
   if (creds()) {
     try {
-      await fetch(`${process.env.UPSTASH_REDIS_REST_URL}/pipeline`, {
+      await fetch(`${REST_URL()}/pipeline`, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${process.env.UPSTASH_REDIS_REST_TOKEN}`,
+          Authorization: `Bearer ${REST_TOKEN()}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify([

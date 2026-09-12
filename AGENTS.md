@@ -83,10 +83,12 @@
   presence ZSET with a 15-min window, stats.js = {online, downloads},
   download.js = INCR + 302 to the static exe — the landing page's Download
   button goes through it). Backing store is Upstash Redis via the Vercel
-  Marketplace, read from `UPSTASH_REDIS_REST_URL/_TOKEN` env vars — until
-  the project owner adds that integration, all three functions degrade
+  Marketplace, read from `UPSTASH_REDIS_REST_URL/_TOKEN` **or**
+  `KV_REST_API_URL/_TOKEN` (the names the Vercel integration actually sets —
+  LIVE since 2026-09-13); without them all three functions degrade
   gracefully (heartbeats answer 200 {ok:false}, stats returns nulls and the
-  page hides the widgets, downloads redirect uncounted). Tests:
+  page hides the widgets, downloads redirect uncounted). New env vars only
+  reach the functions after a redeploy. Tests:
   tests/test_telemetry.py (all network mocked).
 
 ## Conventions
