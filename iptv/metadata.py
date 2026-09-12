@@ -256,6 +256,22 @@ def _retry_request(
 # Provider interface
 # ---------------------------------------------------------------------------
 
+def _pooled_session(pool_maxsize: int = 20) -> requests.Session:
+    """A keep-alive Session whose connection pool fits the metadata workers.
+
+    The pipeline runs up to 16 concurrent provider chains over ONE shared
+    Session per provider; urllib3's default pool (10 connections) silently
+    discards keep-alive connections beyond that, and a discarded connection
+    means a fresh TLS handshake — the exact waste the shared session exists
+    to avoid (measured on the logo CDNs).
+    """
+    s = requests.Session()
+    adapter = requests.adapters.HTTPAdapter(pool_connections=4, pool_maxsize=pool_maxsize)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    return s
+
+
 class MetadataProvider:
     """Base class. Subclasses implement :meth:`fetch`."""
 
@@ -275,7 +291,7 @@ class TMDBProvider(MetadataProvider):
         # Keep-alive session: TMDb's CDN resets connections under bursts just
         # like the logo CDNs — a fresh TLS handshake per request is wasteful
         # and loses calls. Reused across all fetch() calls on this provider.
-        self._session = requests.Session()
+        self._session = _pooled_session()
 
     def fetch(self, title: str, year: str, section: str) -> Optional[Dict[str, Any]]:
         if not self.api_key or not title:
@@ -616,7 +632,7 @@ class TPDBProvider(MetadataProvider):
 
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key
-        self._session = requests.Session()
+        self._session = _pooled_session()
         self._session.headers.update({
             "Authorization": f"Bearer {api_key}",
             "Accept": "application/json",
@@ -636,28 +652,36 @@ class TPDBProvider(MetadataProvider):
         # Adult playlist names are studio-led ("<Studio> <scene title> …"),
         # which poisons a plain title query — measured 4% on a real playlist.
         # TPDB's parse mode is built for exactly this shape (9x better).
-        row = self._parse_lookup(raw_name or title, year)
+        row, parse_had_rows = self._parse_lookup(raw_name or title, year)
         if row:
             return self._to_meta(row)
 
-        # Fall back to plain keyword search for non-studio-led names.
-        for path in ("/movies", "/scenes"):
-            row = self._search(path, title, year, expect=title)
-            if row:
-                return self._to_meta(row)
+        # Fall back to plain keyword search only when parse mode came back
+        # EMPTY: parse answering with rows that failed verification means
+        # TPDB parsed the name and its candidates were rejected — re-querying
+        # with the shorter studio-stripped title is exactly the loose-keyword
+        # noise mode (short queries "match" everything, ~4% real hits), so it
+        # just costs two extra round-trips per miss and 3x the request volume.
+        if not parse_had_rows:
+            for path in ("/movies", "/scenes"):
+                row = self._search(path, title, year, expect=title)
+                if row:
+                    return self._to_meta(row)
         return None
 
-    def _parse_lookup(self, name: str, year: str = "") -> Optional[Dict[str, Any]]:
+    def _parse_lookup(self, name: str, year: str = "") -> Tuple[Optional[Dict[str, Any]], bool]:
         """TPDB filename-parsing mode, with the match verified locally.
 
+        Returns ``(best_row_or_None, parse_returned_rows)`` — the caller uses
+        the flag to decide whether the plain-keyword fallback can add anything.
         Parse returns loose candidates (rows came back for 80% of entries but
         only ~30% were real matches), so every row is checked before use.
         """
         if not name:
-            return None
-        rows = [row for row in self._request("/scenes", {"parse": name})
-                if self._verify(name, row)]
-        return self._best(rows, year)
+            return None, False
+        raw = self._request("/scenes", {"parse": name})
+        rows = [row for row in raw if self._verify(name, row)]
+        return self._best(rows, year), bool(raw)
 
     def _verify(self, name: str, row: Dict[str, Any]) -> bool:
         """Accept a row only if its title really belongs to this entry.
@@ -749,7 +773,7 @@ class StashDBProvider(MetadataProvider):
 
     def __init__(self, api_key: str) -> None:
         self.api_key = api_key
-        self._session = requests.Session()
+        self._session = _pooled_session()
         self._session.headers.update({
             "ApiKey": api_key,
             "Content-Type": "application/json",
@@ -1891,7 +1915,14 @@ class MetadataPipeline:
         self.logos = IptvOrgLogos(cache)
         self.logo_chain = ChannelLogoChain(self.logos)
         self._limiter = _RateLimiter(rate=rate_per_second, per=1.0)
-        self._executor = _BoundedExecutor(max_workers=4)
+        # Workers only hold a provider chain open (the limiter is the real
+        # API-politeness gate). A chain lasts ~2-4s (sequential TPDB parse →
+        # fallbacks → StashDB → TMDb round-trips), so 4 workers capped
+        # throughput at ~1.6 lookups/s — the 5/s limiter budget was never
+        # reached and a 48k-entry adult section swept for 8+ hours. 16
+        # workers keeps the queue short enough that the limiter is the
+        # bottleneck; threads are cheap (they block on HTTP).
+        self._executor = _BoundedExecutor(max_workers=16)
         self._inflight: Dict[str, threading.Event] = {}
         self._lock = threading.Lock()
 

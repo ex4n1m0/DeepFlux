@@ -724,6 +724,49 @@ def test_tpdb_uses_parse_mode_for_studio_led_names():
     assert "parse" in first.kwargs["params"]
 
 
+def test_tpdb_skips_keyword_fallback_when_parse_returned_rows():
+    """Parse answering with rows that failed verification is a definitive
+    answer — re-querying with the shorter studio-stripped title is the
+    loose-keyword noise mode, so no /movies or /scenes search may fire."""
+    from iptv.metadata import TPDBProvider
+    prov = TPDBProvider("token")
+    row = _tpdb_row()
+    row["title"] = "Totally Unrelated Scene"
+    row["site"] = {"name": "OtherStudio"}
+    with mock.patch.object(prov._session, "get") as get:
+        get.return_value = mock.Mock(
+            status_code=200, ok=True,
+            json=lambda: {"data": [row]},
+            raise_for_status=lambda: None,
+        )
+        assert prov.fetch("SomeStudio Riding Lessons", "", SECTION_MOVIES,
+                          raw_name="SomeStudio Riding Lessons") is None
+    assert get.call_count == 1  # the parse request only
+
+
+def test_tpdb_keyword_fallback_when_parse_returns_nothing():
+    """Parse coming back EMPTY means the name isn't a recognizable scene
+    filename — the plain keyword search still gets its chance."""
+    from iptv.metadata import TPDBProvider
+    prov = TPDBProvider("token")
+    row = _tpdb_row()
+    row["title"] = "Scene Title"
+    empty = mock.Mock(status_code=200, ok=True,
+                      json=lambda: {"data": []},
+                      raise_for_status=lambda: None)
+    hit = mock.Mock(status_code=200, ok=True,
+                    json=lambda: {"data": [row]},
+                    raise_for_status=lambda: None)
+    with mock.patch.object(prov._session, "get", side_effect=[empty, hit]) as get:
+        meta = prov.fetch("Scene Title", "", SECTION_MOVIES,
+                          raw_name="some non scene shaped name")
+    assert meta is not None
+    assert get.call_count == 2
+    fallback = get.call_args_list[1]
+    assert fallback.args[0].endswith("/movies")
+    assert fallback.kwargs["params"].get("q") == "Scene Title"
+
+
 # ---------------------------------------------------------------------------
 # Frame-grab poster fallback
 # ---------------------------------------------------------------------------
