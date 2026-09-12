@@ -19,6 +19,12 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# The app's release version. Kept here (config is imported everywhere) so the
+# telemetry ping and future callers share one source; the user-facing literals
+# (window title, User Guide, installer.iss) are bumped by hand on release —
+# see the version-bump checklist in AGENTS.md.
+APP_VERSION = "3.8"
+
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
 # out of the box for every download: the DeepSeek agent key plus the metadata/
@@ -693,6 +699,18 @@ class VoiceConfig:
 
 
 @dataclass
+class StatsConfig:
+    """Anonymous usage ping (see infra/telemetry.py).
+
+    While the app runs it POSTs a tiny heartbeat to the project website
+    (deepflux.space) every few minutes so the site can show a live
+    "users online" count. The payload is a random install id (generated once,
+    stored in ~/.deeptorrent/install_id), the app version and the OS —
+    nothing else, no identifiers, no paths, no usage details."""
+    ping_enabled: bool = True
+
+
+@dataclass
 class DeeptorrentConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     indexer: IndexerConfig = field(default_factory=IndexerConfig)
@@ -705,6 +723,7 @@ class DeeptorrentConfig:
     iptv: IPTVConfig = field(default_factory=IPTVConfig)
     irc: IRCConfig = field(default_factory=IRCConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    stats: StatsConfig = field(default_factory=StatsConfig)
     sources: SourcesConfig = field(default_factory=SourcesConfig)
     default_save_path: str = str(Path.home() / "Downloads" / "DeepFlux")
     categories: List[str] = field(default_factory=lambda: ["Movies", "TV", "Software", "Other"])
@@ -1109,6 +1128,8 @@ class DeeptorrentConfig:
             ),
             voice=VoiceConfig(**{k: v for k, v in data.get("voice", {}).items()
                                  if k in VoiceConfig.__dataclass_fields__}),
+            stats=StatsConfig(**{k: v for k, v in data.get("stats", {}).items()
+                                 if k in StatsConfig.__dataclass_fields__}),
             sources=SourcesConfig(
                 sources=merged_sources,
                 use_jackett=data.get("sources", {}).get("use_jackett", True),

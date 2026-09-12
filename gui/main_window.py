@@ -1014,8 +1014,18 @@ class MainWindow(QMainWindow):
         threading.Thread(target=self._ytdlp_update_worker, daemon=True,
                          name="ytdlp-update").start()
 
+        # Anonymous usage ping — powers the live "users online" count on the
+        # website (deepflux.space). Payload: random install id + version + OS;
+        # off-switch in Download settings. Every failure is silent.
+        try:
+            from infra import telemetry
+            telemetry.start_heartbeat(self.config,
+                                      data_dir=os.path.dirname(self.config_path))
+        except Exception:
+            logger.debug("telemetry heartbeat failed to start", exc_info=True)
+
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.7 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.8 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -5966,6 +5976,13 @@ class MainWindow(QMainWindow):
         # Stop an in-progress voice recording so the mic handle is released.
         if getattr(self, "_voice_rec", None) is not None and self._voice_rec.recording:
             self._voice_rec.stop()
+
+        # Best-effort telemetry "leaving" note — never blocks the quit.
+        try:
+            from infra import telemetry
+            telemetry.stop_heartbeat()
+        except Exception:
+            pass
 
         # Persist window geometry + active tab. Skipped when an imported
         # settings file is pending — the old in-memory config must not

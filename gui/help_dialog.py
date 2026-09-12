@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.7 — User Guide</h1>
+<h1>DeepFlux 3.8 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -363,6 +363,25 @@ browser toolbar's Bookmarks button.</p>
   <tr><td><b>IRC</b></td><td><b>Networks</b> — servers, channels, SASL.</td></tr>
 </table>
 
+<h2>Privacy</h2>
+
+<p>DeepFlux works fully offline if you want it to. Two things talk to the
+internet by default:</p>
+
+<ul>
+  <li><b>Anonymous usage ping</b> — while the app runs, a tiny ping is sent to
+  deepflux.space every few minutes so the website can show a live "users
+  online" count. It carries only a random install id (a file on your disk, not
+  tied to you), the app version and your OS name — nothing else: no username,
+  no machine name, no file names, no browsing or download activity. Turn it
+  off in File → Download → Download Manager Settings.</li>
+  <li><b>Update checks</b> — a daily check for an outdated YouTube downloader
+  (warn-only). Same settings page.</li>
+</ul>
+
+<p>Everything else — searching, downloading, playing, the agent — only uses
+the network when you ask it to.</p>
+
 <h2>Keyboard Shortcuts</h2>
 
 <table>
@@ -410,7 +429,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.7 — AI Deep Search</p>
+<p>DeepFlux 3.8 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -478,7 +497,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.7 — AI Deep Search")
+        version = QLabel("3.8 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

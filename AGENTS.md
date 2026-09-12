@@ -64,10 +64,30 @@
   project.json` does not resolve to the CLI's default personal scope).
   Version bumps touch: installer.iss (MyAppVersion + OutputBaseFilename),
   main_window title, help_dialog (H1/Version/About), opensubtitles UA,
-  website index.html, README.md ("Current version" line — a pre-commit hook
-  in .git/hooks/ re-syncs it from installer.iss MyAppVersion on every commit
-  and auto-stages the change; if the hook is missing on a fresh clone,
-  reinstall it from this note).
+  config.py APP_VERSION (the telemetry ping's version), website index.html
+  (meta line AND the /api/download?f=… href), README.md ("Current version"
+  line — a pre-commit hook in .git/hooks/ re-syncs it from installer.iss
+  MyAppVersion on every commit and auto-stages the change; if the hook is
+  missing on a fresh clone, reinstall it from this note).
+- Live stats (since 3.8): the app sends an anonymous usage ping
+  (`infra/telemetry.py`, started by GUI `__init__` and the CLI Repl, stopped
+  in closeEvent/shutdown with a best-effort "leave" note) to
+  `https://deepflux.space/api/heartbeat` every 5 min — payload is ONLY
+  {install id, APP_VERSION, os.name}; the id is a random hex file at
+  `~/.deeptorrent/install_id` (deliberately NOT in config.json so Settings
+  Export can't transplant one machine's identity onto another; survives
+  installs since the installer only deletes config.json). Off-switch:
+  `stats.ping_enabled` (Download Manager settings page, applies next launch),
+  default ON by owner decision 2026-09-13. Every failure is silent by
+  contract. The website side lives in `website/api/` (heartbeat.js =
+  presence ZSET with a 15-min window, stats.js = {online, downloads},
+  download.js = INCR + 302 to the static exe — the landing page's Download
+  button goes through it). Backing store is Upstash Redis via the Vercel
+  Marketplace, read from `UPSTASH_REDIS_REST_URL/_TOKEN` env vars — until
+  the project owner adds that integration, all three functions degrade
+  gracefully (heartbeats answer 200 {ok:false}, stats returns nulls and the
+  page hides the widgets, downloads redirect uncounted). Tests:
+  tests/test_telemetry.py (all network mocked).
 
 ## Conventions
 - Settings backup: File → Export/Import Settings (`infra/config_backup.py`)
@@ -554,6 +574,15 @@
     control.
   * Verified end-to-end on a fresh sample: JAV 93%, non-JAV 50%, weighted
     ~51% (was 7% before parse mode) — roughly 25k of 48k tiles.
+  * The plain `/movies`+`/scenes` keyword fallbacks only run when parse
+    returns ZERO rows (2026-09-12, speed fix). Parse answering with rows
+    that failed `_verify` is definitive for that name, and re-querying with
+    the shorter studio-stripped title is exactly the loose-keyword noise
+    mode — it cost 2 extra sequential requests on the most common miss
+    shape (~40% of entries) for ~4% yield, and the extra TPDB volume fed
+    the connection-reset/retry cycle. Tests:
+    `test_tpdb_skips_keyword_fallback_when_parse_returned_rows`,
+    `test_tpdb_keyword_fallback_when_parse_returns_nothing`.
   Do not "improve" recall by loosening the thresholds; that trades blank
   tiles for confidently wrong ones. The residual is covered by the frame-grab
   fallback below, not by fuzzier matching.
@@ -649,12 +678,20 @@
   (~4.3s each, 480x270 JPEG). Do not collapse that distinction back into a
   plain bool.
 - Cover population is three-layered in `ContentGrid`: visible tiles resolve
-  immediately, `_PREFETCH_TILES` (300) rows either side of the viewport are
+  immediately, `_PREFETCH_TILES` (250) rows either side of the viewport are
   pre-downloaded (capped by `_MAX_PENDING_ARTWORK` so a fast scroll can't
   starve on-screen tiles), and a `_sweep_timer` walks `_sweep_queue` — every
   artwork-less entry in the *current section* — at `_SWEEP_BATCH`/sec, which
   deliberately matches the metadata limiter (5/s) so the queue never grows
-  and on-demand lookups wait ~1s at most. Switching sections abandons the
+  and on-demand lookups wait ~1s at most. The MetadataPipeline executor is
+  16 workers (2026-09-12, speed fix): a provider chain lasts ~2-4s of
+  SEQUENTIAL round-trips, and the old 4-worker pool starved the 5/s limiter
+  to ~1.6 lookups/s — the sweep over a 48k adult section took 8+ hours
+  instead of 2.7h and visible tiles queued behind busy workers. Keep
+  workers comfortably above rate × latency so the limiter stays the
+  bottleneck; provider sessions are built by `_pooled_session()` (pool 20)
+  because urllib3's default 10-connection pool discards keep-alive
+  connections at that concurrency. Switching sections abandons the
   sweep (`set_items` clears it). `_visible_range` uses `indexAt` probes at
   several x fractions (icon-mode gaps return invalid indexes) with a
   scrollbar-ratio fallback — never a full 30k-item scan per scroll event.

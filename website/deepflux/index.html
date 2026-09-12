@@ -69,6 +69,21 @@
     letter-spacing: 0.12em;
     color: rgba(255, 255, 255, 0.45);
   }
+  p.live {
+    margin-top: 10px;
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    color: rgba(255, 255, 255, 0.45);
+  }
+  p.live .dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #4ade80;
+    margin-right: 7px;
+    vertical-align: 1px;
+  }
   section.features {
     /* Same 38px rhythm: sits between the download block and the social icons. */
     padding: 38px 24px 0;
@@ -134,8 +149,12 @@
     <img src="DeepFluxBanner.webp" alt="DeepFlux wordmark artwork">
   </header>
   <section class="dl-wrap">
-    <a class="dl" href="DeepFlux3.7Setup.exe" download>Download</a>
-    <p class="meta">DeepFlux 3.7 · Windows 10/11 64-bit · posted 2026-09-12</p>
+    <!-- /api/download counts the click (Upstash counter) then 302s to the
+         static file; it redirects uncounted when the counter isn't set up. -->
+    <a class="dl" href="/api/download?f=DeepFlux3.8Setup.exe" download>Download</a>
+    <p class="meta">DeepFlux 3.8 · Windows 10/11 64-bit · posted 2026-09-13</p>
+    <p class="live" id="live" hidden
+       title="The user count is anonymous — a random id per install, nothing else. Opt out in the app's Download settings."></p>
   </section>
   <section class="features" aria-label="What DeepFlux can do">
     <ul>
@@ -167,5 +186,31 @@
     window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
   </script>
   <script defer src="/_vercel/insights/script.js"></script>
+  <script>
+    // Live "users online" + download counter, fed by /api/stats (Upstash
+    // presence set behind it). Hidden entirely while stats are unavailable.
+    (function () {
+      var el = document.getElementById('live');
+      function refresh() {
+        fetch('/api/stats', { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (s) {
+            var bits = [];
+            if (typeof s.online === 'number' && s.online > 0) {
+              bits.push('<span class="dot"></span>' + s.online +
+                        (s.online === 1 ? ' user online' : ' users online'));
+            }
+            if (typeof s.downloads === 'number' && s.downloads > 0) {
+              bits.push(s.downloads.toLocaleString('en-US') + ' downloads');
+            }
+            if (bits.length) { el.innerHTML = bits.join(' &nbsp;·&nbsp; '); el.hidden = false; }
+            else { el.hidden = true; }
+          })
+          .catch(function () { el.hidden = true; });
+      }
+      refresh();
+      setInterval(refresh, 60000);
+    })();
+  </script>
 </body>
 </html>

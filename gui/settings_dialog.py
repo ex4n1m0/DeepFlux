@@ -334,6 +334,17 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_youtube_update_check = QCheckBox("Warn when the YouTube downloader (yt-dlp) is outdated")
         dm_layout.addRow("", self.dm_youtube_update_check)
 
+        self.dm_usage_ping = QCheckBox(
+            "Send an anonymous usage ping (powers the live user count on deepflux.space)")
+        dm_layout.addRow("", self.dm_usage_ping)
+
+        dm_ping_hint = QLabel(
+            "The ping carries a random install id, the app version and the OS — nothing else.\n"
+            "It is sent every few minutes while the app runs; untick to disable it entirely.")
+        dm_ping_hint.setObjectName("hint")
+        dm_ping_hint.setWordWrap(True)
+        dm_layout.addRow("", dm_ping_hint)
+
         self.dm_categories = QPlainTextEdit()
         self.dm_categories.setMaximumHeight(90)
         self.dm_categories.setPlaceholderText("Videos|D:\\Media\\Videos|mp4,mkv,webm")
@@ -382,6 +393,7 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_youtube_subtitles.setChecked(self.config.download.youtube_subtitles)
         self.dm_youtube_playlists.setChecked(self.config.download.youtube_playlists)
         self.dm_youtube_update_check.setChecked(self.config.download.youtube_update_check)
+        self.dm_usage_ping.setChecked(self.config.stats.ping_enabled)
         self.dm_categories.setPlainText("\n".join(
             f"{category.name}|{category.folder}|{','.join(category.extensions)}"
             for category in self.config.download.categories
@@ -438,6 +450,10 @@ class DownloadsSettingsDialog(QDialog):
             self.config.download.youtube_playlists = self.dm_youtube_playlists.isChecked()
             self.config.download.youtube_update_check = self.dm_youtube_update_check.isChecked()
             self.config.download.categories = categories
+            # Applies on the next launch — the heartbeat thread reads the
+            # flag once at startup (stopping mid-session would flicker the
+            # online count for a setting the user rarely touches).
+            self.config.stats.ping_enabled = self.dm_usage_ping.isChecked()
         self.accept()
 
 

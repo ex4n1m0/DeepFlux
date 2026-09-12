@@ -94,6 +94,13 @@ class Repl:
         threading.Thread(target=self._jackett_sync, daemon=True).start()
         # Daily-gated yt-dlp freshness probe (outdated = partial downloads).
         threading.Thread(target=self._ytdlp_update_check, daemon=True).start()
+        # Anonymous usage ping — live user count on the website; silent.
+        try:
+            from infra import telemetry
+            telemetry.start_heartbeat(self.config,
+                                      data_dir=os.path.dirname(self.config_path))
+        except Exception:
+            logger.debug("telemetry heartbeat failed to start", exc_info=True)
 
     def _ytdlp_update_check(self) -> None:
         from dlmgr import ytdlp_update
@@ -251,6 +258,11 @@ class Repl:
         )
 
     def shutdown(self) -> None:
+        try:
+            from infra import telemetry
+            telemetry.stop_heartbeat()
+        except Exception:
+            pass
         self.agent.cancel()
         self.agent.stop_watchdog()
         self.tools.shutdown()
