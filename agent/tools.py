@@ -12,7 +12,8 @@ import shutil
 import socket
 import threading
 import time
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import httpx
@@ -58,6 +59,7 @@ READ_ONLY_TOOL_NAMES = frozenset({
     "irc_list_nicks", "irc_list_channels", "browser_list_tabs", "browser_get_content", "browser_snapshot",
     "browser_wait", "browser_list_bookmarks", "list_downloads", "propose_rename_and_category",
     "analyze_organization", "list_memories", "agent_diagnostics",
+    "iptv_list_sources", "list_api_keys", "list_settings", "list_torrent_sources",
 })
 
 CONFIRMATION_TOOL_NAMES = frozenset({
@@ -70,6 +72,12 @@ CONFIRMATION_TOOL_NAMES = frozenset({
     "browser_select_ref", "browser_check_ref", "browser_close_tab",
     "browser_add_bookmark", "browser_remove_bookmark", "edit_memory", "forget_memory",
     "apply_organization_plan",
+    # App setup (user decision 2026-09-12: the agent may set up anything the
+    # user could type into a dialog — secrets stay write-only).
+    "iptv_add_source", "iptv_update_source", "iptv_remove_source",
+    "set_api_key", "set_settings",
+    "add_torrent_source", "remove_torrent_source",
+    "irc_add_network", "irc_remove_network",
 })
 
 WATCHDOG_AUTO_HEAL_TOOL_NAMES = frozenset({
@@ -84,6 +92,10 @@ SENSITIVE_TOOL_FIELDS = {
     "irc_send_raw": ("line",),
     "save_memory": ("content",),
     "edit_memory": ("content",),
+    "set_api_key": ("value",),
+    "iptv_add_source": ("password",),
+    "iptv_update_source": ("password",),
+    "irc_add_network": ("password", "sasl_password"),
 }
 
 UNTRUSTED_RESULT_TOOLS = frozenset({
@@ -91,6 +103,169 @@ UNTRUSTED_RESULT_TOOLS = frozenset({
     "find_alt_release", "get_rss_feed_items", "irc_list_messages",
     "irc_search_messages", "browser_get_content", "browser_snapshot", "browser_wait",
 })
+
+
+# ---------------------------------------------------------------------------
+# App-setup surface (user decision 2026-09-12): the agent may set up anything
+# the user could have typed into the app's dialogs. Secrets (API keys,
+# passwords) are WRITE-ONLY — settable when the user hands one over or the
+# agent legitimately finds one, never readable back into the LLM context.
+# ---------------------------------------------------------------------------
+
+# Key/credential slots addressable by set_api_key. Path tuples index into the
+# live DeeptorrentConfig. Kept in sync with the slots File → API Keys edits.
+API_KEY_SLOTS: Dict[str, Tuple[Tuple[str, ...], str]] = {
+    "llm": (("llm", "api_key"), "LLM provider API key — the agent's own brain"),
+    "perplexity": (("web_search", "api_key"), "Perplexity web-search API key"),
+    "brave": (("web_search", "brave_api_key"), "Brave Search API key"),
+    "jackett": (("indexer", "api_key"), "Jackett API key"),
+    "tmdb": (("iptv", "tmdb_api_key"), "TMDb key — movie/series posters and info"),
+    "omdb": (("iptv", "omdb_api_key"), "OMDb key — metadata fallback"),
+    "fanarttv": (("iptv", "fanarttv_api_key"), "Fanart.tv key — backdrops"),
+    "tpdb": (("iptv", "tpdb_api_key"), "ThePornDB key — adult VOD metadata"),
+    "stashdb": (("iptv", "stashdb_api_key"), "StashDB key — adult VOD metadata"),
+    "opensubtitles": (("iptv", "opensubtitles_api_key"), "OpenSubtitles.com API key"),
+    "opensubtitles_username": (("iptv", "opensubtitles_username"), "OpenSubtitles account username (raises the daily quota)"),
+    "opensubtitles_password": (("iptv", "opensubtitles_password"), "OpenSubtitles account password"),
+}
+
+_SECRET_NAME_PARTS = ("api_key", "password", "passwd", "token", "secret", "sasl_account", "username")
+
+# Config sections whose SCALAR fields the agent may read (secrets masked) and
+# write via set_settings. Structural lists (iptv.sources, irc.networks,
+# rss.feeds, sources.sources) are handled by dedicated tools instead.
+_SETTINGS_SECTIONS = (
+    "llm", "indexer", "web_search", "watchdog", "rss", "browser",
+    "download", "torrents", "iptv", "irc", "voice", "sources",
+)
+
+# Explicitly NOT agent-writable even though they are scalars: forced-on
+# behavior, internal bookkeeping, or plumbing that generic writes would break.
+_SETTINGS_DENY_PATHS = {
+    ("llm", "stream"), ("llm", "memory_enabled"),  # from_file forces both True
+    ("llm", "memory_dir"),                          # memory lives at a fixed root
+    ("sources", "last_jackett_fetch"),              # internal sync bookkeeping
+    ("download", "ytdlp_last_check"),               # internal freshness bookkeeping
+    ("download", "control_api_port"),               # running server binding
+}
+
+# Fields that accept only a fixed set of values — validated on write so a
+# typo can't brick a subsystem until the next settings dialog visit.
+_SETTING_ENUMS: Dict[Tuple[str, str], Tuple[str, ...]] = {
+    ("llm", "provider"): ("deepseek", "openrouter", "custom"),
+    ("iptv", "vod_group_mode"): ("year", "category"),
+    ("iptv", "preferred_player"): ("mpv", "vlc"),
+    ("voice", "device"): ("auto", "cpu", "cuda"),
+}
+
+
+def _is_secret_leaf(name: str) -> bool:
+    lowered = (name or "").lower()
+    return any(part in lowered for part in _SECRET_NAME_PARTS)
+
+
+def _iter_setting_fields(config: DeeptorrentConfig):
+    """Yield (path_tuple, current_value) for every agent-visible scalar
+    setting, secrets included (callers mask them). Keeps the whitelist in
+    sync with config.py automatically — new scalar fields become
+    agent-settable the moment they land in a dataclass."""
+    for section_name in _SETTINGS_SECTIONS:
+        section = getattr(config, section_name, None)
+        if section is None or not is_dataclass(section):
+            continue
+        for field in dataclass_fields(section):
+            path = (section_name, field.name)
+            if path in _SETTINGS_DENY_PATHS:
+                continue
+            value = getattr(section, field.name)
+            if isinstance(value, (bool, int, float, str)):
+                yield path, value
+    for name in ("default_save_path", "log_level"):
+        yield (name,), getattr(config, name)
+
+
+def _mask_setting(value: Any) -> str:
+    return "<set>" if value else "<not set>"
+
+
+def _coerce_setting_value(path: Tuple[str, ...], current: Any, value: Any) -> Any:
+    """Coerce the JSON-ish tool argument to the field's Python type."""
+    enum_values = _SETTING_ENUMS.get(path)
+    if enum_values and isinstance(current, str):
+        text = str(value).strip()
+        if text not in enum_values:
+            raise ToolError(
+                f"'{'.'.join(path)}' must be one of: {', '.join(enum_values)}")
+        return text
+    if isinstance(current, bool):
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in ("true", "1", "yes", "on"):
+            return True
+        if text in ("false", "0", "no", "off"):
+            return False
+        raise ToolError(f"'{'.'.join(path)}' expects true or false")
+    if isinstance(current, int) and not isinstance(current, bool):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            raise ToolError(f"'{'.'.join(path)}' expects a whole number")
+    if isinstance(current, float):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            raise ToolError(f"'{'.'.join(path)}' expects a number")
+    if isinstance(current, str):
+        return str(value)
+    raise ToolError(f"'{'.'.join(path)} has an unsupported type")
+
+
+def _peek_playlist(url: str, timeout: int = 20) -> Optional[str]:
+    """Best-effort M3U payload check before adding an iptv source: follow
+    redirects (validated like every agent URL) and stream the first few KB,
+    looking for #EXTM3U. Returns an error string, or None when the URL looks
+    like a playlist. Network failures count as errors — dead URLs should not
+    become sources."""
+    from urllib.parse import urljoin
+
+    current = url
+    for _ in range(6):
+        try:
+            current = validate_public_http_url(current)
+            response = requests.get(
+                current, timeout=timeout, allow_redirects=False, stream=True,
+                headers={"User-Agent": BROWSER_UA},
+            )
+        except (requests.RequestException, ToolError, OSError) as exc:
+            return f"request failed ({exc.__class__.__name__})"
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                return "redirect without a destination"
+            current = urljoin(current, location)
+            continue
+        if response.status_code != 200:
+            response.close()
+            return f"HTTP {response.status_code}"
+        chunk = b""
+        try:
+            for piece in response.iter_content(1024):
+                chunk += piece
+                if len(chunk) >= 4096:
+                    break
+        except requests.RequestException:
+            return "download interrupted"
+        finally:
+            response.close()
+        head = chunk.decode("utf-8", "ignore").lstrip("\ufeff \t\r\n")
+        if head.startswith("#EXTM3U") or "#EXTINF" in head:
+            return None
+        if head.startswith("<"):
+            return "content is HTML/XML, not a playlist (often the EPG link, not the playlist link)"
+        return "content did not look like an M3U playlist (#EXTM3U not found)"
+    return "too many redirects"
 
 
 def redact_url_secrets(value: str) -> str:
@@ -265,6 +440,9 @@ class ToolRegistry:
             "propose_rename_and_category", "analyze_organization", "apply_organization_plan",
             "web_search", "web_fetch", "save_memory",
             "search_memory", "list_memories", "edit_memory", "forget_memory", "agent_diagnostics",
+            # Cheap setup reads stay visible so the model knows it CAN set the
+            # app up (the mutations themselves are keyword-gated below).
+            "iptv_list_sources", "list_api_keys", "list_settings", "list_torrent_sources",
         }
         groups = {
             "rss": {name for name in all_names if name.endswith("rss_feed") or "rss_feed" in name or name == "download_from_feed"},
@@ -272,6 +450,11 @@ class ToolRegistry:
             "files": {"list_directory", "create_folder", "copy_path", "move_path", "rename_path", "delete_path"},
             "iptv": {name for name in all_names if name.startswith("iptv_")},
             "browser": {name for name in all_names if name.startswith("browser_")},
+            "setup": {"iptv_list_sources", "iptv_add_source", "iptv_update_source",
+                      "iptv_remove_source", "list_api_keys", "set_api_key",
+                      "list_settings", "set_settings", "list_torrent_sources",
+                      "add_torrent_source", "remove_torrent_source",
+                      "irc_add_network", "irc_remove_network"},
         }
         if any(word in text for word in ("rss", "feed", "subscription")):
             selected.update(groups["rss"])
@@ -279,10 +462,15 @@ class ToolRegistry:
             selected.update(groups["irc"])
         if any(word in text for word in ("file", "folder", "directory", "path", "rename", "move", "copy", "delete")):
             selected.update(groups["files"])
-        if any(word in text for word in ("iptv", "play", "player", "channel", "epg", "subtitle", "volume", "movie", "series", "episode")):
+        if any(word in text for word in ("iptv", "playlist", "m3u", "play", "player", "channel", "epg", "subtitle", "volume", "movie", "series", "episode")):
             selected.update(groups["iptv"])
         if any(word in text for word in ("browser", "browse", "bookmark", "tab", "click", "form", "navigate", "web page", "website", "login", "log in")):
             selected.update(groups["browser"])
+        if any(word in text for word in (
+            "setting", "settings", "config", "preference", "api key", "apikey",
+            "source", "indexer", "provider", "credential",
+        )):
+            selected.update(groups["setup"])
         return selected & all_names
 
     def shutdown(self) -> None:
@@ -1343,6 +1531,204 @@ class ToolRegistry:
                     required=["level"],
                 ),
                 "handler": self._iptv_set_volume,
+            },
+            # --- App setup: IPTV sources (anything the user could add in the GUI) ---
+            "iptv_list_sources": {
+                "schema": self._tool_schema(
+                    name="iptv_list_sources",
+                    description="List the configured IPTV playlist sources (Play tab): id, name, "
+                    "type, URL, EPG URL and enabled state. Ids/names feed iptv_update_source "
+                    "and iptv_remove_source. Credentials are never included.",
+                    properties={},
+                    required=[],
+                ),
+                "handler": self._iptv_list_sources,
+            },
+            "iptv_add_source": {
+                "schema": self._tool_schema(
+                    name="iptv_add_source",
+                    description="Add an IPTV playlist source to the Play tab (like the GUI's "
+                    "Settings → Playlist Sources). For m3u_url the URL is validated first — "
+                    "it must serve a real #EXTM3U playlist (dead links and EPG/XML links are "
+                    "rejected). The Play tab starts loading it immediately. Xtream logins need "
+                    "username/password; local_folder takes a directory path.",
+                    properties={
+                        "url": {"type": "string", "description": "Playlist URL (m3u_url/xtream) or folder/file path (local_folder/m3u_file)."},
+                        "name": {"type": "string", "description": "Display name (default: the hostname).", "default": ""},
+                        "kind": {"type": "string", "description": "'m3u_url' (default), 'xtream', 'local_folder' or 'm3u_file'.", "default": "m3u_url"},
+                        "epg_url": {"type": "string", "description": "Optional XMLTV EPG URL for this source.", "default": ""},
+                        "username": {"type": "string", "description": "Xtream Codes username (xtream only).", "default": ""},
+                        "password": {"type": "string", "description": "Xtream Codes password (xtream only).", "default": ""},
+                        "user_agent": {"type": "string", "description": "Custom User-Agent header for playlist/stream requests.", "default": ""},
+                        "referer": {"type": "string", "description": "Custom Referer header for playlist/stream requests.", "default": ""},
+                        "enabled": {"type": "boolean", "description": "Whether the source loads (default true).", "default": True},
+                        "auto_refresh_minutes": {"type": "integer", "description": "Auto-refresh interval in minutes; 0 = manual only.", "default": 0},
+                        "validate": {"type": "boolean", "description": "For m3u_url: fetch the first bytes and require #EXTM3U (default true).", "default": True},
+                    },
+                    required=["url"],
+                ),
+                "handler": self._iptv_add_source,
+            },
+            "iptv_update_source": {
+                "schema": self._tool_schema(
+                    name="iptv_update_source",
+                    description="Update an existing IPTV source. Only the fields you pass "
+                    "change — omit everything else to leave it untouched.",
+                    properties={
+                        "source": {"type": "string", "description": "Source id, id prefix or name (from iptv_list_sources)."},
+                        "name": {"type": "string", "description": "New display name (omit to keep)."},
+                        "url": {"type": "string", "description": "New playlist URL (omit to keep)."},
+                        "epg_url": {"type": "string", "description": "New XMLTV EPG URL; pass an empty string to clear it."},
+                        "enabled": {"type": "boolean", "description": "Enable/disable the source (omit to keep)."},
+                        "username": {"type": "string", "description": "Xtream username (omit to keep)."},
+                        "password": {"type": "string", "description": "Xtream password (omit to keep)."},
+                        "user_agent": {"type": "string", "description": "Custom User-Agent header (omit to keep)."},
+                        "referer": {"type": "string", "description": "Custom Referer header (omit to keep)."},
+                        "auto_refresh_minutes": {"type": "integer", "description": "Auto-refresh interval in minutes; 0 = manual only (omit to keep)."},
+                    },
+                    required=["source"],
+                ),
+                "handler": self._iptv_update_source,
+            },
+            "iptv_remove_source": {
+                "schema": self._tool_schema(
+                    name="iptv_remove_source",
+                    description="Remove an IPTV playlist source from the Play tab.",
+                    properties={
+                        "source": {"type": "string", "description": "Source id, id prefix or name (from iptv_list_sources)."},
+                    },
+                    required=["source"],
+                ),
+                "handler": self._iptv_remove_source,
+            },
+            # --- App setup: API keys (write-only) ---
+            "list_api_keys": {
+                "schema": self._tool_schema(
+                    name="list_api_keys",
+                    description="Show every API key / credential slot and whether it is "
+                    "configured. Values are never readable — use set_api_key to write one.",
+                    properties={},
+                    required=[],
+                ),
+                "handler": self._list_api_keys,
+            },
+            "set_api_key": {
+                "schema": self._tool_schema(
+                    name="set_api_key",
+                    description="Write (or clear, with an empty value) an API key or credential "
+                    "slot. Only use a value the user gave you explicitly or that you obtained "
+                    "for them (e.g. a provider's documented key page). Never ask the user to "
+                    "paste a key they don't want to share; existing values are never readable.",
+                    properties={
+                        "slot": {"type": "string", "description": "Slot name from list_api_keys (e.g. 'tmdb', 'llm', 'jackett')."},
+                        "value": {"type": "string", "description": "The key/credential value (empty string clears the slot)."},
+                    },
+                    required=["slot", "value"],
+                ),
+                "handler": self._set_api_key,
+            },
+            # --- App setup: general settings ---
+            "list_settings": {
+                "schema": self._tool_schema(
+                    name="list_settings",
+                    description="List the app's agent-visible settings with their current values "
+                    "(secrets show as <set>/<not set>) and dotted paths for set_settings. "
+                    "Optional section filter: llm, indexer, web_search, watchdog, rss, browser, "
+                    "download, torrents, iptv, irc, voice, sources.",
+                    properties={
+                        "section": {"type": "string", "description": "Restrict to one config section (default: all).", "default": ""},
+                    },
+                    required=[],
+                ),
+                "handler": self._list_settings,
+            },
+            "set_settings": {
+                "schema": self._tool_schema(
+                    name="set_settings",
+                    description="Change one app setting by its dotted path (e.g. "
+                    "'iptv.epg_url', 'download.max_concurrent'). Only non-secret scalar "
+                    "settings are settable — keys and passwords go through set_api_key. "
+                    "IPTV changes apply live; most others apply on next use or restart.",
+                    properties={
+                        "path": {"type": "string", "description": "Dotted setting path from list_settings."},
+                        "value": {"description": "New value (string, number or boolean).", "type": ["string", "number", "boolean"]},
+                    },
+                    required=["path", "value"],
+                ),
+                "handler": self._set_settings,
+            },
+            # --- App setup: torrent indexer sources + IRC networks ---
+            "list_torrent_sources": {
+                "schema": self._tool_schema(
+                    name="list_torrent_sources",
+                    description="List the configured torrent search sources (indexers/sites) "
+                    "that search_indexers queries, with their type and enabled state.",
+                    properties={},
+                    required=[],
+                ),
+                "handler": self._list_torrent_sources,
+            },
+            "add_torrent_source": {
+                "schema": self._tool_schema(
+                    name="add_torrent_source",
+                    description="Add a torrent search source (indexer or site) that "
+                    "search_indexers will query from now on.",
+                    properties={
+                        "name": {"type": "string", "description": "Display name."},
+                        "url": {"type": "string", "description": "Site homepage/search URL."},
+                        "id": {"type": "string", "description": "Optional slug (default: derived from the hostname; a known Jackett id gets its popularity ranking).", "default": ""},
+                        "type": {"type": "string", "description": "'public' (default) or 'private'.", "default": "public"},
+                        "categories": {"type": "array", "items": {"type": "string"}, "description": "App categories this source is good for, e.g. ['Movies','TV'].", "default": []},
+                        "enabled": {"type": "boolean", "description": "Whether searches use it (default true).", "default": True},
+                    },
+                    required=["name", "url"],
+                ),
+                "handler": self._add_torrent_source,
+            },
+            "remove_torrent_source": {
+                "schema": self._tool_schema(
+                    name="remove_torrent_source",
+                    description="Remove a torrent search source by id, name or URL.",
+                    properties={
+                        "source": {"type": "string", "description": "Source id, name or URL (from list_torrent_sources)."},
+                    },
+                    required=["source"],
+                ),
+                "handler": self._remove_torrent_source,
+            },
+            "irc_add_network": {
+                "schema": self._tool_schema(
+                    name="irc_add_network",
+                    description="Add an IRC network to the configured list (like the IRC tab's "
+                    "Networks dialog). Connect afterwards with irc_connect.",
+                    properties={
+                        "host": {"type": "string", "description": "Server hostname."},
+                        "port": {"type": "integer", "description": "Port (default 6697).", "default": 6697},
+                        "tls": {"type": "boolean", "description": "Use TLS (default true).", "default": True},
+                        "id": {"type": "string", "description": "Short slug (default: derived from the host).", "default": ""},
+                        "nick": {"type": "string", "description": "Nickname (default: a DeepFlux-style default).", "default": ""},
+                        "username": {"type": "string", "description": "IRC username (default: nick).", "default": ""},
+                        "realname": {"type": "string", "description": "Real name field.", "default": ""},
+                        "password": {"type": "string", "description": "Server PASS password (rarely needed).", "default": ""},
+                        "sasl_account": {"type": "string", "description": "SASL PLAIN account name.", "default": ""},
+                        "sasl_password": {"type": "string", "description": "SASL PLAIN password.", "default": ""},
+                        "channels": {"type": "array", "items": {"type": "string"}, "description": "Channels to auto-join on connect, e.g. ['#help'].", "default": []},
+                    },
+                    required=["host"],
+                ),
+                "handler": self._irc_add_network,
+            },
+            "irc_remove_network": {
+                "schema": self._tool_schema(
+                    name="irc_remove_network",
+                    description="Remove a configured IRC network by id or host. A currently "
+                    "connected network stays connected until disconnected.",
+                    properties={
+                        "network": {"type": "string", "description": "Network id or hostname."},
+                    },
+                    required=["network"],
+                ),
+                "handler": self._irc_remove_network,
             },
             # --- Browser (the Browse tab — full control of the embedded browser) ---
             "browser_list_tabs": {
@@ -3448,6 +3834,360 @@ class ToolRegistry:
         level = max(0, min(100, int(level)))
         self._iptv_bridge.set_volume(level)
         return {"success": True, "volume": level}
+
+    # ------------------------------------------------------------------
+    # App-setup handlers (user decision 2026-09-12): the agent may configure
+    # anything the user could have typed into a dialog — IPTV sources, API
+    # keys (write-only), general settings, torrent sources, IRC networks.
+    # ------------------------------------------------------------------
+
+    def _persist_config(self) -> None:
+        """Persist the live config to disk (same path every other writer uses)."""
+        self.config.to_file(DeeptorrentConfig.default_config_path())
+
+    def _apply_iptv_config_live(self) -> str:
+        """Re-apply IPTV config to the running Play tab (queued onto the GUI
+        thread by the bridge); returns a user-facing note either way."""
+        if self._iptv_bridge is not None:
+            try:
+                self._iptv_bridge.request_reload()
+                return "The Play tab is reloading with the new configuration."
+            except Exception:
+                logger.warning("iptv bridge reload failed", exc_info=True)
+        return "It will be picked up on the next Play-tab refresh or app restart."
+
+    def _find_iptv_source(self, ref: str):
+        """Resolve a source by id, unique id prefix or (unique) name."""
+        ref = (ref or "").strip()
+        if not ref:
+            return None, "source reference is required"
+        sources = self.config.iptv.sources
+        for source in sources:
+            if source.id == ref:
+                return source, None
+        prefixed = [s for s in sources if s.id.startswith(ref)]
+        if len(prefixed) == 1:
+            return prefixed[0], None
+        exact = [s for s in sources if s.name.lower() == ref.lower()]
+        if len(exact) == 1:
+            return exact[0], None
+        partial = [s for s in sources if ref.lower() in s.name.lower()]
+        if len(partial) == 1:
+            return partial[0], None
+        return None, f"No unique IPTV source matching '{ref}' — use iptv_list_sources for exact ids"
+
+    def _iptv_list_sources(self) -> Dict[str, Any]:
+        sources = []
+        for s in self.config.iptv.sources:
+            entry: Dict[str, Any] = {
+                "id": s.id, "name": s.name, "kind": s.kind, "url": s.url,
+                "enabled": s.enabled, "auto_refresh_minutes": s.auto_refresh_minutes,
+            }
+            if s.epg_url:
+                entry["epg_url"] = s.epg_url
+            sources.append(entry)
+        return {
+            "success": True,
+            "sources": sources,
+            "count": len(sources),
+            "note": "Pass id or name to iptv_update_source / iptv_remove_source. "
+                    "Credentials are never included." if sources
+                    else "No sources configured — add one with iptv_add_source "
+                         "(web_search can find public playlist URLs).",
+        }
+
+    def _iptv_add_source(self, url: str, name: str = "", kind: str = "m3u_url",
+                         epg_url: str = "", username: str = "", password: str = "",
+                         user_agent: str = "", referer: str = "", enabled: bool = True,
+                         auto_refresh_minutes: int = 0, validate: bool = True) -> Dict[str, Any]:
+        from config import IPTVSourceConfig
+
+        kind = (kind or "m3u_url").strip().lower()
+        if kind not in ("m3u_url", "m3u_file", "xtream", "local_folder"):
+            raise ToolError("kind must be 'm3u_url', 'm3u_file', 'xtream' or 'local_folder'")
+        url = (url or "").strip()
+        if not url:
+            raise ToolError("url is required")
+        if kind in ("m3u_url", "xtream"):
+            url = validate_public_http_url(url)
+            if epg_url:
+                epg_url = validate_public_http_url(epg_url)
+        elif not os.path.exists(url):
+            raise ToolError(f"Path does not exist: {url}")
+
+        duplicate = [s.name for s in self.config.iptv.sources if s.url == url]
+        if duplicate:
+            return {"success": False, "error": "A source with this URL already exists: " + ", ".join(duplicate)}
+
+        if kind == "m3u_url" and validate:
+            problem = _peek_playlist(url)
+            if problem:
+                return {"success": False, "error": f"Not added — {problem}. If you are sure the URL is right, retry with validate=false.", "url": url}
+
+        if not name:
+            try:
+                from urllib.parse import urlparse
+                name = urlparse(url).hostname or "IPTV source"
+            except ValueError:
+                name = "IPTV source"
+
+        source = IPTVSourceConfig(
+            id=str(uuid.uuid4()), name=name, kind=kind, url=url,
+            user_agent=(user_agent or "").strip(), referer=(referer or "").strip(),
+            username=(username or "").strip(), password=password or "",
+            enabled=bool(enabled), auto_refresh_minutes=max(0, int(auto_refresh_minutes or 0)),
+            epg_url=(epg_url or "").strip(),
+        )
+        self.config.iptv.sources.append(source)
+        self._persist_config()
+        return {
+            "success": True,
+            "source": {"id": source.id, "name": source.name, "kind": source.kind,
+                       "url": source.url, "enabled": source.enabled},
+            "note": f"Source saved. {self._apply_iptv_config_live()}",
+        }
+
+    def _iptv_update_source(self, source: str, name: Optional[str] = None, url: Optional[str] = None,
+                            epg_url: Optional[str] = None, enabled: Optional[bool] = None,
+                            username: Optional[str] = None, password: Optional[str] = None,
+                            user_agent: Optional[str] = None, referer: Optional[str] = None,
+                            auto_refresh_minutes: Optional[int] = None) -> Dict[str, Any]:
+        target, error = self._find_iptv_source(source)
+        if target is None:
+            return {"success": False, "error": error}
+        if url:
+            if target.kind in ("m3u_url", "xtream"):
+                url = validate_public_http_url(url)
+            elif not os.path.exists(url):
+                return {"success": False, "error": f"Path does not exist: {url}"}
+            clash = [s.name for s in self.config.iptv.sources if s.url == url and s.id != target.id]
+            if clash:
+                return {"success": False, "error": "Another source already uses this URL: " + ", ".join(clash)}
+            target.url = url
+        if epg_url is not None and target.kind != "local_folder":
+            target.epg_url = validate_public_http_url(epg_url) if epg_url else ""
+        if name:
+            target.name = name.strip()
+        if enabled is not None:
+            target.enabled = bool(enabled)
+        if username is not None:
+            target.username = username.strip()
+        if password is not None:
+            target.password = password
+        if user_agent is not None:
+            target.user_agent = user_agent.strip()
+        if referer is not None:
+            target.referer = referer.strip()
+        if auto_refresh_minutes is not None:
+            target.auto_refresh_minutes = max(0, int(auto_refresh_minutes))
+        self._persist_config()
+        return {
+            "success": True,
+            "source": {"id": target.id, "name": target.name, "kind": target.kind,
+                       "url": target.url, "enabled": target.enabled},
+            "note": f"Source updated. {self._apply_iptv_config_live()}",
+        }
+
+    def _iptv_remove_source(self, source: str) -> Dict[str, Any]:
+        target, error = self._find_iptv_source(source)
+        if target is None:
+            return {"success": False, "error": error}
+        self.config.iptv.sources = [s for s in self.config.iptv.sources if s.id != target.id]
+        self._persist_config()
+        return {"success": True, "removed": target.name,
+                "note": f"Source removed. {self._apply_iptv_config_live()}"}
+
+    def _list_api_keys(self) -> Dict[str, Any]:
+        keys = []
+        for slot, (path, description) in API_KEY_SLOTS.items():
+            node: Any = self.config
+            try:
+                for part in path:
+                    node = getattr(node, part)
+            except AttributeError:  # slot removed from config — skip gracefully
+                continue
+            keys.append({"slot": slot, "description": description, "configured": bool(node)})
+        return {
+            "success": True,
+            "keys": keys,
+            "note": "Values are write-only — never readable. Use set_api_key to write or clear one.",
+        }
+
+    def _set_api_key(self, slot: str, value: str) -> Dict[str, Any]:
+        if slot not in API_KEY_SLOTS:
+            raise ToolError("Unknown slot. Valid slots: " + ", ".join(sorted(API_KEY_SLOTS)))
+        path, _description = API_KEY_SLOTS[slot]
+        node: Any = self.config
+        for part in path[:-1]:
+            node = getattr(node, part)
+        setattr(node, path[-1], (value or "").strip())
+        self._persist_config()
+        note = "Key saved."
+        if path[0] == "iptv":
+            note += " " + self._apply_iptv_config_live()
+        elif path[0] == "llm":
+            note += " The agent picks it up on the next conversation or app restart."
+        return {"success": True, "slot": slot, "configured": bool((value or "").strip()), "note": note}
+
+    def _list_settings(self, section: str = "") -> Dict[str, Any]:
+        section = (section or "").strip().lower()
+        rows = []
+        for path, value in _iter_setting_fields(self.config):
+            if section and path[0] != section:
+                continue
+            leaf = path[-1]
+            rows.append({
+                "path": ".".join(path),
+                "value": _mask_setting(value) if _is_secret_leaf(leaf) else value,
+                "type": type(value).__name__,
+            })
+        return {
+            "success": True,
+            "settings": rows,
+            "count": len(rows),
+            "note": "Use set_settings with the dotted path. Fields showing <set>/<not set> are "
+                    "secrets — write-only via set_api_key.",
+        }
+
+    def _set_settings(self, path: str, value: Any) -> Dict[str, Any]:
+        parts = tuple((path or "").strip().lower().split("."))
+        writable = {p: v for p, v in _iter_setting_fields(self.config)}
+        if parts not in writable:
+            raise ToolError(
+                f"Unknown or non-settable setting '{path}'. Use list_settings for valid dotted paths.")
+        current = writable[parts]
+        if _is_secret_leaf(parts[-1]):
+            raise ToolError(
+                f"'{path}' is a secret — set it with set_api_key instead (values are write-only).")
+        new_value = _coerce_setting_value(parts, current, value)
+        node: Any = self.config
+        for part in parts[:-1]:
+            node = getattr(node, part)
+        setattr(node, parts[-1], new_value)
+        self._persist_config()
+        note = "Saved."
+        if parts[0] == "iptv":
+            note += " " + self._apply_iptv_config_live()
+        else:
+            note += " Applies on next use or restart unless the related subsystem reads it live."
+        return {"success": True, "path": ".".join(parts), "value": new_value, "note": note}
+
+    def _list_torrent_sources(self) -> Dict[str, Any]:
+        rows = [{
+            "id": s.id, "name": s.name, "url": s.url, "type": s.type,
+            "enabled": s.enabled, "categories": list(s.categories),
+        } for s in self.config.sources.sources]
+        return {
+            "success": True,
+            "sources": rows,
+            "count": len(rows),
+            "use_jackett": self.config.sources.use_jackett,
+            "note": "search_indexers queries the enabled ones immediately." if rows
+                    else "No torrent sources configured — add one with add_torrent_source "
+                         "or fetch the Jackett set (the app syncs it automatically when configured).",
+        }
+
+    def _add_torrent_source(self, name: str, url: str, id: str = "", type: str = "public",
+                            categories: Optional[List[str]] = None, enabled: bool = True) -> Dict[str, Any]:
+        from config import SourceConfig
+
+        name = (name or "").strip()
+        url = validate_public_http_url((url or "").strip())
+        if not name:
+            raise ToolError("name is required")
+        type = (type or "public").strip().lower()
+        if type not in ("public", "private"):
+            raise ToolError("type must be 'public' or 'private'")
+        slug = (id or "").strip().lower() or re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+        existing = self.config.sources.sources
+        if any(s.id == slug for s in existing):
+            return {"success": False, "error": f"A source with id '{slug}' already exists"}
+        if any(s.url == url for s in existing):
+            return {"success": False, "error": "A source with this URL already exists"}
+        source = SourceConfig(
+            id=slug, name=name, url=url, type=type, enabled=bool(enabled),
+            categories=[c for c in (categories or []) if str(c).strip()],
+        )
+        existing.append(source)
+        self._persist_config()
+        return {
+            "success": True,
+            "source": {"id": source.id, "name": source.name, "url": source.url, "type": source.type},
+            "note": "Saved — search_indexers includes it right away (a known Jackett id also "
+                    "inherits its popularity ranking).",
+        }
+
+    def _remove_torrent_source(self, source: str) -> Dict[str, Any]:
+        ref = (source or "").strip().lower()
+        rows = self.config.sources.sources
+        target = next((s for s in rows if s.id == ref), None) \
+            or next((s for s in rows if s.name.lower() == ref), None) \
+            or next((s for s in rows if s.url.lower() == ref), None)
+        if target is None:
+            return {"success": False, "error": f"No torrent source matching '{source}'"}
+        self.config.sources.sources = [s for s in rows if s.id != target.id]
+        self._persist_config()
+        return {"success": True, "removed": target.name}
+
+    def _irc_add_network(self, host: str, port: int = 6697, tls: bool = True,
+                          id: str = "", nick: str = "", username: str = "",
+                          realname: str = "", password: str = "",
+                          sasl_account: str = "", sasl_password: str = "",
+                          channels: Optional[List[str]] = None) -> Dict[str, Any]:
+        from config import IRCNetworkConfig
+
+        host = (host or "").strip()
+        if not host:
+            raise ToolError("host is required")
+        port = int(port or 6697)
+        if not 1 <= port <= 65535:
+            raise ToolError("port must be between 1 and 65535")
+        slug = (id or "").strip().lower() or re.sub(r"[^a-z0-9]+", "", host.split(".")[0].lower()) or "network"
+        networks = self.config.irc.networks
+        if any(n.id == slug for n in networks):
+            return {"success": False, "error": f"A network with id '{slug}' already exists"}
+        if any((n.host or "").lower() == host.lower() for n in networks):
+            return {"success": False, "error": f"A network for {host} already exists: use irc_connect"}
+        joined = []
+        for channel in (channels or []):
+            name = str(channel).strip()
+            if name and not name.startswith(("#", "&", "+")):
+                name = "#" + name
+            if name:
+                joined.append(name)
+        network = IRCNetworkConfig(
+            id=slug, host=host, port=port, tls=bool(tls),
+            nick=(nick or "").strip() or "DeepFluxUser",
+            username=(username or "").strip(), realname=(realname or "").strip() or "DeepFlux",
+            password=password or "", sasl_account=(sasl_account or "").strip(),
+            sasl_password=sasl_password or "", channels=joined,
+        )
+        networks.append(network)
+        self._persist_config()
+        return {
+            "success": True,
+            "network": {"id": network.id, "host": network.host, "port": network.port,
+                        "tls": network.tls, "channels": joined},
+            "note": "Saved. Connect with irc_connect"
+                    + (f" — it will auto-join {', '.join(joined)}" if joined else "")
+                    + ". The IRC tab's network picker shows it after a restart.",
+        }
+
+    def _irc_remove_network(self, network: str) -> Dict[str, Any]:
+        ref = (network or "").strip().lower()
+        rows = self.config.irc.networks
+        target = next((n for n in rows if ref in (n.id or "").lower()
+                       or ref in (n.host or "").lower()), None)
+        if target is None:
+            return {"success": False, "error": f"No configured IRC network matching '{network}'"}
+        self.config.irc.networks = [n for n in rows if n.id != target.id]
+        self._persist_config()
+        return {
+            "success": True,
+            "removed": target.id,
+            "note": "Removed from config. If it is currently connected it stays connected "
+                    "until disconnected (irc_disconnect).",
+        }
 
     # ------------------------------------------------------------------
     # Browser handlers (the Browse tab — via the GUI-injected bridge which

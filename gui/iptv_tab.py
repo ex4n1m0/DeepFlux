@@ -4647,6 +4647,7 @@ class _AgentBridgeSignals(QObject):
     pause = Signal()
     set_volume = Signal(int)
     add_subs = Signal(str)           # subtitle file path → load into player
+    reload_config = Signal()         # agent changed IPTV config → re-apply live
 
 
 class AgentIPTVBridge:
@@ -4674,6 +4675,9 @@ class AgentIPTVBridge:
         # which updates both the backend and the persisted config.
         s.set_volume.connect(tab._player.vol.setValue)
         s.add_subs.connect(self._do_add_subs)
+        # Agent-side config edits (sources/keys/settings tools) re-apply the
+        # live config exactly like a settings-dialog OK does.
+        s.reload_config.connect(lambda: tab.reload_config(tab._config))
         # Queued delivery to the GUI thread — safe to snapshot player state.
         tab._player.sig_state.connect(self._on_player_state)
         tab._player.sig_position.connect(self._on_player_position)
@@ -4696,6 +4700,12 @@ class AgentIPTVBridge:
 
     def set_volume(self, level: int) -> None:
         self._signals.set_volume.emit(max(0, min(100, int(level))))
+
+    def request_reload(self) -> None:
+        """Agent changed IPTV config — re-apply it on the GUI thread (same
+        path as the settings dialog's OK: sources, keys, player options,
+        then a background refresh of every enabled source)."""
+        self._signals.reload_config.emit()
 
     def add_subtitle_file(self, path: str) -> None:
         """Load a downloaded subtitle file into the player (GUI thread)."""

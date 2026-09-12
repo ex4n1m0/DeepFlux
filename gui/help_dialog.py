@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.6.2 — User Guide</h1>
+<h1>DeepFlux 3.7 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -112,6 +112,23 @@ live under the two real menus, <b>File</b> and <b>Help</b>.</p>
   <li>"Organize the files in my downloads folder" — file operations</li>
   <li>"Join #python on Libera and say hi" — full IRC participation</li>
   <li>"Subscribe to this RSS feed" — manages feed subscriptions</li>
+  <li>"Find me some IPTV playlists and add them" — searches the web for public
+    M3U playlists, validates them and adds them as Play-tab sources</li>
+</ul>
+
+<h3>Letting the agent set the app up</h3>
+<p>The agent can configure anything you could have typed into a dialog yourself
+— it always asks for confirmation first, and changes are saved to your
+config just like the settings dialogs do:</p>
+<ul>
+  <li><b>IPTV sources</b> — "add this M3U URL as a source", "disable the second
+    playlist", "remove that provider". The Play tab reloads immediately.</li>
+  <li><b>API keys</b> — "here's my TMDb key: …" writes it. Keys are write-only:
+    the agent can set or clear one but can never read existing values back.</li>
+  <li><b>Settings</b> — "set the artwork cache to 5 GB", "turn off EPG", "use
+    VLC as the player". Secret fields stay write-only via the key tool.</li>
+  <li><b>Search sources &amp; IRC networks</b> — add/remove torrent indexers and
+    IRC servers, then use them right away.</li>
 </ul>
 
 <p>The agent searches in this order: Jackett (structured results) → source web searches →
@@ -134,8 +151,9 @@ use into <code>~/.deeptorrent/models/</code>. Tune it in
 <h3>Safety &amp; confirmations</h3>
 <p>Actions with real-world side effects ask for your confirmation first: starting
 downloads, deleting files, cancelling a download (which deletes the partial file),
-playing IPTV content, posting to IRC, and clicking or submitting forms in the
-browser. Read-only actions (searching, listing, status checks) run immediately.</p>
+playing IPTV content, posting to IRC, clicking or submitting forms in the
+browser, and every app-setup change (adding sources, writing keys, changing
+settings). Read-only actions (searching, listing, status checks) run immediately.</p>
 
 <div class="note">
 <b>Tip:</b> Jackett gives much better results than web searches. Install it and add
@@ -392,7 +410,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.6.2 — AI Deep Search</p>
+<p>DeepFlux 3.7 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -460,7 +478,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.6.2 — AI Deep Search")
+        version = QLabel("3.7 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

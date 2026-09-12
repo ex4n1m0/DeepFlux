@@ -1015,7 +1015,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.6.2 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.7 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -3808,6 +3808,19 @@ class MainWindow(QMainWindow):
         "iptv_pause": ("⏸", "Toggling pause"),
         "iptv_stop": ("⏹", "Stopping playback"),
         "iptv_set_volume": ("🔊", "Setting volume"),
+        "iptv_list_sources": ("📺", "Listing IPTV sources"),
+        "iptv_add_source": ("📺", "Adding IPTV source"),
+        "iptv_update_source": ("📺", "Updating IPTV source"),
+        "iptv_remove_source": ("📺", "Removing IPTV source"),
+        "list_api_keys": ("🔑", "Checking API keys"),
+        "set_api_key": ("🔑", "Setting API key"),
+        "list_settings": ("⚙", "Reading settings"),
+        "set_settings": ("⚙", "Changing setting"),
+        "list_torrent_sources": ("🗂", "Listing search sources"),
+        "add_torrent_source": ("🗂", "Adding search source"),
+        "remove_torrent_source": ("🗂", "Removing search source"),
+        "irc_add_network": ("🔌", "Adding IRC network"),
+        "irc_remove_network": ("🔌", "Removing IRC network"),
     }
 
     def _format_tool_args(self, tool: str, args: dict) -> str:
@@ -3882,6 +3895,19 @@ class MainWindow(QMainWindow):
             return f"↓{args.get('download_kb', 0)} ↑{args.get('upload_kb', 0)} KB/s"
         if tool in ("add_rss_feed", "remove_rss_feed"):
             return args.get("url", "")
+        if tool == "iptv_add_source":
+            return f"\"{args.get('name', '') or args.get('url', '')}\""
+        if tool in ("iptv_update_source", "iptv_remove_source"):
+            return f"\"{args.get('source', '')}\""
+        if tool == "set_api_key":
+            clearing = not str(args.get("value", "")).strip()
+            return f"{args.get('slot', '')}" + (" (clearing)" if clearing else "")
+        if tool == "set_settings":
+            return f"{args.get('path', '')} = {args.get('value', '')}"
+        if tool in ("add_torrent_source", "remove_torrent_source"):
+            return f"\"{args.get('name', '') or args.get('source', '')}\""
+        if tool in ("irc_add_network", "irc_remove_network"):
+            return args.get("host", "") or args.get("network", "")
         # Generic fallback.
         parts = [f"{k}={v}" for k, v in args.items() if k not in ("save_path",)]
         return ", ".join(parts[:3]) if parts else ""
