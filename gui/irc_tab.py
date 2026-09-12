@@ -60,9 +60,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config import DeeptorrentConfig, IRCNetworkConfig
+from config import DeeptorrentConfig, IRCNetworkConfig, shared_room_secret
 from ircmgr.client import IRCClientCore
-from ircmgr.state import CHANNEL_PREFIXES, irc_casefold
+from ircmgr.room import ROOM_CHANNEL, RoomController
+from ircmgr.state import CHANNEL_PREFIXES, ROOM_NET_ID, irc_casefold
 from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 from gui.window_sizing import roomy
 
@@ -428,9 +429,15 @@ class NetworkManagerDialog(QDialog):
 
 
 class IRCTab(QWidget):
-    """The IRC client tab. Shares its IRCClientCore with the agent tools."""
+    """The IRC client tab. Shares its IRCClientCore with the agent tools.
+
+    Also hosts the DeepFlux Room (ircmgr/room.py) — a serverless community
+    chat rendered as a pseudo-network pinned at the top of the tree, sharing
+    this page's chat view, nick list and input. ``room`` is injectable for
+    tests."""
 
     def __init__(self, config: DeeptorrentConfig, irc_client: IRCClientCore,
+                 room: Optional[RoomController] = None,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._config = config
@@ -439,6 +446,9 @@ class IRCTab(QWidget):
         self._signals = _IRCSignals()
         self._signals.event.connect(self._on_event)
         self._client.add_listener(self._signals.event.emit)
+        self._room = room or RoomController(config.chat, self._client.state,
+                                            secret=shared_room_secret())
+        self._room.add_listener(self._signals.event.emit)
 
         self._current: Optional[Tuple[str, Optional[str]]] = None  # (net_id, channel|None)
         self._unread: Dict[Tuple[str, Optional[str]], int] = {}
@@ -458,6 +468,11 @@ class IRCTab(QWidget):
 
         self._build_ui()
         self._reload_network_combo()
+        # The DeepFlux Room is pinned above the IRC networks in tree + combo.
+        self._add_network_tree_item(ROOM_NET_ID, "DeepFlux Room")
+        self._ensure_channel_item(ROOM_NET_ID, ROOM_CHANNEL)
+        self._room_nick_edit.setText(self._config.chat.nickname)
+        self._room_host_edit.setText(self._config.chat.manual_host)
         # Start disconnected — the user connects manually from the toolbar.
         for net in self._config.irc.networks:
             self._add_network_tree_item(net.id, net.host)
@@ -641,6 +656,50 @@ class IRCTab(QWidget):
         self.topic_label.setWordWrap(True)
         root.addWidget(self.topic_label)
 
+        # DeepFlux Room join bar (visible only while the room view is open).
+        # The room never auto-connects: nickname + Join, every session.
+        self._room_bar = QWidget()
+        self._room_bar.setVisible(False)
+        room_row = QHBoxLayout(self._room_bar)
+        room_row.setContentsMargins(0, 0, 0, 0)
+        room_row.setSpacing(6)
+        room_label = QLabel("DeepFlux Room")
+        room_label.setStyleSheet(f"color:#a8edff;font-weight:600")
+        room_row.addWidget(room_label)
+        self._room_nick_edit = QLineEdit()
+        self._room_nick_edit.setPlaceholderText("Nickname")
+        self._room_nick_edit.setMaximumWidth(140)
+        self._room_nick_edit.setClearButtonEnabled(True)
+        self._room_nick_edit.returnPressed.connect(self._on_room_join_clicked)
+        room_row.addWidget(self._room_nick_edit)
+        self._room_advanced_btn = QPushButton("Host…")
+        self._room_advanced_btn.setCheckable(True)
+        self._room_advanced_btn.setToolTip(
+            "Advanced: connect directly to a hosting peer (ip:port) instead "
+            "of using automatic discovery")
+        self._room_advanced_btn.toggled.connect(self._on_room_advanced_toggled)
+        room_row.addWidget(self._room_advanced_btn)
+        self._room_host_edit = QLineEdit()
+        self._room_host_edit.setPlaceholderText("ip:port — direct host")
+        self._room_host_edit.setMaximumWidth(200)
+        self._room_host_edit.setVisible(False)
+        room_row.addWidget(self._room_host_edit)
+        self._room_join_btn = QPushButton("Join")
+        self._room_join_btn.clicked.connect(self._on_room_join_clicked)
+        room_row.addWidget(self._room_join_btn)
+        self._room_private_btn = QPushButton("Make private…")
+        self._room_private_btn.setToolTip(
+            "Generate a new random room key shared only with the people in "
+            "the room right now — people joining later will not see this room")
+        self._room_private_btn.clicked.connect(self._on_room_private_clicked)
+        self._room_private_btn.setVisible(False)
+        room_row.addWidget(self._room_private_btn)
+        self._room_status = QLabel("")
+        self._room_status.setStyleSheet(f"color:{_MUTED_COLOR}")
+        shrink_label(self._room_status)  # live status must not grow the window min
+        room_row.addWidget(self._room_status, 1)
+        root.addWidget(self._room_bar)
+
         # Input
         bottom = QHBoxLayout()
         self.input = IRCInputLine(self._complete_input)
@@ -659,6 +718,7 @@ class IRCTab(QWidget):
     def _reload_network_combo(self) -> None:
         self.network_combo.blockSignals(True)
         self.network_combo.clear()
+        self.network_combo.addItem(self._room_combo_label(), userData=ROOM_NET_ID)
         for net in self._config.irc.networks:
             self.network_combo.addItem(self._network_combo_label(net), userData=net.id)
         self.network_combo.blockSignals(False)
@@ -748,6 +808,9 @@ class IRCTab(QWidget):
         if net_id is None:
             self._on_manage_networks()  # no networks yet → open the dialog
             return
+        if net_id == ROOM_NET_ID:
+            self._on_room_join_clicked()
+            return
         self._connect_network(net_id)
 
     def _connect_network(self, net_id: str) -> None:
@@ -757,6 +820,9 @@ class IRCTab(QWidget):
 
     def _on_disconnect_clicked(self) -> None:
         net_id = self._selected_network_id()
+        if net_id == ROOM_NET_ID:
+            self._room.leave()
+            return
         if net_id:
             self._client.disconnect_network(net_id)
 
@@ -767,6 +833,132 @@ class IRCTab(QWidget):
     def _on_disconnect_all_clicked(self) -> None:
         for net in self._config.irc.networks:
             self._client.disconnect_network(net.id)
+
+    # ------------------------------------------------------------------
+    # DeepFlux Room (serverless community chat, ircmgr/room.py)
+    # ------------------------------------------------------------------
+
+    def _room_combo_label(self, state: str = "") -> str:
+        if not state:
+            state = {"host": "connected", "member": "connected",
+                     "connecting": "connecting"}.get(self._room.role, "offline")
+        dot = {"connected": "●", "connecting": "◌", "error": "✕"}.get(state, "○")
+        return f"{dot} DeepFlux Room"
+
+    def _on_room_advanced_toggled(self, checked: bool) -> None:
+        self._room_host_edit.setVisible(checked)
+        self._room_advanced_btn.setText("Host…" if not checked else "Hide")
+
+    def _update_room_bar(self) -> None:
+        room_selected = bool(self._current and self._current[0] == ROOM_NET_ID)
+        self._room_bar.setVisible(room_selected)
+        if not room_selected:
+            return
+        joined = self._room.is_joined()
+        self._room_join_btn.setText("Leave" if joined else "Join")
+        self._room_nick_edit.setEnabled(not joined)
+        self._room_private_btn.setVisible(joined)
+        mode = "encrypted" if self._room.encrypted else "UNENCRYPTED (source build)"
+        if joined and "private room" in (self._client.state.topic_of(
+                ROOM_NET_ID, ROOM_CHANNEL) or ""):
+            mode = "private · " + mode
+        role = self._room.role
+        if joined and role == "host":
+            endpoints = self._room.endpoints()
+            where = f" — others join via {endpoints[0]}" if endpoints else ""
+            self._room_status.setText(f"hosting{where} · {mode}")
+        elif joined:
+            self._room_status.setText(f"connected as {self._room.nick} · {mode}")
+        elif role == "connecting":
+            self._room_status.setText(f"connecting… · {mode}")
+        else:
+            self._room_status.setText(
+                "first one in hosts the room · " + mode)
+
+    def _on_room_join_clicked(self) -> None:
+        if self._room.is_joined():
+            self._room.leave()
+            self._update_room_bar()  # instant feedback; the state event re-syncs
+            return
+        nick = self._room_nick_edit.text().strip()
+        if not nick:
+            self._room_status.setText("Enter a nickname first.")
+            self._room_nick_edit.setFocus()
+            return
+        if re.search(r"[\s,\r\n]", nick) or len(nick) > 24:
+            self._show_local("error", "Invalid nickname (no spaces or commas, "
+                                      "max 24 chars).")
+            return
+        manual = ""
+        if self._room_advanced_btn.isChecked():
+            manual = self._room_host_edit.text().strip()
+        self._config.chat.nickname = nick
+        self._config.chat.manual_host = manual
+        self._save_config()
+        self._room.join(nick, manual)
+        self._update_room_bar()
+
+    def _on_room_private_clicked(self) -> None:
+        if not self._room.is_joined():
+            return
+        answer = QMessageBox.question(
+            self, "Make the room private",
+            "Generate a new random key and share it only with the people in "
+            "the room right now?\n\n"
+            "From that moment, people who join later will not see this room "
+            "— they get a separate, empty lounge instead. Everyone currently "
+            "here moves together onto the new key.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            if not self._room.make_private():
+                self._show_local("error",
+                                 "Could not rotate the room key — try again in "
+                                 "a few seconds.")
+
+    def _room_send(self, text: str) -> None:
+        # Query tabs under the room are view-only: everything sent from the
+        # room goes to the whole room — never pretend it is private.
+        if (self._current and self._current[0] == ROOM_NET_ID
+                and self._current[1] is not None
+                and not self._client.state.identifiers_equal(
+                    ROOM_NET_ID, self._current[1], ROOM_CHANNEL)):
+            self._show_local("error",
+                             "Private messages are not supported in the room.")
+            return
+        if text.startswith("/"):
+            parts = text.split(" ", 2)
+            cmd = parts[0].lower()
+            if cmd == "/clear":
+                self._client.state.clear_buffer(ROOM_NET_ID, ROOM_CHANNEL)
+                self._render_buffer(ROOM_NET_ID, ROOM_CHANNEL)
+            elif cmd == "/me":
+                action = text.split(" ", 1)[1] if len(parts) > 1 else ""
+                if action and self._room.is_joined():
+                    if not self._room.send_message(action, action=True):
+                        self._show_local("error", "Not connected — action not sent.")
+                else:
+                    self._show_local("error", "Join the room first.")
+            elif cmd == "/help":
+                self._show_local("server",
+                                 "Room commands: /me action · /clear · /help — "
+                                 "everything else is IRC-only.")
+            else:
+                self._show_local("error",
+                                 f"{cmd} is not available in the DeepFlux Room.")
+            return
+        if not self._room.is_joined():
+            self._show_local("error", "Join the room first — nickname + Join below.")
+            return
+        if not self._room.send_message(text):
+            self._show_local("error", "Not connected — message not sent.")
+
+    def _copy_room_address(self) -> None:
+        from PySide6.QtWidgets import QApplication
+        endpoints = self._room.endpoints()
+        if endpoints:
+            QApplication.clipboard().setText(endpoints[0])
 
     def _on_combo_activated(self, index: int) -> None:
         """User picked a network in the combo → follow it in the tree."""
@@ -805,6 +997,14 @@ class IRCTab(QWidget):
             return
         if re.search(r"[\s,\r\n]", nick) or len(nick) > 30:
             self._show_local("error", "Invalid nickname (no spaces or commas, max 30 chars).")
+            return
+        if net_id == ROOM_NET_ID:
+            self._config.chat.nickname = nick[:24]
+            self._save_config()
+            self._room_nick_edit.setText(nick[:24])
+            self._show_local("server", "Room nickname saved — it is used when "
+                                        "you press Join.")
+            self._nick_edit_dirty = False
             return
         cfg = self._find_net_cfg(net_id)
         if cfg and cfg.nick != nick:
@@ -868,6 +1068,11 @@ class IRCTab(QWidget):
         # selection), not whatever the combo happens to show.
         net_id = (self._current[0] if self._current else None) or self._selected_network_id()
         channel = self.join_edit.text().strip()
+        if net_id == ROOM_NET_ID:
+            self._show_local("server",
+                             "The DeepFlux Room is joined from the nickname "
+                             "bar below its view.")
+            return
         if net_id and channel:
             self._client.join(net_id, channel)
             self.join_edit.clear()
@@ -893,6 +1098,14 @@ class IRCTab(QWidget):
         if not net_id:
             return None
         menu = QMenu(self)
+        if net_id == ROOM_NET_ID:
+            if self._room.is_joined():
+                menu.addAction("Leave the room", lambda: self._room.leave())
+                if self._room.role == "host" and self._room.endpoints():
+                    menu.addAction("Copy room address", self._copy_room_address)
+            else:
+                menu.addAction("Join the room…", self._on_room_join_clicked)
+            return menu
         if channel is None:
             if self._client.is_connected(net_id):
                 menu.addAction("Disconnect", lambda: self._client.disconnect_network(net_id))
@@ -940,6 +1153,9 @@ class IRCTab(QWidget):
             self._show_local("error", "No network selected.")
             return
 
+        if net_id == ROOM_NET_ID:
+            self._room_send(text)
+            return
         if text.startswith("/"):
             if self._handle_command(net_id, text):
                 return
@@ -957,6 +1173,8 @@ class IRCTab(QWidget):
         self._client.send_message(net_id, channel, text)
 
     def _is_connected(self, net_id: str) -> bool:
+        if net_id == ROOM_NET_ID:
+            return self._room.is_joined()
         return self._client.is_connected(net_id)
 
     def _show_local(self, kind: str, text: str) -> None:
@@ -1236,12 +1454,20 @@ class IRCTab(QWidget):
             self._populate_chanlist(net_id)
         else:
             self.chanlist_panel.setVisible(False)
+        self._update_room_bar()
 
     def _render_buffer(self, net_id: str, channel: Optional[str]) -> None:
         self.chat.clear()
         self._chat_empty = True
         self._search_count = 0
-        msgs = self._client.get_messages(net_id, channel, limit=self._config.irc.buffer_lines)
+        if net_id == ROOM_NET_ID:
+            # The room is not an IRC network: read the shared state's memory
+            # buffer directly (no encrypted IRC history store involved).
+            msgs = [m.to_dict() for m in self._client.state.get_messages(
+                net_id, channel, limit=self._config.irc.buffer_lines)]
+        else:
+            msgs = self._client.get_messages(net_id, channel,
+                                             limit=self._config.irc.buffer_lines)
         lines = [self._fmt_line(
             m["kind"], m["nick"], m["text"], m["ts"],
             highlighted=self._is_mention(net_id, m["nick"], m["text"], m["kind"]),
@@ -1399,6 +1625,8 @@ class IRCTab(QWidget):
             if self._same_target(self._current, net_id, channel):
                 self.topic_label.setText(event.get("topic", ""))
             self._maybe_show(net_id, channel, "topic", "", event.get("topic", ""))
+            if net_id == ROOM_NET_ID:
+                self._update_room_bar()  # picks up the "private" status tag
             return
         if etype == "parted":
             self._remove_channel_view(net_id, event.get("channel", ""))
@@ -1537,7 +1765,8 @@ class IRCTab(QWidget):
         state = event.get("state", "")
         item = self._network_item(net_id)
         net = self._find_net_cfg(net_id)
-        host = net.host if net else net_id
+        host = "DeepFlux Room" if net_id == ROOM_NET_ID else (
+            net.host if net else net_id)
         if item:
             dot = {"connected": "●", "connecting": "◌", "disconnected": "○",
                    "error": "✕"}.get(state, "○")
@@ -1549,9 +1778,15 @@ class IRCTab(QWidget):
             item.setForeground(0, QColor(color))
             self._refresh_unread_labels(net_id)
         combo_index = self.network_combo.findData(net_id)
-        if combo_index >= 0 and net:
-            self.network_combo.setItemText(
-                combo_index, self._network_combo_label(net, state))
+        if combo_index >= 0:
+            if net_id == ROOM_NET_ID:
+                self.network_combo.setItemText(
+                    combo_index, self._room_combo_label(state))
+            elif net:
+                self.network_combo.setItemText(
+                    combo_index, self._network_combo_label(net, state))
+        if net_id == ROOM_NET_ID:
+            self._update_room_bar()
         if net_id == self._selected_network_id() or (self._current and self._current[0] == net_id):
             note = {"connected": f"connected as {event.get('nick', '')}",
                     "connecting": "connecting…", "disconnected": "offline",
@@ -1644,6 +1879,12 @@ class IRCTab(QWidget):
     # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
+        # Graceful room exit first: it withdraws the discovery pointer and
+        # tells members the host is going away (room continuity).
+        try:
+            self._room.shutdown()
+        except Exception:
+            logger.debug("room shutdown failed", exc_info=True)
         # Persist channel lists per network (joined channels survive restarts).
         try:
             snap = self._client.status()

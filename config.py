@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "3.8"
+APP_VERSION = "3.9"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -95,6 +95,19 @@ _SHARED_TPDB_API_KEY = _load_shared_key("SHARED_TPDB_API_KEY")
 _SHARED_STASHDB_API_KEY = _load_shared_key("SHARED_STASHDB_API_KEY")
 _SHARED_OMDB_API_KEY = _load_shared_key("SHARED_OMDB_API_KEY")
 _SHARED_FANARTTV_API_KEY = _load_shared_key("SHARED_FANARTTV_API_KEY")
+# Community-room crypto secret. Deliberately NOT a config field: it is read
+# directly by ircmgr.room via shared_room_secret(), so there is no slot that
+# to_file()/sanitized_dict() could ever persist or scrub. Empty (source
+# builds) = the room runs unencrypted with its own public discovery slot.
+_SHARED_ROOM_KEY = _load_shared_key("SHARED_ROOM_KEY")
+
+
+def shared_room_secret() -> str:
+    """In-box secret for the DeepFlux Room chat (setup builds only).
+
+    Same hygiene as the other shared keys: obfuscated inside the untracked
+    _embedded_keys.py, shipped only in the frozen bundle, absent from git."""
+    return _SHARED_ROOM_KEY
 
 
 # DeepFlux is DeepSeek-native and also supports OpenAI-compatible endpoints.
@@ -699,6 +712,16 @@ class VoiceConfig:
 
 
 @dataclass
+class ChatConfig:
+    """DeepFlux Room — the serverless community chat on the IRC page
+    (ircmgr/room.py). Nothing here auto-connects: the user types a nickname
+    and presses Join every session (the nickname is only a prefill)."""
+    nickname: str = ""       # prefill for the join bar
+    listen_port: int = 7766  # host's preferred TCP port (scans +20 when busy)
+    manual_host: str = ""    # last used direct "ip:port" (advanced join)
+
+
+@dataclass
 class StatsConfig:
     """Anonymous usage ping (see infra/telemetry.py).
 
@@ -723,6 +746,7 @@ class DeeptorrentConfig:
     iptv: IPTVConfig = field(default_factory=IPTVConfig)
     irc: IRCConfig = field(default_factory=IRCConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
+    chat: ChatConfig = field(default_factory=ChatConfig)
     stats: StatsConfig = field(default_factory=StatsConfig)
     sources: SourcesConfig = field(default_factory=SourcesConfig)
     default_save_path: str = str(Path.home() / "Downloads" / "DeepFlux")
@@ -1128,6 +1152,12 @@ class DeeptorrentConfig:
             ),
             voice=VoiceConfig(**{k: v for k, v in data.get("voice", {}).items()
                                  if k in VoiceConfig.__dataclass_fields__}),
+            chat=ChatConfig(
+                nickname=str(data.get("chat", {}).get("nickname", "") or "")[:24],
+                listen_port=max(1024, min(65535, int(
+                    data.get("chat", {}).get("listen_port", 7766) or 7766))),
+                manual_host=str(data.get("chat", {}).get("manual_host", "") or "")[:64],
+            ),
             stats=StatsConfig(**{k: v for k, v in data.get("stats", {}).items()
                                  if k in StatsConfig.__dataclass_fields__}),
             sources=SourcesConfig(

@@ -36,6 +36,7 @@ ATTRS = [
     "SHARED_STASHDB_API_KEY",
     "SHARED_OMDB_API_KEY",
     "SHARED_FANARTTV_API_KEY",
+    "SHARED_ROOM_KEY",
 ]
 
 HEADER = '''"""LOCAL-ONLY build secret — gitignored, NEVER commit.

@@ -1057,7 +1057,7 @@ class TestIRCTabGUI:
         client.state.set_nicks("net", "#Chan", {"Alice": "@+", "Me[1]": ""})
         tab = IRCTab(config, client)
         try:
-            root = tab.tree.topLevelItem(0)
+            root = tab._network_item("net")
             channel_item = tab._ensure_channel_item("net", "#Chan")
             tab.tree.setCurrentItem(channel_item)
             app.processEvents()
@@ -1223,7 +1223,7 @@ class TestIRCTabGUI:
                     app.processEvents()
                     time.sleep(0.02)
 
-                root = tab.tree.topLevelItem(0)
+                root = tab._network_item("libera")
                 assert root is not None and "irc.libera.chat" in root.text(0)
                 assert root.childCount() == 1
                 tab.tree.setCurrentItem(root.child(0))
@@ -1405,13 +1405,20 @@ class TestIRCTabImprovements:
     def test_combo_status_dots_and_aggregate_label(self):
         app, _config, client, tab = self._make_tab()
         try:
-            assert tab.network_combo.itemText(0).startswith("○ irc.alpha.net")
+            def combo_text(net_id: str) -> str:
+                return tab.network_combo.itemText(tab.network_combo.findData(net_id))
+
+            # The per-network status note only follows the SELECTION; the
+            # room entry is the combo default now, so select alpha first.
+            tab._on_combo_activated(tab.network_combo.findData("alpha"))
+            app.processEvents()
+            assert combo_text("alpha").startswith("○ irc.alpha.net")
             assert tab.status_label.text() == "0/2 connected"
             client.state.set_connected("alpha", True, nick="AlphaUser")
             tab._on_event({"type": "state", "network": "alpha",
                            "state": "connected", "nick": "AlphaUser"})
-            assert tab.network_combo.itemText(0).startswith("●")
-            assert tab.network_combo.itemText(1).startswith("○")
+            assert combo_text("alpha").startswith("●")
+            assert combo_text("beta").startswith("○")
             assert tab.status_label.text().startswith("connected as AlphaUser")
             assert tab.status_label.text().endswith("1/2 connected")
             client.state.set_connected("beta", True, nick="BetaUser")
@@ -1430,7 +1437,8 @@ class TestIRCTabImprovements:
             tab.tree.setCurrentItem(beta_item)
             app.processEvents()
             # Diverge the combo from the tree view deliberately.
-            tab.network_combo.setCurrentIndex(0)  # alpha
+            tab.network_combo.setCurrentIndex(
+                tab.network_combo.findData("alpha"))
             assert tab._current == ("beta", "#beta-chan")
             tab.join_edit.setText("#elsewhere")
             with patch.object(client, "join") as join_mock:
@@ -1463,9 +1471,10 @@ class TestIRCTabImprovements:
         try:
             tab.tree.setCurrentItem(tab._network_item("alpha"))
             app.processEvents()
-            tab.network_combo.setCurrentIndex(1)  # beta, no activation yet
+            beta_index = tab.network_combo.findData("beta")
+            tab.network_combo.setCurrentIndex(beta_index)  # no activation yet
             assert tab._current == ("alpha", None)
-            tab._on_combo_activated(1)
+            tab._on_combo_activated(beta_index)
             assert tab._current == ("beta", None)
         finally:
             tab.deleteLater()

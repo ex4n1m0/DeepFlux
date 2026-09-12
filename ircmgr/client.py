@@ -48,6 +48,7 @@ from ircmgr.state import (
     KIND_QUIT,
     KIND_SERVER,
     KIND_TOPIC,
+    ROOM_NET_ID,
     is_channel,
 )
 
@@ -341,6 +342,9 @@ class IRCClientCore:
     def resolve_network(self, net_id: str = "", channel: str = "") -> Tuple[Optional[str], Optional[str]]:
         """Pick a network when the caller didn't name one. Returns (id, error)."""
         snap = self.state.snapshot()["networks"]
+        # The DeepFlux Room pseudo-network is GUI-managed (RoomController),
+        # not an IRC connection — never auto-select it for agent commands.
+        snap = [n for n in snap if n["id"] != ROOM_NET_ID]
         nets = {n["id"]: n for n in snap}
         if net_id:
             if net_id not in nets:

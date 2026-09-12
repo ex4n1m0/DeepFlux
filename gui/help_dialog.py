@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.8 — User Guide</h1>
+<h1>DeepFlux 3.9 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -363,6 +363,47 @@ browser toolbar's Bookmarks button.</p>
   <tr><td><b>IRC</b></td><td><b>Networks</b> — servers, channels, SASL.</td></tr>
 </table>
 
+<h2>DeepFlux Room — Community Chat</h2>
+
+<p>The IRC page also carries the <b>DeepFlux Room</b> (the
+<span style="color:#a8edff">DeepFlux Room</span> entry pinned at the top of
+the network tree, with its <code>#lounge</code> channel). It is not IRC and
+uses no chat server: the <b>first person to join hosts the room inside the
+app</b>, and everyone else connects to them directly, peer to peer. When the
+host leaves, another member automatically takes over, so the room keeps
+living.</p>
+
+<ul>
+  <li><b>Joining:</b> open the room's view, type a nickname, press
+  <b>Join</b>. You are never joined automatically — every session starts at
+  this bar. <b>Leave</b> is the same button.</li>
+  <li><b>Finding the host:</b> a tiny pointer on deepflux.space says who is
+  currently hosting (address + timestamp only — <b>no messages, ever</b>).
+  The "Host…" button next to the nickname skips that and connects straight
+  to an address you type (<code>ip:port</code>) — handy on tricky networks,
+  or when discovery is down.</li>
+  <li><b>Encryption:</b> in the downloaded setup build every message is
+  sealed with a key that ships only inside the app (AES-GCM, per-message
+  keys, tamper-proof). Builds compiled from the GitHub source have no key
+  and their lounge runs unencrypted — a separate room that never sees the
+  encrypted one. Sealed means sealed on the wire: anyone holding the same
+  app can read the room; it is a group key, not a secret channel.</li>
+  <li><b>Making the room private:</b> anyone in the room can press
+  <b>Make private…</b> to generate a fresh random key that is handed only
+  to the people in the room at that moment. From then on, people who join
+  later cannot read — or even find — this room; they get a separate, empty
+  lounge. The private room lives as long as its members stay connected
+  (the rotated key is held in memory, never written to disk), and it
+  survives its host leaving — the next member re-hosts it under the same
+  private key.</li>
+  <li><b>Hosting notes:</b> the host's app tries to open a port on your
+  router automatically (UPnP) and shows the address others can use
+  (right-click the room → <b>Copy room address</b>). Windows may ask once
+  to allow DeepFlux through the firewall — the room works best if you
+  allow it. No port open? Joiners on your local network still reach you,
+  and anyone can use a direct address.</li>
+</ul>
+
 <h2>Privacy</h2>
 
 <p>DeepFlux works fully offline if you want it to. Two things talk to the
@@ -378,6 +419,10 @@ internet by default:</p>
   <li><b>Update checks</b> — a daily check for an outdated YouTube downloader
   (warn-only). Same settings page.</li>
 </ul>
+
+<p>The DeepFlux Room adds one more, only while you use it: the discovery
+pointer described above (a sealed host address — chat itself never touches
+any server).</p>
 
 <p>Everything else — searching, downloading, playing, the agent — only uses
 the network when you ask it to.</p>
@@ -497,7 +542,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.8 — AI Deep Search")
+        version = QLabel("3.9 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

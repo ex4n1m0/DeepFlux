@@ -30,6 +30,12 @@ CHANNEL_PREFIXES = ("#", "&", "+", "!")
 CASEMAPPINGS = ("ascii", "strict-rfc1459", "rfc1459")
 _PREFIX_ORDER = "~&@%+"
 
+# Pseudo-network id for the DeepFlux Room (ircmgr/room.py): the serverless
+# community chat that shares the IRC page. It lives in this IRCState like a
+# real network so the GUI's existing tree/combo/buffer/nick-list code renders
+# it, but IRCClientCore never connects to it — RoomController owns it.
+ROOM_NET_ID = "dfroom"
+
 
 def is_channel(target: str) -> bool:
     return target.startswith(CHANNEL_PREFIXES)

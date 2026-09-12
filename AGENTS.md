@@ -1004,6 +1004,80 @@
   (subset-gated so user-customized entries survive), dead endpoints are
   retargeted only when still carrying the old shipped host/port/TLS, and a
   dead morethantv entry is dropped; user-added channels/entries always win.
+- DeepFlux Room (`ircmgr/room.py`, added 2026-09-13, unreleased): a
+  SERVERLESS community chat rendered on the IRC page as a pseudo-network
+  (`ROOM_NET_ID = "dfroom"` in state.py, one channel `#lounge`) — it reuses
+  the tree/combo/transcript/nick-list by writing into the SHARED IRCState
+  and emitting events shaped exactly like IRCClientCore's, so `_on_event`
+  renders it with the normal code paths. `resolve_network` filters the
+  pseudo-network out of agent auto-pick. NOT IRC: the first user to press
+  Join hosts a TCP chat server in-app (star topology — the host relays and
+  is authoritative for nick→connection, so clients cannot forge nicks);
+  everyone else connects directly. Discovery needs one shared point:
+  `website/api/room.js` (Upstash, same env names as heartbeat) stores ONLY
+  a host pointer {endpoints, ts, token} under `df:room:<id>` with a 120s
+  TTL — never a message; announce uses atomic SET NX so a live foreign
+  host's slot is never clobbered, refresh/leave verify the host token, and
+  `?mode=myip` echoes the caller IP so a host can advertise its public
+  address. Everything degrades: no env vars / site down → host still works
+  LAN-only + direct-address. Controller lifecycle: left → connecting →
+  member|host → left; a member whose link dies re-runs discovery with
+  backoff (5 tries) and promotes itself to host when the pointer is gone;
+  a demoted/stopped host recovers the same way; only a `taken` refresh
+  demotes (offline discovery must never tear down a working room).
+  NEVER auto-joined: the join bar (nickname + Join/Leave, optional
+  "Host…" direct ip:port, config `chat.*`) is the only way in, per user
+  decision. `RoomClient.connect` RACES all advertised endpoints (public +
+  LAN) so LAN joiners don't sit through the public timeout.
+  CRYPTO (owner decision): messages are sealed AES-256-GCM under a secret
+  that ships ONLY in the setup exe (`SHARED_ROOM_KEY` slot in
+  _embedded_keys.py; `config.shared_room_secret()` reads it — it is NOT a
+  config field, so to_file/sanitized_dict can never persist it). Keys are
+  derived per direction (c2h ≠ h2c, AAD binds record kind — no reflection,
+  no cross-purpose replay); joins carry an HMAC proof (2-min window), the
+  discovery pointer is sealed+verified, and the encrypted room's discovery
+  id is key-derived so source builds cannot even SEE it. Source builds
+  (no key) run the same room UNENCRYPTED as a separate `lounge` slot —
+  by design, do not "fix". Group-key ceiling: any exe holder can read the
+  room; it is sealed in transit/at the rendezvous, not secret from
+  members. Host hardening: nick regex (1–24, no spaces/commas,
+  case-insensitive-unique, "room"/"lounge" reserved), 64-user cap,
+  2000-char/8-msg-per-5s rate limit (flooders dropped), 16KB wire cap,
+  last-100 history replayed in the welcome.
+  KEY ROTATION / "Make private…" (user decision, 2026-09-13): any member
+  may press the button (GUI confirms first); the HOST performs the
+  rotation — `RoomHost.rotate()` generates a 256-bit secret, sends one
+  {"t":"rekey"} record sealed under the CURRENT key (so only people
+  already in the room receive it; a member's ability to seal a
+  rekey_req IS the permission — forged requests drop the connection),
+  then swaps codecs with a 10s cooldown. Both host and client keep the
+  immediately-previous codec for a 60s grace window so in-flight records
+  sealed moments before the rotation still decode. The controller
+  (`_on_rotated`) swaps its codec, retitles the room "private room
+  (rotated key)", and — when hosting — withdraws the OLD discovery slot
+  and claims the NEW one (room id derives from the key, so key-less
+  latecomers cannot even find the room; they host a fresh lounge).
+  Rotation always generates a REAL secret, so even a source-build room
+  becomes encrypted after rotating. The rotated key lives in memory only
+  (leave + rejoin = back to the base room); takeover after rotation
+  re-hosts under the rotated id.
+  SOCKET GOTCHAS (each one bit us — measured, 2026-09-13): (1) sock.close()
+  is DEFERRED while a makefile() reader still references the socket, so the
+  FIN never goes out and the peer only times out — ALWAYS shutdown(SHUT_RDWR)
+  first (it also unblocks a reader parked in readline); (2) file.close()
+  from another thread BLOCKS on the reader's buffer lock until its read
+  returns (a full 75s read timeout here) — never close the makefile
+  cross-thread before shutdown. Host listens on port `chat.listen_port`
+  (7766, scans +20), best-effort UPnP IGD mapping (`_upnp_map_port`,
+  SSDP+SOAP, cached per process) so internet joiners can reach a home
+  host; Windows Firewall may prompt once on first host (documented in the
+  User Guide, cannot be automated). Tests: tests/test_chatroom.py —
+  FakeRendezvous mirrors room.js, UPnP patched out, everything on
+  loopback. The release build needs the owner to add the room secret: set
+  SHARED_ROOM_KEY in _embedded_keys.py and run packaging/gen_embedded_keys.py
+  (ATTRS already lists it; absent = source behavior, encrypted room simply
+  absent). Deploy note: room.js is additive — old exes never call it, so it
+  can ship to production independently of the app release.
 - Agent tools: `irc_status` / `irc_list_messages` / `irc_search_messages` are
   READ_ONLY; `irc_send_message` / `irc_join` / `irc_part` require confirmation.
   ToolRegistry takes `irc_client=` (GUI injects the shared core; CLI lazily
