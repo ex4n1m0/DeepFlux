@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 3.6.1 — User Guide</h1>
+<h1>DeepFlux 3.6.2 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 IRC client, and file manager. The AI agent can search for and download torrents,
@@ -70,6 +70,12 @@ files, and chat on IRC, all with your confirmation for sensitive actions.</p>
       press <code>Enter</code>. The agent will search, pick the best result, and
       ask before downloading.</li>
 </ol>
+
+<p><b>Window size:</b> the window can be made as small as you like. On narrow
+windows, less-used toolbar buttons collapse into a <b>⋯</b> menu button (on the
+Play tab, the Command tab's function-key bar, IRC, and the download lists) and
+the player's transport row switches to compact buttons — everything stays
+reachable, nothing disappears.</p>
 
 <h2>Tabs</h2>
 
@@ -208,7 +214,10 @@ the torrent engine on completion.</p>
       settings are applied.</li>
   <li><b>Covers:</b> posters and channel logos fill in automatically while you
       browse, and a deliberately slow background sweep looks up the rest (the
-      "Finding artwork n/N" counter in the status bar) to stay within API limits.</li>
+      "Finding artwork n/N" counter in the status bar) to stay within API limits.
+      The poster grid adapts to the window — between 3 and 9 covers per row
+      depending on the space available: widen the window to see more covers,
+      shrink it to see bigger ones.</li>
   <li><b>EPG:</b> now/next info for live channels when the playlist declares a
       guide URL — or set one per source in the source settings.</li>
   <li><b>Refresh resilience:</b> if a provider refresh fails, the last good channel
@@ -383,7 +392,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.6.1 — AI Deep Search</p>
+<p>DeepFlux 3.6.2 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -451,7 +460,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("3.6.1 — AI Deep Search")
+        version = QLabel("3.6.2 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

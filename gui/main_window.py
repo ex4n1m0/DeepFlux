@@ -80,6 +80,7 @@ from gui.sources_dialog import SourcesDialog
 from gui.help_dialog import HelpDialog, AboutDialog
 from gui.downloads_tab import DownloadsTab
 from gui.column_sizing import AutoColumnSizer
+from gui.responsive import OverflowRow, ResponsiveRow
 from gui.commander_tab import CommanderTab
 from gui.browser_bridge import BrowserBridge, accept_language_header, normalize_browser_target
 from gui.browser_history import BrowserHistory
@@ -1014,7 +1015,7 @@ class MainWindow(QMainWindow):
                          name="ytdlp-update").start()
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 3.6.1 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 3.6.2 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1520,8 +1521,11 @@ class MainWindow(QMainWindow):
         torrents_tab_layout = QVBoxLayout(torrents_tab)
         torrents_tab_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Quick-action buttons above the torrent list
-        btn_layout = QHBoxLayout()
+        # Quick-action buttons above the torrent list. ResponsiveRow: the
+        # row's button minimums (~640px) overflow into a "⋯" menu on narrow
+        # windows instead of locking the window wide.
+        torrents_btn_row = ResponsiveRow()
+        btn_layout = QHBoxLayout(torrents_btn_row)
         add_magnet_btn = QPushButton("+ Magnet")
         add_magnet_btn.setObjectName("btn_accent")
         add_magnet_btn.clicked.connect(self._add_magnet_dialog)
@@ -1540,7 +1544,10 @@ class MainWindow(QMainWindow):
         clear_completed_btn = QPushButton("Clear Completed")
         clear_completed_btn.clicked.connect(self._clear_completed_torrents)
         btn_layout.addWidget(clear_completed_btn)
-        torrents_tab_layout.addLayout(btn_layout)
+        torrents_tab_layout.addWidget(torrents_btn_row)
+        self._torrent_btn_overflow = OverflowRow(torrents_btn_row, (
+            clear_completed_btn, remove_btn, rss_btn, add_file_btn,
+        ))
 
         torrents_label = QLabel("◈ Torrents")
         torrents_label.setObjectName("section_label")

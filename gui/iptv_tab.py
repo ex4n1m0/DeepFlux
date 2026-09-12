@@ -86,9 +86,13 @@ from iptv.models import (
 from iptv.player import PlayerBackend, create_backend
 from gui.multiview import MultiViewGrid, build_playback_headers
 from dlmgr.ffmpeg import StreamRecorder, find_ffmpeg, is_network_stream_url
+from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
+
+# QWIDGETSIZE_MAX (0x00FFFFFF) is not exposed by PySide6.
+_MAX_WIDGET_SIZE = 16777215
 
 # Maximum items shown per sidebar leaf node. When a category or year bucket
 # has more than this, the sidebar adds numbered bulk children (1–500, 501–1000,
@@ -269,8 +273,10 @@ class PlayerWidget(QWidget):
         self.video_stack.addWidget(self.surface)
         layout.addWidget(self.video_stack, 1)
 
-        # Control bar (auto-hiding).
-        self.controls = QWidget()
+        # Control bar (auto-hiding). ResponsiveRow + a floor at the compact
+        # width: the full-fat button row demands ~950px and must not lock
+        # the window wide — below it the buttons compact (see _refit_controls).
+        self.controls = ResponsiveRow(min_width=580)
         self.controls.setStyleSheet("background-color: rgba(10,10,15,0.85);")
         controls_layout = QVBoxLayout(self.controls)
         controls_layout.setContentsMargins(8, 4, 8, 4)
@@ -355,6 +361,7 @@ class PlayerWidget(QWidget):
         self.record_status_lbl = QLabel("")
         self.record_status_lbl.setStyleSheet("color: #e67e22; font-size: 17px;")
         self.record_status_lbl.setMaximumWidth(180)
+        shrink_label(self.record_status_lbl)  # live text must not grow the window min
         self.record_status_lbl.hide()
         tools.addWidget(self.record_status_lbl, 1)
 
@@ -382,6 +389,27 @@ class PlayerWidget(QWidget):
         self.fs_btn.clicked.connect(self._toggle_fullscreen)
         ctrl.addWidget(self.fs_btn)
         controls_layout.addLayout(tools)
+
+        # Narrow-window compaction (see _refit_controls): the transport row
+        # otherwise demands ~950px of button minimums and locks the whole
+        # window wide. These are the emoji-only buttons — a capped width plus
+        # tighter padding still leaves the glyph visible.
+        self._ctrl_layout = ctrl
+        self._tools_row = tools
+        self._narrow_emoji_btns = (
+            self.rw_btn, self.play_btn, self.stop_btn, self.ff_btn,
+            self.mute_btn, self.aspect_btn, self.audio_btn, self.subs_btn,
+            self.preset_btn,
+        )
+        self._narrow_controls = False
+        self._ctrl_wide_min = 0
+        # Secondary tools overflow into a "⋯" menu when the pane is narrow.
+        # (record/sleep buttons are excluded: compact PiP mode hides them
+        # itself, and OverflowRow must be the only thing managing its
+        # candidates' visibility.)
+        self._tools_overflow = OverflowRow(
+            self.controls, (self.mv_btn, self.compact_btn), self,
+            layout=tools)
 
         layout.addWidget(self.controls)
 
@@ -1015,6 +1043,37 @@ class PlayerWidget(QWidget):
             for widget, visible in self._compact_control_visibility.items():
                 widget.setVisible(visible)
             self._compact_control_visibility.clear()
+
+    # -- narrow-window compaction --------------------------------------------
+    # The transport row's buttons carry the app-wide 18px font + padding, so
+    # their minimums sum to ~950px and used to lock the whole window wide.
+    # Below that width the emoji-only buttons get a capped width + tighter
+    # padding (glyph still visible) and the redundant "⛶ Full" button hides
+    # (the ⛶ button, F key and double-click all do fullscreen too).
+    def _refit_controls(self) -> None:
+        if self._ctrl_wide_min == 0 and not self._narrow_controls:
+            self._ctrl_wide_min = self._ctrl_layout.minimumSize().width()
+        if self._ctrl_wide_min == 0:
+            return
+        self._set_narrow_controls(self.width() < self._ctrl_wide_min)
+
+    def _set_narrow_controls(self, narrow: bool) -> None:
+        if narrow == self._narrow_controls:
+            return
+        self._narrow_controls = narrow
+        if narrow:
+            self.controls.setStyleSheet(
+                "background-color: rgba(10,10,15,0.85);"
+                "QPushButton { padding: 2px 4px; }")
+            for btn in self._narrow_emoji_btns:
+                btn.setMaximumWidth(46)
+            self.fs_btn.hide()
+        else:
+            self.controls.setStyleSheet(
+                "background-color: rgba(10,10,15,0.85);")
+            for btn in self._narrow_emoji_btns:
+                btn.setMaximumWidth(_MAX_WIDGET_SIZE)
+            self.fs_btn.show()
 
     def _toggle_compact(self) -> None:
         on = not self._compact
@@ -1684,6 +1743,7 @@ class PlayerWidget(QWidget):
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
+        self._refit_controls()
         # Keep the overlays covering the video surface after resizes, and on
         # top of the native mpv/VLC window (raise_ — native HWND z-order).
         if self.error_overlay.isVisible():
@@ -2230,8 +2290,8 @@ class ContentGrid(QListWidget):
         super().__init__(parent)
         self._manager = manager
         self.setViewMode(QListWidget.IconMode)
-        # Tile size is recomputed from the viewport (3 rows visible, columns
-        # fill the width) — see _recompute_tile_size. Start from a sane default
+        # Tile size is recomputed from the viewport (dynamic 3–9 columns, 3
+        # rows visible) — see _recompute_tile_size. Start from a sane default
         # so sizeHint is valid before the first resize.
         self._tile_size = QSize(240, 320)
         self.setIconSize(self._tile_size)
@@ -2509,28 +2569,41 @@ class ContentGrid(QListWidget):
         QTimer.singleShot(0, self._load_visible_artwork)
 
     # -- dynamic tile sizing -------------------------------------------------
-    _TARGET_COLS = 3
+    # Column count adapts to the viewport: how many ~240px (native poster
+    # width) tiles fit, clamped to [3, 9]. Below 3 the tiles get uselessly
+    # wide; above 9 they get uselessly small (and the artwork detail is lost).
+    _MIN_COLS = 3
+    _MAX_COLS = 9
+    _IDEAL_TILE_W = _TILE_SIZE.width()
+    # QListWidget needs a few px beyond N*(w+spacing)+spacing to pack the
+    # Nth column — a zero-slack exact fill drops the last column at exact
+    # boundaries (measured: 4 computed, 3 packed at ~1200px). The slack
+    # leaves an invisible ≤12px right-edge gap instead.
+    _PACK_SLACK = 12
     _TARGET_ROWS = 3
 
     def _recompute_tile_size(self) -> None:
-        """Fit posters to a 3×3 grid: 3 columns × 3 rows always visible, tiles
-        stretch to fill the available width and height so there's no right-edge
-        or bottom gap. Posters shrink when the window shrinks to keep the 3×3
-        invariant; a floor keeps them from becoming unusably tiny.
+        """Fit posters to the viewport: a dynamic column count (3–9) fills
+        the width exactly, 3 rows stay always visible, and tiles stretch to
+        whatever space that leaves — no right-edge or bottom gap. Posters
+        shrink when the window shrinks; floors keep them usable.
 
-        icon_w is ALWAYS the 3-column width — never shrunk below it — so
-        QListWidget packs exactly 3 columns. When the viewport is short, icon_h
-        is capped and the portrait poster is centred inside the wider tile
-        (the delegate paints it aspect-kept with AlignCenter)."""
+        icon_w is the exact fill width for the chosen column count minus a
+        small pack slack, so QListWidget packs exactly that many columns.
+        When the viewport is short, icon_h is capped and the portrait poster
+        is centred inside the wider tile (the delegate paints it aspect-kept
+        with AlignCenter)."""
         vp = self.viewport().rect()
         if vp.isEmpty():
             return
         spacing = self.spacing()
         fm = self.fontMetrics()
         text_h = fm.height() * _TEXT_LINES + 6
-        # 3 columns fill the width exactly — this width is FIXED so QListWidget
-        # never packs a 4th column.
-        icon_w = (vp.width() - (self._TARGET_COLS + 1) * spacing) // self._TARGET_COLS
+        # Columns: how many ideal-width tiles fit, clamped. Tiles then
+        # stretch to fill the width exactly for the chosen count.
+        cols = (vp.width() - spacing) // (self._IDEAL_TILE_W + spacing)
+        cols = max(self._MIN_COLS, min(self._MAX_COLS, cols))
+        icon_w = (vp.width() - (cols + 1) * spacing - self._PACK_SLACK) // cols
         icon_w = max(80, icon_w)
         # Height at perfect portrait aspect (240x320) from this width.
         icon_h_from_w = int(icon_w * 320 / 240)
@@ -3423,7 +3496,10 @@ class IPTVTab(QWidget):
         layout.setSpacing(4)
 
         # --- Toolbar (in a widget so fullscreen mode can hide it) ---
-        self._toolbar_w = QWidget()
+        # ResponsiveRow: the row's ~1140px of button minimums must not
+        # become the window's minimum — optional buttons overflow into a
+        # "⋯" menu instead (attached at the end of _build_ui).
+        self._toolbar_w = ResponsiveRow()
         toolbar = QHBoxLayout(self._toolbar_w)
         toolbar.setContentsMargins(0, 0, 0, 0)
         toolbar.setSpacing(6)
@@ -3623,6 +3699,19 @@ class IPTVTab(QWidget):
         self._grid.itemActivated.connect(self._on_item_activated)
         self._grid.itemSelected.connect(self._on_item_selected)
         self._list.itemActivated.connect(self._on_item_activated)
+
+        # Narrow windows: the toolbar's button minimums sum to ~1140px, which
+        # used to lock the whole window wide. Optional buttons collapse into
+        # a "⋯" menu in hide-first order — the source picker and search box
+        # always stay on the row.
+        self._toolbar_overflow = OverflowRow(self._toolbar_w, (
+            self._open_file_btn, self._settings_btn, self._refresh_btn,
+            self._scope_btn, self._sidebar_btn, self._content_btn,
+            self._view_list_btn, self._view_grid_btn,
+        ))
+        # Live status text must not grow the window's minimum width.
+        shrink_label(self._status_lbl)
+        shrink_label(self._art_lbl)
 
     # -- sources -------------------------------------------------------------
     def _populate_source_dropdown(self) -> None:

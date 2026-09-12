@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 from dlmgr.engine import DownloadEngine
 from dlmgr.job import JobStatus, SegmentStatus
 from gui.column_sizing import AutoColumnSizer
+from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 
 logger = logging.getLogger(__name__)
 
@@ -401,8 +402,12 @@ class DownloadsTab(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        # --- Toolbar ---
-        toolbar = QHBoxLayout()
+        # --- Toolbar. ResponsiveRow: the nine buttons sum to ~1030px of
+        # minimums — optional ones overflow into a "⋯" menu on narrow
+        # windows instead of locking the window wide. Every action also
+        # lives in the table's context menu. ---
+        toolbar_row = ResponsiveRow()
+        toolbar = QHBoxLayout(toolbar_row)
         toolbar.setSpacing(4)
 
         self.add_url_btn = QPushButton("+ Add URL")
@@ -444,7 +449,14 @@ class DownloadsTab(QWidget):
         self.clear_completed_btn.clicked.connect(self._clear_completed)
         toolbar.addWidget(self.clear_completed_btn)
 
-        layout.addLayout(toolbar)
+        layout.addWidget(toolbar_row)
+        # Hide-first order: bulk/file conveniences go first, the queue
+        # controls (Pause/Resume) stay on the row as long as possible.
+        self._toolbar_overflow = OverflowRow(toolbar_row, (
+            self.clear_completed_btn, self.open_folder_btn,
+            self.open_file_btn, self.retry_btn, self.remove_btn,
+            self.cancel_btn, self.resume_btn, self.pause_btn,
+        ))
 
         filters = QHBoxLayout()
         filters.setSpacing(6)
@@ -461,6 +473,7 @@ class DownloadsTab(QWidget):
         filters.addWidget(self.status_filter)
         self.summary_label = QLabel("Active: 0  |  Queued: 0  |  Speed: —")
         self.summary_label.setObjectName("downloads_summary")
+        shrink_label(self.summary_label)  # live summary must not grow the window min
         filters.addWidget(self.summary_label)
         layout.addLayout(filters)
 

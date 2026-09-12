@@ -63,6 +63,7 @@ from PySide6.QtWidgets import (
 from config import DeeptorrentConfig, IRCNetworkConfig
 from ircmgr.client import IRCClientCore
 from ircmgr.state import CHANNEL_PREFIXES, irc_casefold
+from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 from gui.window_sizing import roomy
 
 logger = logging.getLogger(__name__)
@@ -476,8 +477,11 @@ class IRCTab(QWidget):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(4)
 
-        # Toolbar
-        bar = QHBoxLayout()
+        # Toolbar. ResponsiveRow: the full row sums to ~1220px of button
+        # minimums — optional buttons overflow into a "⋯" menu on narrow
+        # windows instead of locking the window wide.
+        self._toolbar_w = ResponsiveRow()
+        bar = QHBoxLayout(self._toolbar_w)
         self.network_combo = QComboBox()
         self.network_combo.setMinimumWidth(170)
         self.network_combo.activated.connect(self._on_combo_activated)
@@ -527,8 +531,16 @@ class IRCTab(QWidget):
         self.status_label = QLabel("offline")
         self.status_label.setMinimumWidth(60)
         self.status_label.setStyleSheet(f"color:{_MUTED_COLOR}")
+        shrink_label(self.status_label)  # live "N/M connected" must not grow the window min
         bar.addWidget(self.status_label)
-        root.addLayout(bar)
+        root.addWidget(self._toolbar_w)
+        # Hide-first order: dialogs first, the per-network Connect/Disconnect
+        # pair stays on the row as long as possible.
+        self._toolbar_overflow = OverflowRow(self._toolbar_w, (
+            self.settings_btn, self.manage_btn,
+            self.disconnect_all_btn, self.connect_all_btn,
+            self.disconnect_btn, self.connect_btn,
+        ))
 
         search_bar = QHBoxLayout()
         self.search_edit = QLineEdit()

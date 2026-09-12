@@ -91,6 +91,42 @@
   `_on_player_fullscreen`, run on every non-fullscreen window-state change
   via `MainWindow.changeEvent`) must skip it, or an empty ~21px strip shows
   up under the menu bar after a fullscreen/maximize cycle.
+- Responsive window sizing (`gui/responsive.py`, added 2026-09-12): a
+  top-level window's minimum is the WIDEST TAB PAGE's layout minimum, and
+  one fat row used to lock the whole window (measured: Play toolbar 1138px,
+  player transport 961px, Command 1236px — 612px of that ONE FilePane
+  status label — IRC 1232px, Downloads 1034px; the window couldn't shrink
+  below ~1250px, and dynamic status text made the floor MOVE, the
+  "sometimes I can't make it smaller" bug). Three helpers, all measured:
+  * `ResponsiveRow` — a QWidget whose `minimumSizeHint` is capped at its
+    floor, so a fat row no longer sets the window minimum. Without this
+    cap nothing responsive can ever trigger (the window can't shrink to
+    fire the resize events — chicken-and-egg; a hide-on-resize scheme
+    alone is useless).
+  * `OverflowRow(row, candidates)` — hides the row's optional buttons into
+    a "⋯" menu in hide-first order as the row narrows, restores them as it
+    widens; hidden buttons still work (the menu calls the button's own
+    `click()`; checkable buttons get checkable menu actions). Candidates
+    must be widgets the app itself NEVER hides. When the row is a
+    floor-less ResponsiveRow, OverflowRow measures the floor itself (all
+    candidates hidden + the ⋯ button). Wired: Play toolbar, player tools
+    row (mv/compact only — record/sleep buttons are hidden by compact PiP
+    mode, which would fight the row), Commander F-key bar, IRC toolbar,
+    Downloads toolbar, torrent quick-action row (main_window).
+  * `shrink_label` — `setWordWrap(True)` on every QLabel whose text can
+    change at runtime: a QLabel's minimumSizeHint is its FULL text width,
+    so live status text grows the window's minimum (a `setMinimumWidth(0)`
+    does NOT defeat the hint — verified). Applied: FilePane `_pane_status`,
+  Commander `_status`/`_outcome_status`, IRC `status_label` (topic already
+  wrapped), Downloads `summary_label`, Play `_status_lbl`/`_art_lbl`,
+  player `record_status_lbl`. Any NEW dynamic label must get this too.
+  The player transport bar compacts instead of overflowing
+  (`PlayerWidget._refit_controls`/`_set_narrow_controls`: below its
+  wide-mode layout minimum the emoji buttons get max width 46 + tighter
+  QSS padding and "⛶ Full" hides — fullscreen stays on ⛶/F/double-click).
+  Regression cap: `tests/test_responsive.py::test_tabs_stay_shrinkable`
+  builds each tab and asserts minimumSizeHint ≤ 700×460, with long status
+  text; every tab landed at ≤ ~620px.
 - No built-in torrent sources ship: `DEFAULT_SOURCES` in `config.py` is
   empty, and the installer deletes `~/.deeptorrent/config.json` on EVERY
   install — fresh installs and upgrades both start with zero sources, users
@@ -660,12 +696,17 @@
   (remakes outrank the right film by popularity otherwise).
 - IPTV grid layout (gui/iptv_tab.py): posters are DYNAMIC, not fixed 240x320.
   `ContentGrid._recompute_tile_size` fits the viewport — 3 rows always visible
-  (height-driven), columns fill the width exactly (visible count is a multiple
-  of 3: 3, 6, 9, 12… as the pane widens); posters shrink when the window
-  shrinks to keep the 3-row invariant (capped at 460px so huge windows don't
-  make giant tiles). It runs on show/resize (showEvent also defers one pass for
-  post-layout geometry). `PosterDelegate` (a QStyledItemDelegate) paints each
-  tile: poster aspect-kept, title wrapped, and two overlaid buttons at the top
+  (height-driven), column count = how many ~240px (native poster width) tiles
+  fit, CLAMPED to 3–9 (user decision 2026-09-12: min 3, max 9 fully open);
+  tiles then stretch to fill the width exactly for the chosen count, posters
+  shrink when the window shrinks to keep the 3-row invariant. The fill width
+  subtracts `_PACK_SLACK` (12px) — QListWidget needs a few px beyond
+  N*(w+spacing)+spacing to pack the Nth column, and a zero-slack exact fill
+  silently drops the last column at exact boundaries (measured: 4 computed,
+  3 packed at ~1200px). It runs on show/resize (showEvent also defers one pass
+  for post-layout geometry). `PosterDelegate` (a QStyledItemDelegate) paints
+  each tile: poster aspect-kept, title wrapped, and two overlaid buttons at
+  the top
   — Select (filled accent #2a7abf when the tile is selected) and Play. Buttons
   show while hovered or selected. Hit-testing is in `ContentGrid.mousePressEvent`
   via `PosterDelegate.tile_layout`/`button_rects` (shared with paint so geometry

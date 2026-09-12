@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.column_sizing import AutoColumnSizer
+from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +248,9 @@ class FilePane(QWidget):
         self._pane_status.setAccessibleName(f"{pane_name} free space and selection status")
         self._pane_status.setToolTip("Selection count and free disk space")
         self._pane_status.setStyleSheet("color: #8a9ab0; font-size: 17px;")
+        # Live selection/free-space text: word-wrap or a long status sets the
+        # whole window's minimum width (measured 612px from one pane).
+        shrink_label(self._pane_status)
         layout.addWidget(self._pane_status)
 
         self._view.installEventFilter(self)
@@ -532,9 +536,14 @@ class CommanderTab(QWidget):
         checksum_bar.addWidget(self._checksum_copy_btn)
         layout.addLayout(checksum_bar)
 
-        # Function-key bar (Double Commander style).
-        keys = QHBoxLayout()
+        # Function-key bar (Double Commander style). ResponsiveRow: the six
+        # buttons sum to ~770px of minimums — they overflow into a "⋯" menu
+        # on narrow windows instead of locking the window wide. The F5–F8
+        # shortcuts keep working while a button is in the menu.
+        keys_row = ResponsiveRow()
+        keys = QHBoxLayout(keys_row)
         keys.setSpacing(6)
+        fn_btns = []
         for text, tooltip, slot in (
             ("F5 Copy", "Copy selected items to the other pane",
              lambda: self._start_transfer("copy")),
@@ -550,18 +559,23 @@ class CommanderTab(QWidget):
             btn.setToolTip(tooltip)
             btn.clicked.connect(slot)
             keys.addWidget(btn)
+            fn_btns.append(btn)
         keys.addStretch()
         self._status = QLabel("")
         self._status.setAccessibleName("Commander status")
         self._status.setToolTip("Current Commander status")
         self._status.setStyleSheet("color: #8a9ab0; font-size: 17px;")
+        shrink_label(self._status)  # live text must not grow the window min
         keys.addWidget(self._status)
-        layout.addLayout(keys)
+        layout.addWidget(keys_row)
+        # Hide-first order: Compare/Rename/Recycle go first, Copy/Move last.
+        self._fn_overflow = OverflowRow(keys_row, tuple(reversed(fn_btns)))
 
         self._outcome_status = QLabel("No file operations yet")
         self._outcome_status.setAccessibleName("File operation history summary")
         self._outcome_status.setToolTip("Recent file operation outcomes")
         self._outcome_status.setStyleSheet("color: #8a9ab0; font-size: 17px;")
+        shrink_label(self._outcome_status)  # live text must not grow the window min
         layout.addWidget(self._outcome_status)
 
         self._active: FilePane = self.left_pane
