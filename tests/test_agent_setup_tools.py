@@ -1,7 +1,7 @@
 """App-setup agent tools (2026-09-12): the agent can configure anything the
 user could have typed into a dialog — IPTV sources, API keys (write-only),
 general settings (whitelisted scalars, secrets masked), torrent search
-sources and IRC networks. Everything persists through the redirected
+sources. Everything persists through the redirected
 default config path (conftest autouse fixture)."""
 from __future__ import annotations
 
@@ -233,7 +233,7 @@ def test_set_settings_rejects_secrets_and_unknown(tools):
 
 
 # ---------------------------------------------------------------------------
-# Torrent sources + IRC networks
+# Torrent sources
 # ---------------------------------------------------------------------------
 
 def test_torrent_source_add_list_remove(tools, public_urls):
@@ -251,36 +251,13 @@ def test_torrent_source_add_list_remove(tools, public_urls):
     assert tools.config.sources.sources == []
 
 
-def test_irc_add_remove_network(tools):
-    result = tools.call("irc_add_network", {
-        "host": "irc.example.net", "port": 6697, "channels": ["intro", "#test"]})
-    assert result["success"], result
-    network = tools.config.irc.networks[0]
-    assert network.id == "ircexamplenet" or network.id  # slug derived from host
-    assert network.channels == ["#intro", "#test"]
 
-    dup = tools.call("irc_add_network", {"host": "irc.example.net"})
-    assert dup["success"] is False
-
-    removed = tools.call("irc_remove_network", {"network": "example.net"})
-    assert removed["success"], removed
-    assert tools.config.irc.networks == []
-
-
-def test_irc_add_network_validates_port(tools):
-    with pytest.raises(ToolError, match="port"):
-        tools.call("irc_add_network", {"host": "irc.example.net", "port": 99999})
-
-
-# ---------------------------------------------------------------------------
-# Policies, routing, prompt
-# ---------------------------------------------------------------------------
 
 def test_setup_tools_policy_classification():
     reads = {"iptv_list_sources", "list_api_keys", "list_settings", "list_torrent_sources"}
     confirms = {"iptv_add_source", "iptv_update_source", "iptv_remove_source",
                 "set_api_key", "set_settings", "add_torrent_source",
-                "remove_torrent_source", "irc_add_network", "irc_remove_network"}
+                "remove_torrent_source"}
     assert reads <= READ_ONLY_TOOL_NAMES
     assert confirms <= CONFIRMATION_TOOL_NAMES
 

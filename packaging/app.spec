@@ -38,10 +38,6 @@ primp_datas, primp_binaries, primp_hiddenimports = collect_all("primp")
 # "Failed to load or parse browsers.json" and DDG search silently dies.
 fake_useragent_datas, fake_useragent_binaries, fake_useragent_hiddenimports = collect_all("fake_useragent")
 
-# irc (jaraco) — the IRC protocol library. It loads irc/codes.txt at runtime
-# (numeric reply names) via importlib.resources, which PyInstaller misses.
-irc_datas, irc_binaries, irc_hiddenimports = collect_all("irc")
-
 # cryptography — encrypts the settings backup (infra/config_backup.py). Ships
 # a Rust native extension that PyInstaller can't discover statically.
 crypto_datas, crypto_binaries, crypto_hiddenimports = collect_all("cryptography")
@@ -125,8 +121,8 @@ if len(datas) != len(_wanted_datas):
 a = Analysis(
     [os.path.join(project_root, "main.py")],
     pathex=[project_root],
-    binaries=libtorrent_binaries + yt_dlp_binaries + mpv_binaries + vlc_binaries + curl_cffi_binaries + ddgs_binaries + primp_binaries + irc_binaries + fake_useragent_binaries + crypto_binaries + fw_binaries + ct2_binaries + ort_binaries + tok_binaries + hf_binaries,
-    datas=datas + yt_dlp_datas + curl_cffi_datas + ddgs_datas + primp_datas + irc_datas + fake_useragent_datas + crypto_datas + license_datas + fw_datas + ct2_datas + ort_datas + tok_datas + hf_datas,
+    binaries=libtorrent_binaries + yt_dlp_binaries + mpv_binaries + vlc_binaries + curl_cffi_binaries + ddgs_binaries + primp_binaries + fake_useragent_binaries + crypto_binaries + fw_binaries + ct2_binaries + ort_binaries + tok_binaries + hf_binaries,
+    datas=datas + yt_dlp_datas + curl_cffi_datas + ddgs_datas + primp_datas + fake_useragent_datas + crypto_datas + license_datas + fw_datas + ct2_datas + ort_datas + tok_datas + hf_datas,
     hiddenimports=[
         "engine",
         "engine.torrent_engine",
@@ -149,12 +145,11 @@ a = Analysis(
         "gui.commander_tab",
         "gui.iptv_tab",
         "gui.iptv_settings_dialog",
-        "gui.irc_tab",
+        "gui.room_tab",
         "gui.voice_input",
         "ircmgr",
-        "ircmgr.client",
         "ircmgr.state",
-        "ircmgr.history",
+        "ircmgr.room",
         "iptv",
         "iptv.models",
         "iptv.m3u_parser",
@@ -223,9 +218,8 @@ a = Analysis(
         "ddgs",
         "primp",
         "fake_useragent",
-        "irc",
         "infra.config_backup",
-    ] + yt_dlp_hiddenimports + curl_cffi_hiddenimports + ddgs_hiddenimports + primp_hiddenimports + irc_hiddenimports + fake_useragent_hiddenimports + crypto_hiddenimports + fw_hiddenimports + ct2_hiddenimports + ort_hiddenimports + tok_hiddenimports + hf_hiddenimports,
+    ] + yt_dlp_hiddenimports + curl_cffi_hiddenimports + ddgs_hiddenimports + primp_hiddenimports + fake_useragent_hiddenimports + crypto_hiddenimports + fw_hiddenimports + ct2_hiddenimports + ort_hiddenimports + tok_hiddenimports + hf_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

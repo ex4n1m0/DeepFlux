@@ -8,9 +8,20 @@ import threading
 import time
 from unittest import mock
 
+# NOTE: iptv.player is imported LAZILY inside the tests that need it.
+# Importing it at module level loads libmpv.dll into the whole pytest
+# process at COLLECTION time — with Qt offscreen + the room/chat socket
+# threads + GC timing that reliably produced access violations in tests
+# that run BEFORE this file (measured 2026-09-13). Keep mpv out of the
+# process until these tests actually run.
 from iptv import mpv_process, svp
 from iptv.mpv_process import MpvProcessBackend
-from iptv.player import MpvBackend
+
+
+def _mpv_backend_cls():
+    """Lazy iptv.player import — see the note at the top of this file."""
+    from iptv.player import MpvBackend
+    return MpvBackend
 
 
 # -- config ------------------------------------------------------------------
@@ -103,7 +114,7 @@ def test_mpv_exe_reported_only_when_present(tmp_path, monkeypatch):
 def test_in_process_mpv_kwargs_unchanged():
     """The normal backend must stay exactly as it was: zero-copy hwdec, no
     IPC pipe. SVP is handled by the out-of-process backend instead."""
-    kw = MpvBackend(None)._creation_kwargs("123", "gpu-next")
+    kw = _mpv_backend_cls()(None)._creation_kwargs("123", "gpu-next")
     assert kw["hwdec"] == "auto-safe"
     assert kw["vo"] == "gpu-next"
     assert kw["video_sync"] == "display-resample"
@@ -111,7 +122,7 @@ def test_in_process_mpv_kwargs_unchanged():
 
 
 def test_in_process_mpv_set_hwdec():
-    be = MpvBackend(None)
+    be = _mpv_backend_cls()(None)
     be._mpv = mock.Mock()
     be.set_hwdec("d3d11va")
     assert be._mpv.hwdec == "d3d11va"
@@ -120,7 +131,7 @@ def test_in_process_mpv_set_hwdec():
 
 
 def test_in_process_mpv_buffer_status_maps_properties():
-    be = MpvBackend(None)
+    be = _mpv_backend_cls()(None)
     m = mock.Mock()
     m.cache_buffering_state = 75
     m.paused_for_cache = "no"
@@ -137,7 +148,7 @@ def test_in_process_mpv_buffer_status_maps_properties():
 
 def test_in_process_mpv_set_audio_delay_writes_property():
     """SVP-style video latency is compensated via mpv's audio-delay option."""
-    be = MpvBackend(None)
+    be = _mpv_backend_cls()(None)
     sets = {}
 
     class _Mpv:
@@ -150,13 +161,13 @@ def test_in_process_mpv_set_audio_delay_writes_property():
 
 
 def test_in_process_mpv_audio_delay_reads_back():
-    be = MpvBackend(None)
+    be = _mpv_backend_cls()(None)
     be._mpv = {"audio-delay": -0.1}
     assert be.audio_delay() == -0.1
 
 
 def test_in_process_mpv_audio_delay_none_when_uninit():
-    assert MpvBackend(None).audio_delay() == 0.0
+    assert _mpv_backend_cls()(None).audio_delay() == 0.0
 
 
 # -- out-of-process backend (SVP path) -----------------------------------------
@@ -376,7 +387,7 @@ def test_create_backend_falls_back_when_svp_unusable(monkeypatch):
     monkeypatch.setattr(player_mod, "create_svp_backend", lambda parent: None)
     made = []
 
-    class FakeMpv(MpvBackend):
+    class FakeMpv(_mpv_backend_cls()):
         def create(self):
             made.append("in-process")
             return True

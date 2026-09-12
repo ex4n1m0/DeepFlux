@@ -53,10 +53,9 @@ class ToolPolicy:
 READ_ONLY_TOOL_NAMES = frozenset({
     "list_torrents", "get_torrent_status", "get_swarm_stats", "diagnose_swarm",
     "search_indexers", "find_alt_trackers", "find_alt_release", "refresh_tracker_list",
-    "web_search", "web_fetch", "list_rss_feeds", "search_memory", "irc_status",
-    "irc_list_messages", "irc_search_messages", "list_directory", "iptv_search",
-    "iptv_list", "iptv_epg", "iptv_now_playing", "iptv_find_subtitles",
-    "irc_list_nicks", "irc_list_channels", "browser_list_tabs", "browser_get_content", "browser_snapshot",
+    "web_search", "web_fetch", "list_rss_feeds", "search_memory", "list_directory",
+    "iptv_search", "iptv_list", "iptv_epg", "iptv_now_playing", "iptv_find_subtitles",
+    "browser_list_tabs", "browser_get_content", "browser_snapshot",
     "browser_wait", "browser_list_bookmarks", "list_downloads", "propose_rename_and_category",
     "analyze_organization", "list_memories", "agent_diagnostics",
     "iptv_list_sources", "list_api_keys", "list_settings", "list_torrent_sources",
@@ -64,8 +63,6 @@ READ_ONLY_TOOL_NAMES = frozenset({
 
 CONFIRMATION_TOOL_NAMES = frozenset({
     "add_magnet", "add_torrent_file", "add_download", "remove_torrent", "add_tracker",
-    "irc_send_message", "irc_join", "irc_part", "irc_connect", "irc_disconnect",
-    "irc_send_action", "irc_send_notice", "irc_set_nick", "irc_send_raw",
     "create_folder", "copy_path", "move_path", "rename_path", "delete_path", "iptv_play",
     "cancel_download", "add_rss_feed", "remove_rss_feed", "update_rss_feed", "download_from_feed",
     "browser_click", "browser_fill", "browser_click_ref", "browser_type_ref",
@@ -77,7 +74,6 @@ CONFIRMATION_TOOL_NAMES = frozenset({
     "iptv_add_source", "iptv_update_source", "iptv_remove_source",
     "set_api_key", "set_settings",
     "add_torrent_source", "remove_torrent_source",
-    "irc_add_network", "irc_remove_network",
 })
 
 WATCHDOG_AUTO_HEAL_TOOL_NAMES = frozenset({
@@ -89,19 +85,17 @@ WATCHDOG_AUTO_HEAL_TOOL_NAMES = frozenset({
 SENSITIVE_TOOL_FIELDS = {
     "browser_fill": ("value",),
     "browser_type_ref": ("value",),
-    "irc_send_raw": ("line",),
     "save_memory": ("content",),
     "edit_memory": ("content",),
     "set_api_key": ("value",),
     "iptv_add_source": ("password",),
     "iptv_update_source": ("password",),
-    "irc_add_network": ("password", "sasl_password"),
 }
 
 UNTRUSTED_RESULT_TOOLS = frozenset({
     "web_search", "web_fetch", "search_indexers", "find_alt_trackers",
-    "find_alt_release", "get_rss_feed_items", "irc_list_messages",
-    "irc_search_messages", "browser_get_content", "browser_snapshot", "browser_wait",
+    "find_alt_release", "get_rss_feed_items",
+    "browser_get_content", "browser_snapshot", "browser_wait",
 })
 
 
@@ -132,11 +126,11 @@ API_KEY_SLOTS: Dict[str, Tuple[Tuple[str, ...], str]] = {
 _SECRET_NAME_PARTS = ("api_key", "password", "passwd", "token", "secret", "sasl_account", "username")
 
 # Config sections whose SCALAR fields the agent may read (secrets masked) and
-# write via set_settings. Structural lists (iptv.sources, irc.networks,
-# rss.feeds, sources.sources) are handled by dedicated tools instead.
+# write via set_settings. Structural lists (iptv.sources, rss.feeds,
+# sources.sources) are handled by dedicated tools instead.
 _SETTINGS_SECTIONS = (
     "llm", "indexer", "web_search", "watchdog", "rss", "browser",
-    "download", "torrents", "iptv", "irc", "voice", "sources",
+    "download", "torrents", "iptv", "voice", "sources",
 )
 
 # Explicitly NOT agent-writable even though they are scalars: forced-on
@@ -362,7 +356,7 @@ def tool_policy(name: str) -> ToolPolicy:
         return ToolPolicy(effect="read")
     if name in CONFIRMATION_TOOL_NAMES:
         return ToolPolicy(
-            effect="external" if name.startswith(("irc_", "browser_")) else "destructive",
+            effect="external" if name.startswith("browser_") else "destructive",
             confirmation="always",
             watchdog_auto_heal=name in WATCHDOG_AUTO_HEAL_TOOL_NAMES,
             sensitive_fields=SENSITIVE_TOOL_FIELDS.get(name, ()),
@@ -379,7 +373,7 @@ class ToolRegistry:
 
     def __init__(self, engine: TorrentEngine, config: DeeptorrentConfig,
                  on_progress: Optional[Callable[[str], None]] = None,
-                 dl_engine=None, irc_client=None, iptv_bridge=None,
+                 dl_engine=None, iptv_bridge=None,
                  browser_bridge=None) -> None:
         self.engine = engine
         self.config = config
@@ -389,12 +383,6 @@ class ToolRegistry:
         # the GUI; created lazily on first add_download otherwise (CLI/REPL).
         self._dl_engine = dl_engine
         self._owns_dl_engine = False
-        # The embedded IRC client (ircmgr.IRCClientCore). Injected by the GUI
-        # (shared with the IRC tab); lazily created on first irc_* tool use
-        # otherwise. A lazy client has no connected networks until the user
-        # connects from the IRC tab.
-        self._irc_client = irc_client
-        self._owns_irc_client = False
         # IPTV bridge (gui.iptv_tab.AgentIPTVBridge). Injected by the GUI via
         # set_iptv_bridge() once the Play tab exists — it marshals playback
         # actions onto the Qt thread. Without it (CLI) reads fall back to a
@@ -446,20 +434,16 @@ class ToolRegistry:
         }
         groups = {
             "rss": {name for name in all_names if name.endswith("rss_feed") or "rss_feed" in name or name == "download_from_feed"},
-            "irc": {name for name in all_names if name.startswith("irc_")},
             "files": {"list_directory", "create_folder", "copy_path", "move_path", "rename_path", "delete_path"},
             "iptv": {name for name in all_names if name.startswith("iptv_")},
             "browser": {name for name in all_names if name.startswith("browser_")},
             "setup": {"iptv_list_sources", "iptv_add_source", "iptv_update_source",
                       "iptv_remove_source", "list_api_keys", "set_api_key",
                       "list_settings", "set_settings", "list_torrent_sources",
-                      "add_torrent_source", "remove_torrent_source",
-                      "irc_add_network", "irc_remove_network"},
+                      "add_torrent_source", "remove_torrent_source"},
         }
         if any(word in text for word in ("rss", "feed", "subscription")):
             selected.update(groups["rss"])
-        if any(word in text for word in ("irc", "channel", "nickname", "nick ", "chat room")) or "#" in text:
-            selected.update(groups["irc"])
         if any(word in text for word in ("file", "folder", "directory", "path", "rename", "move", "copy", "delete")):
             selected.update(groups["files"])
         if any(word in text for word in ("iptv", "playlist", "m3u", "play", "player", "channel", "epg", "subtitle", "volume", "movie", "series", "episode")):
@@ -481,13 +465,6 @@ class ToolRegistry:
                 logger.debug("owned download engine shutdown failed", exc_info=True)
             self._dl_engine = None
             self._owns_dl_engine = False
-        if self._owns_irc_client and self._irc_client is not None:
-            try:
-                self._irc_client.shutdown()
-            except Exception:
-                logger.debug("owned IRC client shutdown failed", exc_info=True)
-            self._irc_client = None
-            self._owns_irc_client = False
         if self._owns_iptv_manager and self._iptv_manager is not None:
             try:
                 self._iptv_manager.shutdown()
@@ -1141,190 +1118,6 @@ class ToolRegistry:
                 ),
                 "handler": self._forget_memory_tool,
             },
-            "irc_status": {
-                "schema": self._tool_schema(
-                    name="irc_status",
-                    description="Show IRC connection state: connected networks, your nickname, "
-                    "joined channels with user counts, and how many messages are buffered. "
-                    "Use before other irc_* tools when unsure what's connected.",
-                    properties={},
-                    required=[],
-                ),
-                "handler": self._irc_status,
-            },
-            "irc_list_messages": {
-                "schema": self._tool_schema(
-                    name="irc_list_messages",
-                    description="Read recent messages from an IRC channel (or a network's server "
-                    "buffer when channel is omitted). The client keeps a rolling buffer of every "
-                    "open channel, so this answers 'what's happening in #chan?' or 'what did they "
-                    "say about X lately?' without joining anything new.",
-                    properties={
-                        "channel": {"type": "string", "description": "Channel name (e.g. #linux). Omit for the server buffer."},
-                        "network": {"type": "string", "description": "Network id (from irc_status). Optional when unambiguous.", "default": ""},
-                        "limit": {"type": "integer", "description": "Max messages (default 50).", "default": 50},
-                        "minutes": {"type": "integer", "description": "Only messages from the last N minutes (0 = all buffered).", "default": 0},
-                    },
-                    required=[],
-                ),
-                "handler": self._irc_list_messages,
-            },
-            "irc_search_messages": {
-                "schema": self._tool_schema(
-                    name="irc_search_messages",
-                    description="Search the buffered IRC messages of all open channels (or one "
-                    "channel) for a keyword — e.g. 'did anyone mention <release name>?'",
-                    properties={
-                        "query": {"type": "string", "description": "Case-insensitive text to find in messages or nicks."},
-                        "channel": {"type": "string", "description": "Restrict to one channel.", "default": ""},
-                        "network": {"type": "string", "description": "Network id (from irc_status). Optional.", "default": ""},
-                        "limit": {"type": "integer", "description": "Max hits (default 30).", "default": 30},
-                    },
-                    required=["query"],
-                ),
-                "handler": self._irc_search_messages,
-            },
-            "irc_send_message": {
-                "schema": self._tool_schema(
-                    name="irc_send_message",
-                    description="Send a message to an IRC channel or user. This posts publicly "
-                    "under the user's nickname — always confirm the exact text with the user first.",
-                    properties={
-                        "target": {"type": "string", "description": "Channel (#chan) or nickname."},
-                        "text": {"type": "string", "description": "Message text."},
-                        "network": {"type": "string", "description": "Network id (from irc_status). Optional when unambiguous.", "default": ""},
-                    },
-                    required=["target", "text"],
-                ),
-                "handler": self._irc_send_message,
-            },
-            "irc_join": {
-                "schema": self._tool_schema(
-                    name="irc_join",
-                    description="Join an IRC channel on a connected network. Once joined, its "
-                    "messages are buffered and can be read with irc_list_messages.",
-                    properties={
-                        "channel": {"type": "string", "description": "Channel to join (e.g. #linux)."},
-                        "network": {"type": "string", "description": "Network id (from irc_status). Optional when unambiguous.", "default": ""},
-                    },
-                    required=["channel"],
-                ),
-                "handler": self._irc_join,
-            },
-            "irc_part": {
-                "schema": self._tool_schema(
-                    name="irc_part",
-                    description="Leave an IRC channel; its buffer stops updating.",
-                    properties={
-                        "channel": {"type": "string", "description": "Channel to leave."},
-                        "network": {"type": "string", "description": "Network id (from irc_status). Optional when unambiguous.", "default": ""},
-                    },
-                    required=["channel"],
-                ),
-                "handler": self._irc_part,
-            },
-            "irc_connect": {
-                "schema": self._tool_schema(
-                    name="irc_connect",
-                    description="Connect to a configured IRC network (from the IRC tab's network list).",
-                    properties={
-                        "network": {"type": "string", "description": "Network id (from irc_status/config). Optional when only one is configured.", "default": ""},
-                    },
-                    required=[],
-                ),
-                "handler": self._irc_connect,
-            },
-            "irc_disconnect": {
-                "schema": self._tool_schema(
-                    name="irc_disconnect",
-                    description="Disconnect from an IRC network.",
-                    properties={
-                        "network": {"type": "string", "description": "Network id. Optional when unambiguous.", "default": ""},
-                        "message": {"type": "string", "description": "Quit message.", "default": ""},
-                    },
-                    required=[],
-                ),
-                "handler": self._irc_disconnect,
-            },
-            "irc_send_action": {
-                "schema": self._tool_schema(
-                    name="irc_send_action",
-                    description="Send a /me action to a channel or nick (e.g. '* nick waves').",
-                    properties={
-                        "target": {"type": "string", "description": "Channel or nick."},
-                        "text": {"type": "string", "description": "Action text."},
-                        "network": {"type": "string", "description": "Network id. Optional when unambiguous.", "default": ""},
-                    },
-                    required=["target", "text"],
-                ),
-                "handler": self._irc_send_action,
-            },
-            "irc_send_notice": {
-                "schema": self._tool_schema(
-                    name="irc_send_notice",
-                    description="Send an IRC notice (low-priority message) to a channel or nick.",
-                    properties={
-                        "target": {"type": "string", "description": "Channel or nick."},
-                        "text": {"type": "string", "description": "Notice text."},
-                        "network": {"type": "string", "description": "Network id. Optional when unambiguous.", "default": ""},
-                    },
-                    required=["target", "text"],
-                ),
-                "handler": self._irc_send_notice,
-            },
-            "irc_set_nick": {
-                "schema": self._tool_schema(
-                    name="irc_set_nick",
-                    description="Change your nickname on an IRC network.",
-                    properties={
-                        "new_nick": {"type": "string", "description": "The new nickname."},
-                        "network": {"type": "string", "description": "Network id. Optional when unambiguous.", "default": ""},
-                    },
-                    required=["new_nick"],
-                ),
-                "handler": self._irc_set_nick,
-            },
-            "irc_send_raw": {
-                "schema": self._tool_schema(
-                    name="irc_send_raw",
-                    description="Send a raw IRC protocol line (like /raw or /quote in the IRC tab). "
-                    "Powerful — only use when no dedicated tool covers the task.",
-                    properties={
-                        "line": {"type": "string", "description": "Raw IRC command line (e.g. 'MODE #chan +o nick')."},
-                        "network": {"type": "string", "description": "Network id. Optional when unambiguous.", "default": ""},
-                    },
-                    required=["line"],
-                ),
-                "handler": self._irc_send_raw,
-            },
-            "irc_list_channels": {
-                "schema": self._tool_schema(
-                    name="irc_list_channels",
-                    description="List channels on an IRC network (server LIST reply), sorted by user "
-                    "count. A refresh queues LIST and returns immediately with the current cache; "
-                    "call again with refresh=false to read the completed reply.",
-                    properties={
-                        "network": {"type": "string", "description": "Network id. Optional when unambiguous.", "default": ""},
-                        "filter": {"type": "string", "description": "Optional LIST mask, e.g. '#python*'.", "default": ""},
-                        "refresh": {"type": "boolean", "description": "Send a fresh LIST to the server (default true).", "default": True},
-                        "limit": {"type": "integer", "description": "Max channels (default 50).", "default": 50},
-                    },
-                    required=[],
-                ),
-                "handler": self._irc_list_channels,
-            },
-            "irc_list_nicks": {
-                "schema": self._tool_schema(
-                    name="irc_list_nicks",
-                    description="List the users currently in a joined IRC channel (@ = op, + = voice).",
-                    properties={
-                        "channel": {"type": "string", "description": "Joined channel name."},
-                        "network": {"type": "string", "description": "Network id. Optional when unambiguous.", "default": ""},
-                    },
-                    required=["channel"],
-                ),
-                "handler": self._irc_list_nicks,
-            },
             # --- Filesystem (the Command tab's domain — agent-level file ops) ---
             "list_directory": {
                 "schema": self._tool_schema(
@@ -1634,7 +1427,7 @@ class ToolRegistry:
                     description="List the app's agent-visible settings with their current values "
                     "(secrets show as <set>/<not set>) and dotted paths for set_settings. "
                     "Optional section filter: llm, indexer, web_search, watchdog, rss, browser, "
-                    "download, torrents, iptv, irc, voice, sources.",
+                    "download, torrents, iptv, voice, sources.",
                     properties={
                         "section": {"type": "string", "description": "Restrict to one config section (default: all).", "default": ""},
                     },
@@ -1657,7 +1450,7 @@ class ToolRegistry:
                 ),
                 "handler": self._set_settings,
             },
-            # --- App setup: torrent indexer sources + IRC networks ---
+            # --- App setup: torrent indexer sources ---
             "list_torrent_sources": {
                 "schema": self._tool_schema(
                     name="list_torrent_sources",
@@ -1695,40 +1488,6 @@ class ToolRegistry:
                     required=["source"],
                 ),
                 "handler": self._remove_torrent_source,
-            },
-            "irc_add_network": {
-                "schema": self._tool_schema(
-                    name="irc_add_network",
-                    description="Add an IRC network to the configured list (like the IRC tab's "
-                    "Networks dialog). Connect afterwards with irc_connect.",
-                    properties={
-                        "host": {"type": "string", "description": "Server hostname."},
-                        "port": {"type": "integer", "description": "Port (default 6697).", "default": 6697},
-                        "tls": {"type": "boolean", "description": "Use TLS (default true).", "default": True},
-                        "id": {"type": "string", "description": "Short slug (default: derived from the host).", "default": ""},
-                        "nick": {"type": "string", "description": "Nickname (default: a DeepFlux-style default).", "default": ""},
-                        "username": {"type": "string", "description": "IRC username (default: nick).", "default": ""},
-                        "realname": {"type": "string", "description": "Real name field.", "default": ""},
-                        "password": {"type": "string", "description": "Server PASS password (rarely needed).", "default": ""},
-                        "sasl_account": {"type": "string", "description": "SASL PLAIN account name.", "default": ""},
-                        "sasl_password": {"type": "string", "description": "SASL PLAIN password.", "default": ""},
-                        "channels": {"type": "array", "items": {"type": "string"}, "description": "Channels to auto-join on connect, e.g. ['#help'].", "default": []},
-                    },
-                    required=["host"],
-                ),
-                "handler": self._irc_add_network,
-            },
-            "irc_remove_network": {
-                "schema": self._tool_schema(
-                    name="irc_remove_network",
-                    description="Remove a configured IRC network by id or host. A currently "
-                    "connected network stays connected until disconnected.",
-                    properties={
-                        "network": {"type": "string", "description": "Network id or hostname."},
-                    },
-                    required=["network"],
-                ),
-                "handler": self._irc_remove_network,
             },
             # --- Browser (the Browse tab — full control of the embedded browser) ---
             "browser_list_tabs": {
@@ -2093,7 +1852,6 @@ class ToolRegistry:
                 "perplexity": bool(self.config.web_search.api_key),
                 "memory": self.memory is not None,
                 "rss_feeds": len(self.config.rss.feeds),
-                "irc": self._irc_client is not None,
                 "iptv_gui": self._iptv_bridge is not None,
                 "browser_gui": self._browser_bridge is not None,
                 "download_manager": self._dl_engine is not None,
@@ -3256,223 +3014,6 @@ class ToolRegistry:
         return self.memory.forget(memory_id)
 
     # ------------------------------------------------------------------
-    # IRC handlers (embedded IRC client — shared with the GUI's IRC tab)
-    # ------------------------------------------------------------------
-
-    def _get_irc_client(self):
-        """The IRC client core — injected by the GUI; lazily created (and
-        started) on first use elsewhere, e.g. the CLI REPL."""
-        if self._irc_client is None:
-            with self._resource_lock:
-                if self._irc_client is None:
-                    from ircmgr.client import IRCClientCore
-
-                    self._irc_client = IRCClientCore(self.config.irc)
-                    self._owns_irc_client = True
-                    self._irc_client.start()
-                    logger.info("irc tool: lazily started an IRCClientCore")
-        return self._irc_client
-
-    @staticmethod
-    def _fmt_irc_messages(messages: List[Dict[str, Any]]) -> List[str]:
-        import datetime as _dt
-
-        lines = []
-        for m in messages:
-            stamp = _dt.datetime.fromtimestamp(m.get("ts", 0)).strftime("%H:%M")
-            kind = m.get("kind", "msg")
-            nick = m.get("nick", "")
-            text = m.get("text", "")
-            if kind == "msg":
-                lines.append(f"[{stamp}] <{nick}> {text}")
-            elif kind == "action":
-                lines.append(f"[{stamp}] * {nick} {text}")
-            elif kind == "notice":
-                lines.append(f"[{stamp}] -{nick}- {text}")
-            else:
-                lines.append(f"[{stamp}] — {text}")
-        return lines
-
-    def _irc_status(self) -> Dict[str, Any]:
-        client = self._get_irc_client()
-        snap = client.status()
-        snap["success"] = True
-        if not snap["networks"]:
-            snap["note"] = ("No IRC networks configured yet. The user can add one from the "
-                            "IRC tab (Networks… button).")
-        return snap
-
-    def _irc_list_messages(self, channel: str = "", network: str = "",
-                           limit: int = 50, minutes: int = 0) -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network, channel)
-        if err:
-            return {"success": False, "error": err}
-        limit = max(1, min(int(limit or 50), 200))
-        since = time.time() - minutes * 60 if minutes else 0.0
-        messages = client.get_messages(net_id, channel or None, limit=limit, since=since)
-        return {
-            "success": True,
-            "network": net_id,
-            "channel": channel or "(server)",
-            "count": len(messages),
-            "messages": self._fmt_irc_messages(messages),
-            "note": "Only buffered messages are available (buffer size: "
-                    f"{self.config.irc.buffer_lines} lines/channel).",
-        }
-
-    def _irc_search_messages(self, query: str, channel: str = "",
-                             network: str = "", limit: int = 30) -> Dict[str, Any]:
-        client = self._get_irc_client()
-        if network:
-            net_id, err = client.resolve_network(network, channel)
-            if err:
-                return {"success": False, "error": err}
-        else:
-            net_id = None
-        limit = max(1, min(int(limit or 30), 100))
-        hits = client.search_messages(query, net_id=net_id, channel=channel or None,
-                                      limit=limit)
-        return {
-            "success": True,
-            "query": query,
-            "count": len(hits),
-            "hits": [
-                f"[{time.strftime('%H:%M', time.localtime(h['ts']))}] "
-                f"{h['network']}/{h['channel']} <{h['nick']}> {h['text']}"
-                for h in hits
-            ],
-        }
-
-    def _irc_send_message(self, target: str, text: str, network: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network, target)
-        if err:
-            return {"success": False, "error": err}
-        client.send_message(net_id, target, text)
-        return {"success": True, "network": net_id, "target": target,
-                "note": "Queued (outgoing messages are flood-throttled)."}
-
-    def _irc_join(self, channel: str, network: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network)
-        if err:
-            return {"success": False, "error": err}
-        client.join(net_id, channel)
-        chan = channel if channel.startswith(("#", "&", "+", "!")) else "#" + channel
-        return {"success": True, "network": net_id, "channel": chan,
-                "note": "Join sent — messages will start buffering once the server confirms."}
-
-    def _irc_part(self, channel: str, network: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network, channel)
-        if err:
-            return {"success": False, "error": err}
-        client.part(net_id, channel)
-        return {"success": True, "network": net_id, "channel": channel}
-
-    def _irc_connect(self, network: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        # Resolve against the CONFIGURED networks (not just connected ones).
-        candidates = self.config.irc.networks
-        if network:
-            candidates = [n for n in candidates if network.lower() in (n.id or "").lower()
-                          or network.lower() in (n.host or "").lower()]
-        if not candidates:
-            return {"success": False, "error": f"No configured network matching '{network}'. "
-                                               "The user can add one from the IRC tab (Networks…)."}
-        if len(candidates) > 1:
-            return {"success": False, "error": "Ambiguous network — matches: "
-                                               + ", ".join(n.id for n in candidates)}
-        net = candidates[0]
-        connected = {n["id"] for n in client.status().get("networks", []) if n.get("connected")}
-        if net.id in connected:
-            return {"success": True, "network": net.id, "note": "Already connected."}
-        client.connect_network(net)
-        return {"success": True, "network": net.id,
-                "note": "Connecting — check irc_status for the link state."}
-
-    def _irc_disconnect(self, network: str = "", message: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network)
-        if err:
-            return {"success": False, "error": err}
-        client.disconnect_network(net_id, message or "DeepFlux")
-        return {"success": True, "network": net_id}
-
-    def _irc_send_action(self, target: str, text: str, network: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network, target)
-        if err:
-            return {"success": False, "error": err}
-        client.send_action(net_id, target, text)
-        return {"success": True, "network": net_id, "target": target,
-                "note": "Queued (outgoing messages are flood-throttled)."}
-
-    def _irc_send_notice(self, target: str, text: str, network: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network, target)
-        if err:
-            return {"success": False, "error": err}
-        client.send_notice(net_id, target, text)
-        return {"success": True, "network": net_id, "target": target,
-                "note": "Queued (outgoing messages are flood-throttled)."}
-
-    def _irc_set_nick(self, new_nick: str, network: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network)
-        if err:
-            return {"success": False, "error": err}
-        client.change_nick(net_id, new_nick)
-        return {"success": True, "network": net_id, "new_nick": new_nick,
-                "note": "Nick change sent — the server may reject taken/invalid nicks."}
-
-    def _irc_send_raw(self, line: str, network: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network)
-        if err:
-            return {"success": False, "error": err}
-        client.send_raw(net_id, line)
-        return {"success": True, "network": net_id, "line": line}
-
-    def _irc_list_channels(self, network: str = "", filter: str = "",
-                           refresh: bool = True, limit: int = 50) -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network)
-        if err:
-            return {"success": False, "error": err}
-        limit = max(1, min(int(limit or 50), 500))
-        if refresh:
-            client.send_raw(net_id, "LIST " + filter.strip() if filter.strip() else "LIST")
-        rows = client.state.chanlist_of(net_id)
-        out: Dict[str, Any] = {
-            "success": True,
-            "network": net_id,
-            "count": len(rows),
-            "channels": rows[:limit],
-            "pending": bool(refresh),
-            "cached_at": client.state.chanlist_ts(net_id),
-        }
-        if refresh:
-            out["note"] = ("LIST queued; returning the current cache without waiting. "
-                           "Call again with refresh=false for the completed reply.")
-        elif not rows:
-            out["note"] = "No cached channel list is available yet."
-        return out
-
-    def _irc_list_nicks(self, channel: str, network: str = "") -> Dict[str, Any]:
-        client = self._get_irc_client()
-        net_id, err = client.resolve_network(network, channel)
-        if err:
-            return {"success": False, "error": err}
-        nicks = client.state.nicks_of(net_id, channel)
-        if not nicks:
-            return {"success": False, "error": f"No nick list for {channel} — is it joined?"}
-        formatted = [f"{prefix}{nick}" for nick, prefix in nicks.items()]
-        return {"success": True, "network": net_id, "channel": channel,
-                "count": len(formatted), "nicks": formatted,
-                "topic": client.state.topic_of(net_id, channel)}
-
     # ------------------------------------------------------------------
     # Filesystem handlers (agent-level file ops — the Command tab's domain)
     # ------------------------------------------------------------------
@@ -3838,7 +3379,7 @@ class ToolRegistry:
     # ------------------------------------------------------------------
     # App-setup handlers (user decision 2026-09-12): the agent may configure
     # anything the user could have typed into a dialog — IPTV sources, API
-    # keys (write-only), general settings, torrent sources, IRC networks.
+    # keys (write-only), general settings, torrent sources.
     # ------------------------------------------------------------------
 
     def _persist_config(self) -> None:
@@ -4128,66 +3669,6 @@ class ToolRegistry:
         self.config.sources.sources = [s for s in rows if s.id != target.id]
         self._persist_config()
         return {"success": True, "removed": target.name}
-
-    def _irc_add_network(self, host: str, port: int = 6697, tls: bool = True,
-                          id: str = "", nick: str = "", username: str = "",
-                          realname: str = "", password: str = "",
-                          sasl_account: str = "", sasl_password: str = "",
-                          channels: Optional[List[str]] = None) -> Dict[str, Any]:
-        from config import IRCNetworkConfig
-
-        host = (host or "").strip()
-        if not host:
-            raise ToolError("host is required")
-        port = int(port or 6697)
-        if not 1 <= port <= 65535:
-            raise ToolError("port must be between 1 and 65535")
-        slug = (id or "").strip().lower() or re.sub(r"[^a-z0-9]+", "", host.split(".")[0].lower()) or "network"
-        networks = self.config.irc.networks
-        if any(n.id == slug for n in networks):
-            return {"success": False, "error": f"A network with id '{slug}' already exists"}
-        if any((n.host or "").lower() == host.lower() for n in networks):
-            return {"success": False, "error": f"A network for {host} already exists: use irc_connect"}
-        joined = []
-        for channel in (channels or []):
-            name = str(channel).strip()
-            if name and not name.startswith(("#", "&", "+")):
-                name = "#" + name
-            if name:
-                joined.append(name)
-        network = IRCNetworkConfig(
-            id=slug, host=host, port=port, tls=bool(tls),
-            nick=(nick or "").strip() or "DeepFluxUser",
-            username=(username or "").strip(), realname=(realname or "").strip() or "DeepFlux",
-            password=password or "", sasl_account=(sasl_account or "").strip(),
-            sasl_password=sasl_password or "", channels=joined,
-        )
-        networks.append(network)
-        self._persist_config()
-        return {
-            "success": True,
-            "network": {"id": network.id, "host": network.host, "port": network.port,
-                        "tls": network.tls, "channels": joined},
-            "note": "Saved. Connect with irc_connect"
-                    + (f" — it will auto-join {', '.join(joined)}" if joined else "")
-                    + ". The IRC tab's network picker shows it after a restart.",
-        }
-
-    def _irc_remove_network(self, network: str) -> Dict[str, Any]:
-        ref = (network or "").strip().lower()
-        rows = self.config.irc.networks
-        target = next((n for n in rows if ref in (n.id or "").lower()
-                       or ref in (n.host or "").lower()), None)
-        if target is None:
-            return {"success": False, "error": f"No configured IRC network matching '{network}'"}
-        self.config.irc.networks = [n for n in rows if n.id != target.id]
-        self._persist_config()
-        return {
-            "success": True,
-            "removed": target.id,
-            "note": "Removed from config. If it is currently connected it stays connected "
-                    "until disconnected (irc_disconnect).",
-        }
 
     # ------------------------------------------------------------------
     # Browser handlers (the Browse tab — via the GUI-injected bridge which

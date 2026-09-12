@@ -1,4 +1,4 @@
-"""DeepFlux Room — a serverless community chat shown on the IRC page.
+"""DeepFlux Room — a serverless community chat shown on the Room page.
 
 The room is NOT IRC: no IRC server is involved anywhere. The first user who
 presses Join hosts a small TCP chat server inside the app; everyone else
@@ -30,10 +30,9 @@ Crypto (setup build only — see ``config.shared_room_secret``):
 GitHub/source builds (no key) get the same room, unencrypted, as their own
 separate lounge with its own discovery slot.
 
-The controller writes into the SHARED ``IRCState`` under ``ROOM_NET_ID`` and
-emits events shaped exactly like ``IRCClientCore`` events, so the IRC tab
-renders the room with its existing code paths. Qt-free; the GUI bridges
-events through its queued Qt signal like it does for IRC.
+The controller writes into an ``IRCState`` under ``ROOM_NET_ID`` and emits
+plain dict events (state/names/topic/message/join/part/notice); the Room
+tab (gui/room_tab.py) bridges them through a queued Qt signal. Qt-free.
 """
 from __future__ import annotations
 
@@ -67,7 +66,7 @@ from ircmgr.state import (
 
 logger = logging.getLogger(__name__)
 
-# The room's single channel (display name on the IRC page tree).
+# The room's single channel (display name in the Room tab).
 ROOM_CHANNEL = "#lounge"
 
 # Where the host pointer lives. Never carries chat content. The env var is
@@ -349,6 +348,7 @@ class RoomHost:
         self._srv: Optional[socket.socket] = None
         self._running = threading.Event()
         self._next_id = 1
+        self._reader_threads: List[threading.Thread] = []
         # Rotation state: records sealed under the immediately-previous key
         # stay decodable for a short grace window after a rekey.
         self._prev_codec: Optional[RoomCodec] = None
@@ -404,7 +404,24 @@ class RoomHost:
                 if user["sock"] is None:
                     continue
                 _send_obj(user["sock"], user["send_lock"], closing)
-                self._close_user_handles(user)
+                # Shutdown only — this is the controller's thread; each
+                # user's reader thread wakes from the shutdown and closes
+                # its own handles (cross-thread close = access violation,
+                # see RoomClient._close_socket).
+                sock = user["sock"]
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            # Deterministic teardown: wait for the reader threads to finish
+            # closing their own handles before this object is dropped — a
+            # later GC pass walking mid-teardown sockets is an access
+            # violation (measured under load, 2026-09-13).
+            deadline = time.monotonic() + 5.0
+            for thread in list(self._reader_threads):
+                thread.join(max(0.05, deadline - time.monotonic()))
+            self._reader_threads = [t for t in self._reader_threads
+                                    if t.is_alive()]
             self._on_event("stopped", reason=reason)
 
     @staticmethod
@@ -488,8 +505,13 @@ class RoomHost:
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             except OSError:
                 pass
-            threading.Thread(target=self._reader, args=(sock, addr),
-                             daemon=True, name="room-host-reader").start()
+            thread = threading.Thread(target=self._reader, args=(sock, addr),
+                                      daemon=True, name="room-host-reader")
+            self._reader_threads.append(thread)
+            if len(self._reader_threads) > 128:  # prune finished ones
+                self._reader_threads = [t for t in self._reader_threads
+                                        if t.is_alive()]
+            thread.start()
         if self._running.is_set():
             # the listener died unexpectedly (not a deliberate stop) —
             # the controller notices via this event and recovers
@@ -705,7 +727,9 @@ class RoomClient:
         self._send_lock = threading.Lock()
         self._connected = threading.Event()
         self._closed = threading.Event()
+        self._stop_evt = threading.Event()  # wakes the ping sleep for fast teardown
         self._ping_thread: Optional[threading.Thread] = None
+        self._reader_thread: Optional[threading.Thread] = None
         # Rotation state: the immediately-previous key still decodes records
         # for a short grace window after a rekey lands.
         self._prev_codec: Optional[RoomCodec] = None
@@ -812,8 +836,10 @@ class RoomClient:
         self._ping_thread = threading.Thread(target=self._ping_loop, daemon=True,
                                              name="room-ping")
         self._ping_thread.start()
-        threading.Thread(target=self._read_loop, args=(sock, file, nick),
-                         daemon=True, name="room-reader").start()
+        self._reader_thread = threading.Thread(target=self._read_loop,
+                                               args=(sock, file, nick),
+                                               daemon=True, name="room-reader")
+        self._reader_thread.start()
         self._on_event("connected", nick=nick, users=rec.get("users", []),
                        topic=str(rec.get("topic", "")),
                        history=rec.get("history", []))
@@ -825,7 +851,8 @@ class RoomClient:
                 return
             if not _send_obj(self._sock, self._send_lock, {"t": "ping"}):
                 return
-            time.sleep(PING_INTERVAL)
+            if self._stop_evt.wait(PING_INTERVAL):
+                return  # woken for teardown instead of idling out the interval
 
     def _read_loop(self, sock: socket.socket, file, nick: str) -> None:
         reason = "disconnected"
@@ -913,32 +940,50 @@ class RoomClient:
         return None
 
     def close(self, reason: str = "left") -> None:
+        # Deterministic teardown: unblock the reader (shutdown delivers the
+        # FIN and wakes readline), WAIT for the worker threads to exit, and
+        # only then close the handles. Closing the makefile while its reader
+        # is inside readinto() is an access violation (measured under load);
+        # leaving the threads to die asynchronously let a later GC pass walk
+        # mid-teardown sockets — also an access violation (2026-09-13).
         self._closed.set()
         self._connected.clear()
-        self._close_socket()
+        self._stop_evt.set()
+        self._close_socket(final=False)
+        for thread in (self._ping_thread, self._reader_thread):
+            if thread is not None and thread.is_alive()                     and thread is not threading.current_thread():
+                thread.join(2.0)
+        self._close_socket(final=True)
 
-    def _close_socket(self) -> None:
+    def _close_socket(self, final: bool = True) -> None:
         # shutdown() FIRST: it delivers the FIN immediately (sock.close()
         # alone is deferred while the makefile reader still references the
-        # socket) AND unblocks a reader parked in readline() — closing the
-        # file while its reader holds the buffer lock would otherwise stall
-        # until the read timeout.
-        file, self._file = self._file, None
+        # socket) AND unblocks a reader parked in readline().
+        #
+        # The file/socket CLOSE must run on the reader's own thread (or
+        # before a reader ever started): closing the makefile from another
+        # thread while its reader is inside readinto() races the buffer
+        # free against the read — measured as an access violation under
+        # full-suite load (2026-09-13). Cross-thread callers pass
+        # final=False and let the reader's finally do the closing.
         sock, self._sock = self._sock, None
         if sock is not None:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
-            try:
-                sock.close()
-            except OSError:
-                pass
-        if file is not None:
-            try:
-                file.close()
-            except OSError:
-                pass
+            if final:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+        if final:
+            file, self._file = self._file, None
+            if file is not None:
+                try:
+                    file.close()
+                except OSError:
+                    pass
 
 
 def _parse_endpoint(endpoint: str) -> Tuple[str, int, Optional[str]]:
@@ -1178,6 +1223,11 @@ class RoomController:
             self._stop(None)
         except Exception:
             logger.debug("room shutdown failed", exc_info=True)
+        thread = self._maintenance
+        if thread is not None and thread.is_alive():
+            # The loop notices role == "left" on its next wake (≤ poll
+            # interval); waiting keeps teardown deterministic for callers.
+            thread.join(self._poll_interval + 2.0)
 
     def send_message(self, text: str, action: bool = False) -> bool:
         with self._lock:
@@ -1278,6 +1328,11 @@ class RoomController:
             self._nick = nick
             self._endpoints = endpoints
         self._on_own_join(nick, hosting=True)
+        # Mirror the member path's link state so the GUI's status/transcript
+        # paths treat hosting as connected too (nick coloring, re-render).
+        self._state.set_connected(ROOM_NET_ID, True, nick=nick)
+        self._emit({"type": "state", "network": ROOM_NET_ID,
+                    "state": "connected", "nick": nick})
         self._note("You are hosting the room."
                    + (f" Others can join via {endpoints[0]}." if endpoints else ""))
         self._start_maintenance()

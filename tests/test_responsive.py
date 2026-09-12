@@ -165,7 +165,7 @@ def test_grid_columns_dynamic_3_to_9():
         app.processEvents()
 
 
-@pytest.mark.parametrize("tab_name", ["iptv", "commander", "irc", "downloads"])
+@pytest.mark.parametrize("tab_name", ["iptv", "commander", "room", "downloads"])
 def test_tabs_stay_shrinkable(tmp_path, tab_name):
     """Regression cap: no tab page may demand a wide window again — the
     window's minimum is the widest page's minimum (1138-1236px before)."""
@@ -184,14 +184,10 @@ def test_tabs_stay_shrinkable(tmp_path, tab_name):
         if tab_name == "commander":
             from gui.commander_tab import CommanderTab
             return CommanderTab(SimpleNamespace(default_save_path=str(tmp_path))), None
-        if tab_name == "irc":
-            from config import DeeptorrentConfig, IRCNetworkConfig
-            from ircmgr.client import IRCClientCore
-            from gui.irc_tab import IRCTab
-            cfg = DeeptorrentConfig()
-            cfg.irc.networks = [IRCNetworkConfig(id="a", host="irc.a.net", nick="u")]
-            client = IRCClientCore(cfg.irc)
-            return IRCTab(cfg, client), lambda t: (t.shutdown(), client.shutdown())
+        if tab_name == "room":
+            from config import DeeptorrentConfig
+            from gui.room_tab import RoomTab
+            return RoomTab(DeeptorrentConfig()), lambda t: t.shutdown()
         from PySide6.QtCore import QObject, Signal
         from config import DeeptorrentConfig
         from gui.downloads_tab import DownloadsTab
@@ -224,7 +220,7 @@ def test_tabs_stay_shrinkable(tmp_path, tab_name):
         long_text = "0123456789 " * 12
         for lbl_name in ("_status_lbl", "_art_lbl",           # IPTV status row
                          "summary_label",                     # Downloads
-                         "status_label", "topic_label",       # IRC
+                         "_status_label", "_topic_label",     # Room
                          "_status", "_outcome_status"):       # Commander
             lbl = getattr(tab, lbl_name, None)
             if lbl is not None:

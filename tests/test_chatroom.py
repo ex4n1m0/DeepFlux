@@ -29,7 +29,7 @@ from ircmgr.room import (
     valid_nick,
     valid_room_secret,
 )
-from ircmgr.state import IRCState, ROOM_NET_ID
+from ircmgr.state import ChatMessage, IRCState, ROOM_NET_ID
 
 SECRET_A = "test-room-secret-alpha"
 SECRET_B = "test-room-secret-beta"
@@ -351,7 +351,10 @@ class TestRoomHost:
                 a.connect(host.port)
                 a.join("flooder")
                 for i in range(12):
-                    a.say(f"spam {i}")
+                    try:
+                        a.say(f"spam {i}")
+                    except OSError:
+                        break  # the drop caught up mid-flood — exactly right
                 # The flood drop may tear the socket with an RST before the
                 # err record is read — being disconnected IS the punishment.
                 rec = a.drain_until("err")
@@ -639,8 +642,9 @@ class TestRoomController:
         c2 = make_controller("", rdv, state)
         try:
             c1.join("first")
+            assert wait_until(lambda: c1.role == "host", timeout=20.0)
             c2.join("second")
-            assert wait_until(lambda: c1.role == "host" and c2.role == "member")
+            assert wait_until(lambda: c2.role == "member", timeout=20.0)
             c1.send_message("plain hello")
             assert wait_until(lambda: any(
                 m.text == "plain hello"
@@ -670,22 +674,19 @@ class TestRoomController:
 
 
 # ---------------------------------------------------------------------------
-# IRC page integration
+# Room tab integration
 # ---------------------------------------------------------------------------
 
-class TestIRCTabRoom:
-    def _make_tab(self, tmp_path=None):
+class TestRoomTab:
+    def _make_tab(self):
         pytest.importorskip("PySide6")
         import os
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6.QtWidgets import QApplication
-        from gui.irc_tab import IRCTab
-        from ircmgr.client import IRCClientCore
+        from gui.room_tab import RoomTab
 
         app = QApplication.instance() or QApplication([])
         config = DeeptorrentConfig()
-        config.irc.networks = []
-        client = IRCClientCore(config.irc)
 
         class StubRoom:
             encrypted = True
@@ -726,40 +727,79 @@ class TestIRCTabRoom:
                 pass
 
         stub = StubRoom()
-        tab = IRCTab(config, client, room=stub)
-        return app, tab, client, stub
+        tab = RoomTab(config, room=stub)
+        return app, tab, stub
 
-    def test_room_pinned_in_tree_and_combo(self):
-        app, tab, client, stub = self._make_tab()
+    def test_join_bar_and_message_rendering(self):
+        app, tab, stub = self._make_tab()
         try:
-            assert tab.tree.topLevelItem(0).data(0, 0x0100) == ROOM_NET_ID
-            assert tab.network_combo.itemData(0) == ROOM_NET_ID
-            assert "DeepFlux Room" in tab.network_combo.itemText(0)
-            # room channel exists under the room network
-            assert tab._channel_item(ROOM_NET_ID, ROOM_CHANNEL) is not None
-            # join bar hidden while another view is selected
-            assert tab._room_bar.isHidden()
+            # placeholder transcript before joining
+            assert "Nothing here yet" in tab.chat.toPlainText()
+
+            # Join needs a nickname
+            tab._on_join_clicked()
+            assert stub.joins == []
+            assert "nickname" in tab._status_label.text().lower()
+
+            tab._nick_edit.setText("alice")
+            tab._on_join_clicked()
+            assert stub.joins == [("alice", "")]
+            assert tab._join_btn.text() == "Leave"
+            assert tab._nick_edit.isEnabled() is False
+            assert tab._config.chat.nickname == "alice"
+
+            # controller events render through the normal paths
+            stub.emit({"type": "state", "network": ROOM_NET_ID,
+                       "state": "connected", "nick": "alice"})
+            tab._state.set_nicks(ROOM_NET_ID, ROOM_CHANNEL, {"alice": ""})
+            stub.emit({"type": "names", "network": ROOM_NET_ID,
+                       "channel": ROOM_CHANNEL, "nicks": {"alice": ""}})
+            stub.emit({"type": "message", "network": ROOM_NET_ID,
+                       "channel": ROOM_CHANNEL, "nick": "alice",
+                       "text": "hello room", "own": True})
+            assert "hello room" in tab.chat.toPlainText()
+            assert tab.nicks.count() == 1
+
+            # plain text goes to the room (stub accepts, input clears)
+            tab.input.setText("second line")
+            tab._on_send()
+            assert tab.input.text() == ""
+            # Leave resets the bar
+            tab._on_join_clicked()
+            assert tab._join_btn.text() == "Join"
         finally:
             tab.deleteLater()
-            client.shutdown()
+            app.processEvents()
+
+    def test_history_replay_becomes_visible_on_connect(self):
+        """A member's welcome replays history straight into the state buffer
+        WITHOUT per-record events — the tab must re-render on connect."""
+        app, tab, stub = self._make_tab()
+        try:
+            tab._state.record(ROOM_NET_ID, ChatMessage(
+                ts=time.time(), kind="msg", nick="bob",
+                text="replayed line"), ROOM_CHANNEL)
+            stub.emit({"type": "state", "network": ROOM_NET_ID,
+                       "state": "connected", "nick": "alice"})
+            assert "replayed line" in tab.chat.toPlainText()
+        finally:
+            tab.deleteLater()
             app.processEvents()
 
     def test_positional_parent_construction_matches_main_window(self):
-        """Regression (3.9 hotfix): MainWindow calls
-        ``IRCTab(config, client, self)`` — the third POSITIONAL argument is
-        the parent QWidget. A parameter inserted before it bound the window
-        to ``room`` and crashed startup for every user; no test built the
-        real MainWindow, so the suite stayed green."""
+        """MainWindow calls ``RoomTab(config, self)`` — the second POSITIONAL
+        argument is the parent QWidget (the 3.9 hotfix lesson: a parameter
+        inserted before it binds the window to the wrong slot and crashes
+        startup; no test built the real MainWindow, so the suite stayed
+        green)."""
         pytest.importorskip("PySide6")
         import os
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         from PySide6.QtWidgets import QApplication, QWidget
-        from gui.irc_tab import IRCTab
-        from ircmgr.client import IRCClientCore
+        from gui.room_tab import RoomTab
 
         app = QApplication.instance() or QApplication([])
         config = DeeptorrentConfig()
-        client = IRCClientCore(config.irc)
         parent = QWidget()
 
         class StubRoom:
@@ -768,104 +808,73 @@ class TestIRCTabRoom:
             def add_listener(self, cb):
                 pass
 
-        tab = IRCTab(config, client, parent, StubRoom())
+            def is_joined(self):
+                return False
+
+            def endpoints(self):
+                return []
+
+            def make_private(self):
+                return False
+
+            def shutdown(self):
+                pass
+
+        tab = RoomTab(config, parent, StubRoom())
         try:
             assert tab.parent() is parent          # parent bound, not room
             assert isinstance(tab._room, StubRoom)  # room bound where expected
         finally:
             tab.deleteLater()
             parent.deleteLater()
-            client.shutdown()
             app.processEvents()
 
-    def test_join_bar_flow_and_message_rendering(self):
-        app, tab, client, stub = self._make_tab()
+    def test_commands_and_guards(self):
+        app, tab, stub = self._make_tab()
         try:
-            room_item = tab._channel_item(ROOM_NET_ID, ROOM_CHANNEL)
-            tab.tree.setCurrentItem(room_item)
-            app.processEvents()
-            assert not tab._room_bar.isHidden()
-
-            # Join needs a nickname
-            tab._on_room_join_clicked()
-            assert stub.joins == []
-            assert "nickname" in tab._room_status.text().lower()
-
-            tab._room_nick_edit.setText("alice")
-            tab._on_room_join_clicked()
-            assert stub.joins == [("alice", "")]
-            assert tab._room_join_btn.text() == "Leave"
-            assert tab._room_nick_edit.isEnabled() is False
-
-            # controller events render through the normal IRC paths
-            stub.emit({"type": "state", "network": ROOM_NET_ID,
-                       "state": "connected", "nick": "alice"})
-            stub.emit({"type": "join", "network": ROOM_NET_ID,
-                       "channel": ROOM_CHANNEL, "nick": "alice", "own": True})
-            stub.emit({"type": "message", "network": ROOM_NET_ID,
-                       "channel": ROOM_CHANNEL, "nick": "alice",
-                       "text": "hello room", "own": True})
-            assert "hello room" in tab.chat.toPlainText()
-
-            # plain text goes to the room (stub accepts, input clears)
-            tab.input.setText("second line")
-            tab._on_send()
-            assert tab.input.text() == ""
-            # Leave resets the bar
-            tab._on_room_join_clicked()
-            assert tab._room_join_btn.text() == "Join"
-        finally:
-            tab.deleteLater()
-            client.shutdown()
-            app.processEvents()
-
-    def test_room_commands_and_guards(self):
-        app, tab, client, stub = self._make_tab()
-        try:
-            room_item = tab._channel_item(ROOM_NET_ID, ROOM_CHANNEL)
-            tab.tree.setCurrentItem(room_item)
-            app.processEvents()
-
             tab.input.setText("/raw PRIVMSG x")
             tab._on_send()
-            assert "not available" in tab.chat.toPlainText()
+            assert "Unknown command" in tab.chat.toPlainText()
 
             stub.joined = False
             tab.input.setText(" anybody there?")
             tab._on_send()
             assert "Join the room first" in tab.chat.toPlainText()
+
+            # /me while joined goes through the controller as an action
+            stub.joined = True
+            sent = []
+            stub.send_message = lambda text, action=False: sent.append((text, action)) or True
+            tab.input.setText("/me waves")
+            tab._on_send()
+            assert sent == [("waves", True)]
         finally:
             tab.deleteLater()
-            client.shutdown()
             app.processEvents()
 
     def test_make_private_button_confirms_then_rotates(self):
-        app, tab, client, stub = self._make_tab()
+        app, tab, stub = self._make_tab()
         try:
-            room_item = tab._channel_item(ROOM_NET_ID, ROOM_CHANNEL)
-            tab.tree.setCurrentItem(room_item)
-            app.processEvents()
             # hidden while not joined
-            assert tab._room_private_btn.isHidden()
+            assert tab._private_btn.isHidden()
 
-            tab._room_nick_edit.setText("alice")
-            tab._on_room_join_clicked()
-            assert not tab._room_private_btn.isHidden()
+            tab._nick_edit.setText("alice")
+            tab._on_join_clicked()
+            assert not tab._private_btn.isHidden()
 
             calls = []
             stub.make_private = lambda: calls.append(1) or True
             from PySide6.QtWidgets import QMessageBox
-            with patch("gui.irc_tab.QMessageBox.question",
+            with patch("gui.room_tab.QMessageBox.question",
                        return_value=QMessageBox.StandardButton.Yes):
-                tab._on_room_private_clicked()
+                tab._on_private_clicked()
             assert calls == [1]
 
             # a "No" answer never reaches the controller
-            with patch("gui.irc_tab.QMessageBox.question",
+            with patch("gui.room_tab.QMessageBox.question",
                        return_value=QMessageBox.StandardButton.No):
-                tab._on_room_private_clicked()
+                tab._on_private_clicked()
             assert calls == [1]
         finally:
             tab.deleteLater()
-            client.shutdown()
             app.processEvents()

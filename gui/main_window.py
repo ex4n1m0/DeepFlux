@@ -87,9 +87,8 @@ from gui.browser_history import BrowserHistory
 from gui.browser_channel import create_channel, channel_injection_script
 from gui.iptv_tab import AgentIPTVBridge, IPTVTab
 from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog
-from gui.irc_tab import IRCTab
+from gui.room_tab import RoomTab
 from gui.voice_input import MIN_SECONDS, SAMPLE_RATE as VOICE_SAMPLE_RATE, VoiceRecorder, VoiceTranscriber, pcm_to_whisper_audio
-from ircmgr.client import IRCClientCore
 from dlmgr.engine import DownloadEngine
 from dlmgr.control_api import ControlAPI
 from gui.window_sizing import roomy
@@ -985,12 +984,7 @@ class MainWindow(QMainWindow):
         self._dl_api.set_play_handler(self._play_signals.play_stream.emit)
         self._dl_api.start()
 
-        # IRC client core — shared between the IRC tab and the agent's
-        # irc_* tools (same pattern as the download engine above).
-        self._irc_client = IRCClientCore(self.config.irc)
-
-        self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine,
-                                  irc_client=self._irc_client)
+        self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine)
         self.agent = AgentLoop(
             self.engine, self.config, tools=self.tools,
             on_event=lambda evt: self._agent_signals.event.emit(evt),
@@ -1025,7 +1019,7 @@ class MainWindow(QMainWindow):
             logger.debug("telemetry heartbeat failed to start", exc_info=True)
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 4.0 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 4.1 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -2052,9 +2046,9 @@ class MainWindow(QMainWindow):
         self.commander_tab = CommanderTab(self.config, self)
         self.main_tabs.addTab(self.commander_tab, "Command")
 
-        # --- IRC tab (embedded IRC client; shares its core with the agent) ---
-        self.irc_tab = IRCTab(self.config, self._irc_client, self)
-        self.main_tabs.addTab(self.irc_tab, "IRC")
+        # --- Room tab (DeepFlux Room — serverless community chat) ---
+        self.room_tab = RoomTab(self.config, self)
+        self.main_tabs.addTab(self.room_tab, "Room")
 
         # Restore saved splitter positions (user-adjusted sizes persist).
         self._restore_splitters()
@@ -2139,11 +2133,6 @@ class MainWindow(QMainWindow):
             action = _file_item(file_menu, label)
             action.triggered.connect(lambda _c=False, page_cls=_cls: self._open_iptv_page(page_cls))
 
-        # --- Former IRC menu ---
-        _file_zone(file_menu, "IRC")
-        irc_networks_action = _file_item(file_menu, "IRC Networks...")
-        irc_networks_action.triggered.connect(lambda: self.irc_tab._on_manage_networks())
-
         file_menu.addSeparator()
         exit_action = _file_item(file_menu, "Exit", indent=False)
         exit_action.triggered.connect(self._tray_quit)
@@ -2152,7 +2141,7 @@ class MainWindow(QMainWindow):
         # the page, and they never open a menu.
         tab_buttons: List[QAction] = []
         for title, idx in (("Browse", 0), ("Agent", 1), ("Download", 2),
-                           ("Play", 3), ("Command", 4), ("IRC", 5)):
+                           ("Play", 3), ("Command", 4), ("Room", 5)):
             action = QAction(title, self)
             action.triggered.connect(
                 lambda _checked=False, i=idx: self.main_tabs.setCurrentIndex(i))
@@ -3770,20 +3759,6 @@ class MainWindow(QMainWindow):
         "list_memories": ("", "Listing memories"),
         "edit_memory": ("", "Editing memory"),
         "forget_memory": ("", "Forgetting memory"),
-        "irc_status": ("📡", "Checking IRC status"),
-        "irc_list_messages": ("💬", "Reading IRC channel"),
-        "irc_search_messages": ("🔎", "Searching IRC buffers"),
-        "irc_send_message": ("📨", "Sending IRC message"),
-        "irc_join": ("➡", "Joining IRC channel"),
-        "irc_part": ("⬅", "Leaving IRC channel"),
-        "irc_connect": ("🔌", "Connecting to IRC"),
-        "irc_disconnect": ("🔌", "Disconnecting from IRC"),
-        "irc_send_action": ("📨", "Sending IRC action"),
-        "irc_send_notice": ("📨", "Sending IRC notice"),
-        "irc_set_nick": ("✏", "Changing IRC nick"),
-        "irc_send_raw": ("⌨", "Sending raw IRC line"),
-        "irc_list_channels": ("📋", "Listing IRC channels"),
-        "irc_list_nicks": ("👥", "Listing channel users"),
         "browser_list_tabs": ("🗂", "Listing browser tabs"),
         "browser_navigate": ("🌐", "Navigating browser"),
         "browser_close_tab": ("✖", "Closing browser tab"),
@@ -3829,8 +3804,6 @@ class MainWindow(QMainWindow):
         "list_torrent_sources": ("🗂", "Listing search sources"),
         "add_torrent_source": ("🗂", "Adding search source"),
         "remove_torrent_source": ("🗂", "Removing search source"),
-        "irc_add_network": ("🔌", "Adding IRC network"),
-        "irc_remove_network": ("🔌", "Removing IRC network"),
     }
 
     def _format_tool_args(self, tool: str, args: dict) -> str:
@@ -3870,18 +3843,6 @@ class MainWindow(QMainWindow):
             return f"\"{args.get('query', '') or args.get('title', '') or args.get('url', '') or args.get('file', '') or args.get('item_id', '')}\""
         if tool == "iptv_set_volume":
             return f"to {args.get('level', '')}"
-        if tool in ("irc_send_action", "irc_send_notice"):
-            return f"to {args.get('target', '')}: \"{str(args.get('text', ''))[:60]}\""
-        if tool in ("irc_connect", "irc_disconnect"):
-            return args.get("network", "") or "(auto)"
-        if tool == "irc_set_nick":
-            return f"to {args.get('new_nick', '')}"
-        if tool == "irc_send_raw":
-            return f"\"{str(args.get('line', ''))[:60]}\""
-        if tool == "irc_list_channels":
-            return args.get("filter", "")
-        if tool == "irc_list_nicks":
-            return args.get("channel", "")
         if tool == "browser_navigate":
             return f"to {args.get('url', '')}"
         if tool in ("browser_close_tab", "browser_switch_tab"):
@@ -3916,8 +3877,6 @@ class MainWindow(QMainWindow):
             return f"{args.get('path', '')} = {args.get('value', '')}"
         if tool in ("add_torrent_source", "remove_torrent_source"):
             return f"\"{args.get('name', '') or args.get('source', '')}\""
-        if tool in ("irc_add_network", "irc_remove_network"):
-            return args.get("host", "") or args.get("network", "")
         # Generic fallback.
         parts = [f"{k}={v}" for k, v in args.items() if k not in ("save_path",)]
         return ", ".join(parts[:3]) if parts else ""
@@ -5693,8 +5652,7 @@ class MainWindow(QMainWindow):
             self.tools.shutdown()
         except Exception:
             pass
-        self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine,
-                                  irc_client=self._irc_client)
+        self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine)
         if getattr(self, "_iptv_bridge", None) is not None:
             self.tools.set_iptv_bridge(self._iptv_bridge)
         if getattr(self, "_browser_bridge", None) is not None:
@@ -6029,10 +5987,9 @@ class MainWindow(QMainWindow):
             self.iptv_tab.shutdown()
         except Exception:
             pass
-        # Stop IRC subsystem (persist joined channels, QUIT networks).
+        # Stop the community room (withdraw host pointer, say goodbye).
         try:
-            self.irc_tab.shutdown()
-            self._irc_client.shutdown()
+            self.room_tab.shutdown()
         except Exception:
             pass
         # A fullscreened browser view is a parentless top-level window —

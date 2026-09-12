@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "4.0"
+APP_VERSION = "4.1"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -506,199 +506,6 @@ class IPTVConfig:
 
 
 @dataclass
-class IRCNetworkConfig:
-    """A single IRC network/server entry for the IRC tab.
-
-    Credentials (server password / SASL) are persisted in the user's config
-    file like the rest of DeepFlux's settings, but are never logged.
-    """
-    id: str = ""                     # short slug, e.g. "libera"
-    host: str = ""
-    port: int = 6697
-    tls: bool = True
-    nick: str = "DeepFluxUser"
-    username: str = ""               # empty = nick
-    realname: str = "DeepFlux"
-    password: str = ""               # server PASS (rarely needed)
-    sasl_account: str = ""           # optional SASL PLAIN auth
-    sasl_password: str = ""
-    channels: List[str] = field(default_factory=list)
-
-
-@dataclass
-class IRCConfig:
-    """Configuration for the IRC tab + agent IRC monitoring."""
-    networks: List[IRCNetworkConfig] = field(default_factory=list)
-    buffer_lines: int = 500          # per-channel ring buffer (agent reads this)
-    flood_delay: float = 2.0         # min seconds between outgoing messages
-    reconnect_max_seconds: int = 300
-    reconnect_max_attempts: int = 5
-    # Persistent transcripts are explicitly opt-in. Message bodies, targets,
-    # nicknames and IRCv3 metadata are encrypted with a local key at rest.
-    history_enabled: bool = False
-    history_private_messages: bool = False
-    history_retention_days: int = 30
-
-
-# Built-in default IRC networks — merged into user configs by `from_file`
-# (match by `id`, Jackett-style). A curated set of popular public networks plus
-# private-tracker support networks so the user can connect with one click from
-# the IRC tab. All start disconnected (the user connects manually) and NONE
-# ships pre-joined channels — every network auto-requests /LIST on connect
-# (retried until it arrives) so the channel browser offers a directory to join.
-# Hosts/ports verified against the live servers 2026-09-01 with a registration
-# probe (CAP LS + NICK/USER + CAP END → 001): networks whose shipped TLS port
-# was dead or legacy-cipher-only (Undernet, GeekShed, P2P-Network, BrokenSphere,
-# IPTorrents round-robin) ship plain 6667, which registered on every one of
-# them. irc.animebytes.tv was seized (NXDOMAIN) — the network lives at
-# irc.animefriends.moe:7000 (TLS) now. MoreThanTV's own network is gone; MTV
-# support lives on DigitalIRC (already a default), so no morethantv entry.
-DEFAULT_IRC_NETWORKS: List[IRCNetworkConfig] = [
-    IRCNetworkConfig(
-        id="libera",
-        host="irc.libera.chat",
-        port=6697,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="oftc",
-        host="irc.oftc.net",
-        port=6697,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="rizon",
-        host="irc.rizon.net",
-        port=6697,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="dalnet",
-        host="irc.dal.net",
-        port=6697,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="undernet",
-        host="irc.undernet.org",
-        port=6667,
-        tls=False,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="efnet",
-        host="efnet.deic.eu",
-        port=6667,
-        tls=False,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="quakenet",
-        host="irc.quakenet.org",
-        port=6667,
-        tls=False,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="ircnet",
-        host="open.ircnet.net",
-        port=6667,
-        tls=False,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="geekshed",
-        host="irc.geekshed.net",
-        port=6667,
-        tls=False,
-        nick="DeepFluxUser",
-    ),
-    # --- Private-tracker support networks ---
-    IRCNetworkConfig(
-        id="animebytes",
-        host="irc.animefriends.moe",
-        port=7000,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="p2p-network",
-        host="irc.p2p-network.net",
-        port=6667,
-        tls=False,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="digitalirc",
-        host="irc.digitalirc.org",
-        port=6697,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="gazellegames",
-        host="irc.gazellegames.net",
-        port=7000,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="synirc",
-        host="irc.synirc.net",
-        port=6697,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="brokensphere",
-        host="irc.brokensphere.net",
-        port=6667,
-        tls=False,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="orpheus",
-        host="irc.orpheus.network",
-        port=7000,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="passthepopcorn",
-        host="irc.passthepopcorn.me",
-        port=7000,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="scratch-network",
-        host="irc.scratch-network.net",
-        port=7000,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="torrentleech",
-        host="irc.torrentleech.org",
-        port=7021,
-        tls=True,
-        nick="DeepFluxUser",
-    ),
-    IRCNetworkConfig(
-        id="iptorrents",
-        host="irc.iptorrents.com",
-        port=6667,
-        tls=False,
-        nick="DeepFluxUser",
-    ),
-]
-
-
-@dataclass
 class VoiceConfig:
     """Voice input for the agent box — local faster-whisper, fully offline.
 
@@ -713,7 +520,7 @@ class VoiceConfig:
 
 @dataclass
 class ChatConfig:
-    """DeepFlux Room — the serverless community chat on the IRC page
+    """DeepFlux Room — the serverless community chat on the Room page
     (ircmgr/room.py). Nothing here auto-connects: the user types a nickname
     and presses Join every session (the nickname is only a prefill)."""
     nickname: str = ""       # prefill for the join bar
@@ -744,7 +551,6 @@ class DeeptorrentConfig:
     download: DownloadConfig = field(default_factory=DownloadConfig)
     torrents: TorrentsConfig = field(default_factory=TorrentsConfig)
     iptv: IPTVConfig = field(default_factory=IPTVConfig)
-    irc: IRCConfig = field(default_factory=IRCConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
     stats: StatsConfig = field(default_factory=StatsConfig)
@@ -901,89 +707,6 @@ class DeeptorrentConfig:
         else:
             merged_sources = list(DEFAULT_SOURCES)
 
-        # Merge built-in default IRC networks into the saved list (match by
-        # `id`, Jackett-style). Existing user networks are preserved; missing
-        # defaults append. No default ships channels — connecting opens the
-        # channel browser (/LIST) instead of auto-joining anything.
-        irc_data = data.get("irc", {})
-        merged_irc_nets = [IRCNetworkConfig(**{k: v for k, v in n.items()
-                                               if k in IRCNetworkConfig.__dataclass_fields__})
-                           for n in irc_data.get("networks", [])]
-        if merged_irc_nets:
-            known_ids = {n.id for n in merged_irc_nets}
-            merged_irc_nets.extend(d for d in DEFAULT_IRC_NETWORKS if d.id not in known_ids)
-        else:
-            merged_irc_nets = list(DEFAULT_IRC_NETWORKS)
-
-        # Migration: the merge above never touches existing ids, so entries
-        # created by the old test-era default keep "#deepflux-test" forever.
-        # Upgrade those in place: just drop the test channel (we no longer
-        # auto-join #DeepFlux — channelless networks auto-request /LIST instead).
-        for n in merged_irc_nets:
-            if any(c.lower() == "#deepflux-test" for c in n.channels):
-                n.channels = [c for c in n.channels if c.lower() != "#deepflux-test"]
-
-        # Migration: #DeepFlux is no longer auto-joined anywhere (the IRC tab
-        # now auto-requests /LIST for networks without configured channels).
-        # Strip #DeepFlux from every network where it was the shipped default;
-        # user-added channels (private-tracker support channels, etc.) survive.
-        for n in merged_irc_nets:
-            n.channels = [c for c in n.channels if c.lower() != "#deepflux"]
-
-        # Migration (2026-09): no default ships pre-joined channels any more —
-        # every network opens the channel browser on connect instead. Strip
-        # the old shipped channel sets (subset-gated, so an entry the user
-        # customized with extra channels keeps everything).
-        _LEGACY_DEFAULT_CHANNELS = {
-            "animebytes": {"#support"},
-            "p2p-network": {"#bibliotik-help", "#bitspyder"},
-            "digitalirc": {"#empornium-help"},
-            "gazellegames": {"#ggn-help"},
-            "synirc": {"#jpopsuki-support"},
-            "brokensphere": {"#kg-help"},
-            "morethantv": {"#help", "#morethan.tv-disabled"},
-            "orpheus": {"#help", "#disabled"},
-            "passthepopcorn": {"#ptp-help", "#ptp-disabled"},
-            "scratch-network": {"#red-help", "#red-disabled"},
-            "torrentleech": {"#tlhelp"},
-            "iptorrents": {"#iptorrents"},
-        }
-        for n in merged_irc_nets:
-            shipped = _LEGACY_DEFAULT_CHANNELS.get(n.id)
-            if shipped and {c.lower() for c in n.channels} <= shipped:
-                n.channels = []
-
-        # Migration (2026-09): dead or broken shipped endpoints, verified with
-        # a live registration probe (see DEFAULT_IRC_NETWORKS). Retarget only
-        # entries still carrying the old shipped host/port/TLS — customized
-        # entries are left alone.
-        _LEGACY_IRC_TARGETS = {
-            # id: (old host, old port, old tls, new host, new port, new tls)
-            "undernet": ("irc.undernet.org", 6697, True,
-                         "irc.undernet.org", 6667, False),
-            "geekshed": ("irc.geekshed.net", 6697, True,
-                         "irc.geekshed.net", 6667, False),
-            "p2p-network": ("irc.p2p-network.net", 6697, True,
-                            "irc.p2p-network.net", 6667, False),
-            "brokensphere": ("irc.brokensphere.net", 6697, True,
-                             "irc.brokensphere.net", 6667, False),
-            "iptorrents": ("irc.iptorrents.com", 7000, True,
-                           "irc.iptorrents.com", 6667, False),
-            "animebytes": ("irc.animebytes.tv", 7000, True,
-                           "irc.animefriends.moe", 7000, True),
-        }
-        for n in merged_irc_nets:
-            legacy = _LEGACY_IRC_TARGETS.get(n.id)
-            if legacy and (n.host, n.port, n.tls) == legacy[:3]:
-                n.host, n.port, n.tls = legacy[3:]
-
-        # Migration (2026-09): MoreThanTV's own IRC network is gone (the host
-        # no longer resolves; MTV support lives on DigitalIRC, which ships as
-        # its own default). Drop the dead entry — user-added channels on it
-        # cannot be reached anyway.
-        merged_irc_nets = [n for n in merged_irc_nets
-                           if not (n.id == "morethantv" and n.host == "irc.morethan.tv")]
-
         # Drop stale keys from older configs (e.g. the removed `local_only`)
         # so LLMConfig(**...) never fails on an unknown field.
         llm_clean = {k: v for k, v in llm_data.items() if k in LLMConfig.__dataclass_fields__}
@@ -1135,20 +858,6 @@ class DeeptorrentConfig:
                 overscan_pct=float(data.get("iptv", {}).get("overscan_pct", 0.5)),
                 audio_delay=float(data.get("iptv", {}).get("audio_delay", 0.0)),
                 vod_group_mode=data.get("iptv", {}).get("vod_group_mode", "year"),
-            ),
-            irc=IRCConfig(
-                networks=merged_irc_nets,
-                buffer_lines=max(50, min(5000, int(irc_data.get("buffer_lines", 500)))),
-                flood_delay=max(0.5, float(irc_data.get("flood_delay", 2.0))),
-                reconnect_max_seconds=max(10, min(3600, int(
-                    irc_data.get("reconnect_max_seconds", 300)))),
-                reconnect_max_attempts=max(1, min(100, int(
-                    irc_data.get("reconnect_max_attempts", 5)))),
-                history_enabled=bool(irc_data.get("history_enabled", False)),
-                history_private_messages=bool(
-                    irc_data.get("history_private_messages", False)),
-                history_retention_days=max(1, min(3650, int(
-                    irc_data.get("history_retention_days", 30) or 30))),
             ),
             voice=VoiceConfig(**{k: v for k, v in data.get("voice", {}).items()
                                  if k in VoiceConfig.__dataclass_fields__}),

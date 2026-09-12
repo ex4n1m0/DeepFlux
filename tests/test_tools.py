@@ -98,7 +98,6 @@ def test_context_tool_selection_limits_unrelated_domains(tools):
     default_names = tools.tool_names_for_context("find an Ubuntu torrent")
     assert "search_indexers" in default_names
     assert "browser_fill" not in default_names
-    assert "irc_send_message" not in default_names
 
     browser_names = tools.tool_names_for_context("open the browser and log in")
     assert "browser_fill" in browser_names
@@ -1089,45 +1088,6 @@ def test_fresh_install_has_no_sources():
         cfg = DeeptorrentConfig.from_file(path)
         assert [s.id for s in cfg.sources.sources] == ["1337x"]
 
-
-def test_irc_test_era_network_migrates_to_deepflux():
-    """Saved networks still carrying the old '#deepflux-test' default channel
-    have it DROPPED (3.2.1+: no shipped auto-join channel anymore — #DeepFlux
-    is stripped too; the tab auto-requests /LIST instead). The auto_connect
-    field was removed in 3.2.1 — stale saved values are dropped on load."""
-    import os
-    import tempfile
-
-    from config import DeeptorrentConfig
-
-    with tempfile.TemporaryDirectory() as td:
-        path = os.path.join(td, "config.json")
-        saved = {"irc": {"networks": [{
-            "id": "libera", "host": "irc.libera.chat", "port": 6697, "tls": True,
-            "nick": "DeepFluxUser", "channels": ["#deepflux-test"], "auto_connect": False,
-        }]}}
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(saved, f)
-        cfg = DeeptorrentConfig.from_file(path)
-        net = next(n for n in cfg.irc.networks if n.id == "libera")
-        assert net.channels == []
-        assert not hasattr(net, "auto_connect")
-
-        # Other joined channels survive the migration; casing variants match.
-        saved["irc"]["networks"][0]["channels"] = ["#DeepFlux-Test", "#mychan", "#DeepFlux"]
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(saved, f)
-        cfg = DeeptorrentConfig.from_file(path)
-        net = next(n for n in cfg.irc.networks if n.id == "libera")
-        assert net.channels == ["#mychan"]
-
-        # Customized entries (no test channel) are left untouched.
-        saved["irc"]["networks"][0]["channels"] = ["#mychan"]
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(saved, f)
-        cfg = DeeptorrentConfig.from_file(path)
-        net = next(n for n in cfg.irc.networks if n.id == "libera")
-        assert net.channels == ["#mychan"]
 
 
 def test_browser_homepage_defaults_to_deepflux_site():

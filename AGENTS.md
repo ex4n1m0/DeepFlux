@@ -12,11 +12,20 @@
 
 ## Verify changes
 - Quick check: `python -c "import ast; ast.parse(open(<file>, encoding='utf-8').read())"`
-- Tests: `python -m pytest tests/ -v`
+- Tests: `python -m pytest tests/ -v` — CAVEAT (2026-09-13, this dev
+  machine): a SINGLE-process run of the whole suite can die with a native
+  access violation while GC walks the heap during the room tests
+  (`state.py::_channel_locked` frames in the dump). It is a heap-layout /
+  GC-timing artifact of the one giant process — native libs loaded via
+  collection + 900 collected items; every individual file, subset, and the
+  SPLIT invocation are 100% stable, and reverting any single app file does
+  not prevent it. Release gate: run the suite split —
+  `python -m pytest tests/test_a*.py tests/test_b*.py tests/test_c*.py -q`
+  then the same for d–z globs (d e f g h i j l m n o r s t v x y).
 - Tests must NEVER write the real `~/.deeptorrent/config.json`: the autouse
   fixture in `tests/conftest.py` redirects `DeeptorrentConfig.default_config_path`
   for every test; still pass explicit paths whenever
-  code under test can persist — `IRCTab.shutdown` and the RSS feed tools both
+  code under test can persist — `RoomTab.shutdown` and the RSS feed tools both
   call `config.to_file(default_config_path())`. An unpatched GUI-tab test once
   wiped a user's real config (sources + API keys) with test defaults.
 
@@ -31,7 +40,7 @@
   `importlib.resources` data — currently yt_dlp, curl_cffi, ddgs, primp,
   fake_useragent (ddgs' DDG engine loads `browsers.jsonl`; missing data =
   "Failed to load or parse browsers.json" and DDG search silently dies in the
-  frozen build), irc (codes.txt).
+  frozen build).
 - Installer: `"$LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging/installer.iss`
   (Inno 7.0.2 also installed at `C:\Program Files\Inno Setup 7\`). Reads
   `dist/DeepFlux/*` and writes `dist/DeepFlux<version>Setup.exe` by default.
@@ -133,13 +142,13 @@
     floor-less ResponsiveRow, OverflowRow measures the floor itself (all
     candidates hidden + the ⋯ button). Wired: Play toolbar, player tools
     row (mv/compact only — record/sleep buttons are hidden by compact PiP
-    mode, which would fight the row), Commander F-key bar, IRC toolbar,
+    mode, which would fight the row), Commander F-key bar,
     Downloads toolbar, torrent quick-action row (main_window).
   * `shrink_label` — `setWordWrap(True)` on every QLabel whose text can
     change at runtime: a QLabel's minimumSizeHint is its FULL text width,
     so live status text grows the window's minimum (a `setMinimumWidth(0)`
     does NOT defeat the hint — verified). Applied: FilePane `_pane_status`,
-  Commander `_status`/`_outcome_status`, IRC `status_label` (topic already
+  Commander `_status`/`_outcome_status`, Room `_status_label` (topic already
   wrapped), Downloads `summary_label`, Play `_status_lbl`/`_art_lbl`,
   player `record_status_lbl`. Any NEW dynamic label must get this too.
   The player transport bar compacts instead of overflowing
@@ -878,10 +887,6 @@
   * `list_torrent_sources` / `add_torrent_source` / `remove_torrent_source`
     — `config.sources.sources`; search_indexers reads that list live per
     call, so new sources are used immediately.
-  * `irc_add_network` / `irc_remove_network` — `config.irc.networks`;
-    `irc_connect` resolves configured networks live, so the agent can
-    add+connect in one turn. The IRC tab's combo only shows new networks
-    after a restart (cosmetic).
   * All setup mutations persist via `config.to_file(default_config_path())`
     — call `default_config_path` on the CLASS (same as the RSS tools).
   * Context routing: the four cheap reads ride in the DEFAULT tool set;
@@ -915,104 +920,27 @@
 - Tests (`tests/test_voice_input.py`) cover only the numpy conversion +
   config round-trip; mic capture and model inference need real hardware.
 
-## IRC subsystem (ircmgr/ + gui/irc_tab.py)
-- Named `ircmgr` (not `irc/`) to avoid shadowing the PyPI `irc` (jaraco)
-  dependency it builds on — pinned `irc>=20.4.0,<21`.
-- `ircmgr/client.py` — `IRCClientCore`: ONE daemon thread owns the jaraco
-  reactor; every socket op is marshalled in via a command queue (never touch
-  the reactor cross-thread). Outgoing PRIVMSGs are paced per network
-  (`irc.flood_delay`, default 2s) against excess-flood kicks; PING/PONG is
-  handled by the library itself. TLS + SASL PLAIN supported; CTCP
-  VERSION/PING/TIME auto-answered; DCC offers surfaced as events, never
-  auto-accepted. LIST replies (321/322/323) are collected into
-  `state.chanlist` (sorted by users desc). WHOIS numerics (311/312/313/317/
-  318/319/330) and away acks (305/306) are handled and recorded into the
-  server buffer so `/whois`, `/away`, `/back` have visible answers (jaraco
-  event names: whoisuser, whoisserver, whoisoperator, whoisidle,
-  whoischannels, whoisaccount, endofwhois, unaway, nowaway — verify with
-  `irc.client.events.Command.lookup('<numeric>')`).
-- Multi-network routing: the jaraco `Reactor.add_global_handler` registers
-  handlers on the REACTOR, which fires them for EVERY connection's events —
-  so per-connection handlers baked with a fixed `net_id` cross-contaminate
-  networks (a JOIN on libera was also recorded under iptorrents, so both
-  networks showed both channels and messages mirrored). Fix:
-  `_install_handlers` registers ONE set of reactor-global handlers and
-  `_dispatch` resolves the owning `net_id` from a `ServerConnection -> net_id`
-  map (`_conn_to_net`, populated in `_do_connect` before `conn.connect()`).
-  Never go back to `conn.add_global_handler(partial(..., net_id, ...))`.
-- Hot-path rule: `_on_quit`/`_on_nick` and the GUI's `_is_connected` /
-  `_complete_input` use the LIGHT state accessors
-  (`IRCState.channels_of_nick` / `network_connected` / `network_link_state` /
-  `channel_names`, plus `IRCClientCore.is_connected`) — never `state.snapshot()`
-  or `client.status()` per event (netsplit storms made the old full-snapshot
-  per QUIT stall the network thread). `state.clear_buffer` backs `/clear`.
-- `ircmgr/state.py` — thread-safe `IRCState`: per-network nick lists, topics,
-  and per-channel ring buffers (`irc.buffer_lines`, default 500) — this buffer
-  is what the agent's `irc_*` tools read.
-- `ircmgr/history.py` — ONE cached SQLite connection per store
-  (`journal_mode=WAL`, `synchronous=NORMAL`, `close()` is idempotent,
-  re-created lazily). It used to open a fresh connection with
-  `synchronous=FULL`/journal DELETE per message — on the shared reactor
-  thread that stalled every network's socket on busy channels. All access
-  stays under the store RLock (thread-safe across GUI + network threads).
-- GUI: `IRCTab` gets events via a single queued Qt signal (`_IRCSignals.event`),
-  like `_IPTVSignals`. Joined channels persist to config on shutdown
-  (`IRCTab.shutdown` in `closeEvent`).
-- GUI perf invariants (regression-tested): `_append_html` NEVER serializes the
-  document — the "Nothing here yet" placeholder is tracked by the
-  `_chat_empty` flag (the old `chat.toHtml()` per line made busy channels
-  O(n²)); search match counts update incrementally per appended line
-  (`_search_count`), full recounts only on query change / re-render.
-- Multi-server UX: the network combo carries a live status dot per network
-  (● ◌ ○ ✕ via `_network_combo_label`), combo `activated` follows the tree,
-  tree selection syncs the combo; the Join box acts on the network of the
-  VIEWED channel (not the combo); the toolbar has Connect All / Disconnect All
-  and a nick field (`_apply_nick` — renames live when connected, persists
-  `nick` in the network entry otherwise); the status label aggregates
-  "N/M connected". The tree has a context menu (`_build_tree_menu` — built
-  separately from `_show_tree_menu` so tests can inspect actions without a
-  modal exec). /LIST results render in the channel-directory panel
-  (`_populate_chanlist`: sortable QTableWidget, Users-desc by default — a
-  fresh Qt table sorts col-0 DESCENDING otherwise — filter box, Refresh,
-  double-click a row to join, visible only on a network's server view).
-  Nick list sorts ops-first (~ & @ % +) then name, away users italic+muted,
-  account tooltip. Input commands: /join /part /msg /me /nick /notice
-  <target> text /whois /away /back /hop /close /clear /list /raw /quit /help.
-  NetworkDialog's port is a QSpinBox; the TLS checkbox auto-follows the port
-  only while it is a standard 6667/6697 value.
-- PySide6 test gotcha: patching `QMenu.exec` (or any C++ method) on the CLASS
-  does NOT intercept instance calls — shiboken resolves instance methods
-  through the C++ method table, bypassing Python class attributes, so a test
-  that patches it hangs on a real modal menu. Split menu construction
-  (`_build_tree_menu`) from execution, or call via the class (static methods
-  like `QInputDialog.getText` / `QMessageBox.question` DO patch fine because
-  the code calls them on the class).
-- Defaults: `DEFAULT_IRC_NETWORKS` (config.py) — endpoints VERIFIED 2026-09-01
-  with a live registration probe (CAP LS 302 + NICK/USER + CAP END → 001):
-  Libera/OFTC/Rizon/DALnet 6697 TLS; Undernet/GeekShed/P2P-Network/
-  BrokenSphere/IPTorrents on plain 6667 (their shipped TLS ports are dead,
-  legacy-cipher-only, or carry an expired cert — see the block comment in
-  config.py); AnimeBytes at irc.animefriends.moe:7000 TLS (irc.animebytes.tv
-  was seized, NXDOMAIN); MoreThanTV dropped (its network is gone — MTV
-  support lives on DigitalIRC, a default). NO default ships channels anymore:
-  every network is channelless and auto-requests `/LIST` on connect (retried
-  every 10s via `_check_pending_lists` until `listend` arrives, since some
-  servers throttle LIST for ~60s after connect) so the user picks channels
-  from the directory panel. The IRC tab starts DISCONNECTED (3.2.1+) — the
-  `auto_connect` field was removed; the user connects manually from the
-  toolbar. `from_file` migrations: legacy shipped channels are stripped
-  (subset-gated so user-customized entries survive), dead endpoints are
-  retargeted only when still carrying the old shipped host/port/TLS, and a
-  dead morethantv entry is dropped; user-added channels/entries always win.
-- DeepFlux Room (`ircmgr/room.py`, added 2026-09-13, unreleased): a
-  SERVERLESS community chat rendered on the IRC page as a pseudo-network
-  (`ROOM_NET_ID = "dfroom"` in state.py, one channel `#lounge`) — it reuses
-  the tree/combo/transcript/nick-list by writing into the SHARED IRCState
-  and emitting events shaped exactly like IRCClientCore's, so `_on_event`
-  renders it with the normal code paths. `resolve_network` filters the
-  pseudo-network out of agent auto-pick. NOT IRC: the first user to press
-  Join hosts a TCP chat server in-app (star topology — the host relays and
-  is authoritative for nick→connection, so clients cannot forge nicks);
+## Room subsystem (ircmgr/ + gui/room_tab.py)
+- `ircmgr` is a HISTORICAL name: the IRC client was REMOVED completely in
+  4.1 (user decision — the page was confusing). The package now holds only
+  the DeepFlux Room: `state.py` (thread-safe chat state: ring buffers +
+  nick lists, keyed by the ROOM_NET_ID pseudo-network) and `room.py`.
+  Do not re-add IRC client code, IRC agent tools, `config.irc`, or the
+  PyPI `irc` dependency. Old config.json files may still carry a stale
+  `"irc"` section — it is ignored on load and dropped on the next save.
+- `gui/room_tab.py::RoomTab` (tab title "Room", index 5, Ctrl+6):
+  nickname + Join/Leave bar (never auto-joined), optional direct-host
+  "Host…" field, transcript (QTextBrowser + linkify), member list, topic
+  line, /me /clear /help commands, Tab nick-completion, transcript search,
+  mention highlighting. `RoomTab(config, parent, room=None)` — MainWindow
+  passes the parent POSITIONALLY as the second arg; keep it there (3.9
+  lesson). Shutdown (`closeEvent`) calls `room_tab.shutdown()` only.
+- DeepFlux Room (`ircmgr/room.py`, added 2026-09-13): a SERVERLESS
+  community chat — it reuses IRCState and emits dict events
+  (state/names/topic/message/join/part/notice), so the tab renders it
+  through one queued Qt signal. NOT IRC: the first user to press Join hosts
+  a TCP chat server in-app (star topology — the host relays and is
+  authoritative for nick→connection, so clients cannot forge nicks);
   everyone else connects directly. Discovery needs one shared point:
   `website/api/room.js` (Upstash, same env names as heartbeat) stores ONLY
   a host pointer {endpoints, ts, token} under `df:room:<id>` with a 120s
@@ -1025,42 +953,42 @@
   backoff (5 tries) and promotes itself to host when the pointer is gone;
   a demoted/stopped host recovers the same way; only a `taken` refresh
   demotes (offline discovery must never tear down a working room).
-  NEVER auto-joined: the join bar (nickname + Join/Leave, optional
-  "Host…" direct ip:port, config `chat.*`) is the only way in, per user
-  decision. `RoomClient.connect` RACES all advertised endpoints (public +
-  LAN) so LAN joiners don't sit through the public timeout.
+  NEVER auto-joined: the join bar is the only way in, per user decision.
+  `RoomClient.connect` RACES all advertised endpoints (public + LAN) so
+  LAN joiners don't sit through the public timeout.
   CRYPTO (owner decision): messages are sealed AES-256-GCM under a secret
   that ships ONLY in the setup exe (`SHARED_ROOM_KEY` slot in
   _embedded_keys.py; `config.shared_room_secret()` reads it — it is NOT a
   config field, so to_file/sanitized_dict can never persist it). Keys are
-  derived per direction (c2h ≠ h2c, AAD binds record kind — no reflection,
+  derived per direction (c2h != h2c, AAD binds record kind — no reflection,
   no cross-purpose replay); joins carry an HMAC proof (2-min window), the
   discovery pointer is sealed+verified, and the encrypted room's discovery
   id is key-derived so source builds cannot even SEE it. Source builds
   (no key) run the same room UNENCRYPTED as a separate `lounge` slot —
   by design, do not "fix". Group-key ceiling: any exe holder can read the
   room; it is sealed in transit/at the rendezvous, not secret from
-  members. Host hardening: nick regex (1–24, no spaces/commas,
+  members. Host hardening: nick regex (1-24, no spaces/commas,
   case-insensitive-unique, "room"/"lounge" reserved), 64-user cap,
   2000-char/8-msg-per-5s rate limit (flooders dropped), 16KB wire cap,
-  last-100 history replayed in the welcome.
+  last-100 history replayed in the welcome (replayed records land in the
+  state buffer WITHOUT events — the tab re-renders on the `connected`
+  state event, which BOTH member and host paths now emit).
   KEY ROTATION / "Make private…" (user decision, 2026-09-13): any member
   may press the button (GUI confirms first); the HOST performs the
   rotation — `RoomHost.rotate()` generates a 256-bit secret, sends one
   {"t":"rekey"} record sealed under the CURRENT key (so only people
-  already in the room receive it; a member's ability to seal a
-  rekey_req IS the permission — forged requests drop the connection),
-  then swaps codecs with a 10s cooldown. Both host and client keep the
-  immediately-previous codec for a 60s grace window so in-flight records
-  sealed moments before the rotation still decode. The controller
-  (`_on_rotated`) swaps its codec, retitles the room "private room
-  (rotated key)", and — when hosting — withdraws the OLD discovery slot
-  and claims the NEW one (room id derives from the key, so key-less
-  latecomers cannot even find the room; they host a fresh lounge).
-  Rotation always generates a REAL secret, so even a source-build room
-  becomes encrypted after rotating. The rotated key lives in memory only
-  (leave + rejoin = back to the base room); takeover after rotation
-  re-hosts under the rotated id.
+  already in the room receive it; a member's ability to seal a rekey_req IS
+  the permission — forged requests drop the connection), then swaps codecs
+  with a 10s cooldown. Both host and client keep the immediately-previous
+  codec for a 60s grace window so in-flight records sealed moments before
+  the rotation still decode. The controller (`_on_rotated`) swaps its
+  codec, retitles the room "private room (rotated key)", and — when
+  hosting — withdraws the OLD discovery slot and claims the NEW one (room
+  id derives from the key, so key-less latecomers cannot even find the
+  room; they host a fresh lounge). Rotation always generates a REAL
+  secret, so even a source-build room becomes encrypted after rotating.
+  The rotated key lives in memory only (leave + rejoin = back to the base
+  room); takeover after rotation re-hosts under the rotated id.
   SOCKET GOTCHAS (each one bit us — measured, 2026-09-13): (1) sock.close()
   is DEFERRED while a makefile() reader still references the socket, so the
   FIN never goes out and the peer only times out — ALWAYS shutdown(SHUT_RDWR)
@@ -1073,20 +1001,25 @@
   host; Windows Firewall may prompt once on first host (documented in the
   User Guide, cannot be automated). Tests: tests/test_chatroom.py —
   FakeRendezvous mirrors room.js, UPnP patched out, everything on
-  loopback. The release build needs the owner to add the room secret: set
+  loopback; the GUI section builds the real RoomTab offscreen. The loopback
+  host/controller tests are TIMING-SENSITIVE under full-suite load —
+  the flooder test tolerates the RST, controller joins wait up to 20s.
+  The release build needs the owner to add the room secret: set
   SHARED_ROOM_KEY in _embedded_keys.py and run packaging/gen_embedded_keys.py
   (ATTRS already lists it; absent = source behavior, encrypted room simply
-  absent). Deploy note: room.js is additive — old exes never call it, so it
-  can ship to production independently of the app release.
-- Agent tools: `irc_status` / `irc_list_messages` / `irc_search_messages` are
-  READ_ONLY; `irc_send_message` / `irc_join` / `irc_part` require confirmation.
-  ToolRegistry takes `irc_client=` (GUI injects the shared core; CLI lazily
-  starts its own — with no networks connected until configured).
-- Tests: `tests/test_ircmgr.py` has a fake localhost IRC server — use it for
-  any protocol-level regression (no external network in tests). GUI tests run
-  offscreen (`QT_QPA_PLATFORM=offscreen`); never assert `isVisible()` on
-  widgets of a never-shown parent (always False offscreen — assert
-  `isHidden()`/`not isHidden()` for setVisible state instead).
+  absent). Deploy note: room.js is additive — old exes never call it.
+- PySide6 test gotcha: patching `QMenu.exec` (or any C++ method) on the
+  CLASS does NOT intercept instance calls — shiboken resolves instance
+  methods through the C++ method table, bypassing Python class attributes,
+  so a test that patches it hangs on a real modal menu. Split menu
+  construction from execution, or call via the class (static methods like
+  `QInputDialog.getText` / `QMessageBox.question` DO patch fine because the
+  code calls them on the class).
+- GUI perf invariant (kept from the IRC era): `_append_html` NEVER
+  serializes the document — the "Nothing here yet" placeholder is tracked
+  by the `_chat_empty` flag; search match counts update incrementally per
+  appended line (`_search_count`), full recounts only on query change /
+  re-render.
 
 ## IPTV + filesystem agent tools (Play / Command tabs)
 - Play-tab folder search: the search box has a 📍 Folder scope toggle.
@@ -1173,14 +1106,14 @@
   overwrite unrelated settings. Menu-launched scalable viewers cap their
   defaults/minimums to fit within an 800×600 desktop.
 - Menu bar layout (3.5.4): **File** and **Help** are the only real menus.
-  The six page titles — Browse, Agent, Download, Play, Command, IRC — are
+  The six page titles — Browse, Agent, Download, Play, Command, Room — are
   PURE tab buttons (menu-less QActions on the bar; a click always switches
   the page, `triggered` also switches for keyboard activation). Everything
   the old per-tab menus carried lives under File in flat labeled zones:
   API Keys, Export/Import Settings + file associations, Browser Settings
   (pages, History, Save PDF, DevTools), Download
   (Add Magnet/Torrent, Jackett, Download Settings pages, Sources, RSS),
-  Play (the four IPTV_SETTINGS_PAGES), IRC (Networks), and Exit.
+  Play (the four IPTV_SETTINGS_PAGES), and Exit.
   Zones are built with `_file_zone` (separator line + bold disabled header)
   + `_file_item` (small text indent) — `QMenu.addSection()` must NOT be
   used: its text does not render under the app stylesheet (verified
@@ -1284,9 +1217,6 @@
   `triggerAction(ExitFullScreen)`) and Alt+F4 (eventFilter reroutes Close)
   exit cleanly. `closeEvent` destroys a fullscreened view so it can't block
   the quit.
-- IRC extras: `irc_connect`/`irc_disconnect` (config networks, not just
-  connected ones), `irc_send_action`/`irc_send_notice`/`irc_set_nick`/
-  `irc_send_raw` (all confirmation-gated), `irc_list_channels` (sends LIST,
   waits ≤20s for chanlist_ts, `refresh=false` reuses the cache — plain
   sequential, not READ_ONLY) and `irc_list_nicks` (READ_ONLY, nicks + topic
   from IRCState).

@@ -26,7 +26,7 @@ SALT_BYTES = 16
 # Top-level config keys used to sanity-check a decrypted payload.
 _KNOWN_SECTIONS = {
     "llm", "web_search", "indexer", "download", "torrents", "iptv",
-    "irc", "voice", "sources", "rss", "browser",
+    "voice", "chat", "sources", "rss", "browser",
 }
 
 

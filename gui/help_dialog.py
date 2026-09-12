@@ -44,13 +44,13 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 4.0 — User Guide</h1>
+<h1>DeepFlux 4.1 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
-IRC client, and file manager. The AI agent can search for and download torrents,
-find direct downloads, manage your library — and drive the app itself: it can
-navigate the browser, manage the download queue, play IPTV content, organize
-files, and chat on IRC, all with your confirmation for sensitive actions.</p>
+community chat room, and file manager. The AI agent can search for and download
+torrents, find direct downloads, manage your library — and drive the app itself:
+it can navigate the browser, manage the download queue, play IPTV content, and
+organize files, all with your confirmation for sensitive actions.</p>
 
 <h2>Getting Started</h2>
 
@@ -73,7 +73,7 @@ files, and chat on IRC, all with your confirmation for sensitive actions.</p>
 
 <p><b>Window size:</b> the window can be made as small as you like. On narrow
 windows, less-used toolbar buttons collapse into a <b>⋯</b> menu button (on the
-Play tab, the Command tab's function-key bar, IRC, and the download lists) and
+Play tab, the Command tab's function-key bar, and the download lists) and
 the player's transport row switches to compact buttons — everything stays
 reachable, nothing disappears.</p>
 
@@ -87,12 +87,12 @@ reachable, nothing disappears.</p>
   <tr><td><b>Download</b></td><td>Torrents on top, download manager below. Auto-focused whenever a transfer is added.</td><td>Full queue control: list, pause, resume, retry, cancel</td></tr>
   <tr><td><b>Play</b></td><td>IPTV and media player — live TV, movies, series, and your own local media folders.</td><td>Search playlist, play, pause, stop, volume, EPG</td></tr>
   <tr><td><b>Command</b></td><td>Dual-pane file manager (Double Commander style).</td><td>Browse, copy, move, rename, delete, new folder</td></tr>
-  <tr><td><b>IRC</b></td><td>IRC client.</td><td>Read channels, send messages, join/part, connect, nick, LIST</td></tr>
+  <tr><td><b>Room</b></td><td>DeepFlux Room — serverless community chat (peer to peer; the first person to join hosts it).</td><td>—</td></tr>
 </table>
 
 <p>Switch tabs with <code>Ctrl+1</code>–<code>Ctrl+6</code>, or click a page button in the
 menu bar: <b>Browse</b>, <b>Agent</b>, <b>Download</b>, <b>Play</b>, <b>Command</b> and
-<b>IRC</b> are pure page buttons — a click always takes you to that page. All commands
+<b>Room</b> are pure page buttons — a click always takes you to that page. All commands
 live under the two real menus, <b>File</b> and <b>Help</b>.</p>
 
 <h2>Using the Agent</h2>
@@ -110,7 +110,6 @@ live under the two real menus, <b>File</b> and <b>Help</b>.</p>
   <li>"Read this page and click the 24.04 download link" — sees rendered pages (JS, logins)</li>
   <li>"Play a news channel" / "what's on now?" — IPTV playback and EPG</li>
   <li>"Organize the files in my downloads folder" — file operations</li>
-  <li>"Join #python on Libera and say hi" — full IRC participation</li>
   <li>"Subscribe to this RSS feed" — manages feed subscriptions</li>
   <li>"Find me some IPTV playlists and add them" — searches the web for public
     M3U playlists, validates them and adds them as Play-tab sources</li>
@@ -127,8 +126,8 @@ config just like the settings dialogs do:</p>
     the agent can set or clear one but can never read existing values back.</li>
   <li><b>Settings</b> — "set the artwork cache to 5 GB", "turn off EPG", "use
     VLC as the player". Secret fields stay write-only via the key tool.</li>
-  <li><b>Search sources &amp; IRC networks</b> — add/remove torrent indexers and
-    IRC servers, then use them right away.</li>
+  <li><b>Search sources</b> — add/remove torrent indexers, then use them
+    right away.</li>
 </ul>
 
 <p>The agent searches in this order: Jackett (structured results) → source web searches →
@@ -151,7 +150,7 @@ use into <code>~/.deeptorrent/models/</code>. Tune it in
 <h3>Safety &amp; confirmations</h3>
 <p>Actions with real-world side effects ask for your confirmation first: starting
 downloads, deleting files, cancelling a download (which deletes the partial file),
-playing IPTV content, posting to IRC, clicking or submitting forms in the
+playing IPTV content, clicking or submitting forms in the
 browser, and every app-setup change (adding sources, writing keys, changing
 settings). Read-only actions (searching, listing, status checks) run immediately.</p>
 
@@ -342,7 +341,7 @@ directory (Chrome → <code>chrome://extensions</code> → Developer mode → Lo
 
 <p>Everything lives in the <b>File</b> menu, flat — grouped into zones, each
 opened by a separator line and a bold header (API Keys, Browser Settings,
-Download, Play, IRC) with its items slightly indented; no submenus to dig
+Download, Play) with its items slightly indented; no submenus to dig
 through. The Bookmarks folder tree is the one exception — it lives on the
 browser toolbar's Bookmarks button.</p>
 
@@ -360,21 +359,18 @@ browser toolbar's Bookmarks button.</p>
   <tr><td><b>Bookmarks button</b> (browser toolbar, left of Private)</td><td><b>Import Bookmarks…</b> / <b>Export Bookmarks…</b> and your whole bookmark folder tree in one popup — bookmarks live here, not in the File menu.</td></tr>
   <tr><td><b>Download</b></td><td>Add Magnet / Add Torrent File, <b>Jackett Settings</b> (URL; Test Connection syncs your indexer list), the Download Settings pages (Torrent Downloads, Torrent Queue, Download Manager — save paths, bandwidth limits, connections), <b>Sources</b> (which sites the agent searches), and <b>RSS Feeds</b> (subscriptions — or just ask the agent).</td></tr>
   <tr><td><b>Play</b></td><td>Four small pages: Playlist Sources, Metadata &amp; Cache (artwork cache, EPG), Subtitles &amp; Languages (preferred audio/subtitle language), and Playback (backend, decoding, buffer, smooth motion, SVP interpolation, throttling).</td></tr>
-  <tr><td><b>IRC</b></td><td><b>Networks</b> — servers, channels, SASL.</td></tr>
 </table>
 
 <h2>DeepFlux Room — Community Chat</h2>
 
-<p>The IRC page also carries the <b>DeepFlux Room</b> (the
-<span style="color:#a8edff">DeepFlux Room</span> entry pinned at the top of
-the network tree, with its <code>#lounge</code> channel). It is not IRC and
-uses no chat server: the <b>first person to join hosts the room inside the
-app</b>, and everyone else connects to them directly, peer to peer. When the
-host leaves, another member automatically takes over, so the room keeps
-living.</p>
+<p>The <b>Room</b> page is the <span style="color:#a8edff">DeepFlux Room</span>,
+the app's community chat. It uses no chat server: the <b>first person to
+join hosts the room inside the app</b>, and everyone else connects to them
+directly, peer to peer. When the host leaves, another member automatically
+takes over, so the room keeps living.</p>
 
 <ul>
-  <li><b>Joining:</b> open the room's view, type a nickname, press
+  <li><b>Joining:</b> open the Room page, type a nickname, press
   <b>Join</b>. You are never joined automatically — every session starts at
   this bar. <b>Leave</b> is the same button.</li>
   <li><b>Finding the host:</b> a tiny pointer on deepflux.space says who is
@@ -397,11 +393,11 @@ living.</p>
   survives its host leaving — the next member re-hosts it under the same
   private key.</li>
   <li><b>Hosting notes:</b> the host's app tries to open a port on your
-  router automatically (UPnP) and shows the address others can use
-  (right-click the room → <b>Copy room address</b>). Windows may ask once
-  to allow DeepFlux through the firewall — the room works best if you
-  allow it. No port open? Joiners on your local network still reach you,
-  and anyone can use a direct address.</li>
+  router automatically (UPnP) and shows the address others can use in the
+  status line — right-click that line → <b>Copy room address</b>. Windows
+  may ask once to allow DeepFlux through the firewall — the room works best
+  if you allow it. No port open? Joiners on your local network still reach
+  you, and anyone can use a direct address.</li>
 </ul>
 
 <h2>Privacy</h2>
@@ -431,7 +427,7 @@ the network when you ask it to.</p>
 
 <table>
   <tr><th>Key</th><th>Action</th></tr>
-  <tr><td><code>Ctrl+1</code>–<code>Ctrl+6</code></td><td>Switch tabs (Browse / Agent / Download / Play / Command / IRC)</td></tr>
+  <tr><td><code>Ctrl+1</code>–<code>Ctrl+6</code></td><td>Switch tabs (Browse / Agent / Download / Play / Command / Room)</td></tr>
   <tr><td><code>Ctrl+F</code></td><td>Jump to Agent input</td></tr>
   <tr><td><code>Ctrl+M</code> / <code>Ctrl+O</code></td><td>Add magnet / open torrent file</td></tr>
   <tr><td><code>Ctrl+T</code> / <code>Ctrl+W</code></td><td>New / close browser tab</td></tr>
@@ -542,12 +538,12 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("4.0 — AI Deep Search")
+        version = QLabel("4.1 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 
         desc = QLabel(
-            "AI-powered download manager with browser, player, IRC, and file manager.\n\n"
+            "AI-powered download manager with browser, player, community room, and file manager.\n\n"
             "AI via DeepSeek / OpenRouter / custom\n"
             "Web search via DuckDuckGo, Brave, Perplexity (parallel)"
         )

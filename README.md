@@ -5,15 +5,15 @@ LLM-Powered Browser, Downloader, File Manager & Player (Windows).
 DeepFlux is a Python desktop app where an LLM agent drives the whole
 toolbox through structured tool calling: a Chromium browser, a BitTorrent
 engine (libtorrent-rasterbar), an IDM-style segmented download manager with
-HLS/DASH capture, an IPTV/media player, a dual-pane file manager and an IRC
-client. The agent searches indexers and the web, diagnoses stalled swarms,
+HLS/DASH capture, an IPTV/media player, a dual-pane file manager and a
+serverless community chat room. The agent searches indexers and the web, diagnoses stalled swarms,
 finds alternate trackers and releases, manages the download queue, drives the
 browser, and organizes completed downloads — asking for confirmation before
 anything destructive.
 
 Website and installer: **https://deepflux.space**
 
-**Current version: 4.0** (2026-09-13) — kept in sync with
+**Current version: 4.1** (2026-09-13) — kept in sync with
 `packaging/installer.iss` by the pre-commit hook in `.git/hooks/`.
 
 ## Features
@@ -40,9 +40,9 @@ Website and installer: **https://deepflux.space**
   mpv backend with HDR10 / Dolby Vision tone mapping (VLC backend optional).
 - **Command** (`gui/commander_tab.py`): dual-pane file manager
   (Double Commander style) the agent can operate.
-- **IRC** (`ircmgr/`, `gui/irc_tab.py`): multi-network client (TLS, SASL,
-  flood-safe pacing, auto-reconnect); channels are buffered so the agent can
-  read/search them and — with confirmation — join, part and post.
+- **Room** (`ircmgr/`, `gui/room_tab.py`): the DeepFlux Room — a serverless
+  community chat (peer to peer, first joiner hosts; encrypted in the setup
+  build, "make private" key rotation; discovery pointer on deepflux.space).
 - **Chrome extension** (`chrome_extension/`, `native_messaging/`): sends
   downloads from an external Chrome to DeepFlux via a native messaging host
   the installer registers.
@@ -209,7 +209,7 @@ DeepFlux/
 ├── gui/                 # PySide6 main window, tabs and dialogs
 ├── infra/               # Jackett service/sync, settings backup, file associations, docker-compose
 ├── iptv/                # IPTV/media player backend (mpv), Xtream, EPG, subtitles
-├── ircmgr/              # embedded IRC client core
+├── ircmgr/              # DeepFlux Room (serverless community chat)
 ├── native_messaging/    # Chrome native messaging host + registration
 ├── packaging/           # PyInstaller spec, Inno Setup script, icons, bundled binaries
 ├── tests/               # pytest suite

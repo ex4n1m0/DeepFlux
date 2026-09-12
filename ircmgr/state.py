@@ -1,8 +1,9 @@
-"""Shared IRC state: per-network/channel ring buffers and nick lists.
+"""Shared chat state for the DeepFlux Room: ring buffers and nick lists.
 
-The network thread (IRCClientCore) writes here; the GUI and the agent tools
-read. All public methods take the instance lock, so readers never observe a
-half-applied event.
+The room controller (ircmgr/room.py) writes here from its daemon threads;
+the GUI reads. All public methods take the instance lock, so readers never
+observe a half-applied event. The "network/channel" shape is historical —
+the room is the only writer and lives under ROOM_NET_ID.
 """
 from __future__ import annotations
 
@@ -31,9 +32,8 @@ CASEMAPPINGS = ("ascii", "strict-rfc1459", "rfc1459")
 _PREFIX_ORDER = "~&@%+"
 
 # Pseudo-network id for the DeepFlux Room (ircmgr/room.py): the serverless
-# community chat that shares the IRC page. It lives in this IRCState like a
-# real network so the GUI's existing tree/combo/buffer/nick-list code renders
-# it, but IRCClientCore never connects to it — RoomController owns it.
+# community chat. It lives in this IRCState like a network so the buffer and
+# nick-list machinery has a stable key — RoomController owns it.
 ROOM_NET_ID = "dfroom"
 
 
@@ -41,15 +41,19 @@ def is_channel(target: str) -> bool:
     return target.startswith(CHANNEL_PREFIXES)
 
 
+# Prebuilt translate tables: building maketrans() per call made every fold
+# allocate (and the room folds per nick/channel per event — a GC trigger
+# hot spot under load).
+_FOLD_RFC1459 = str.maketrans({"[": "{", "]": "}", "\\": "|", "^": "~"})
+_FOLD_STRICT = str.maketrans({"[": "{", "]": "}", "\\": "|"})
+
+
 def irc_casefold(value: str, casemapping: str = "rfc1459") -> str:
-    """Fold an IRC identifier according to the server's advertised mapping."""
-    folded = value.lower()
+    """Fold an IRC identifier according to the advertised case mapping."""
     if casemapping == "ascii":
-        return folded
-    folded = folded.translate(str.maketrans({"[": "{", "]": "}", "\\": "|"}))
-    if casemapping != "strict-rfc1459":
-        folded = folded.replace("^", "~")
-    return folded
+        return value.lower()
+    return value.lower().translate(
+        _FOLD_RFC1459 if casemapping != "strict-rfc1459" else _FOLD_STRICT)
 
 
 def irc_equals(left: str, right: str, casemapping: str = "rfc1459") -> bool:
@@ -101,12 +105,9 @@ class NetworkState:
     casemapping: str = "rfc1459"
     channels: Dict[str, ChannelState] = field(default_factory=dict)
     server_buffer: Deque[ChatMessage] = field(default_factory=deque)
-    # IRCv3 account-notify / away-notify metadata keyed by last-seen nick.
+    # account-notify / away-notify metadata keyed by last-seen nick.
     accounts: Dict[str, str] = field(default_factory=dict)
     away: Dict[str, bool] = field(default_factory=dict)
-    # Last LIST result: [{"channel": str, "users": int, "topic": str}]
-    chanlist: List[Dict[str, Any]] = field(default_factory=list)
-    chanlist_ts: float = 0.0
 
 
 class IRCState:
@@ -168,33 +169,6 @@ class IRCState:
             if net:
                 net.connecting = flag
 
-    def set_casemapping(self, net_id: str, casemapping: str) -> None:
-        mapping = casemapping.lower()
-        if mapping not in CASEMAPPINGS:
-            return
-        with self._lock:
-            net = self._networks.get(net_id)
-            if not net:
-                return
-            net.casemapping = mapping
-            # Coalesce channels which only differ under the newly advertised mapping.
-            merged: Dict[str, ChannelState] = {}
-            for channel in net.channels.values():
-                existing = next((candidate for candidate in merged.values()
-                                 if irc_equals(candidate.name, channel.name, mapping)), None)
-                if existing is None:
-                    merged[channel.name] = channel
-                else:
-                    existing.topic = channel.topic or existing.topic
-                    existing.buffer.extend(channel.buffer)
-                    for nick, prefix in channel.nicks.items():
-                        key = self._nick_key(existing.nicks, nick, mapping)
-                        if key is None:
-                            existing.nicks[nick] = normalize_prefix(prefix)
-                        else:
-                            existing.nicks[key] = normalize_prefix(existing.nicks[key] + prefix)
-            net.channels = merged
-
     def casemapping_of(self, net_id: str) -> str:
         with self._lock:
             net = self._networks.get(net_id)
@@ -230,23 +204,6 @@ class IRCState:
             ch = self.ensure_channel(net_id, channel)
             if ch:
                 ch.topic = topic
-
-    def set_chanlist(self, net_id: str, rows: List[Dict[str, Any]]) -> None:
-        with self._lock:
-            net = self._networks.get(net_id)
-            if net:
-                net.chanlist = rows
-                net.chanlist_ts = time.time()
-
-    def chanlist_of(self, net_id: str) -> List[Dict[str, Any]]:
-        with self._lock:
-            net = self._networks.get(net_id)
-            return list(net.chanlist) if net else []
-
-    def chanlist_ts(self, net_id: str) -> float:
-        with self._lock:
-            net = self._networks.get(net_id)
-            return net.chanlist_ts if net else 0.0
 
     def set_nicks(self, net_id: str, channel: str, nicks: Dict[str, str]) -> None:
         with self._lock:
