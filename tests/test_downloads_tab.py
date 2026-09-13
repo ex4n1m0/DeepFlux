@@ -123,9 +123,9 @@ def test_model_filtering_summary_error_and_url_redaction(make_tab):
 
     assert isinstance(tab.table, QTableView)
     assert tab.table.selectionMode() == QTableView.ExtendedSelection
-    assert "Active: 1" in tab.summary_label.text()
-    assert "Queued: 1" in tab.summary_label.text()
-    assert "2.0 KB/s" in tab.summary_label.text()
+    assert "Active: 1" in tab._summary_plain
+    assert "Queued: 1" in tab._summary_plain
+    assert "2.0 KB/s" in tab._summary_plain
 
     error_index = source_index_for(tab, "failed", 4)
     assert error_index.data(Qt.DisplayRole) == "Error: server rejected request"
@@ -146,7 +146,7 @@ def test_model_filtering_summary_error_and_url_redaction(make_tab):
     tab.status_filter.setCurrentIndex(tab.status_filter.findData(JobStatus.ERROR.value))
     assert tab._proxy.rowCount() == 1
     assert tab._proxy.index(0, 0).data(DownloadsTableModel.JOB_ID_ROLE) == "failed"
-    assert "Showing: 1/3" in tab.summary_label.text()
+    assert "Showing: 1/3" in tab._summary_plain
 
 
 def test_selection_is_stable_across_sort_refresh_and_filters(make_tab):

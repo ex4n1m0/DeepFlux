@@ -219,7 +219,8 @@ def test_tabs_stay_shrinkable(tmp_path, tab_name):
         # actually mutates at runtime.
         long_text = "0123456789 " * 12
         for lbl_name in ("_status_lbl", "_art_lbl",           # IPTV status row
-                         "summary_label",                     # Downloads
+                         "_stat_active", "_stat_queued",      # Downloads
+                         "_stat_speed", "_stat_showing",      # summary stats
                          "_status_label", "_topic_label",     # Room
                          "_status", "_outcome_status"):       # Commander
             lbl = getattr(tab, lbl_name, None)

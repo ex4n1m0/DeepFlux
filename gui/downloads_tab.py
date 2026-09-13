@@ -484,10 +484,40 @@ class DownloadsTab(QWidget):
         for status in JobStatus:
             self.status_filter.addItem(status.value.capitalize(), status.value)
         filters.addWidget(self.status_filter)
-        self.summary_label = QLabel("Active: 0  |  Queued: 0  |  Speed: —")
-        self.summary_label.setObjectName("downloads_summary")
-        shrink_label(self.summary_label)  # live summary must not grow the window min
-        filters.addWidget(self.summary_label)
+        # Live summary: three SHORT stat labels, not one long QLabel. A
+        # word-wrapped QLabel's sizeHint is a balanced two-line shape and the
+        # search box owns the row's stretch, so the layout only ever granted
+        # that wrapped width — "Active | Queued | Speed" rendered as stacked
+        # lines even at full window width. Short labels keep one-line hints
+        # and only wrap when the row is genuinely narrow; the ResponsiveRow
+        # floor keeps their combined minimum pinned at the normal-content
+        # width so live text can never grow the window minimum.
+        def _stat(caption: str) -> QLabel:
+            lbl = QLabel(self._stat_html(caption, "0"))
+            shrink_label(lbl)  # live values must not grow the window min
+            return lbl
+
+        def _dot() -> QLabel:
+            lbl = QLabel("·")
+            lbl.setStyleSheet("color: #8a9ab0; border: none;")
+            return lbl
+
+        stats_row = ResponsiveRow()
+        stats = QHBoxLayout(stats_row)
+        stats.setContentsMargins(0, 0, 0, 0)
+        stats.setSpacing(8)
+        self._stat_active = _stat("Active")
+        self._stat_queued = _stat("Queued")
+        self._stat_speed = _stat("Speed")
+        self._stat_showing = QLabel("")
+        shrink_label(self._stat_showing)  # "Showing: n/N" while a filter is on
+        for widget in (self._stat_active, _dot(), self._stat_queued, _dot(),
+                       self._stat_speed, self._stat_showing):
+            stats.addWidget(widget)
+        stats_row.set_row_min_width(stats.minimumSize().width())
+        filters.addSpacing(12)
+        filters.addWidget(stats_row)
+        self._summary_plain = "Active: 0 | Queued: 0 | Speed: —"
         layout.addLayout(filters)
 
         # --- Downloads table ---
@@ -622,16 +652,29 @@ class DownloadsTab(QWidget):
         self._update_details()
         self._update_action_states()
 
+    @staticmethod
+    def _stat_html(caption: str, value: str, accent: bool = False) -> str:
+        color = "#a8edff" if accent else "#ffffff"
+        return (f'<span style="color:#8a9ab0;">{caption}</span> '
+                f'<b style="color:{color};">{value}</b>')
+
     def _update_summary(self, jobs) -> None:
         active = sum(job.status in (JobStatus.DOWNLOADING, JobStatus.PROCESSING) for job in jobs)
         queued = sum(job.status == JobStatus.QUEUED for job in jobs)
         speed = sum(max(0, job.speed_bps) for job in jobs
                     if job.status in (JobStatus.DOWNLOADING, JobStatus.PROCESSING))
         showing = self._proxy.rowCount()
-        suffix = f"  |  Showing: {showing}/{len(jobs)}" if showing != len(jobs) else ""
-        self.summary_label.setText(
-            f"Active: {active}  |  Queued: {queued}  |  Speed: {_format_speed(speed)}{suffix}"
-        )
+        self._stat_active.setText(self._stat_html("Active", str(active)))
+        self._stat_queued.setText(self._stat_html("Queued", str(queued)))
+        self._stat_speed.setText(
+            self._stat_html("Speed", _format_speed(speed), accent=speed > 0))
+        self._stat_showing.setText(
+            f'<span style="color:#8a9ab0;">Showing: {showing}/{len(jobs)}</span>'
+            if showing != len(jobs) else "")
+        self._summary_plain = (
+            f"Active: {active} | Queued: {queued} | Speed: {_format_speed(speed)}")
+        if showing != len(jobs):
+            self._summary_plain += f" | Showing: {showing}/{len(jobs)}"
 
     def _set_search_filter(self, text: str) -> None:
         self._apply_filter(lambda: self._proxy.set_search(text))
