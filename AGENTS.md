@@ -456,12 +456,19 @@
   both properties (`_smooth` gates `_want_interpolation`); all of it is a
   no-op on the VLC backend.
 - SVP 4 motion interpolation (`iptv/svp.py` + `iptv/mpv_process.py`, Play →
-  Playback "SVP motion interpolation", default OFF) is the ONLY way to get
+  Playback "SVP motion interpolation", default ON since 2026-09-13 — a
+  no-op without an SVP install, so SVP users get true motion for files/VOD
+  out of the box) is the ONLY way to get
   real soap-opera-effect frame synthesis — mpv's own `interpolation` cannot
   do it (see the verified limit below). NOTHING is bundled: SVP is
   proprietary (~$25 lifetime, 30-day trial, one PC per license) and we only
   cooperate with the user's own install, like SMPlayer/VLC/Plex do. No SVP
   install = greyed-out checkbox, zero behavior change.
+  LIVE TV NEVER USES SVP (user decision 2026-09-13): SVP mode is baked into
+  the backend at creation, so `PlayerWidget._svp_wanted_for(item)` (setting
+  on AND item not live) drives creation, `play()` rebuilds the backend when
+  crossing the live/non-live boundary, and `_media_backend_svp` snapshots
+  the WANTED state so apply_config/VLC/missing-SVP never loop-recreate.
   ARCHITECTURE, and why it must stay this way (all verified live, 2026-08):
   * SVP injects its filter chain through VapourSynth, which EMBEDS ITS OWN
     CPython 3.12. libmpv running inside DeepFlux's Python 3.11 process
@@ -495,9 +502,11 @@
     `PlayerWidget._on_position` then treats the media as live — grey,
     unclickable progress bar and disabled skip buttons (reported bug).
   MEASURED end-to-end: local `Mutiny (2026)` and an IPTV **VOD** stream both
-  go 23.976 -> 119.88 fps with `vf=[svp]`; an IPTV **LIVE** channel goes
-  25 -> 50 fps (`vf=[lavfi, svp]`) and holds steady (20.1s of playback in
-  22s wall, no stall/restart) — so SVP is left enabled for live too.
+  go 23.976 -> 119.88 fps with `vf=[svp]`; an IPTV **LIVE** channel also
+  worked (25 -> 50 fps, 20.1s of playback in 22s wall, no stall/restart)
+  when SVP was allowed on live — but live is EXCLUDED by default since
+  2026-09-13 (see `_svp_wanted_for` above); the measurement stays here so
+  nobody has to re-probe it if that decision is ever revisited.
   Pause/seek/tracks/duration/position callbacks all keep working.
   When a provider stream fails to open here, check the mpv log for
   `tls: IO error: Error number -10054` (WSAECONNRESET) BEFORE suspecting this

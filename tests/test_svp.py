@@ -26,10 +26,13 @@ def _mpv_backend_cls():
 
 # -- config ------------------------------------------------------------------
 
-def test_svp_config_defaults_off(tmp_path):
+def test_svp_config_defaults_on(tmp_path):
+    # Default ON: with no SVP installed it is a no-op, so SVP users get
+    # true motion for files/VOD out of the box. Live TV never uses SVP
+    # regardless of this flag (PlayerWidget._svp_wanted_for).
     from config import DeeptorrentConfig
     cfg = DeeptorrentConfig.from_file(str(tmp_path / "missing.json"))
-    assert cfg.iptv.svp_enabled is False
+    assert cfg.iptv.svp_enabled is True
 
 
 def test_svp_config_round_trip(tmp_path):
@@ -38,6 +41,10 @@ def test_svp_config_round_trip(tmp_path):
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"iptv": {"svp_enabled": True}}, f)
     assert DeeptorrentConfig.from_file(path).iptv.svp_enabled is True
+    # An explicit opt-out survives a reload.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"iptv": {"svp_enabled": False}}, f)
+    assert DeeptorrentConfig.from_file(path).iptv.svp_enabled is False
 
 
 # -- install detection --------------------------------------------------------

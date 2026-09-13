@@ -69,6 +69,13 @@
     letter-spacing: 0.12em;
     color: rgba(255, 255, 255, 0.45);
   }
+  p.note {
+    margin-top: 10px;
+    font-size: 0.75rem;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.35);
+  }
+  p.note b { color: rgba(255, 255, 255, 0.55); font-weight: 600; }
   p.live {
     margin-top: 10px;
     font-size: 0.75rem;
@@ -153,6 +160,9 @@
          static file; it redirects uncounted when the counter isn't set up. -->
     <a class="dl" href="/api/download?f=DeepFlux4.3Setup.exe" download>Download</a>
     <p class="meta">DeepFlux 4.3 · Windows 10/11 64-bit · posted 2026-09-13</p>
+    <p class="note">Unsigned build — if Windows shows “protected your PC”,
+      choose <b>More info → Run anyway</b>, or right-click the downloaded
+      file → <b>Properties → Unblock</b> before running it.</p>
     <p class="live" id="live" hidden
        title="The user count is anonymous — a random id per install, nothing else. Opt out in the app's Download settings."></p>
   </section>

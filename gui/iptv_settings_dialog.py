@@ -661,7 +661,8 @@ class IPTVPlaybackDialog(_SettingsPage):
             "Small GPU cost; mpv backend only.\n"
             "Note: this is NOT TV-style motion smoothing — it never creates\n"
             "new frames, and has no visible effect when the video fps divides\n"
-            "the refresh rate (e.g. 24 fps movies on a 120 Hz display)."
+            "the refresh rate (e.g. 24 fps movies on a 120 Hz display).\n"
+            "Files and VOD only — live TV always plays without it."
         )
         pl.addRow("", self.interpolation)
 
@@ -671,9 +672,11 @@ class IPTVPlaybackDialog(_SettingsPage):
             "24 fps movies move like high-frame-rate video (verified here:\n"
             "23.976 -> 119.88 fps).\n\n"
             "Requires your own SVP 4 install (svp-team.com, 30-day trial);\n"
-            "nothing is bundled. Playback then runs in SVP's mpv player,\n"
+            "nothing is bundled. On by default whenever SVP 4 is found —\n"
+            "untick to disable. Playback then runs in SVP's mpv player,\n"
             "embedded in this window. Costs GPU; takes effect on the next\n"
-            "file you play. Not used for live TV."
+            "file you play. Local files and VOD only — live TV always\n"
+            "plays without SVP."
         )
         from iptv import svp as _svp
         _inst = _svp.find_install()

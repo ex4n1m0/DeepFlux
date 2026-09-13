@@ -4970,18 +4970,80 @@ def test_player_applies_pause_buffer_only_to_live_playback(tmp_path):
     QApplication.instance() or QApplication([])
     cfg = DeeptorrentConfig()
     cfg.iptv.live_pause_buffer_seconds = 180
+    cfg.iptv.svp_enabled = False  # this test stubs _ensure_backend; skip SVP rebuilds
     mgr, pl = _manager_with_playlist(tmp_path)
     player = PlayerWidget(mgr, cfg)
     backend = mock.MagicMock()
     player._media_backend = backend
     player._backend = backend
-    player._ensure_backend = lambda: True
+    player._ensure_backend = lambda *a, **k: True
     player.play(pl.channels[0])
     backend.set_live_pause_buffer.assert_called_with(180)
 
     movie = Movie(id="s1::movie", name="Film", url="http://host/film.mkv")
     player.play(movie)
     backend.set_live_pause_buffer.assert_called_with(0)
+    player.shutdown()
+    mgr.shutdown()
+
+
+def test_svp_backend_skips_live_and_returns_for_files(tmp_path, monkeypatch):
+    """SVP is baked into the backend at creation: files/VOD get the SVP
+    backend when the setting is on, live TV never does, and crossing the
+    boundary rebuilds the backend instead of reusing the wrong one."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    import gui.iptv_tab as iptab
+    from gui.iptv_tab import PlayerWidget
+
+    QApplication.instance() or QApplication([])
+    cfg = DeeptorrentConfig()
+    cfg.iptv.svp_enabled = True
+    mgr, pl = _manager_with_playlist(tmp_path)
+    player = PlayerWidget(mgr, cfg)
+    player._prepare_svp = lambda: True  # pretend SVP 4 is installed
+    requested = []
+
+    def _factory(parent_widget, preferred="mpv", svp=False):
+        requested.append(svp)
+        b = mock.MagicMock()
+        b.svp_requested = svp
+        return b
+
+    monkeypatch.setattr(iptab, "create_backend", _factory)
+
+    movie = Movie(id="s1::movie", name="Film", url="http://host/film.mkv")
+    player.play(movie)
+    assert player._svp_wanted_for(movie) is True
+    assert requested == [True]
+
+    # Switching to a live channel rebuilds WITHOUT SVP…
+    player.play(pl.channels[0])
+    assert player._svp_wanted_for(pl.channels[0]) is False
+    assert requested == [True, False]
+
+    # …and a file afterwards rebuilds WITH it again.
+    player.play(movie)
+    assert requested == [True, False, True]
+    player.shutdown()
+    mgr.shutdown()
+
+
+def test_svp_wanted_follows_setting_and_section(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+
+    QApplication.instance() or QApplication([])
+    mgr, pl = _manager_with_playlist(tmp_path)
+    player = PlayerWidget(mgr, DeeptorrentConfig())  # svp_enabled default True
+    movie = Movie(id="s1::movie", name="Film", url="http://host/film.mkv")
+    assert player._svp_wanted_for(movie) is True
+    assert player._svp_wanted_for(pl.channels[0]) is False
+    player._config.iptv.svp_enabled = False
+    assert player._svp_wanted_for(movie) is False
     player.shutdown()
     mgr.shutdown()
 

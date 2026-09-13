@@ -309,12 +309,12 @@ the grid; unmute the ones you want with the 🔇 in the tile's strip.</p>
       (measured: 23.976 → 119.88 fps). This needs
       <a href="https://www.svp-team.com/">SVP 4</a>, a separate paid program
       (~$25 one-off, 30-day free trial) — nothing is bundled, and DeepFlux
-      works exactly as before without it. Install SVP 4 <b>including its mpv
-      player component</b>, then tick "SVP motion interpolation" in
-      Play → Playback; it applies to the next file you play. Works with local
-      files, VOD and live TV, and costs GPU power. If SVP isn't found the
-      option stays greyed out, and if it ever fails DeepFlux falls back to
-      normal playback.</li>
+      works exactly as before without it. It switches on by itself whenever
+      SVP 4 <b>including its mpv player component</b> is installed — untick
+      "SVP motion interpolation" in Play → Playback to disable it. Works with
+      local files and VOD, and costs GPU power; live TV always plays without
+      SVP. If SVP isn't found the option stays greyed out, and if it ever
+      fails DeepFlux falls back to normal playback.</li>
   <li>Aspect ratio cycles with <code>A</code>; <code>F</code> or double-click for fullscreen.</li>
 </ul>
 
@@ -440,6 +440,15 @@ the network when you ask it to.</p>
 </table>
 
 <h2>Troubleshooting</h2>
+
+<div class="warn">
+<b>"Windows protected your PC" when installing:</b> the setup file is
+unsigned, so SmartScreen warns about it on first download. The file is
+safe — click <b>More info → Run anyway</b>. To skip the warning entirely,
+right-click the downloaded setup file → <b>Properties</b> → tick
+<b>Unblock</b> → OK before running it. The warning fades away on its own
+once enough people have installed the release.
+</div>
 
 <div class="warn">
 <b>Agent not responding:</b> Check your API key in File → API Keys.

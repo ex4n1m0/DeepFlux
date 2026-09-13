@@ -212,7 +212,7 @@ class PlayerWidget(QWidget):
         self._saved_limits = (0, 0)
         self._backend: Optional[PlayerBackend] = None   # currently active
         self._media_backend: Optional[PlayerBackend] = None  # mpv/VLC
-        self._media_backend_svp = False   # iptv.svp_enabled value at backend creation
+        self._media_backend_svp = False   # SVP wanted for the item the backend was built for
         self._backend_recreate_on_play = False  # SVP toggle pending (see apply_config)
         self._milkdrop: Optional[Any] = None            # Butterchurn (audio)
         self._current_item: Any = None
@@ -503,21 +503,34 @@ class PlayerWidget(QWidget):
         self._adaptive_cache_secs = 0
 
     # -- backend lifecycle ---------------------------------------------------
-    def _ensure_backend(self) -> bool:
+    def _svp_wanted_for(self, item: Any) -> bool:
+        """Whether the backend for ``item`` should be the SVP one.
+
+        True only when the setting is on AND the item is not a live
+        channel — live TV always plays on the plain backend (decision
+        2026-09-13): SVP's frame synthesis is for film-cadence files, and
+        live needs the leanest decode path providers allow.
+        """
+        return bool(self._config.iptv.svp_enabled) and not self._manager.is_live_item(item)
+
+    def _ensure_backend(self, want_svp: Optional[bool] = None) -> bool:
         """Create the media backend (mpv/VLC). MilkDrop is a second, lazily
         created backend that takes over for audio files — see
         :meth:`_play_with_milkdrop`."""
         if self._media_backend is None:
-            svp_on = self._prepare_svp()
+            if want_svp is None:
+                want_svp = self._svp_wanted_for(self._current_item)
+            svp_on = bool(want_svp) and self._prepare_svp()
             mb = create_backend(self.surface, preferred=self._config.iptv.preferred_player,
                                 svp=svp_on)
             if mb is None:
                 self._show_error("No playback backend available. See Settings → IPTV.")
                 return False
-            # Snapshot the SETTING (not whether the backend honors it) so a
-            # VLC backend doesn't retrigger the recreate flag every time
-            # apply_config runs while SVP is enabled.
-            self._media_backend_svp = bool(self._config.iptv.svp_enabled)
+            # Snapshot the WANTED state (setting on + this item class), not
+            # whether the backend honors it, so a VLC backend or a missing
+            # SVP doesn't retrigger the recreate flag every time apply_config
+            # runs while SVP is enabled.
+            self._media_backend_svp = bool(want_svp)
             self._wire_backend(mb)
             mb.set_hwdec(self._config.iptv.hwdec)
             mb.set_cache(self._config.iptv.cache_seconds)
@@ -806,10 +819,16 @@ class PlayerWidget(QWidget):
             self._checkpoint_current()
             if item is not self._current_item:
                 self._stop_recording()
+        # SVP is baked into the backend at creation — rebuild when crossing
+        # the live/non-live boundary so live TV never runs the SVP backend
+        # and files get it back afterwards.
+        if (self._media_backend is not None
+                and self._svp_wanted_for(item) != self._media_backend_svp):
+            self._backend_recreate_on_play = True
         if self._backend_recreate_on_play:
             self._backend_recreate_on_play = False
             self._teardown_media_backend()
-        if not self._ensure_backend():
+        if not self._ensure_backend(want_svp=self._svp_wanted_for(item)):
             return
         self._throttle_torrents()
         # Invalidate every callback/timer belonging to the previous item before
@@ -1733,7 +1752,7 @@ class PlayerWidget(QWidget):
     # -- settings live-apply -------------------------------------------------
     def apply_config(self) -> None:
         """Re-apply player settings (buffer, hwdec, overscan, interpolation) to a live backend."""
-        if bool(self._config.iptv.svp_enabled) != self._media_backend_svp:
+        if self._svp_wanted_for(self._current_item) != self._media_backend_svp:
             # SVP mode is baked into mpv at creation (IPC pipe + copy-back
             # hwdec) — rebuild the backend when the next file plays.
             self._backend_recreate_on_play = True

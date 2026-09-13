@@ -474,8 +474,11 @@ class IPTVConfig:
     interpolation: bool = True      # mpv smoothmotion frame blending (GPU cost)
     # SVP 4 (SmoothVideo Project) true motion interpolation. Nothing is
     # bundled — this only cooperates with the user's own SVP install (see
-    # iptv/svp.py). Files/VOD only; forces copy-back hwdec while active.
-    svp_enabled: bool = False
+    # iptv/svp.py). Default ON: with no SVP installed it is a harmless no-op,
+    # so SVP users get true motion for files/VOD out of the box. Live TV
+    # NEVER uses SVP regardless of this flag (PlayerWidget._svp_wanted_for);
+    # forces copy-back hwdec while active.
+    svp_enabled: bool = True
     # MilkDrop (Butterchurn) visualization while audio-only media plays.
     # milkdrop_preset is a .milk filename from the shipped MilkDrop/ folder or
     # ~/.deeptorrent/presets; empty = the first one found.
@@ -844,7 +847,7 @@ class DeeptorrentConfig:
                 recording_dir=data.get("iptv", {}).get("recording_dir", ""),
                 hwdec=data.get("iptv", {}).get("hwdec", "auto-safe"),
                 interpolation=bool(data.get("iptv", {}).get("interpolation", True)),
-                svp_enabled=bool(data.get("iptv", {}).get("svp_enabled", False)),
+                svp_enabled=bool(data.get("iptv", {}).get("svp_enabled", True)),
                 milkdrop_enabled=bool(data.get("iptv", {}).get("milkdrop_enabled", True)),
                 milkdrop_preset=data.get("iptv", {}).get("milkdrop_preset", ""),
                 preferred_player=data.get("iptv", {}).get("preferred_player", "mpv"),
