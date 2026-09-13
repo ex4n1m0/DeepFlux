@@ -1019,7 +1019,7 @@ class MainWindow(QMainWindow):
             logger.debug("telemetry heartbeat failed to start", exc_info=True)
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 4.1 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 4.2 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1512,9 +1512,9 @@ class MainWindow(QMainWindow):
         self.search_btn = search_btn
         agent_input_layout.addWidget(search_btn)
 
-        send_btn = QPushButton("Agent")
+        send_btn = QPushButton("Ask Agent")
         send_btn.setObjectName("btn_accent")
-        send_btn.setToolTip("Ask the conversational torrent agent (Enter)")
+        send_btn.setToolTip("Send the message to the AI agent (Enter)")
         send_btn.clicked.connect(self._on_agent_button)
         self.send_btn = send_btn
         agent_input_layout.addWidget(send_btn)
@@ -1532,20 +1532,25 @@ class MainWindow(QMainWindow):
         btn_layout = QHBoxLayout(torrents_btn_row)
         add_magnet_btn = QPushButton("+ Magnet")
         add_magnet_btn.setObjectName("btn_accent")
+        add_magnet_btn.setToolTip("Add a torrent from a magnet link")
         add_magnet_btn.clicked.connect(self._add_magnet_dialog)
         btn_layout.addWidget(add_magnet_btn)
         add_file_btn = QPushButton("+ Torrent File")
         add_file_btn.setObjectName("btn_accent")
+        add_file_btn.setToolTip("Add a torrent from a .torrent file")
         add_file_btn.clicked.connect(self._add_torrent_file_dialog)
         btn_layout.addWidget(add_file_btn)
         rss_btn = QPushButton("RSS")
+        rss_btn.setToolTip("Manage RSS feeds and their downloads")
         rss_btn.clicked.connect(self._open_rss_dialog)
         btn_layout.addWidget(rss_btn)
         btn_layout.addStretch()
         remove_btn = QPushButton("Remove")
+        remove_btn.setToolTip("Remove the selected torrent from the list (keep files)")
         remove_btn.clicked.connect(self._remove_selected_torrent)
         btn_layout.addWidget(remove_btn)
         clear_completed_btn = QPushButton("Clear Completed")
+        clear_completed_btn.setToolTip("Drop finished torrents from the list (files stay)")
         clear_completed_btn.clicked.connect(self._clear_completed_torrents)
         btn_layout.addWidget(clear_completed_btn)
         torrents_tab_layout.addWidget(torrents_btn_row)
@@ -1806,6 +1811,7 @@ class MainWindow(QMainWindow):
 
         self.browser_go_btn = QPushButton("Go")
         self.browser_go_btn.setObjectName("btn_accent")
+        self.browser_go_btn.setToolTip("Open the address or run the search (Enter)")
         self.browser_go_btn.clicked.connect(self._browser_navigate)
         nav_layout.addWidget(self.browser_go_btn)
 
@@ -1851,10 +1857,12 @@ class MainWindow(QMainWindow):
         self.browser_extension_btn.setObjectName("btn_secondary")
         self.browser_extension_btn.setCheckable(True)
         self.browser_extension_btn.setChecked(self.config.browser.extension_enabled)
-        self.browser_extension_btn.setIcon(self._load_browser_icon("adblock"))
+        # Own "video" icon — it used to reuse the adblock shield, putting two
+        # identical adjacent icons on the bar with different meanings.
+        self.browser_extension_btn.setIcon(self._load_browser_icon("video"))
         self.browser_extension_btn.setToolTip(
-            "Toggle video grabber (off by default — turn on to detect "
-            "downloadable videos)")
+            "Toggle video detection (off by default — turn on to offer "
+            "downloading videos found on the current page)")
         self.browser_extension_btn.setFixedWidth(34)
         self._update_extension_button_style()
         self.browser_extension_btn.clicked.connect(self._toggle_extension)

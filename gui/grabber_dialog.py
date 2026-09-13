@@ -190,10 +190,12 @@ class SiteGrabberDialog(QDialog):
         bottom_row = QHBoxLayout()
         self.download_btn = QPushButton("Download selected")
         self.download_btn.setObjectName("btn_accent")
+        self.download_btn.setToolTip("Queue only the ticked results")
         self.download_btn.clicked.connect(
             lambda: self._download(self._selected_videos()))
         bottom_row.addWidget(self.download_btn)
         self.download_all_btn = QPushButton("Download this page")
+        self.download_all_btn.setToolTip("Queue every result listed on this page")
         self.download_all_btn.clicked.connect(
             lambda: self._download(list(self._videos)))
         bottom_row.addWidget(self.download_all_btn)

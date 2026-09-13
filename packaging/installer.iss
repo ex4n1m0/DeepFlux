@@ -3,7 +3,7 @@
 ; Then open this script in Inno Setup and Compile.
 
 #define MyAppName "DeepFlux"
-#define MyAppVersion "4.1"
+#define MyAppVersion "4.2"
 #define MyAppPublisher "DeepFlux"
 #define MyAppExeName "DeepFlux.exe"
 ; PyInstaller onedir output, relative to this script (packaging/..\dist).
@@ -23,7 +23,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir={#BuildOutputDir}
-OutputBaseFilename=DeepFlux4.1Setup
+OutputBaseFilename=DeepFlux4.2Setup
 SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -43,6 +43,23 @@ DisableReadyPage=yes
 DisableProgramGroupPage=yes
 ; /VERYSILENT or /SILENT from the command line skips even the directory page.
 PrivilegesRequiredOverridesAllowed=dialog
+
+; --- Code signing / SmartScreen -------------------------------------------
+; Downloaded unsigned exes trigger "Windows protected your PC" (SmartScreen)
+; and every release restarts from zero reputation. Nothing in this script
+; can prevent that — only signing the SETUP EXE with a real certificate can.
+; When a certificate exists, sign the inner launcher first:
+;   signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
+;     dist\DeepFlux\DeepFlux.exe
+; then build the installer with a registered sign tool, e.g.:
+;   set DF_SIGNTOOL=deepflux
+;   ISCC /Sdeepflux="C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe" ^
+;     sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $f packaging\installer.iss
+; Without DF_SIGNTOOL set, the build stays unsigned exactly as before.
+#define DfSignTool GetEnv('DF_SIGNTOOL')
+#if DfSignTool != ""
+SignTool={#DfSignTool}
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

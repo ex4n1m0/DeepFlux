@@ -42,7 +42,7 @@
   "Failed to load or parse browsers.json" and DDG search silently dies in the
   frozen build).
 - Installer: `"$LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" packaging/installer.iss`
-  (Inno 7.0.2 also installed at `C:\Program Files\Inno Setup 7\`). Reads
+  (Inno 7.0.2 also installed at `C:\Program Files (Inno Setup 7\`). Reads
   `dist/DeepFlux/*` and writes `dist/DeepFlux<version>Setup.exe` by default.
   `BuildDir` and `BuildOutputDir` are command-line-overridable ISPP defines,
   both relative to installer.iss; this lets a locked-bundle build read
@@ -52,6 +52,18 @@
   rendered lines or it gets cropped on machines with larger system fonts /
   text scaling — long instructions belong in the in-app User Guide, not the
   installer final page.
+- Code signing (SmartScreen, added 2026-09-13): builds are UNSIGNED until a
+  certificate exists — downloaded setup exes therefore show the "Windows
+  protected your PC" warning, and every release restarts file reputation
+  from zero (Microsoft's own doc; EV no longer bypasses SmartScreen).
+  installer.iss has the conditional wiring: set env `DF_SIGNTOOL=<name>` and
+  pass ISCC `/S<name>="...signtool.exe" sign /fd SHA256 /tr
+  http://timestamp.digicert.com /td SHA256 $f` — see the comment block in
+  installer.iss; sign `dist/DeepFlux/DeepFlux.exe` the same way BEFORE ISCC
+  (Win11 Smart App Control checks installed executables too). signtool is at
+  `C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe`.
+  Keep ONE signing identity across releases — publisher reputation does not
+  transfer between certificates.
 - Logo: every derived asset (icon.ico, logo_48, wizard images, extension
   icons, website webp) is generated from the root `DeepFlux<version>.png` by
   `python packaging/gen_logo_assets.py` — update that script's source

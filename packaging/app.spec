@@ -102,6 +102,7 @@ _wanted_datas = [
     (os.path.join(project_root, "packaging", "icons", "adblock.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "adblock.png"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "grabber.svg"), "packaging/icons"),
+    (os.path.join(project_root, "packaging", "icons", "video.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "ffmpeg", "ffmpeg.exe"), "ffmpeg"),
     (os.path.join(project_root, "chrome_extension"), "chrome_extension"),
     # MilkDrop audio visualizer: the Butterchurn renderer + .milk converter run

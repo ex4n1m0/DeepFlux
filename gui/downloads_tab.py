@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyledItemDelegate,
     QStyleOptionProgressBar,
+    QStackedWidget,
     QTableView,
     QTableWidget,
     QTableWidgetItem,
@@ -412,40 +413,52 @@ class DownloadsTab(QWidget):
 
         self.add_url_btn = QPushButton("+ Add URL")
         self.add_url_btn.setObjectName("btn_accent")
+        self.add_url_btn.setToolTip("Add a direct file, HLS/DASH stream or YouTube link")
         self.add_url_btn.clicked.connect(self._add_url_dialog)
         toolbar.addWidget(self.add_url_btn)
 
         self.pause_btn = QPushButton("Pause")
+        self.pause_btn.setToolTip("Pause the selected download(s)")
         self.pause_btn.clicked.connect(self._pause_selected)
         toolbar.addWidget(self.pause_btn)
 
         self.resume_btn = QPushButton("Resume")
+        self.resume_btn.setToolTip("Resume the selected paused download(s)")
         self.resume_btn.clicked.connect(self._resume_selected)
         toolbar.addWidget(self.resume_btn)
 
         self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setToolTip(
+            "Stop the selected download(s) and delete the partial files")
         self.cancel_btn.clicked.connect(self._cancel_selected)
         toolbar.addWidget(self.cancel_btn)
 
         self.retry_btn = QPushButton("Retry")
+        self.retry_btn.setToolTip("Restart the selected failed download(s)")
         self.retry_btn.clicked.connect(self._retry_selected)
         toolbar.addWidget(self.retry_btn)
 
         self.remove_btn = QPushButton("Remove")
+        self.remove_btn.setToolTip(
+            "Drop the selected finished/cancelled download(s) from the list")
         self.remove_btn.clicked.connect(self._remove_selected)
         toolbar.addWidget(self.remove_btn)
 
         toolbar.addStretch()
 
         self.open_file_btn = QPushButton("Open File")
+        self.open_file_btn.setToolTip("Open the selected completed file")
         self.open_file_btn.clicked.connect(self._open_selected_file)
         toolbar.addWidget(self.open_file_btn)
 
         self.open_folder_btn = QPushButton("Open Folder")
+        self.open_folder_btn.setToolTip("Open the folder of the selected download")
         self.open_folder_btn.clicked.connect(self._open_selected_folder)
         toolbar.addWidget(self.open_folder_btn)
 
         self.clear_completed_btn = QPushButton("Clear Completed")
+        self.clear_completed_btn.setToolTip(
+            "Drop finished downloads from the list (files stay on disk)")
         self.clear_completed_btn.clicked.connect(self._clear_completed)
         toolbar.addWidget(self.clear_completed_btn)
 
@@ -502,7 +515,47 @@ class DownloadsTab(QWidget):
             self.table, fill_column=0, max_widths={4: 260, 6: 380})
         self.search_edit.textChanged.connect(self._set_search_filter)
         self.status_filter.currentIndexChanged.connect(self._set_status_filter)
-        layout.addWidget(self.table)
+
+        # Empty state: while the engine has no jobs at all, a stacked panel
+        # replaces the table (clean look — no blank striped grid behind
+        # text). One accent button carries the primary action; the table
+        # comes back on the next _refresh tick with rows.
+        empty = QWidget()
+        empty.setAccessibleName("No downloads yet")
+        empty_layout = QVBoxLayout(empty)
+        empty_layout.setContentsMargins(40, 40, 40, 40)
+        empty_layout.setSpacing(10)
+        empty_layout.addStretch(1)
+        empty_glyph = QLabel("⬇")
+        empty_glyph.setAlignment(Qt.AlignCenter)
+        empty_glyph.setStyleSheet("color: #3d5a80; font-size: 44px; border: none; background: transparent;")
+        empty_layout.addWidget(empty_glyph)
+        empty_title = QLabel("No downloads yet")
+        empty_title.setAlignment(Qt.AlignCenter)
+        empty_title.setStyleSheet("color: #ffffff; font-size: 21px; font-weight: 600; border: none; background: transparent;")
+        shrink_label(empty_title)  # QLabel minimums are full text width
+        empty_layout.addWidget(empty_title)
+        empty_text = QLabel("Add a file, stream or YouTube link to start downloading.")
+        empty_text.setAlignment(Qt.AlignCenter)
+        empty_text.setStyleSheet("color: #8a9ab0; font-size: 17px; border: none; background: transparent;")
+        shrink_label(empty_text)
+        empty_layout.addWidget(empty_text)
+        self._empty_add_btn = QPushButton("+ Add URL")
+        self._empty_add_btn.setObjectName("btn_accent")
+        self._empty_add_btn.setToolTip("Add a direct file, HLS/DASH stream or YouTube link")
+        self._empty_add_btn.clicked.connect(self._add_url_dialog)
+        empty_button_row = QHBoxLayout()
+        empty_button_row.addStretch(1)
+        empty_button_row.addWidget(self._empty_add_btn)
+        empty_button_row.addStretch(1)
+        empty_layout.addSpacing(8)
+        empty_layout.addLayout(empty_button_row)
+        empty_layout.addStretch(2)
+
+        self._table_stack = QStackedWidget()
+        self._table_stack.addWidget(self.table)
+        self._table_stack.addWidget(empty)
+        layout.addWidget(self._table_stack)
 
         # --- Details panel (segmented file downloads only; hidden for streams) ---
         self.details_group = QGroupBox("Details")
@@ -527,6 +580,7 @@ class DownloadsTab(QWidget):
         self._update_action_states()
 
     def _start_refresh_timer(self) -> None:
+        self._refresh()  # immediate first pass — empty panel / rows show at once
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(1000)
@@ -559,6 +613,12 @@ class DownloadsTab(QWidget):
         self._current_job_id = current_id if current_id in selected_ids else next(iter(selected_ids), None)
 
         self._update_summary(jobs)
+        # Empty state: the panel replaces the table only when the engine has
+        # no jobs at all (a search that filters everything out still shows
+        # the table + header, so the filters read as the reason it's empty).
+        no_jobs = not jobs
+        self._table_stack.setCurrentWidget(
+            self._table_stack.widget(1) if no_jobs else self.table)
         self._update_details()
         self._update_action_states()
 

@@ -294,6 +294,9 @@ class RoomTab(QWidget):
     def _update_room_bar(self) -> None:
         joined = self._room.is_joined()
         self._join_btn.setText("Leave" if joined else "Join")
+        self._join_btn.setToolTip(
+            "Leave the room" if joined else
+            "Connect to the DeepFlux Room community chat (first person in hosts it)")
         self._nick_edit.setEnabled(not joined)
         self._private_btn.setVisible(joined)
         mode = "encrypted" if self._room.encrypted else "UNENCRYPTED (source build)"

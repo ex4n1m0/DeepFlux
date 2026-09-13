@@ -144,6 +144,12 @@ def _source_empty_message(source: Any, playlist: Any) -> str:
 # Qt signal bridge: worker threads -> GUI thread
 # ---------------------------------------------------------------------------
 
+def _toggle_accent(btn: QPushButton, on: bool) -> None:
+    """Show a checkable button's state — global QSS has no :checked rule."""
+    btn.setObjectName("btn_accent" if on else "")
+    btn.style().polish(btn)
+
+
 class _IPTVSignals(QObject):
     progress = Signal(int, object)        # (count, total_or_None)
     load_done = Signal(bool, object)      # (ok, Playlist)
@@ -330,8 +336,10 @@ class PlayerWidget(QWidget):
         self.vol.valueChanged.connect(self._on_volume)
         ctrl.addWidget(self.vol)
 
-        self.aspect_btn = QPushButton("⛶")
-        self.aspect_btn.setToolTip("Cycle aspect ratio (A)")
+        # Label shows the CURRENT aspect mode — an icon-only "⛶" here was
+        # indistinguishable from the "⛶ Full" fullscreen button next row.
+        self.aspect_btn = QPushButton("Auto")
+        self.aspect_btn.setToolTip("Aspect ratio — click to cycle (A)")
         self.aspect_btn.clicked.connect(self._cycle_aspect)
         ctrl.addWidget(self.aspect_btn)
 
@@ -346,8 +354,8 @@ class PlayerWidget(QWidget):
         ctrl.addWidget(self.subs_btn)
 
         # Only meaningful while the MilkDrop visualizer is on screen.
-        self.preset_btn = QPushButton("🌀")
-        self.preset_btn.setToolTip("MilkDrop preset")
+        self.preset_btn = QPushButton("✨ Visual")
+        self.preset_btn.setToolTip("MilkDrop visualizer preset (music playback)")
         self.preset_btn.clicked.connect(self._show_preset_menu)
         self.preset_btn.hide()
         ctrl.addWidget(self.preset_btn)
@@ -393,13 +401,13 @@ class PlayerWidget(QWidget):
         # Narrow-window compaction (see _refit_controls): the transport row
         # otherwise demands ~950px of button minimums and locks the whole
         # window wide. These are the emoji-only buttons — a capped width plus
-        # tighter padding still leaves the glyph visible.
+        # tighter padding still leaves the glyph visible. Aspect/Visual carry
+        # short text labels instead, so they get their own (wider) caps.
         self._ctrl_layout = ctrl
         self._tools_row = tools
         self._narrow_emoji_btns = (
             self.rw_btn, self.play_btn, self.stop_btn, self.ff_btn,
-            self.mute_btn, self.aspect_btn, self.audio_btn, self.subs_btn,
-            self.preset_btn,
+            self.mute_btn, self.audio_btn, self.subs_btn,
         )
         self._narrow_controls = False
         self._ctrl_wide_min = 0
@@ -437,6 +445,7 @@ class PlayerWidget(QWidget):
         self.error_hint.setWordWrap(True)
         el.addWidget(self.error_hint)
         self.retry_btn = QPushButton("↻ Retry")
+        self.retry_btn.setToolTip("Try opening this stream again")
         self.retry_btn.setStyleSheet(
             "QPushButton { background-color: #2a7abf; color: white; "
             "border: none; border-radius: 6px; padding: 8px 24px; "
@@ -615,6 +624,7 @@ class PlayerWidget(QWidget):
         return self._multiview_grid
 
     def _on_multiview_toggled(self, on: bool) -> None:
+        _toggle_accent(self.mv_btn, on)
         if on:
             self.video_stack.setCurrentWidget(self._ensure_multiview())
         else:
@@ -626,6 +636,7 @@ class PlayerWidget(QWidget):
             self.mv_btn.blockSignals(True)
             self.mv_btn.setChecked(True)
             self.mv_btn.blockSignals(False)
+            _toggle_accent(self.mv_btn, True)
             return
         grid = self._multiview_grid
         if grid is None:
@@ -638,6 +649,7 @@ class PlayerWidget(QWidget):
         self.mv_btn.blockSignals(True)
         self.mv_btn.setChecked(False)
         self.mv_btn.blockSignals(False)
+        _toggle_accent(self.mv_btn, False)
 
     def _promote_from_grid(self, channel: Any) -> None:
         """A tile asked for the full player: leave grid mode (stopping all
@@ -1067,12 +1079,16 @@ class PlayerWidget(QWidget):
                 "QPushButton { padding: 2px 4px; }")
             for btn in self._narrow_emoji_btns:
                 btn.setMaximumWidth(46)
+            self.aspect_btn.setMaximumWidth(72)   # "2.35:1" must stay readable
+            self.preset_btn.setMaximumWidth(88)   # "✨ Visual"
             self.fs_btn.hide()
         else:
             self.controls.setStyleSheet(
                 "background-color: rgba(10,10,15,0.85);")
             for btn in self._narrow_emoji_btns:
                 btn.setMaximumWidth(_MAX_WIDGET_SIZE)
+            self.aspect_btn.setMaximumWidth(_MAX_WIDGET_SIZE)
+            self.preset_btn.setMaximumWidth(_MAX_WIDGET_SIZE)
             self.fs_btn.show()
 
     def _toggle_compact(self) -> None:
@@ -1132,7 +1148,9 @@ class PlayerWidget(QWidget):
         if self._backend is None:
             return
         self._aspect_idx = (self._aspect_idx + 1) % len(self._aspect_modes)
-        self._backend.set_aspect(self._aspect_modes[self._aspect_idx])
+        mode = self._aspect_modes[self._aspect_idx]
+        self._backend.set_aspect(mode)
+        self.aspect_btn.setText("Auto" if mode == "auto" else mode)
 
     # -- audio / subtitle tracks ---------------------------------------------
     @staticmethod
@@ -3538,10 +3556,12 @@ class IPTVTab(QWidget):
 
         self._view_grid_btn = QPushButton("▦ Grid")
         self._view_grid_btn.setObjectName("btn_accent")
+        self._view_grid_btn.setToolTip("Show content as poster tiles")
         self._view_grid_btn.clicked.connect(lambda: self._set_view("grid"))
         toolbar.addWidget(self._view_grid_btn)
 
         self._view_list_btn = QPushButton("≡ List")
+        self._view_list_btn.setToolTip("Show content as a details list")
         self._view_list_btn.clicked.connect(lambda: self._set_view("list"))
         toolbar.addWidget(self._view_list_btn)
 
@@ -4232,9 +4252,11 @@ class IPTVTab(QWidget):
         self._view_list_btn.style().polish(self._view_list_btn)
 
     def _toggle_sidebar(self, on: bool) -> None:
+        _toggle_accent(self._sidebar_btn, on)
         self._set_pane_visible(self._sidebar, on)
 
     def _toggle_content(self, on: bool) -> None:
+        _toggle_accent(self._content_btn, on)
         self._set_pane_visible(self._content, on)
 
     def _set_pane_visible(self, pane: QWidget, on: bool) -> None:

@@ -170,7 +170,7 @@ class FilePane(QWidget):
             "→", "Forward", "Go forward (Alt+Right)", self.go_forward)
         bar.addWidget(self._forward_btn)
         self._up_btn = self._nav_button(
-            "⬆", "Up", "Up one level (Backspace)", self.go_up)
+            "▲", "Up", "Up one level (Backspace)", self.go_up)
         bar.addWidget(self._up_btn)
         self._path_edit = QLineEdit()
         self._path_edit.setAccessibleName(f"{pane_name} path")
@@ -275,7 +275,9 @@ class FilePane(QWidget):
         button = QPushButton(text)
         button.setAccessibleName(f"{self._pane_name} {name.lower()}")
         button.setToolTip(tooltip)
-        button.setFixedWidth(30)
+        # 40px keeps the arrow glyphs readable; at 30px the emoji-presentation
+        # forms collapse into blobs (the "unclear buttons" report, 2026-09-13).
+        button.setFixedWidth(40)
         button.clicked.connect(slot)
         return button
 
@@ -381,6 +383,10 @@ class FilePane(QWidget):
     def set_show_hidden_system(self, show: bool) -> None:
         self._show_hidden_system = bool(show)
         self._hidden_btn.setChecked(self._show_hidden_system)
+        # Global QSS has no :checked rule — swap to the accent style so the
+        # ON state is visible (same pattern as the Play tab view toggles).
+        self._hidden_btn.setObjectName("btn_accent" if show else "")
+        self._hidden_btn.style().polish(self._hidden_btn)
         self._apply_filter()
         self._update_pane_status()
 
