@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import sys
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -1268,6 +1270,136 @@ def test_missing_source_raises(mock_engine, tmp_path):
         tools.call("copy_path", {"source": str(tmp_path / "nope"), "destination": str(tmp_path / "x")})
     with pytest.raises(ToolError, match="not found"):
         tools.call("delete_path", {"path": str(tmp_path / "nope")})
+
+
+# ---------------------------------------------------------------------------
+# Shell / execution tool (run_shell — setup installs; confirmation-gated)
+# ---------------------------------------------------------------------------
+
+def _py_cmd(code: str) -> str:
+    """A shell command line that runs `code` with the current interpreter."""
+    return f'"{sys.executable}" -c "{code}"'
+
+
+def test_run_shell_captures_output_and_marks_untrusted(tools):
+    result = tools.call("run_shell", {"command": _py_cmd("print('hello-shell')")})
+    assert result["success"] is True
+    assert result["returncode"] == 0
+    assert "hello-shell" in result["output"]
+    assert result["timed_out"] is False
+    assert "warning" not in result  # benign command -> no secret warning
+    # Command output can echo arbitrary external text — always marked untrusted.
+    assert result["_trust"] == "untrusted_external_content"
+
+
+def test_run_shell_nonzero_exit(tools):
+    result = tools.call("run_shell", {"command": _py_cmd("import sys; sys.exit(3)")})
+    assert result["success"] is False
+    assert result["returncode"] == 3
+
+
+def test_run_shell_timeout(mock_engine):
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+    start = time.monotonic()
+    result = tools.call("run_shell", {
+        "command": _py_cmd("import time; time.sleep(30)"),
+        "timeout_seconds": 5,
+    })
+    elapsed = time.monotonic() - start
+    assert result["success"] is False
+    assert result["timed_out"] is True
+    assert result["timeout_seconds"] == 5
+    # The tree-kill must actually work: the sleeping child dies with the
+    # shell, so the handler returns at ~timeout instead of blocking on the
+    # pipe until the child exits on its own (regression: ~30s here).
+    assert elapsed < 15, f"run_shell timeout returned after {elapsed:.1f}s"
+
+
+def test_run_shell_timeout_returns_when_pipe_survivor_clings_on(mock_engine):
+    """Regression (review 2026-09-14): killing only the shell leaves an orphan
+    holding the stdout pipe, and the drain read then blocks past any timeout.
+    `cmd /c start /b` leaves exactly such an orphan; the handler must still
+    return within timeout + bounded drain instead of waiting for it."""
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+    command = f'cmd /c start /b "" "{sys.executable}" -c "import time; time.sleep(60)"'
+    start = time.monotonic()
+    result = tools.call("run_shell", {"command": command, "timeout_seconds": 5})
+    elapsed = time.monotonic() - start
+    assert result["success"] is False
+    assert result["timed_out"] is True
+    assert elapsed < 35, f"run_shell blocked {elapsed:.1f}s behind a pipe survivor"
+
+
+def test_run_shell_output_truncated(tools):
+    result = tools.call("run_shell", {"command": _py_cmd("print('x' * 40000)")})
+    assert result["success"] is True
+    assert result["output_truncated"] is True
+    assert "[output truncated]" in result["output"]
+    assert len(result["output"]) < 20000
+
+
+def test_run_shell_detached_launches(tools, tmp_path):
+    result = tools.call("run_shell", {
+        "command": _py_cmd("open('marker.txt', 'w').write('x')"),
+        "cwd": str(tmp_path),
+        "wait": False,
+    })
+    assert result["success"] is True
+    assert result["launched"] is True
+    assert isinstance(result["pid"], int) and result["pid"] > 0
+    deadline = time.monotonic() + 15
+    while time.monotonic() < deadline and not (tmp_path / "marker.txt").exists():
+        time.sleep(0.1)
+    assert (tmp_path / "marker.txt").read_text() == "x"
+
+
+def test_run_shell_rejects_bad_args(tools, tmp_path):
+    with pytest.raises(ToolError, match="empty"):
+        tools.call("run_shell", {"command": "   "})
+    with pytest.raises(ToolError, match="does not exist"):
+        tools.call("run_shell", {"command": "echo hi", "cwd": str(tmp_path / "missing")})
+
+
+def test_run_shell_policy_and_routing(tools):
+    from agent.loop import DESTRUCTIVE_TOOLS, READ_ONLY_TOOLS
+    from agent.tools import WATCHDOG_AUTO_HEAL_TOOL_NAMES, tool_policy
+
+    assert "run_shell" in DESTRUCTIVE_TOOLS           # needs confirmation, always
+    assert "run_shell" not in READ_ONLY_TOOLS
+    assert "run_shell" not in WATCHDOG_AUTO_HEAL_TOOL_NAMES  # never auto-run by the watchdog
+    assert tool_policy("run_shell").confirmation == "always"
+
+    assert "run_shell" in tools.tool_names_for_context("please install ffmpeg for me")
+    assert "run_shell" in tools.tool_names_for_context("open a shell and check the version")
+    # Word-boundary routing: generic phrases must not pull the shell schema in.
+    assert "run_shell" not in tools.tool_names_for_context("run a quick search for Dune")
+    assert "run_shell" not in tools.tool_names_for_context("open the Command tab")
+    assert "run_shell" not in tools.tool_names_for_context("find an Ubuntu torrent")
+
+
+def test_run_shell_timeout_clamped_to_task_budget(mock_engine):
+    config = DeeptorrentConfig()
+    config.llm.task_timeout_seconds = 60
+    tools = ToolRegistry(mock_engine, config)
+    result = tools.call("run_shell", {"command": _py_cmd("print('ok')"), "timeout_seconds": 600})
+    assert result["success"] is True
+    assert result["timeout_seconds"] == 60  # a wait longer than the task budget is pointless
+
+
+def test_run_shell_flags_secret_dumping_commands(tools):
+    from agent.tools import SHELL_SECRET_WARNING
+
+    result = tools.call("run_shell", {
+        "command": _py_cmd("print(open(r'C:/Users/x/.deeptorrent/config.json').read(200))"),
+        "timeout_seconds": 15,
+    })
+    assert result["warning"] == SHELL_SECRET_WARNING
+
+    result = tools.call("run_shell", {"command": "set", "timeout_seconds": 15})
+    assert result["warning"] == SHELL_SECRET_WARNING
+
+    result = tools.call("run_shell", {"command": _py_cmd("print('plain output')")})
+    assert "warning" not in result
 
 
 # ---------------------------------------------------------------------------

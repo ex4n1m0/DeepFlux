@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 4.4 — User Guide</h1>
+<h1>DeepFlux 4.5 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -128,6 +128,12 @@ config just like the settings dialogs do:</p>
     VLC as the player". Secret fields stay write-only via the key tool.</li>
   <li><b>Search sources</b> — add/remove torrent indexers, then use them
     right away.</li>
+  <li><b>Missing components</b> — "install FFmpeg for me", "get Jackett set up":
+    the agent can download installers from official sources and run them
+    (e.g. via <code>winget</code>). Every command is shown to you for approval
+    before it runs — nothing executes without your confirmation. Commands run
+    with your own permissions, so system-wide installs may show the normal
+    Windows UAC prompt.</li>
 </ul>
 
 <p>The agent searches in this order: Jackett (structured results) → source web searches →
@@ -547,7 +553,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("4.4 — AI Deep Search")
+        version = QLabel("4.5 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

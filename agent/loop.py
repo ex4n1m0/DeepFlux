@@ -17,6 +17,7 @@ from agent.tools import (
     ToolRegistry,
     redact_sensitive_data,
     redact_tool_arguments,
+    shell_secret_warning,
     tool_policy,
 )
 from config import DeeptorrentConfig
@@ -85,6 +86,7 @@ App setup (you can set up anything the user could type into a dialog):
 - API keys & credentials: `list_api_keys` shows which slots exist and whether they are configured; `set_api_key` writes or clears one. Key values are WRITE-ONLY: you may set one when the user gives it to you (never echo it back after they do), but you can never read existing values. Never invent or guess a key value.
 - General settings: `list_settings` / `set_settings` change the app's non-secret options by dotted path (e.g. `iptv.epg_url`, `download.max_concurrent`). Secret fields show as <set>/<not set> and are set via set_api_key instead.
 - Torrent search sources: `list_torrent_sources` / `add_torrent_source` / `remove_torrent_source` manage the indexers/sites that search_indexers queries.
+- Missing components (you can finish the machine's setup): when a feature needs an external tool that isn't installed — FFmpeg (conversions, subtitle timing), Jackett (torrent indexers), SVP (motion interpolation), yt-dlp updates on source builds — offer to install it. Search the web for the official source, download via `add_download` (or prefer `winget` when available), then run the installer with `run_shell`. EVERY `run_shell` call requires user confirmation: state the exact command and what it will do first. Prefer official sources (winget, vendor sites) and silent/quiet flags (`/silent`, `/S`, `--silent`); never use third-party mirrors or pipe a remote script into the shell. Commands run with the user's own permissions — system-wide installs may pop a Windows UAC prompt; warn the user to expect it. Use the default (wait) mode for commands that finish in a few minutes; use wait=false only for installers that show their own UI or clearly outlast the task budget, then verify the result afterwards (files on disk or a version-check command) instead of tight polling. `run_shell` is a last resort — never use it for anything a dedicated tool already does (downloads, file moves, settings).
 - RSS feeds: `add_rss_feed` / `update_rss_feed` / `remove_rss_feed` (see below).
 - These tools persist to the user's config — mention what you changed and that they can also review it in the app's settings dialogs.
 
@@ -484,6 +486,13 @@ class AgentLoop:
             previews.append(f"- `{name}` ({marker}): `{preview}`")
         self._pending_created_at = time.time()
         ask = "I need your confirmation before executing this tool batch:\n\n" + "\n".join(previews)
+        # Informed consent for commands that print stored secrets (env dumps,
+        # the app's config/credential files) — shell output isn't redactable.
+        for p in self.pending:
+            if p.tool_name == "run_shell":
+                warning = shell_secret_warning(str(p.arguments.get("command", "")))
+                if warning:
+                    ask += "\n\n⚠️ " + warning
         if reasoning:
             ask += f"\n\nReason: {reasoning}"
         ask += "\n\nReply **yes** to proceed or **no** to cancel. This approval expires in 5 minutes."

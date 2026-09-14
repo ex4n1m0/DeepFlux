@@ -1019,7 +1019,7 @@ class MainWindow(QMainWindow):
             logger.debug("telemetry heartbeat failed to start", exc_info=True)
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 4.4 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 4.5 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -3812,6 +3812,7 @@ class MainWindow(QMainWindow):
         "list_torrent_sources": ("🗂", "Listing search sources"),
         "add_torrent_source": ("🗂", "Adding search source"),
         "remove_torrent_source": ("🗂", "Removing search source"),
+        "run_shell": ("💻", "Running command"),
     }
 
     def _format_tool_args(self, tool: str, args: dict) -> str:
@@ -3885,6 +3886,9 @@ class MainWindow(QMainWindow):
             return f"{args.get('path', '')} = {args.get('value', '')}"
         if tool in ("add_torrent_source", "remove_torrent_source"):
             return f"\"{args.get('name', '') or args.get('source', '')}\""
+        if tool == "run_shell":
+            command = str(args.get("command", ""))
+            return f"\"{command[:90]}{'…' if len(command) > 90 else ''}\"" + (" (detached)" if not args.get("wait", True) else "")
         # Generic fallback.
         parts = [f"{k}={v}" for k, v in args.items() if k not in ("save_path",)]
         return ", ".join(parts[:3]) if parts else ""

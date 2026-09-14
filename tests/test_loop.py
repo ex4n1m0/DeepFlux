@@ -370,9 +370,43 @@ def test_mixed_batch_is_preserved_until_confirmation(mock_engine):
     mock_engine.add_magnet.assert_called_once()
 
 
-def test_reject_clears_pending_action(mock_engine):
+def test_run_shell_confirmation_warns_about_secret_dumping(mock_engine):
+    """A run_shell command that would print stored secrets must carry the
+    informed-consent warning in the confirmation ask (shell output is not
+    redactable, so the approval has to be informed)."""
     from agent.llm import LLMMessage
 
+    def _shell_call(command: str) -> dict:
+        return {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "run_shell", "arguments": json.dumps({"command": command})},
+        }
+
+    config = DeeptorrentConfig()
+
+    secret_loop = AgentLoop(
+        mock_engine, config, tools=ToolRegistry(mock_engine, config),
+        llm=MockLLM([LLMMessage(role="assistant", tool_calls=[
+            _shell_call(r"type %USERPROFILE%\.deeptorrent\config.json")])]),
+    )
+    result = secret_loop.chat("check my config")
+    assert result["pending_confirmation"] is True
+    assert "expose stored secrets" in result["content"]
+    assert secret_loop.pending  # still awaiting approval — nothing executed
+
+    plain_loop = AgentLoop(
+        mock_engine, config, tools=ToolRegistry(mock_engine, config),
+        llm=MockLLM([LLMMessage(role="assistant", tool_calls=[
+            _shell_call("ffmpeg -version")])]),
+    )
+    result = plain_loop.chat("check my ffmpeg version")
+    assert result["pending_confirmation"] is True
+    assert "expose stored secrets" not in result["content"]
+
+
+def test_reject_clears_pending_action(mock_engine):
+    from agent.llm import LLMMessage
     call = {
         "id": "call_1", "type": "function",
         "function": {"name": "delete_path", "arguments": json.dumps({"path": "/tmp/file"})},

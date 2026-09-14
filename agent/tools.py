@@ -10,6 +10,8 @@ import os
 import re
 import shutil
 import socket
+import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -74,6 +76,9 @@ CONFIRMATION_TOOL_NAMES = frozenset({
     "iptv_add_source", "iptv_update_source", "iptv_remove_source",
     "set_api_key", "set_settings",
     "add_torrent_source", "remove_torrent_source",
+    # Shell/execution (user decision 2026-09-14: the agent may download and
+    # run installers for missing components — every call needs approval).
+    "run_shell",
 })
 
 WATCHDOG_AUTO_HEAL_TOOL_NAMES = frozenset({
@@ -96,7 +101,27 @@ UNTRUSTED_RESULT_TOOLS = frozenset({
     "web_search", "web_fetch", "search_indexers", "find_alt_trackers",
     "find_alt_release", "get_rss_feed_items",
     "browser_get_content", "browser_snapshot", "browser_wait",
+    "run_shell",  # command output can echo arbitrary external text
 })
+
+
+# --- run_shell limits -------------------------------------------------------
+# Windowed build: without CREATE_NO_WINDOW every spawn flashes a console
+# (same lesson as dlmgr/ffmpeg.py). Output is head+tail-truncated so a chatty
+# installer can't flood the LLM context. The wait cap also stays under the
+# agent task timeout (config.llm.task_timeout_seconds, default 600; the loop
+# only enforces that budget BETWEEN calls) so a hung command can't double a
+# task's worst-case runtime.
+_SHELL_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_SHELL_OUTPUT_LIMIT = 16000
+_SHELL_TIMEOUT_MIN = 5
+_SHELL_TIMEOUT_MAX = 600
+
+# Keyword router for run_shell (word boundaries — see tool_names_for_context).
+_SHELL_ROUTE_RE = re.compile(
+    r"\b(shell|terminal|powershell|cmd|install\w*|uninstall\w*|execute|exe|winget|ffmpeg|jackett|svp)\b",
+    re.IGNORECASE,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +334,37 @@ def redact_sensitive_data(value: Any) -> Any:
     return value
 
 
+# Commands whose OUTPUT is likely to contain stored secrets (user-saved API
+# keys live in ~/.deeptorrent/config.json; the write-only-key policy means the
+# agent must never read them back). Shell output is not key-redactable, so the
+# consent must at least be INFORMED: the warning is appended to both the
+# confirmation ask and the tool result.
+_SECRET_DUMP_PATTERNS = (
+    re.compile(r"\.deeptorrent", re.IGNORECASE),
+    re.compile(r"config\.json", re.IGNORECASE),
+    re.compile(r"control_api|\.dfc\b|install_id", re.IGNORECASE),
+    re.compile(r"(^|[&|;]\s*|(?:cmd|cmd.exe)\s+/c\s+)set(\s|$)", re.IGNORECASE),  # cmd env dump
+    re.compile(r"(^|[&|;]\s*)env(\s|$)", re.IGNORECASE),          # sh env dump
+    re.compile(r"printenv|Get-ChildItem\s+env|gci\s+env|Get-Item\s+env", re.IGNORECASE),
+    re.compile(r"\bkeychain\b|\bcredentials?\b", re.IGNORECASE),
+)
+
+SHELL_SECRET_WARNING = (
+    "This command can expose stored secrets (API keys, tokens, passwords) to "
+    "the AI model and its provider — make sure you really intend that before "
+    "approving."
+)
+
+
+def shell_secret_warning(command: str) -> str:
+    """Return the informed-consent warning when a run_shell command looks like
+    it will print secrets (env dumps, the app's own config/credential files)."""
+    text = command or ""
+    if any(pattern.search(text) for pattern in _SECRET_DUMP_PATTERNS):
+        return SHELL_SECRET_WARNING
+    return ""
+
+
 def validate_public_http_url(url: str) -> str:
     from urllib.parse import urlparse
 
@@ -441,6 +497,7 @@ class ToolRegistry:
                       "iptv_remove_source", "list_api_keys", "set_api_key",
                       "list_settings", "set_settings", "list_torrent_sources",
                       "add_torrent_source", "remove_torrent_source"},
+            "shell": {"run_shell"},
         }
         if any(word in text for word in ("rss", "feed", "subscription")):
             selected.update(groups["rss"])
@@ -455,6 +512,11 @@ class ToolRegistry:
             "source", "indexer", "provider", "credential",
         )):
             selected.update(groups["setup"])
+        # Word-boundary matching: bare substrings over-trigger ("run a search",
+        # the app's own "Command" tab). Confirmation still gates every call —
+        # this only shapes which schema the model sees.
+        if _SHELL_ROUTE_RE.search(text):
+            selected.update(groups["shell"])
         return selected & all_names
 
     def shutdown(self) -> None:
@@ -1488,6 +1550,39 @@ class ToolRegistry:
                     required=["source"],
                 ),
                 "handler": self._remove_torrent_source,
+            },
+            "run_shell": {
+                "schema": self._tool_schema(
+                    name="run_shell",
+                    description=(
+                        "Run a shell command on the user's machine with their permissions — "
+                        "for setting up missing DeepFlux components (e.g. winget-install FFmpeg "
+                        "or Jackett, run a downloaded installer, check whether something is "
+                        "installed) and other tasks the other tools can't express. ALWAYS "
+                        "requires user confirmation: state the exact command and why it is "
+                        "needed before calling. Prefer official sources (winget, vendor sites) "
+                        "and silent install flags; never download from third-party mirrors or "
+                        "pipe a remote script straight into the shell."
+                    ),
+                    properties={
+                        "command": {"type": "string", "description": "The full command line to execute."},
+                        "cwd": {"type": "string", "description": "Working directory (default: the user's temp dir).", "default": ""},
+                        "timeout_seconds": {
+                            "type": "integer",
+                            "description": "How long to wait when wait=true (default 300, max 600).",
+                            "minimum": 5, "maximum": 600, "default": 300,
+                        },
+                        "wait": {
+                            "type": "boolean",
+                            "description": "Wait and return the captured output (default). "
+                            "false = launch detached and return the pid immediately — use for "
+                            "installers that show their own UI or run longer than the task budget.",
+                            "default": True,
+                        },
+                    },
+                    required=["command"],
+                ),
+                "handler": self._run_shell,
             },
             # --- Browser (the Browse tab — full control of the embedded browser) ---
             "browser_list_tabs": {
@@ -3669,6 +3764,125 @@ class ToolRegistry:
         self.config.sources.sources = [s for s in rows if s.id != target.id]
         self._persist_config()
         return {"success": True, "removed": target.name}
+
+    def _run_shell(self, command: str, cwd: str = "", timeout_seconds: int = 300,
+                   wait: bool = True) -> Dict[str, Any]:
+        """Execute a shell command (confirmation-gated — see CONFIRMATION_TOOL_NAMES).
+
+        Runs with the app's own (non-elevated) token; a command that needs
+        admin rights triggers the normal Windows UAC prompt. shell=True keeps
+        cmd built-ins, && chains and quoting working; stdin is DEVNULL so
+        nothing can hang waiting for input."""
+        command = (command or "").strip()
+        if not command:
+            raise ToolError("command must not be empty")
+        # The per-call wait cap also stays under the agent's task wall-clock
+        # budget (the loop only enforces it BETWEEN calls, so a wait longer
+        # than the budget would double a task's worst-case runtime).
+        task_cap = int(getattr(self.config.llm, "task_timeout_seconds", 600) or 600)
+        timeout = int(max(_SHELL_TIMEOUT_MIN, min(timeout_seconds, _SHELL_TIMEOUT_MAX,
+                                                  max(_SHELL_TIMEOUT_MIN, task_cap))))
+        workdir = os.path.abspath(os.path.expanduser(cwd)) if (cwd or "").strip() else tempfile.gettempdir()
+        if not os.path.isdir(workdir):
+            raise ToolError(f"Working directory does not exist: {workdir}")
+        self._progress(f"run_shell: {command[:120]}")
+        warning = shell_secret_warning(command)
+        if not wait:
+            proc = subprocess.Popen(
+                command, shell=True, cwd=workdir,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=_SHELL_CREATION_FLAGS,
+            )
+            result: Dict[str, Any] = {
+                "success": True,
+                "launched": True,
+                "pid": proc.pid,
+                "command": command,
+                "note": "Launched detached — not waited on. Verify afterwards (installed "
+                        "files on disk, or a short version-check command); avoid tight "
+                        "polling loops.",
+            }
+            if warning:
+                result["warning"] = warning
+            return result
+        popen_kwargs: Dict[str, Any] = {}
+        if os.name != "nt":
+            popen_kwargs["start_new_session"] = True  # own process group -> killable tree
+        proc = subprocess.Popen(
+            command, shell=True, cwd=workdir,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=_SHELL_CREATION_FLAGS,
+            **popen_kwargs,
+        )
+        output = ""
+        timed_out = False
+        try:
+            output, _ = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            # Killing only the shell (what subprocess.run's timeout does) is NOT
+            # enough: the real command is a cmd.exe CHILD holding the stdout
+            # pipe, and the drain read then blocks until it exits — verified to
+            # hang the agent worker past any timeout. Kill the whole tree, then
+            # drain with a hard bound and abandon the output if a survivor
+            # outside the tree (e.g. an elevated installer) still clings on.
+            self._kill_process_tree(proc)
+            try:
+                output, _ = proc.communicate(timeout=10)
+            except (subprocess.TimeoutExpired, OSError, ValueError):
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                output = ""
+        if timed_out:
+            return {
+                "success": False,
+                "error": f"Timed out after {timeout}s. The process tree was killed, but a "
+                         "child outside it may still be running — check with a "
+                         "follow-up command before retrying.",
+                "timed_out": True,
+                "timeout_seconds": timeout,
+                "cwd": workdir,
+                **({"warning": warning} if warning else {}),
+            }
+        output = output or ""
+        truncated = len(output) > _SHELL_OUTPUT_LIMIT
+        if truncated:
+            half = _SHELL_OUTPUT_LIMIT // 2
+            output = output[:half] + "\n... [output truncated] ...\n" + output[-half:]
+        return {
+            "success": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "output": output,
+            "output_truncated": truncated,
+            "timed_out": False,
+            "timeout_seconds": timeout,
+            "cwd": workdir,
+            **({"warning": warning} if warning else {}),
+        }
+
+    @staticmethod
+    def _kill_process_tree(proc: subprocess.Popen) -> None:
+        """Terminate the shell AND its children (the timeout-kill path)."""
+        try:
+            if os.name == "nt":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, creationflags=_SHELL_CREATION_FLAGS,
+                )
+            else:
+                import signal
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except (OSError, PermissionError, ProcessLookupError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
 
     # ------------------------------------------------------------------
     # Browser handlers (the Browse tab — via the GUI-injected bridge which

@@ -914,6 +914,33 @@
     the mutations come with setup keywords ("source", "setting", "config",
     "api key", "indexer", "provider", "credential"); "playlist"/"m3u" also
     trigger the iptv group.
+- `run_shell` (user decision 2026-09-14): the agent may run shell commands
+  to finish the machine's setup (winget-install FFmpeg/Jackett, run a
+  downloaded installer, check what's installed). CONFIRMATION-gated like the
+  other setup mutations, NEVER in the watchdog allowlist, result marked
+  untrusted (command output can carry prompt injections), output
+  head+tail-truncated to 16 KB. Routing is a word-boundary regex
+  (`_SHELL_ROUTE_RE`) — bare substrings over-triggered ("run a search", the
+  app's own "Command" tab). CRITICAL implementation facts (both found by
+  review, 2026-09-14 — do not regress):
+  * NEVER use `subprocess.run(shell=True, timeout=...)` here: at timeout it
+    kills only cmd.exe, then its second communicate() blocks WITHOUT a
+    timeout until every grandchild holding the stdout pipe exits — a hung
+    installer blocked the single agent worker forever. The handler uses
+    Popen + communicate(timeout), then on TimeoutExpired kills the whole
+    TREE (`taskkill /F /T /PID` on Windows, `os.killpg` + start_new_session
+    on POSIX), then a bounded 10s drain, then abandons the output if a
+    survivor outside the tree (elevated installer, `start /b` orphan) still
+    clings to the pipe. Regression tests pin the wall-clock bound
+    (`test_run_shell_timeout*`).
+  * The per-call wait is clamped to `min(600, llm.task_timeout_seconds)` —
+    the loop only enforces the task budget BETWEEN tool calls.
+  * Commands whose output likely contains stored secrets (env dumps,
+    `config.json`, `.dfc`, `control_api.token` — patterns in
+    `_SECRET_DUMP_PATTERNS`) get an informed-consent warning appended to the
+    confirmation ask (loop `_queue_confirmation`) AND a `warning` field in
+    the result; shell output itself is never key-scrubbed — the exact
+    command preview is the real gate.
 - The SYSTEM_PROMPT identity is now "all-in-one media and download center"
   (NOT "BitTorrent download manager") with an Introductions block governing
   the auto-greeting: short, plain-language, whole-app breadth, no tables, no
