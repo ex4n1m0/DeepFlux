@@ -195,6 +195,17 @@ class DeepSeekClient(LLMClient):
                     chunk = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+                # OpenAI-compatible providers (OpenRouter, DeepSeek under
+                # load) can emit HTTP 200 with an error EVENT mid-stream —
+                # swallowing it here produced an empty assistant bubble with
+                # no error and no retry (choices is empty → the old code just
+                # skipped the chunk). Raise so the loop's normal error path
+                # reports it.
+                err = chunk.get("error")
+                if isinstance(err, dict) and err.get("message"):
+                    raise RuntimeError(f"LLM stream error: {err['message']}")
+                if isinstance(err, str) and err:
+                    raise RuntimeError(f"LLM stream error: {err}")
                 choices = chunk.get("choices") or []
                 if not choices:
                     continue

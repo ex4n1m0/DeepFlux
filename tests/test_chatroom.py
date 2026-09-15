@@ -878,3 +878,65 @@ class TestRoomTab:
         finally:
             tab.deleteLater()
             app.processEvents()
+
+
+class TestReviewRegressions:
+    """Fixes from the 2026-09-15 total-codebase review."""
+
+    def test_welcome_trims_history_to_fit_wire_cap(self):
+        """Big history used to make the welcome exceed MAX_WIRE_BYTES →
+        _send_obj refused → every new joiner was rejected and the room was
+        permanently unjoinable."""
+        host = self._host = None
+        from ircmgr.room import MAX_WIRE_BYTES
+        host = RoomHost(RoomCodec(SECRET_A), bind_host="127.0.0.1", port=0)
+        assert host.start("HostNick")
+        try:
+            # 120 records × ~300 chars ≈ 36KB serialized — well over the cap.
+            host._history.extend(
+                {"t": "msg", "nick": f"n{i%7}", "ts": 1.0 + i,
+                 "e": RoomCodec(SECRET_A).seal("h2c", "msg", {"text": "x" * 300})}
+                for i in range(120)
+            )
+            with _RawClient(host._codec) as a:
+                a.connect(host.port)
+                welcome = a.join("alice")
+                assert welcome["t"] == "welcome"  # join still accepted
+                probe = json.dumps(welcome, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+                assert len(probe) <= MAX_WIRE_BYTES
+                assert len(welcome["history"]) < 120  # oldest dropped to fit
+        finally:
+            host.stop("test done")
+
+    def test_recv_line_bounds_hostile_overlong_stream(self):
+        class FakeFile:
+            def readline(self, limit):
+                return "A" * limit  # newline-free garbage up to the limit
+
+        from ircmgr.room import MAX_WIRE_BYTES, _recv_line
+        assert _recv_line(FakeFile()) is None
+
+    def test_prejoin_ping_budget_closes_never_joining_peer(self):
+        host = RoomHost(RoomCodec(SECRET_A), bind_host="127.0.0.1", port=0)
+        assert host.start("HostNick")
+        try:
+            sock = socket.create_connection(("127.0.0.1", host.port), timeout=5)
+            dropped = False
+            for _ in range(20):  # > the 5-ping pre-join budget
+                try:
+                    sock.sendall(b'{"t":"ping"}\n')
+                except (ConnectionAbortedError, ConnectionResetError, OSError):
+                    dropped = True
+                    break
+                time.sleep(0.05)
+            # The host must refuse to keep ponging a never-joining peer —
+            # a mid-send abort, clean EOF, or a reset all prove the drop.
+            if not dropped:
+                sock.settimeout(3)
+                try:
+                    assert sock.recv(64) == b""
+                except (ConnectionAbortedError, ConnectionResetError, OSError):
+                    pass
+            sock.close()
+        finally:
+            host.stop("test done")

@@ -265,3 +265,29 @@ def test_organize_torrent_requires_completion(tmp_path):
         engine._organize_torrent("a" * 40, str(tmp_path / "Movies"), "Movies", [])
 
     record.handle.move_storage.assert_not_called()
+
+
+def test_v2_only_torrents_get_distinct_keys():
+    """V2-only torrents carry an all-zero v1 sha1 — keying on v1 collapsed
+    them all onto one hash (false 'already in the list' + colliding state
+    files). They must get distinct v2-prefixed keys (2026-09-15 review)."""
+    from engine.torrent_engine import _hash_str
+
+    class _Hashes:
+        def __init__(self, v1, v2):
+            self.v1 = v1
+            self.v2 = v2
+
+    class _Obj:
+        def __init__(self, v1, v2):
+            self._h = _Hashes(v1, v2)
+
+        def info_hashes(self):
+            return self._h
+
+    a = _Obj("0" * 40, "aa" * 32)
+    b = _Obj("0" * 40, "bb" * 32)
+    regular = _Obj("ab" * 20, "cc" * 32)
+    assert _hash_str(a) != _hash_str(b)
+    assert _hash_str(a).startswith("v2:")
+    assert _hash_str(regular) == "ab" * 20

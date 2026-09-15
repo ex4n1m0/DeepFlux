@@ -64,6 +64,16 @@ def test_page_content_sanitization_redacts_tokens_emails_and_link_queries():
             {"text": "signed", "href": "https://example.com/a?api_key=secret"},
             {"text": "bad", "href": "javascript:alert(1)"},
         ],
+        # snapshot controls + click_ref-style scalar fields carry the same
+        # risk (review 2026-09-15) — labels are page text, hrefs live URLs.
+        "label": "contact me@example.com",
+        "href": "https://example.com/click?signature=abc",
+        "url_before": "https://example.com/from?token=xyz",
+        "controls": [
+            {"ref": "e0", "tag": "a", "label": "mail me@example.com",
+             "href": "https://example.com/a?token=secret"},
+            {"ref": "e1", "tag": "a", "label": "x", "href": "javascript:alert(1)"},
+        ],
     })
 
     assert "me@example.com" not in result["text"]
@@ -71,6 +81,54 @@ def test_page_content_sanitization_redacts_tokens_emails_and_link_queries():
     assert "secret" not in result["url"]
     assert len(result["links"]) == 1
     assert "secret" not in result["links"][0]["href"]
+    assert "me@example.com" not in result["label"]
+    assert "abc" not in result["href"]
+    assert "xyz" not in result["url_before"]
+    assert len(result["controls"]) == 2
+    assert "me@example.com" not in result["controls"][0]["label"]
+    assert "secret" not in result["controls"][0]["href"]
+    assert result["controls"][1]["href"] == ""  # javascript: dropped, not passed through
+
+
+def test_wrap_script_survives_trailing_comment(app):
+    # _wrap_script parenthesizes so a trailing // comment can't swallow the
+    # JSON.stringify call (review LOW, 2026-09-15).
+    from PySide6.QtCore import QUrl
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    view = QWebEngineView()
+    loaded = []
+    view.loadFinished.connect(lambda ok: loaded.append(ok))
+    view.setHtml("<html><body>ok</body></html>", QUrl("https://x.test/"))
+    window = QObject()
+    window._current_browser_view = lambda: view
+    window._browser_agent_content_allowed = lambda url: True
+    bridge = BrowserBridge(window)
+    assert _pump(lambda: bool(loaded))
+    result = _run_bridge_op(bridge, "_run_js", script="(() => 1)() // note")
+    # Scalars arrive JSON-quoted (stringify of 1 is "1") — coercion only
+    # parses object/array strings; that's the documented invariant.
+    assert result == {"success": True, "value": "1"}
+    view.deleteLater()
+
+
+def test_run_js_fails_loud_on_throwing_script(app):
+    # A script that throws (or a stringify failure) must NEVER come back as
+    # success — the PySide6 6.11 blank-result lesson (review LOW, 2026-09-15).
+    from PySide6.QtCore import QUrl
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    view = QWebEngineView()
+    loaded = []
+    view.loadFinished.connect(lambda ok: loaded.append(ok))
+    view.setHtml("<html><body>ok</body></html>", QUrl("https://x.test/"))
+    window = QObject()
+    window._current_browser_view = lambda: view
+    window._browser_agent_content_allowed = lambda url: True
+    bridge = BrowserBridge(window)
+    assert _pump(lambda: bool(loaded))
+    result = _run_bridge_op(bridge, "_run_js", script="(() => { throw new Error('boom'); })()")
+    assert result["success"] is False
+    assert "no result" in result["error"]
+    view.deleteLater()
 
 
 def test_expired_pending_call_ignores_late_result():
@@ -117,6 +175,107 @@ def test_agent_navigation_is_blocked_in_private_tab(app):
     assert pending.result["success"] is False
     assert "private" in pending.result["error"].lower()
     window._browser_new_tab.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Real-page regression tests (no network: setHtml with a synthetic origin).
+#
+# PySide6 6.11 regression (2026-09-15): runJavaScript callbacks return '' for
+# OBJECT results in every world — scalars/strings still marshal. Every bridge
+# op that builds its result in JS came back as {'success': True, 'value': ''}
+# and agent browser control silently broke (unit tests all faked the bridge).
+# The bridge now wraps scripts in JSON.stringify and parses centrally; these
+# tests drive the REAL view + page IPC so a future PySide6 bump can't
+# reintroduce the blank results unnoticed.
+# ---------------------------------------------------------------------------
+
+def _pump(predicate, timeout_s=15.0):
+    """Spin the Qt loop until predicate() is true (JS callbacks arrive via IPC)."""
+    import time as _time
+    from PySide6.QtCore import QEventLoop, QTimer
+    loop = QEventLoop()
+    timer = QTimer()
+    timer.setInterval(25)
+    deadline = _time.monotonic() + timeout_s
+
+    def tick():
+        if predicate() or _time.monotonic() >= deadline:
+            timer.stop()
+            loop.quit()
+
+    timer.timeout.connect(tick)
+    timer.start()
+    loop.exec()
+    return predicate()
+
+
+def _make_real_bridge():
+    from PySide6.QtCore import QUrl
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    view = QWebEngineView()
+    loaded = []
+    view.loadFinished.connect(lambda ok: loaded.append(ok))
+    view.setHtml(
+        "<html><body><h1>DeepFlux Test</h1>"
+        "<a id='lnk' href='https://x.test/a'>A link</a>"
+        "<a id='signed' href='https://x.test/b?token=secret-value'>Signed link</a>"
+        "<input id='q' type='text' placeholder='Search here'>"
+        "<button id='go'>Go</button></body></html>",
+        QUrl("https://x.test/"))
+    window = QObject()
+    window._current_browser_view = lambda: view
+    window._browser_agent_content_allowed = lambda url: True
+    return BrowserBridge(window), view, loaded
+
+
+def _run_bridge_op(bridge, method, **kwargs):
+    pending = _PendingCall()
+    getattr(bridge, method)(pending, **kwargs)
+    assert _pump(lambda: pending.event.is_set()), f"{method} never completed"
+    return pending.result
+
+
+def test_real_page_snapshot_returns_controls(app):
+    bridge, view, loaded = _make_real_bridge()
+    assert _pump(lambda: bool(loaded))
+    result = _run_bridge_op(bridge, "_do_snapshot")
+    assert result["success"] is True
+    controls = result["controls"]
+    tags = {c["tag"] for c in controls}
+    assert {"a", "button", "input"} <= tags
+    link = next(c for c in controls if c["tag"] == "a" and c["href"] == "https://x.test/a")
+    assert link["href"] == "https://x.test/a"
+    # Signed-link query values in control hrefs must be redacted end-to-end
+    # before the result reaches the LLM.
+    signed = next(c for c in controls if "x.test/b" in c["href"])
+    assert "secret-value" not in signed["href"]
+    view.deleteLater()
+
+
+def test_real_page_get_content_returns_text(app):
+    bridge, view, loaded = _make_real_bridge()
+    assert _pump(lambda: bool(loaded))
+    result = _run_bridge_op(bridge, "_do_get_content", max_chars=2000)
+    assert result["success"] is True
+    assert "DeepFlux Test" in result["text"]
+    assert any(l["href"] == "https://x.test/a" for l in result["links"])
+    view.deleteLater()
+
+
+def test_real_page_type_and_click_refs(app):
+    bridge, view, loaded = _make_real_bridge()
+    assert _pump(lambda: bool(loaded))
+    snap = _run_bridge_op(bridge, "_do_snapshot")
+    box = next(c for c in snap["controls"] if c["tag"] == "input")
+    typed = _run_bridge_op(bridge, "_do_type_ref", ref=box["ref"], value="hello deepflux")
+    assert typed["success"] is True and typed.get("typed") is True
+    button = next(c for c in snap["controls"] if c["tag"] == "button")
+    clicked = _run_bridge_op(bridge, "_do_click_ref", ref=button["ref"])
+    assert clicked["success"] is True
+    # The typed value really landed in the DOM.
+    checked = _run_bridge_op(bridge, "_do_get_content", max_chars=2000)
+    assert checked["success"] is True
+    view.deleteLater()
 
 
 def test_channel_download_requires_browser_authorization(app):

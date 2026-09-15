@@ -337,6 +337,17 @@ class IPTVManager:
                 source.id, text=text, path=path, on_progress=on_progress, is_cancelled=is_cancelled
             )
 
+        # A parse cancelled mid-way (app shutdown sets every cancel flag)
+        # yields a PARTIAL playlist — never persist it over the good cache
+        # nor install it as the live copy (review 2026-09-15).
+        if is_cancelled and is_cancelled():
+            logger.info("Parse for %s cancelled — keeping previous state", source.name)
+            with self._lock:
+                keep = self._playlists.get(source.id)
+            if keep is not None:
+                return keep
+            return Playlist(source_id=source.id)
+
         classify.classify(pl)
         classify.populate_years(pl)
         _rebuild_categories(pl)
@@ -447,10 +458,22 @@ class IPTVManager:
                 self.enforce_cache_limit_async()
                 with self._lock:
                     if not self._reload_requested:
+                        # Clear the thread ref INSIDE the same critical
+                        # section as the final flag check: a caller that
+                        # arrived between the check and the thread's actual
+                        # death saw is_alive()==True, set the flag, and
+                        # returned — but the worker had already committed to
+                        # exiting, so the requested reload silently never
+                        # happened (review 2026-09-15).
+                        self._refresh_thread = None
                         break
 
         t = threading.Thread(target=_worker, daemon=True)
         with self._lock:
+            if self._refresh_thread is not None and self._refresh_thread.is_alive():
+                # Lost a race with another spawner — fold into their sweep.
+                self._reload_requested = True
+                return self._refresh_thread
             self._refresh_thread = t
         t.start()
         return t

@@ -306,10 +306,16 @@ def pointer_still_fresh(pointer: Optional[Dict[str, Any]]) -> bool:
 
 def _recv_line(file) -> Optional[str]:
     try:
-        line = file.readline()
+        # Bounded read: the wire cap must hold on the READ side too — the
+        # old unbounded readline() let a hostile peer stream a newline-free
+        # header and grow the host's memory forever (2026-09-15). A line at
+        # exactly the limit without a trailing newline is over-long garbage.
+        line = file.readline(MAX_WIRE_BYTES + 2)
     except (OSError, ValueError):
         return None
     if not line:
+        return None
+    if len(line) == MAX_WIRE_BYTES + 2 and not line.endswith("\n"):
         return None
     return line.strip()
 
@@ -520,6 +526,7 @@ class RoomHost:
 
     def _reader(self, sock: socket.socket, addr) -> None:
         user: Optional[Dict[str, Any]] = None
+        prejoin_pings = 0
         try:
             file = sock.makefile("r", encoding="utf-8", errors="replace")
             while self._running.is_set():
@@ -536,6 +543,15 @@ class RoomHost:
                     break
                 kind = rec.get("t")
                 if kind == "ping":
+                    # Pre-join pings are unauthenticated and every one pins
+                    # this reader thread — cap them so a never-joining peer
+                    # can't hold connections open forever on the exposed
+                    # host listener (flood protection only applies AFTER a
+                    # join; review 2026-09-15).
+                    if user is None:
+                        prejoin_pings += 1
+                        if prejoin_pings > 5:
+                            break
                     # Pre-join only this thread writes to the socket, so a
                     # throwaway lock is enough; afterwards use the user's own.
                     lock = user["send_lock"] if user else threading.Lock()
@@ -572,11 +588,6 @@ class RoomHost:
                 pass
             nick = user["nick"] if user else ""
             self._drop_user(sock, nick or None, "disconnected")
-
-    @staticmethod
-    def _blank_lock(sock: socket.socket) -> threading.Lock:
-        # pongs are tiny; a dedicated lock per socket is not worth it
-        return _PONG_LOCKS.setdefault(sock, threading.Lock())
 
     def _handle_join(self, sock: socket.socket, file, addr,
                      rec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -619,6 +630,17 @@ class RoomHost:
                    "mode": "enc" if self._codec.encrypted else "plain",
                    "topic": _topic_text(self._codec.encrypted),
                    "users": users, "history": history}
+        # The welcome is ONE wire record capped at MAX_WIRE_BYTES, and the
+        # history replay is the only unbounded part — once the deque's
+        # serialized form crosses the cap (normal within a session), every
+        # new joiner was rejected and the room became UNJOINABLE (review
+        # blocker 2026-09-15). Keep the NEWEST records that fit.
+        while history:
+            welcome["history"] = history
+            probe = json.dumps(welcome, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            if len(probe) <= MAX_WIRE_BYTES:
+                break
+            history.pop(0)
         if not _send_obj(sock, user["send_lock"], welcome):
             self._drop_user(sock, nick, "disconnected")
             return None
@@ -1281,6 +1303,12 @@ class RoomController:
         if not client.connect(endpoints, nick):
             return False
         with self._lock:
+            # Leave/shutdown during the async connect attempt already set
+            # "left" — installing the client anyway resurrected the join
+            # (zombie member: live socket + threads after the user left).
+            if self._role != "connecting":
+                client.close()
+                return False
             self._client = client
             self._host = None
             self._role = "member"
@@ -1322,6 +1350,11 @@ class RoomController:
                        "address only.")
 
         with self._lock:
+            # Same zombie guard as _connect_member: leaving during host
+            # startup must not resurrect the room under us.
+            if self._role != "connecting":
+                host.stop("left during host startup")
+                return False
             self._host = host
             self._client = None
             self._role = "host"

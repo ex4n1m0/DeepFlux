@@ -356,8 +356,13 @@ def _inline_md(text: str) -> str:
     text = re.sub(r"__(.+?)__", r"<b>\1</b>", text)
     # Italic: *text* or _text_ (but not inside bold markers)
     text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", text)
-    # Links: [text](url)
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
+    # Links: [text](url) — the URL is quote-encoded so a crafted one can't
+    # break out of the href attribute (the text itself was escaped at the
+    # top; quotes survive that pass, review 2026-09-15).
+    def _md_link(m):
+        url = m.group(2).replace('"', "%22")
+        return f'<a href="{url}">{m.group(1)}</a>'
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _md_link, text)
     return text
 
 
@@ -1019,7 +1024,7 @@ class MainWindow(QMainWindow):
             logger.debug("telemetry heartbeat failed to start", exc_info=True)
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 4.5 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 4.6 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -2188,6 +2193,7 @@ class MainWindow(QMainWindow):
         )
 
         # RSS monitor timer — checks auto-download feeds periodically.
+        self._rss_worker = None  # overlap guard for _check_rss_feeds
         self._rss_timer = QTimer(self)
         self._rss_timer.timeout.connect(self._check_rss_feeds)
         interval = max(60, self.config.rss.check_interval_seconds) * 1000
@@ -2857,8 +2863,11 @@ class MainWindow(QMainWindow):
         # Show hovered link URL in the status bar (like a real browser).
         page.linkHovered.connect(
             lambda url: self._hover_label.setText(url if url else ""))
-        # When the page requests a new window/tab, create one internally.
-        page.newTabRequested.connect(lambda u: self._browser_new_tab(url=u))
+        # When the page requests a new window/tab, create one internally —
+        # INHERIT the privacy flag: a target=_blank from a private tab used
+        # to open a persistent-profile tab (history, cookies, restore, agent
+        # channel), leaking the private session's outbound links.
+        page.newTabRequested.connect(lambda u, p=private: self._browser_new_tab(url=u, private=p))
         # magnet: links clicked in a page → torrent engine (the page never
         # navigates to them; acceptNavigationRequest returns False).
         page.magnetRequested.connect(self._browser_magnet_clicked)
@@ -3816,81 +3825,88 @@ class MainWindow(QMainWindow):
     }
 
     def _format_tool_args(self, tool: str, args: dict) -> str:
-        """Human-readable summary of what a tool is doing, not raw JSON."""
+        """Human-readable summary of what a tool is doing, not raw JSON.
+
+        Values are LLM-controlled and can echo fetched page content — every
+        interpolation is HTML-escaped before reaching the rich-text sink
+        (a crafted anchor used to allow href breakout / markup injection,
+        incl. a one-click no-confirmation magnet link; review 2026-09-15)."""
+        esc = lambda v: _html.escape(str(v if v is not None else ""), quote=True)
         if tool == "web_search":
-            return f"for \"{args.get('query', '')}\""
+            return f"for \"{esc(args.get('query', ''))}\""
         if tool == "web_fetch":
-            return f"<a href=\"{args.get('url', '')}\">{args.get('url', '')}</a>"
+            url = esc(args.get("url", ""))
+            return f"<a href=\"{url}\">{url}</a>"
         if tool in ("search_indexers",):
-            return f"for \"{args.get('query', '')}\""
+            return f"for \"{esc(args.get('query', ''))}\""
         if tool in ("find_alt_trackers", "find_alt_release"):
-            return f"for \"{args.get('torrent_name', '')}\""
+            return f"for \"{esc(args.get('torrent_name', ''))}\""
         if tool == "search_memory":
-            return f"for \"{args.get('query', '')}\""
+            return f"for \"{esc(args.get('query', ''))}\""
         if tool == "save_memory":
-            return f"\"{str(args.get('content', ''))[:60]}\""
+            return f"\"{esc(str(args.get('content', ''))[:60])}\""
         if tool in ("add_magnet",):
             uri = args.get("uri", "")
             short = uri[:60] + "..." if len(uri) > 60 else uri
-            return f"magnet: {short}"
+            return f"magnet: {esc(short)}"
         if tool in ("add_torrent_file",):
-            return f"file: {args.get('path', '')}"
+            return f"file: {esc(args.get('path', ''))}"
         if tool in ("diagnose_swarm", "get_torrent_status", "get_swarm_stats",
                      "pause_torrent", "resume_torrent", "remove_torrent"):
-            return f"hash: {args.get('info_hash', '')[:12]}..."
+            return f"hash: {esc(args.get('info_hash', '')[:12])}..."
         if tool == "add_tracker":
-            return f"tracker: {args.get('url', '')}"
+            return f"tracker: {esc(args.get('url', ''))}"
         if tool in ("list_directory", "create_folder", "delete_path"):
-            return args.get("path", "")
+            return esc(args.get("path", ""))
         if tool in ("copy_path", "move_path"):
-            return f"{args.get('source', '')} → {args.get('destination', '')}"
+            return f"{esc(args.get('source', ''))} → {esc(args.get('destination', ''))}"
         if tool == "rename_path":
-            return f"{args.get('path', '')} → {args.get('new_name', '')}"
+            return f"{esc(args.get('path', ''))} → {esc(args.get('new_name', ''))}"
         if tool in ("iptv_search", "iptv_epg"):
-            return f"for \"{args.get('query', '') or args.get('channel', '')}\""
+            return f"for \"{esc(args.get('query', '') or args.get('channel', ''))}\""
         if tool == "iptv_play":
-            return f"\"{args.get('query', '') or args.get('title', '') or args.get('url', '') or args.get('file', '') or args.get('item_id', '')}\""
+            return f"\"{esc(args.get('query', '') or args.get('title', '') or args.get('url', '') or args.get('file', '') or args.get('item_id', ''))}\""
         if tool == "iptv_set_volume":
             return f"to {args.get('level', '')}"
         if tool == "browser_navigate":
-            return f"to {args.get('url', '')}"
+            return f"to {esc(args.get('url', ''))}"
         if tool in ("browser_close_tab", "browser_switch_tab"):
             return f"tab {args.get('index', '')}"
         if tool == "browser_go":
-            return args.get("action", "")
+            return esc(args.get("action", ""))
         if tool == "browser_click":
-            return args.get("selector", "") or f"\"{args.get('text', '')}\""
+            return esc(args.get("selector", "")) or f"\"{esc(args.get('text', ''))}\""
         if tool == "browser_fill":
-            return f"{args.get('selector', '')} = \"{str(args.get('value', ''))[:40]}\""
+            return f"{esc(args.get('selector', ''))} = \"{esc(str(args.get('value', ''))[:40])}\""
         if tool == "browser_scroll":
-            return args.get("direction", "down")
+            return esc(args.get("direction", "down"))
         if tool in ("browser_add_bookmark", "browser_remove_bookmark"):
-            return args.get("url", "") or "(current page)"
+            return esc(args.get("url", "")) or "(current page)"
         if tool in ("pause_download", "resume_download", "retry_download",
                     "cancel_download", "remove_download"):
-            return f"job {args.get('job_id', '')}"
+            return f"job {esc(args.get('job_id', ''))}"
         if tool in ("force_recheck", "force_reannounce", "set_sequential_download"):
-            return f"hash: {args.get('info_hash', '')[:12]}..."
+            return f"hash: {esc(args.get('info_hash', '')[:12])}..."
         if tool == "set_torrent_rate_limits":
             return f"↓{args.get('download_kb', 0)} ↑{args.get('upload_kb', 0)} KB/s"
         if tool in ("add_rss_feed", "remove_rss_feed"):
-            return args.get("url", "")
+            return esc(args.get("url", ""))
         if tool == "iptv_add_source":
-            return f"\"{args.get('name', '') or args.get('url', '')}\""
+            return f"\"{esc(args.get('name', '') or args.get('url', ''))}\""
         if tool in ("iptv_update_source", "iptv_remove_source"):
-            return f"\"{args.get('source', '')}\""
+            return f"\"{esc(args.get('source', ''))}\""
         if tool == "set_api_key":
             clearing = not str(args.get("value", "")).strip()
-            return f"{args.get('slot', '')}" + (" (clearing)" if clearing else "")
+            return f"{esc(args.get('slot', ''))}" + (" (clearing)" if clearing else "")
         if tool == "set_settings":
-            return f"{args.get('path', '')} = {args.get('value', '')}"
+            return f"{esc(args.get('path', ''))} = {esc(args.get('value', ''))}"
         if tool in ("add_torrent_source", "remove_torrent_source"):
-            return f"\"{args.get('name', '') or args.get('source', '')}\""
+            return f"\"{esc(args.get('name', '') or args.get('source', ''))}\""
         if tool == "run_shell":
             command = str(args.get("command", ""))
-            return f"\"{command[:90]}{'…' if len(command) > 90 else ''}\"" + (" (detached)" if not args.get("wait", True) else "")
+            return f"\"{esc(command[:90])}{'…' if len(command) > 90 else ''}\"" + (" (detached)" if not args.get("wait", True) else "")
         # Generic fallback.
-        parts = [f"{k}={v}" for k, v in args.items() if k not in ("save_path",)]
+        parts = [f"{esc(k)}={esc(v)}" for k, v in args.items() if k not in ("save_path",)]
         return ", ".join(parts[:3]) if parts else ""
 
     def _on_agent_event(self, event: dict) -> None:
@@ -3915,7 +3931,13 @@ class MainWindow(QMainWindow):
             elif etype == "reasoning":
                 content = event.get("content", "")
                 if content:
-                    self._append_event(f"💭 {content}")
+                    # Tool-turn narration is model output that can echo
+                    # fetched page content — escape it like every other
+                    # rich-text insert (the model_reasoning branch above
+                    # already did; this mainline path didn't — review
+                    # 2026-09-15).
+                    safe = str(content).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+                    self._append_event(f"💭 {safe}")
             elif etype == "tool_start":
                 # A new tool turn begins — seal any streamed text so it isn't
                 # replaced when the final answer arrives.
@@ -4091,9 +4113,9 @@ class MainWindow(QMainWindow):
         """Hard timeout for direct searches — unblock the Search tab UI.
 
         Results arriving later are still rendered (marked as late)."""
-        logger.warning("Search timed out (30s)")
+        logger.warning("Search timed out (60s)")
         self._search_timed_out_flag = True
-        self._append_search_error("Search is taking longer than 30s — the network may be slow. Results will appear here if they arrive.")
+        self._append_search_error("Search is taking longer than 60s — the network may be slow. Results will appear here if they arrive.")
         self._set_search_busy(False)
 
     def _on_chat_link_clicked(self, url) -> None:
@@ -4143,9 +4165,14 @@ class MainWindow(QMainWindow):
             expiration = cookie.expirationDate()
             if expiration.isValid():
                 expires = expiration.toSecsSinceEpoch()
+            key = (domain, path, name)
+            # LRU, not FIFO: re-setting an existing cookie must refresh its
+            # recency, or the earliest-set LOGIN cookies were the first
+            # evicted at the cap after heavy browsing (review 2026-09-15).
+            self._browser_cookies.pop(key, None)
             if len(self._browser_cookies) >= 5000:
                 self._browser_cookies.pop(next(iter(self._browser_cookies)), None)
-            self._browser_cookies[(domain, path, name)] = {
+            self._browser_cookies[key] = {
                 "value": bytes(cookie.value()).decode("utf-8", "ignore"),
                 "host_only": not domain.startswith("."),
                 "secure": bool(cookie.isSecure()),
@@ -4199,6 +4226,9 @@ class MainWindow(QMainWindow):
                 or details["secure"] and parsed.scheme.lower() != "https"
             ):
                 continue
+            # LRU: refresh recency on use (see _on_browser_cookie_added).
+            self._browser_cookies.pop(key, None)
+            self._browser_cookies[key] = details
             matches.append((len(cookie_path), name, details["value"]))
         matches.sort(reverse=True)
         return "; ".join(f"{name}={value}" for _length, name, value in matches)
@@ -5480,6 +5510,11 @@ class MainWindow(QMainWindow):
         restart_btn = box.addButton("Restart now", QMessageBox.AcceptRole)
         box.addButton("Later", QMessageBox.RejectRole)
         box.exec()
+        # Both branches must guard the freshly imported file: the periodic
+        # browser-session save and closeEvent re-write the (stale) in-memory
+        # config — on "Later" that silently reverted the import on the very
+        # next tab switch (review 2026-09-15).
+        self._skip_config_save = True
         if box.clickedButton() is restart_btn:
             self._restart_app()
         else:
@@ -5711,9 +5746,25 @@ class MainWindow(QMainWindow):
         (so the agent can still show them when the user asks)."""
         if not self.config.rss.feeds:
             return
+        # Overlap guard: a worker with a few dead feeds can run for minutes
+        # (6 redirect hops × 30s timeouts each) — a second concurrent worker
+        # saw the same new items before either marked them seen and
+        # auto-downloaded everything twice (review 2026-09-15).
+        if self._rss_worker is not None and self._rss_worker.is_alive():
+            logger.info("RSS check already running — skipping this tick")
+            return
 
         def _worker():
-            for feed in self.config.rss.feeds:
+            try:
+                self._check_rss_feeds_inner()
+            finally:
+                self._rss_worker = None
+
+        self._rss_worker = threading.Thread(target=_worker, daemon=True)
+        self._rss_worker.start()
+
+    def _check_rss_feeds_inner(self) -> None:
+            for feed in list(self.config.rss.feeds):
                 try:
                     result = self._rss_monitor.check_feed(feed)
                     if result.get("error"):
@@ -5728,7 +5779,7 @@ class MainWindow(QMainWindow):
 
                     if feed.mode == "auto_download":
                         # Auto-download all new items with magnet/torrent links.
-                        downloaded = 0
+                        ok_items = []
                         for item in new_items:
                             magnet = item.get("magnet_uri", "")
                             torrent_url = item.get("torrent_url", "")
@@ -5739,7 +5790,7 @@ class MainWindow(QMainWindow):
                                         "save_path": self.config.default_save_path,
                                         "category": feed.category,
                                     })
-                                    downloaded += 1
+                                    ok_items.append(item)
                                 elif torrent_url:
                                     # Download the .torrent file from URL.
                                     import tempfile
@@ -5753,18 +5804,22 @@ class MainWindow(QMainWindow):
                                         "save_path": self.config.default_save_path,
                                         "category": feed.category,
                                     })
-                                    downloaded += 1
+                                    ok_items.append(item)
                             except Exception as exc:
                                 logger.warning("Auto-download failed for %s: %s", item.get("title", ""), exc)
 
-                        # Mark items as seen only for auto-download mode.
-                        self._rss_monitor.mark_seen(feed, new_items)
+                        # Mark only SUCCESSFULLY downloaded items as seen —
+                        # failures used to be marked too and were then never
+                        # retried nor shown again (silent loss; the agent's
+                        # download_from_feed already had it right).
+                        if ok_items:
+                            self._rss_monitor.mark_seen(feed, ok_items)
 
-                        if downloaded > 0:
+                        if ok_items:
                             self._agent_signals.event.emit({
                                 "type": "rss_auto_download",
                                 "feed": feed_name,
-                                "count": downloaded,
+                                "count": len(ok_items),
                             })
                     else:
                         # Monitor mode: do NOT mark items as seen — leave them
@@ -5783,9 +5838,6 @@ class MainWindow(QMainWindow):
                 self.config.to_file(self.config_path)
             except Exception:
                 pass
-
-        thread = threading.Thread(target=_worker, daemon=True)
-        thread.start()
 
     def _open_rss_viewer(self) -> None:
         """Open the RSS viewer window with all feed items in a browsable table."""

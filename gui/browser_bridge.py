@@ -146,6 +146,29 @@ class BrowserBridge(QObject):
             pending.result = result
             pending.event.set()
 
+    @staticmethod
+    def _coerce_js_result(res: Any) -> Any:
+        """PySide6 6.11 regression (verified 2026-09-15): runJavaScript
+        callbacks return '' for OBJECT results — in every world; strings and
+        scalars still marshal. Every bridge script is therefore wrapped in
+        JSON.stringify(...) at the issue point and parsed back here, so the
+        handlers keep working with plain dicts (gui/milkdrop.py's mpState
+        used the same pattern all along)."""
+        if isinstance(res, str) and res[:1] in ("{", "["):
+            try:
+                return json.loads(res)
+            except ValueError:
+                return res
+        return res
+
+    @staticmethod
+    def _wrap_script(script: str) -> str:
+        """Serialize the script's result (see _coerce_js_result). Parenthesized
+        so a trailing // line comment can never swallow the closing call.
+        Invariant: bridge scripts return OBJECT literals — a plain string
+        would come back JSON-quoted and not be re-parsed."""
+        return f"JSON.stringify((\n{script.strip()}\n))"
+
     def _run_js(
         self,
         pending: _PendingCall,
@@ -160,18 +183,26 @@ class BrowserBridge(QObject):
 
         def _cb(res: Any) -> None:
             try:
-                if transform is not None:
-                    res = transform(res)
-                if isinstance(res, dict):
-                    res.setdefault("success", True)
-                    result = res
+                res = self._coerce_js_result(res)
+                if res is None or res == "":
+                    # Undefined/'' = the script threw or stringify failed —
+                    # every wrapped script returns an object, so a real
+                    # success is never empty. Fail loud, never "success".
+                    result = {"success": False,
+                              "error": "page script evaluation returned no result"}
                 else:
-                    result = {"success": True, "value": res}
+                    if transform is not None:
+                        res = transform(res)
+                    if isinstance(res, dict):
+                        res.setdefault("success", True)
+                        result = res
+                    else:
+                        result = {"success": True, "value": res}
             except Exception as exc:
                 result = {"success": False, "error": str(exc)}
             self._finish(pending, result)
 
-        view.page().runJavaScript(script, QWebEngineScript.ApplicationWorld, _cb)
+        view.page().runJavaScript(self._wrap_script(script), QWebEngineScript.ApplicationWorld, _cb)
 
     def _normalize_url(self, text: str) -> str:
         """Normalize URL/search input using the configured search provider."""
@@ -276,35 +307,67 @@ class BrowserBridge(QObject):
             return result
         from agent.tools import redact_url_secrets
 
+        def _clean_text(value: str) -> str:
+            value = re.sub(
+                r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b",
+                "[redacted-email]",
+                value,
+            )
+            value = re.sub(
+                r"(?i)\b(?:sk|pplx|ghp|github_pat|xox[baprs])[-_][a-z0-9_-]{12,}\b",
+                "[redacted-token]",
+                value,
+            )
+            value = re.sub(
+                r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b",
+                "[redacted-token]",
+                value,
+            )
+            return value
+
+        def _clean_href(href: str) -> Optional[str]:
+            # Dangerous schemes are dropped entirely, not just redacted.
+            return None if href.startswith(("javascript:", "data:", "file:")) \
+                else redact_url_secrets(href)
+
         safe = dict(result)
-        text = str(safe.get("text", ""))
-        text = re.sub(
-            r"(?i)\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b",
-            "[redacted-email]",
-            text,
-        )
-        text = re.sub(
-            r"(?i)\b(?:sk|pplx|ghp|github_pat|xox[baprs])[-_][a-z0-9_-]{12,}\b",
-            "[redacted-token]",
-            text,
-        )
-        text = re.sub(
-            r"\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b",
-            "[redacted-token]",
-            text,
-        )
-        safe["text"] = text
+        safe["text"] = _clean_text(str(safe.get("text", "")))
         safe["url"] = redact_url_secrets(str(safe.get("url", "")))
+        # click_ref/click-style results: the element's own text and target.
+        if "label" in safe:
+            safe["label"] = _clean_text(str(safe.get("label", "")))
+        for href_key in ("href", "url_before"):
+            if href_key in safe:
+                cleaned = _clean_href(str(safe.get(href_key, "")))
+                safe[href_key] = cleaned or ""
         links = []
         for link in safe.get("links", []) if isinstance(safe.get("links"), list) else []:
             if not isinstance(link, dict):
                 continue
-            href = str(link.get("href", ""))
-            if href.startswith(("javascript:", "data:", "file:")):
+            href = _clean_href(str(link.get("href", "")))
+            if href is None:
                 continue
-            links.append({**link, "href": redact_url_secrets(href)})
+            links.append({**link, "href": href, "text": _clean_text(str(link.get("text", "")))})
         if "links" in safe:
             safe["links"] = links
+        # snapshot controls: labels are page text, hrefs are live page URLs —
+        # both carry the same secret risk as links[] and must not reach the
+        # LLM unredacted (review finding 2026-09-15: signed-link query values
+        # in controls[].href sailed straight into the model context).
+        controls = []
+        for control in safe.get("controls", []) if isinstance(safe.get("controls"), list) else []:
+            if not isinstance(control, dict):
+                continue
+            control = dict(control)
+            if "label" in control:
+                control["label"] = _clean_text(str(control.get("label", "")))
+            href = _clean_href(str(control.get("href", "")))
+            if href is None:
+                href = ""
+            control["href"] = href
+            controls.append(control)
+        if "controls" in safe:
+            safe["controls"] = controls
         return safe
 
     def _do_get_content(self, pending: _PendingCall, max_chars: int = 8000,
@@ -481,6 +544,17 @@ class BrowserBridge(QObject):
         timer.setInterval(250)
 
         def check() -> None:
+            # Deadline is checked HERE too: if the browser tab was closed
+            # mid-wait, view.page() raises RuntimeError on every 250ms tick
+            # and the deadline (only checked inside the complete callback,
+            # which never fires) never stops the timer — ~4 tracebacks/sec
+            # until app exit and the agent call only resolved via the 35s
+            # bridge timeout (review 2026-09-15).
+            if time.monotonic() >= deadline:
+                timer.stop()
+                timer.deleteLater()
+                self._finish(pending, {"success": False, "error": "Browser wait timed out."})
+                return
             script = """
 (() => {
   let selectorMatch = true;
@@ -498,6 +572,7 @@ class BrowserBridge(QObject):
             )
 
             def complete(result: Any) -> None:
+                result = self._coerce_js_result(result)
                 if isinstance(result, dict) and result.get("success") is False:
                     timer.stop()
                     timer.deleteLater()
@@ -511,8 +586,14 @@ class BrowserBridge(QObject):
                     timer.deleteLater()
                     self._finish(pending, {"success": False, "error": "Browser wait timed out."})
 
-            view.page().runJavaScript(
-                script, QWebEngineScript.ApplicationWorld, complete)
+            try:
+                view.page().runJavaScript(
+                    self._wrap_script(script), QWebEngineScript.ApplicationWorld, complete)
+            except RuntimeError:
+                # The view's C++ object died (tab closed mid-wait).
+                timer.stop()
+                timer.deleteLater()
+                self._finish(pending, {"success": False, "error": "Browser tab closed while waiting."})
 
         timer.timeout.connect(check)
         timer.start()
@@ -544,7 +625,8 @@ class BrowserBridge(QObject):
           href: el.href || ""};
 })()
 """ % (json.dumps(selector), json.dumps(text))
-        self._run_js(pending, script)
+        # text/href are page content — same redaction as every other result.
+        self._run_js(pending, script, self._sanitize_page_content)
 
     def _do_fill(self, pending: _PendingCall, selector: str = "", value: str = "",
                  submit: bool = False) -> None:

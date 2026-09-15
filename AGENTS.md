@@ -113,6 +113,49 @@
   tests/test_telemetry.py (all network mocked).
 
 ## Conventions
+- 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,
+  ~30 fixed, all with file-level rationale comments + regression tests).
+  Durable rules that came out of it — do not regress:
+  * `config.to_file` is ATOMIC (module lock + temp + os.replace) — many
+    threads write config.json; a truncated file loads as {} and silently
+    wipes sources/keys. NEVER reintroduce a bare `open(path, "w")` write.
+  * EVERY config section constructor filters unknown keys (`__dataclass_fields__`)
+    — a config written by a newer/hand-edited build must not crash startup.
+  * Jackett `merge_sources` KEEPS entries missing from the fetched snapshot
+    (manual sources were silently wiped hourly); stale Jackett-gone entries
+    linger by design — removable by hand.
+  * Agent HTTP fetches are STREAMED with hard byte caps (public_http_get
+    FETCH_BODY_LIMIT; RSS 5 MiB during read; .torrent 32 MiB) — never buffer
+    an unbounded remote body into the GUI process.
+  * Source/feed URLs shown to the LLM go through `redact_source_credentials`
+    (Xtream username/password); `_find_feed` resolves the redacted form.
+    Jackett error text is query-scrubbed (`_scrub_query_secrets`) so the
+    apikey never rides exception strings.
+  * Room: the welcome record TRIMS history to fit MAX_WIRE_BYTES (an
+    over-cap welcome made the room permanently unjoinable); `_recv_line` is
+    bounded; pre-join pings are budgeted (5); leaving mid-connect must not
+    resurrect the join (role re-check under the lock).
+  * EPG table PK is (url, channel_id, start) with an in-place migration —
+    concurrent guides must not overwrite each other's shared channels.
+  * `iptv_list_sources`/`_list_rss_feeds`/`_format_tool_args`/markdown link
+    URLs are HTML-escaped or redacted before any rich-text sink (a crafted
+    page could inject markup, incl. a one-click no-confirmation magnet).
+  * RSS auto-download marks only SUCCESSFULLY downloaded items seen, one
+    worker at a time (overlap guard).
+  * v2-only torrents key as "v2:<hash>" in the engine (all-zero v1 collapsed
+    them); the engine worker crash path drains queued futures instead of
+    hanging every caller.
+  * `_download_m3u`/segment workers: fan-out rebalance marks the truncated
+    head ERROR (auto-retried); ranged file creation never truncates
+    (O_CREAT, not "w+b"); .dtresume names include the extension; HLS init
+    sections are fetched with decrypt=False (RFC 8216); ffmpeg remux has a
+    wall-clock kill; settings import sets _skip_config_save on BOTH dialog
+    branches; target=_blank inherits the private flag; downloads re-sniff
+    is once-per-job; the cookie cache is LRU.
+  * Accepted residuals (documented, not fixed): DNS-rebinding TOCTOU on
+    validate-then-fetch (needs pinned-IP connections — too invasive);
+    Room fan-out can block ≤75s per wedged peer (needs per-member queues);
+    LLM streaming has no total-duration bound (per-read timeout only).
 - Settings backup: File → Export/Import Settings (`infra/config_backup.py`)
   serializes the whole live config (`asdict`) into a passphrase-encrypted
   `.dfc` — JSON envelope {magic `deepflux-settings`, PBKDF2-SHA256
@@ -910,19 +953,26 @@
     call, so new sources are used immediately.
   * All setup mutations persist via `config.to_file(default_config_path())`
     — call `default_config_path` on the CLASS (same as the RSS tools).
-  * Context routing: the four cheap reads ride in the DEFAULT tool set;
-    the mutations come with setup keywords ("source", "setting", "config",
-    "api key", "indexer", "provider", "credential"); "playlist"/"m3u" also
-    trigger the iptv group.
+  * Context routing is GONE (user decision 2026-09-15, after a live 4.5
+    failure): `tool_names_for_context` returns the FULL toolset for every
+    task. The old keyword gating hid the setup mutations whenever a message
+    missed the magic words — "here's my jackett key" contains no "api key"
+    phrase, so `set_api_key` wasn't even in the schema list and the agent
+    truthfully told the user it couldn't write settings (same blind spot
+    broke installs). Cost: ~89 schemas ≈ 12k tokens per request — accepted.
+    Do NOT reintroduce keyword routing for mutations; if context cost ever
+    matters, trim schema DESCRIPTIONS, not visibility.
 - `run_shell` (user decision 2026-09-14): the agent may run shell commands
   to finish the machine's setup (winget-install FFmpeg/Jackett, run a
   downloaded installer, check what's installed). CONFIRMATION-gated like the
   other setup mutations, NEVER in the watchdog allowlist, result marked
   untrusted (command output can carry prompt injections), output
-  head+tail-truncated to 16 KB. Routing is a word-boundary regex
-  (`_SHELL_ROUTE_RE`) — bare substrings over-triggered ("run a search", the
-  app's own "Command" tab). CRITICAL implementation facts (both found by
-  review, 2026-09-14 — do not regress):
+  head+tail-truncated to 16 KB. The SYSTEM_PROMPT carries the FFmpeg winget
+  gotcha: `winget install Gyan.FFmpeg` lands in
+  `%LOCALAPPDATA%\Microsoft\WinGet\Links`, which is NOT on the running
+  app's PATH until restart — the agent must point `download.ffmpeg_path`
+  at it via set_settings right after installing. CRITICAL implementation
+  facts (both found by review, 2026-09-14 — do not regress):
   * NEVER use `subprocess.run(shell=True, timeout=...)` here: at timeout it
     kills only cmd.exe, then its second communicate() blocks WITHOUT a
     timeout until every grandchild holding the stdout pipe exits — a hung
@@ -1222,6 +1272,25 @@
   never the page's MainWorld. NOTE: neither `call` nor
   `ToolRegistry._browser_call` may name their first param `action` — the
   `browser_go` tool forwards an `action=` kwarg and Python would bind it twice.
+- PySide6 6.11 REGRESSION (found live 2026-09-15, do not regress):
+  `QWebEnginePage.runJavaScript` callbacks return `''` for any JS OBJECT
+  result — every world; strings/scalars still marshal. Every bridge op that
+  built its result in JS silently returned `{'success': True, 'value': ''}`
+  and agent browser control was COMPLETELY broken (navigate/list_tabs worked
+  because they build results in Python; unit tests all faked the bridge, so
+  only a live run caught it). The bridge now wraps every script via
+  `_wrap_script` (`JSON.stringify((<script>))`) and parses centrally in
+  `_coerce_js_result` — `gui/milkdrop.py` used the same string pattern all
+  along. `_run_js` treats None/'' as a loud failure, never success.
+  Regression tests drive the REAL view (`test_real_page_*` in
+  tests/test_browser_bridge.py — real page IPC, no network via setHtml);
+  they fail on the pre-fix code. If a future PySide6 bump breaks string
+  results too, those tests will catch it.
+- `_sanitize_page_content` redacts EVERYTHING that reaches the LLM: body
+  text (email/token/JWT regexes), top-level url, `links[]` AND `controls[]`
+  and click-result `label`/`href`/`url_before` (signed-link query values
+  via redact_url_secrets; javascript:/data:/file: hrefs dropped/blanked —
+  review 2026-09-15: control hrefs once sailed into the model context).
 - Tools: navigation/tab/go/scroll/bookmarks plus consent-gated
   `browser_get_content`; preferred automation is `browser_snapshot` → stable
   `eN` refs → confirmed `browser_click_ref` / `browser_type_ref` /

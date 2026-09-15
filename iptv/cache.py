@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS epg (
     title TEXT,
     "desc" TEXT,
     url TEXT DEFAULT '',            -- which XMLTV source this row came from
-    PRIMARY KEY (channel_id, start)
+    PRIMARY KEY (url, channel_id, start)
 );
 
 CREATE TABLE IF NOT EXISTS epg_meta (
@@ -128,6 +128,28 @@ class IPTVCache:
             cols = {r[1] for r in conn.execute("PRAGMA table_info(epg)").fetchall()}
             if "url" not in cols:
                 conn.execute("ALTER TABLE epg ADD COLUMN url TEXT DEFAULT ''")
+            # Migration: the original PK (channel_id, start) made concurrent
+            # guides OVERWRITE each other's rows for shared tvg-ids (global
+            # epg_url + per-source url_tvg is a supported configuration) —
+            # rebuild the table with url in the key (review 2026-09-15).
+            row = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='epg'"
+            ).fetchone()
+            if row and "PRIMARY KEY (channel_id, start)" in (row[0] or ""):
+                conn.executescript("""
+                    ALTER TABLE epg RENAME TO epg_old_pk;
+                    CREATE TABLE epg (
+                        channel_id TEXT,
+                        start INTEGER,
+                        "end" INTEGER,
+                        title TEXT,
+                        "desc" TEXT,
+                        url TEXT DEFAULT '',
+                        PRIMARY KEY (url, channel_id, start)
+                    );
+                    INSERT OR REPLACE INTO epg SELECT * FROM epg_old_pk;
+                    DROP TABLE epg_old_pk;
+                """)
 
             # ``CREATE TABLE IF NOT EXISTS`` handles databases predating watch
             # progress. These additive checks also make upgrades safe from

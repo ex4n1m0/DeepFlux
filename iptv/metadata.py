@@ -166,6 +166,15 @@ _DEFAULT_MAX_ATTEMPTS = 4
 _DEFAULT_BACKOFF_BASE = 0.3  # seconds; ~0.3, 0.6, 1.2, 2.4 with jitter
 
 
+def _omdb_float(value) -> float:
+    """OMDb ratings: float, but 'N/A' for unrated titles (must not raise —
+    an exception discarded and negative-cached a whole valid result)."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _is_transient_exc(exc: Exception) -> bool:
     """True when a requests exception looks like a transient network blip."""
     if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
@@ -436,7 +445,9 @@ class OMDbProvider(MetadataProvider):
         return {
             "title": data.get("Title", title),
             "year": (data.get("Year") or "")[:4],
-            "rating": float(data.get("imdbRating", 0) or 0),
+            # OMDb answers "N/A" for unrated titles — the bare float()
+            # raised and the whole (often valid) result was negative-cached.
+            "rating": _omdb_float(data.get("imdbRating")),
             "synopsis": data.get("Plot", ""),
             "genres": [g.strip() for g in (data.get("Genre") or "").split(",") if g.strip()],
             "poster": poster,
@@ -1282,11 +1293,8 @@ class FanzaProvider(MetadataProvider):
             meta = self._parse(html_text, code, poster)
             if meta:
                 return meta
-
-        # Even if the detail page fails, the predicted cover URL is often
-        # correct — return a minimal record so the tile gets a poster.
-        # The artwork fetcher will validate the URL (404 -> no tile).
-        if poster:
+            # The detail page EXISTS (the code is real on FANZA) but parsing
+            # came up empty — the predicted cover URL is often still correct.
             return {
                 "title": code,
                 "year": "",
@@ -1297,6 +1305,13 @@ class FanzaProvider(MetadataProvider):
                 "backdrop": "",
                 "provider": self.name,
             }
+
+        # Detail page unreachable: return NOTHING. The bare prediction
+        # "hit" for essentially every censored code, which stopped the JAV
+        # chain (JavBus → JavLibrary → TPDB) at the first provider,
+        # poisoned the positive cache for 30 days, and left a blank tile
+        # whenever the predicted URL 404'd (review 2026-09-15). A miss
+        # must fall through to the next provider.
         return None
 
     def _fetch_html(self, url: str) -> str:
@@ -1723,7 +1738,12 @@ class IptvOrgLogos:
                     self._index_time = cached.get("updated", 0)
                 else:
                     self._index = {}
-                    self._index_time = 0.0  # retry on the next lookup
+                    # Backoff, not retry-every-lookup: restoring 0.0 here
+                    # re-entered _build_index on every unresolved channel
+                    # name — two 60s timeouts each, on the shared artwork
+                    # pool, whenever iptv-org was unreachable (review
+                    # 2026-09-15). One retry per 5 minutes instead.
+                    self._index_time = time.time() - self.REFRESH_SECONDS + 300
             return self._index or {}
 
     def lookup(self, channel_name: str) -> str:

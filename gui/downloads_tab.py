@@ -383,12 +383,13 @@ class DownloadsTab(QWidget):
         if not hasattr(self, "_torrent_handled"):
             self._torrent_handled: set = set()
         for job in jobs:
-            if (job.status == JobStatus.COMPLETED
-                    and job.id not in self._torrent_handled
-                    and os.path.isfile(job.save_path)
-                    and self._is_torrent_file(job.save_path)):
+            if job.status == JobStatus.COMPLETED and job.id not in self._torrent_handled:
+                # Remember the verdict either way: re-sniffing every completed
+                # non-torrent job on each 1s tick was O(completed jobs) disk
+                # I/O per second, forever (review 2026-09-15).
+                if os.path.isfile(job.save_path) and self._is_torrent_file(job.save_path):
+                    cb(job.save_path, job.id)
                 self._torrent_handled.add(job.id)
-                cb(job.save_path, job.id)
 
     def _is_playable(self, job) -> bool:
         """Completed video file that exists on disk."""

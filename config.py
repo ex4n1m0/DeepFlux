@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -19,11 +20,14 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# Serializes config.json writes across threads (see DeeptorrentConfig.to_file).
+_config_write_lock = threading.Lock()
+
 # The app's release version. Kept here (config is imported everywhere) so the
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "4.5"
+APP_VERSION = "4.6"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -703,7 +707,15 @@ class DeeptorrentConfig:
         # Migration: merge built-in default sources into the saved list so
         # newly shipped sources appear without wiping user customizations
         # (saved entries keep their enabled state; missing defaults append).
-        merged_sources = [SourceConfig(**s) for s in data.get("sources", {}).get("sources", [])]
+        # All section constructors filter unknown keys: a config written by a
+        # NEWER build (or hand-edited) must never crash this one with a
+        # TypeError — the iptv.sources rule, applied everywhere since the
+        # 2026-09-15 review.
+        def _filtered(cls, entries):
+            known = cls.__dataclass_fields__
+            return [cls(**{k: v for k, v in e.items() if k in known}) for e in entries]
+
+        merged_sources = _filtered(SourceConfig, data.get("sources", {}).get("sources", []))
         if merged_sources:
             known_ids = {s.id for s in merged_sources}
             merged_sources.extend(d for d in DEFAULT_SOURCES if d.id not in known_ids)
@@ -763,11 +775,13 @@ class DeeptorrentConfig:
 
         return cls(
             llm=LLMConfig(**llm_clean),
-            indexer=IndexerConfig(**data.get("indexer", {})),
+            indexer=IndexerConfig(**{k: v for k, v in data.get("indexer", {}).items()
+                                     if k in IndexerConfig.__dataclass_fields__}),
             web_search=WebSearchConfig(**ws_data),
-            watchdog=WatchdogConfig(**data.get("watchdog", {})),
+            watchdog=WatchdogConfig(**{k: v for k, v in data.get("watchdog", {}).items()
+                                       if k in WatchdogConfig.__dataclass_fields__}),
             rss=RSSConfig(
-                feeds=[RSSFeed(**f) for f in data.get("rss", {}).get("feeds", [])],
+                feeds=_filtered(RSSFeed, data.get("rss", {}).get("feeds", [])),
                 check_interval_seconds=data.get("rss", {}).get("check_interval_seconds", 300),
             ),
             browser=BrowserConfig(
@@ -776,7 +790,7 @@ class DeeptorrentConfig:
                 homepage=(data.get("browser", {}).get("homepage") or "").strip() or DEFAULT_BROWSER_HOMEPAGE,
                 search_engine=(data.get("browser", {}).get("search_engine")
                                if data.get("browser", {}).get("search_engine") in BROWSER_SEARCH_ENGINES else "google"),
-                bookmarks=[Bookmark(**b) for b in data.get("browser", {}).get("bookmarks", [])],
+                bookmarks=_filtered(Bookmark, data.get("browser", {}).get("bookmarks", [])),
                 adblock_enabled=data.get("browser", {}).get("adblock_enabled", True),
                 adblock_disabled_sites=[str(host).lower() for host in data.get("browser", {}).get("adblock_disabled_sites", [])],
                 extension_enabled=data.get("browser", {}).get("extension_enabled", False),
@@ -811,9 +825,10 @@ class DeeptorrentConfig:
                 youtube_playlists=bool(data.get("download", {}).get("youtube_playlists", False)),
                 youtube_update_check=bool(data.get("download", {}).get("youtube_update_check", True)),
                 ytdlp_last_check=float(data.get("download", {}).get("ytdlp_last_check", 0.0) or 0.0),
-                categories=[DownloadCategory(**c) for c in data.get("download", {}).get("categories", [])],
+                categories=_filtered(DownloadCategory, data.get("download", {}).get("categories", [])),
             ),
-            torrents=TorrentsConfig(**data.get("torrents", {})),
+            torrents=TorrentsConfig(**{k: v for k, v in data.get("torrents", {}).items()
+                                       if k in TorrentsConfig.__dataclass_fields__}),
             iptv=IPTVConfig(
                 # Filter unknown keys: a config written by a NEWER build must
                 # not crash an older one with a TypeError here.
@@ -915,9 +930,27 @@ class DeeptorrentConfig:
         return data
 
     def to_file(self, path: str) -> None:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(self.sanitized_dict(), f, indent=2)
+        """Persist atomically: concurrent writers exist (agent tools, the
+        hourly Jackett sync, GUI saves, RSS workers), and a bare open("w") +
+        json.dump interleaves or truncates — a corrupted config.json loads
+        as {} and silently wipes the user's sources and keys. The lock
+        serializes writers process-wide; temp+os.replace makes each write
+        atomic on disk."""
+        data = json.dumps(self.sanitized_dict(), indent=2)
+        tmp = path + ".tmp"
+        with _config_write_lock:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(data)
+            try:
+                os.replace(tmp, path)
+            except OSError:
+                # The install dir may have vanished mid-quit (uninstaller);
+                # don't turn a tidy shutdown into a traceback.
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
 
     def default_config_path() -> str:
         return str(Path.home() / ".deeptorrent" / "config.json")

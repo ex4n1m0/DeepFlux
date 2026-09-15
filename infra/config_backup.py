@@ -75,6 +75,11 @@ def decrypt_settings(blob: bytes, password: str) -> bytes:
         token = env["token"].encode("ascii")
     except (KeyError, TypeError, ValueError) as exc:
         raise SettingsBackupError("corrupted settings file") from exc
+    # The iteration count is attacker-controlled in a crafted .dfc — an
+    # unbounded value pins a CPU core for hours BEFORE any cryptographic
+    # check runs (the app's own constant is well inside this band).
+    if not (100_000 <= iterations <= 2_000_000):
+        raise SettingsBackupError("corrupted settings file (unreasonable KDF iterations)")
     try:
         return Fernet(_derive_key(password, salt, iterations)).decrypt(token)
     except InvalidToken as exc:

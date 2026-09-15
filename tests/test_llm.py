@@ -243,3 +243,22 @@ def test_create_llm_client_providers():
     assert isinstance(create_llm_client(LLMConfig(provider="dummy")), DummyLLMClient)
     with pytest.raises(ValueError):
         create_llm_client(LLMConfig(provider="bogus"))
+
+
+@patch("agent.llm.requests.post")
+def test_stream_error_event_raises_instead_of_empty_reply(mock_post):
+    """HTTP 200 + an error EVENT mid-stream (OpenRouter/DeepSeek under load)
+    must raise so the loop reports it — the old code swallowed it and the
+    agent answered with an empty bubble, no error, no retry."""
+    lines = [
+        'data: {"choices":[{"delta":{"content":"partial "}}]}',
+        'data: {"error":{"message":"provider overloaded"}}',
+        "data: [DONE]",
+    ]
+    resp = _ok_response({})
+    resp.iter_lines.return_value = iter(lines)
+    mock_post.return_value = resp
+
+    with pytest.raises(RuntimeError, match="provider overloaded"):
+        _client().chat([{"role": "user", "content": "hi"}],
+                       on_delta=lambda kind, text: None)

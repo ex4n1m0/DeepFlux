@@ -972,7 +972,16 @@ class DownloadEngine:
             self._job_throttles.pop(job_id, None)
             del self._jobs[job_id]
             resume_state.delete_resume_state(job)
-            return True
+            incomplete = job.status != JobStatus.COMPLETED
+        if incomplete:
+            # An errored stream job can leave its HLS/DASH temp segment dirs
+            # behind (deliberately kept for retry) — removing the job without
+            # this orphaned multi-GB .segments dirs forever (review 2026-09-15).
+            for suffix in (".segments", ".segments.audio"):
+                seg_dir = job.save_path + suffix
+                if os.path.isdir(seg_dir):
+                    shutil.rmtree(seg_dir, ignore_errors=True)
+        return True
 
     def retry_job(self, job_id: str) -> Optional[DownloadJob]:
         """Retry an errored job by re-queuing it."""
@@ -998,8 +1007,10 @@ class DownloadEngine:
             if job is None:
                 return False
             job.priority = max(-10, min(10, int(priority)))
-            if not job.is_complete:
-                resume_state.save_resume_state(job)
+            # No eager resume-state save: it ran on GUI/agent threads and
+            # raced the monitor's 5-second save on the same .tmp path
+            # (interleaved JSON → corrupt state after a crash). The monitor
+            # persists the priority within its next tick.
             return True
 
     # ------------------------------------------------------------------
@@ -1213,6 +1224,13 @@ class DownloadEngine:
 
                     # Stop the stalled worker.
                     stalled_w.stop()
+                    # The truncated HEAD range [start+completed, split) has
+                    # no worker anymore — mark it ERROR so the monitor's
+                    # _auto_retry_errors restarts it (a stopped worker parks
+                    # in PENDING, which nothing ever restarts for a
+                    # DOWNLOADING job; the orphan hung the job at a fixed
+                    # progress forever — review 2026-09-15).
+                    stalled_seg.status = SegmentStatus.ERROR
 
                     # Create a new segment for the tail.
                     new_seg = SegmentState(

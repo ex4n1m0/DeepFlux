@@ -28,21 +28,33 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    /* Vertically center the stack on tall viewports; "safe center" keeps
-       normal top-anchored scrolling when the content is taller (mobile). */
+    /* Top-anchored (user preference 2026-09-14): the logo sits flush at
+       the top of the viewport; the footer's padding provides the
+       page-bottom breathing room. */
     justify-content: flex-start;
-    justify-content: safe center;
   }
   header.banner {
     display: flex;
     justify-content: center;
-    padding: 64px 16px 38px; /* 38px rhythm: banner -> download button */
+    padding: 0 16px 38px; /* flush at the top; 38px rhythm: banner -> tagline */
     flex-shrink: 0;
   }
   header.banner img {
     width: min(78vw, 560px);
     height: auto;
     display: block;
+  }
+  p.tagline {
+    /* Same 38px rhythm: tagline -> download button. */
+    margin: 0 auto 38px;
+    max-width: 680px;
+    padding: 0 24px;
+    font-size: 0.9rem;
+    line-height: 1.65;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.72);
+    text-align: center;
+    flex-shrink: 0;
   }
   section.dl-wrap {
     text-align: center;
@@ -155,14 +167,20 @@
   <header class="banner">
     <img src="DeepFluxBanner.webp" alt="DeepFlux wordmark artwork">
   </header>
+  <p class="tagline">DeepFlux is an AI-powered download manager with a built-in
+    browser, media player, community chat room, and file manager. The AI agent
+    can search for and download files, manage your library — and drive the app
+    itself: it can navigate the browser, manage the download queue, play IPTV
+    content, and organize files, all with your confirmation for sensitive&nbsp;actions.</p>
   <section class="dl-wrap">
     <!-- /api/download counts the click (Upstash counter) then 302s to the
          static file; it redirects uncounted when the counter isn't set up. -->
-    <a class="dl" href="/api/download?f=DeepFlux4.5Setup.exe" download>Download</a>
-    <p class="meta">DeepFlux 4.5 · Windows 10/11 64-bit · posted 2026-09-14</p>
+    <a class="dl" href="/api/download?f=DeepFlux4.6Setup.exe" download>Download</a>
+    <p class="meta">DeepFlux 4.6 · Windows 10/11 64-bit · posted 2026-09-15</p>
     <p class="note">Unsigned build — if Windows shows “protected your PC”,
-      choose <b>More info → Run anyway</b>, or right-click the downloaded
-      file → <b>Properties → Unblock</b> before running it.</p>
+      choose <b>More info → Run anyway</b>,<br>
+      or right-click the downloaded file → <b>Properties → Unblock</b>
+      before running it.</p>
     <p class="live" id="live" hidden
        title="The user count is anonymous — a random id per install, nothing else. Opt out in the app's Download settings."></p>
   </section>

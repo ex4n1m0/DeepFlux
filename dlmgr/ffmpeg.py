@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -25,6 +26,10 @@ logger = logging.getLogger(__name__)
 # Hide the console window FFmpeg would otherwise pop up on Windows when
 # spawned from a windowed (PyInstaller --noconsole) app. 0 on other platforms.
 _CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# Remux wall-clock bound — generous (concat of a long stream) but finite;
+# a wedged ffmpeg must never pin a download job in PROCESSING forever.
+_REMUX_TIMEOUT_S = 3600
 
 # Container extensions FFmpeg can infer a muxer from.
 KNOWN_CONTAINER_EXTS = {
@@ -420,15 +425,22 @@ class FFmpegWrapper:
                 cmd,
                 stderr=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
                 universal_newlines=True,
                 encoding="utf-8",
                 errors="replace",
                 creationflags=_CREATION_FLAGS,
             )
 
-            # Parse progress from stderr.
+            # Parse progress from stderr. A wedged ffmpeg (corrupt/looping
+            # segment input) must never block this forever — the loop is
+            # bounded and the process killed on timeout (review 2026-09-15;
+            # previously the job sat in PROCESSING with no error and the
+            # orphan ffmpeg.exe outlived the app).
+            deadline = time.monotonic() + _REMUX_TIMEOUT_S
             duration = 0.0
             current_time = 0.0
+            timed_out = False
             for line in proc.stderr:
                 line = line.strip()
                 # Parse Duration.
@@ -443,15 +455,22 @@ class FFmpegWrapper:
                     current_time = int(h) * 3600 + int(mi) * 60 + float(s)
                     if on_progress:
                         on_progress(min(1.0, current_time / duration))
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    break
 
-            proc.wait()
-            if proc.returncode == 0:
+            if timed_out:
+                proc.kill()
+                logger.error("FFmpeg remux timed out after %ss: %s", _REMUX_TIMEOUT_S, output_path)
+            proc.wait(timeout=30)
+            if not timed_out and proc.returncode == 0:
                 logger.info("FFmpeg remux complete: %s", output_path)
                 if on_progress:
                     on_progress(1.0)
                 return True
             else:
-                logger.error("FFmpeg failed with return code %d", proc.returncode)
+                if not timed_out:
+                    logger.error("FFmpeg failed with return code %d", proc.returncode)
                 return False
 
         except Exception as exc:

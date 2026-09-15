@@ -129,9 +129,16 @@ class DownloadJob:
 
     @property
     def resume_file_path(self) -> str:
-        """Path to the .dtresume state file alongside the download."""
+        """Path to the .dtresume state file alongside the download.
+
+        Keyed by the FULL filename (extension kept): "video.mp4" and
+        "video.mkv" in one folder shared one state file before — the 5s
+        monitor save alternately overwrote each job's state and a crash
+        could load one job's segment map for the other's file (review
+        2026-09-15). Old extension-less state files are simply not found —
+        those jobs restart from scratch once."""
         import os
-        return os.path.splitext(self.save_path)[0] + ".dtresume"
+        return self.save_path + ".dtresume"
 
     def to_dict(self) -> dict:
         return {

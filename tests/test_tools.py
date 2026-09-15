@@ -96,18 +96,21 @@ def test_list_tools(tools):
     assert expected.issubset(names)
 
 
-def test_context_tool_selection_limits_unrelated_domains(tools):
-    default_names = tools.tool_names_for_context("find an Ubuntu torrent")
-    assert "search_indexers" in default_names
-    assert "browser_fill" not in default_names
-
-    browser_names = tools.tool_names_for_context("open the browser and log in")
-    assert "browser_fill" in browser_names
-    assert "search_indexers" in browser_names
-
-    rss_names = tools.tool_names_for_context("show my RSS feed subscriptions")
-    assert "get_rss_feed_items" in rss_names
-    assert "download_from_feed" in rss_names
+def test_every_tool_exposed_on_every_task(tools):
+    """User decision 2026-09-15: full toolbox always. Keyword routing once hid
+    set_api_key when the user said "jackett key" (no "api key" phrase) and the
+    agent truthfully reported it couldn't write settings — same for installs."""
+    all_names = {tool["function"]["name"] for tool in tools.list_tools()}
+    for message in (
+        "find an Ubuntu torrent",            # torrent talk
+        "here is my jackett key: abc123",    # the reported 4.5 failure
+        "install ffmpeg for me",             # the reported 4.5 failure
+        "open the browser and log in",
+        "hello",
+        "my video won't play",               # no keyword at all
+    ):
+        assert tools.tool_names_for_context(message) == all_names, message
+    assert "set_api_key" in all_names and "run_shell" in all_names
 
 
 def test_capability_question_exposes_every_tool(tools):
@@ -1360,7 +1363,7 @@ def test_run_shell_rejects_bad_args(tools, tmp_path):
         tools.call("run_shell", {"command": "echo hi", "cwd": str(tmp_path / "missing")})
 
 
-def test_run_shell_policy_and_routing(tools):
+def test_run_shell_policy_and_always_visible(tools):
     from agent.loop import DESTRUCTIVE_TOOLS, READ_ONLY_TOOLS
     from agent.tools import WATCHDOG_AUTO_HEAL_TOOL_NAMES, tool_policy
 
@@ -1369,12 +1372,9 @@ def test_run_shell_policy_and_routing(tools):
     assert "run_shell" not in WATCHDOG_AUTO_HEAL_TOOL_NAMES  # never auto-run by the watchdog
     assert tool_policy("run_shell").confirmation == "always"
 
-    assert "run_shell" in tools.tool_names_for_context("please install ffmpeg for me")
-    assert "run_shell" in tools.tool_names_for_context("open a shell and check the version")
-    # Word-boundary routing: generic phrases must not pull the shell schema in.
-    assert "run_shell" not in tools.tool_names_for_context("run a quick search for Dune")
-    assert "run_shell" not in tools.tool_names_for_context("open the Command tab")
-    assert "run_shell" not in tools.tool_names_for_context("find an Ubuntu torrent")
+    # Full-toolbox rule (2026-09-15): visible on every task, whatever the phrasing.
+    for message in ("install ffmpeg for me", "my video won't play", "hello"):
+        assert "run_shell" in tools.tool_names_for_context(message)
 
 
 def test_run_shell_timeout_clamped_to_task_budget(mock_engine):
@@ -1963,6 +1963,7 @@ def test_torrent_url_allows_configured_local_jackett(mock_engine):
     response = MagicMock()
     response.status_code = 200
     response.content = ("magnet:?xt=urn:btih:" + "d" * 40).encode()
+    response.iter_content.return_value = [response.content]
     response.headers = {"Content-Type": "text/plain"}
     response.raise_for_status.return_value = None
     mock_engine.add_magnet.return_value = "d" * 40
@@ -1998,7 +1999,8 @@ def test_rss_fetch_blocks_private_network():
 
     client = RSSFeedClient(RSSFeed(url="http://169.254.169.254/feed.xml"))
     with patch("agent.rss.requests.get") as mock_get:
-        assert client.fetch() == []
+        # None = fetch failed (vs [] = a clean, empty feed — since 2026-09-15).
+        assert client.fetch() is None
     mock_get.assert_not_called()
 
 

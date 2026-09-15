@@ -322,6 +322,13 @@ class MpvProcessBackend(PlayerBackend):
                 self._set("user-agent", headers["User-Agent"])
             if headers.get("Referer"):
                 self._set("referrer", headers["Referer"])
+        else:
+            # Runtime options survive loadfile — reset them so a plain item
+            # after a Referer-carrying one doesn't leak the old headers to
+            # the new CDN (see the in-process backend's identical fix).
+            self._set("http-header-fields", [])
+            self._set("user-agent", "")
+            self._set("referrer", "")
         self._duration = 0.0     # refreshed by the "duration" observer
         self._command("loadfile", url, "replace")
         if self.on_state:

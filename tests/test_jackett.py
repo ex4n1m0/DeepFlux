@@ -80,7 +80,9 @@ def test_fetch_indexers_only_configured(mock_get):
 
 def test_merge_sources_preserves_disabled_and_enables_new():
     existing = [SourceConfig(id="iptorrents", name="IPTorrents", enabled=False),
-                SourceConfig(id="oldgone", name="Old", enabled=True)]
+                SourceConfig(id="oldgone", name="Old", enabled=True),
+                SourceConfig(id="mysite", name="My Site", url="https://my.site",
+                             categories=["Movies"])]
     fetched = [SourceConfig(id="iptorrents", name="IPTorrents", type="private"),
                SourceConfig(id="1337x", name="1337x", type="public")]
     # Default policy: new indexers start enabled; explicit user choices survive.
@@ -88,7 +90,12 @@ def test_merge_sources_preserves_disabled_and_enables_new():
     by_id = {s.id: s for s in merged}
     assert by_id["iptorrents"].enabled is False  # user disabled it — stays disabled
     assert by_id["1337x"].enabled is True        # new from Jackett — enabled by default
-    assert "oldgone" not in by_id                # removed from Jackett — drops off
+    # Entries missing from the Jackett snapshot SURVIVE the merge: manually
+    # added sources (agent tool / Sources dialog) were silently wiped by the
+    # hourly sync before the 2026-09-15 fix. Stale Jackett-gone entries
+    # linger too — removable by hand, never auto-deleted.
+    assert by_id["oldgone"].enabled is True
+    assert by_id["mysite"].categories == ["Movies"]
 
 
 def test_merge_sources_opt_out_of_enabling_new():

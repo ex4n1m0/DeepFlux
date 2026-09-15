@@ -287,3 +287,41 @@ def test_system_prompt_breadth_and_setup_section():
     assert "iptv_add_source" in SYSTEM_PROMPT
     assert "set_api_key" in SYSTEM_PROMPT
     assert "WRITE-ONLY" in SYSTEM_PROMPT
+    # Full-toolbox rule (2026-09-15): the agent must never claim read-only,
+    # and the prompt carries the FFmpeg winget-path gotcha.
+    assert "NEVER claim the toolset is read-only" in SYSTEM_PROMPT
+    assert "WinGet\\Links" in SYSTEM_PROMPT
+    assert "download.ffmpeg_path" in SYSTEM_PROMPT
+
+
+def test_context_budget_not_agent_writable(tools):
+    """The full schema payload rides every request now — letting the agent
+    shrink the context budget below that floor would silently wipe the
+    conversation on every turn (loop review 2026-09-15)."""
+    with pytest.raises(ToolError, match="non-settable"):
+        tools.call("set_settings", {"path": "llm.context_budget_tokens", "value": 8000})
+
+
+def test_source_urls_redacted_in_listing(tools):
+    """Xtream playlist URLs carry username/password query params — they must
+    not reach the LLM verbatim, and the redacted form must still resolve the
+    source for follow-up tools (2026-09-15 review)."""
+    from config import IPTVSourceConfig, RSSFeed
+    tools.config.iptv.sources.append(IPTVSourceConfig(
+        id="xt1", name="My Xtream", kind="xtream",
+        url="http://provider.tv:8080/get.php?username=alice&password=s3cret",
+        username="alice", password="s3cret"))
+    result = tools.call("iptv_list_sources", {})
+    entry = next(s for s in result["sources"] if s["id"] == "xt1")
+    assert "s3cret" not in entry["url"] and "alice" not in entry["url"]
+    assert "<redacted>" in entry["url"]
+
+    tools.config.rss.feeds.append(RSSFeed(
+        url="https://feed.example/rss?token=topsecret", name="My Feed"))
+    result = tools.call("list_rss_feeds", {})
+    assert "topsecret" not in result["feeds"][0]["url"]
+    # The redacted URL still resolves for item reads / removal.
+    feed = tools._find_feed("https://feed.example/rss?token=<redacted>")
+    assert feed is not None and feed.name == "My Feed"
+    feed = tools._find_feed("My Feed")
+    assert feed is not None

@@ -1689,20 +1689,34 @@ def test_javlibrary_fetch_tries_multiple_bases():
 
 # -- FANZA provider --
 
-def test_fanza_predicts_cover_url_for_censored():
-    """FANZA cover URLs follow a predictable pattern — the provider returns a
-    poster even when the HTML scrape fails (zero-parse poster fallback)."""
+def test_fanza_predicts_cover_when_detail_page_exists():
+    """FANZA cover URLs follow a predictable pattern — the prediction is only
+    trusted when the DETAIL PAGE was fetched (the code is real); a page that
+    parses to nothing still yields the predicted poster."""
     from iptv.metadata import FanzaProvider
     prov = FanzaProvider()
-    # Mock the HTML fetch to return empty (simulates a failed scrape).
-    with mock.patch.object(prov, "_fetch_html", return_value=""):
-        with mock.patch("iptv.metadata._jav_rate_limiter"):
-            meta = prov.fetch("", "", SECTION_MOVIES, raw_name="ABP-123")
+    # Page fetched, but parsing yields no meta -> predicted cover fallback.
+    with mock.patch.object(prov, "_fetch_html", return_value="<html>real page</html>"):
+        with mock.patch.object(prov, "_parse", return_value=None):
+            with mock.patch("iptv.metadata._jav_rate_limiter"):
+                meta = prov.fetch("", "", SECTION_MOVIES, raw_name="ABP-123")
     assert meta is not None
     # Cover URL: https://pics.dmm.co.jp/digital/video/abp00123/abp00123pl.jpg
     assert "abp00123" in meta["poster"]
     assert meta["poster"].endswith("pl.jpg")
     assert meta["provider"] == "fanza"
+
+
+def test_fanza_unreachable_page_falls_through():
+    """Detail page NOT fetched -> None, so the JAV chain continues (the bare
+    prediction used to 'hit' every censored code and poisoned the positive
+    cache — review 2026-09-15)."""
+    from iptv.metadata import FanzaProvider
+    prov = FanzaProvider()
+    with mock.patch.object(prov, "_fetch_html", return_value=""):
+        with mock.patch("iptv.metadata._jav_rate_limiter"):
+            meta = prov.fetch("", "", SECTION_MOVIES, raw_name="ABP-123")
+    assert meta is None
 
 
 def test_fanza_skips_uncensored_codes():

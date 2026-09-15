@@ -47,7 +47,7 @@ READ_ONLY_TOOLS = set(READ_ONLY_TOOL_NAMES)
 TOOL_HISTORY_KEEP_FULL = 4
 TOOL_HISTORY_MAX_CHARS = 1500
 
-SYSTEM_PROMPT = """You are DeepFlux, the built-in assistant of the DeepFlux desktop app — an
+SYSTEM_PROMPT = r"""You are DeepFlux, the built-in assistant of the DeepFlux desktop app — an
 all-in-one media and download center. You control the whole app through the
 tools provided: IPTV live TV & movie/series playback, the video player,
 torrent and direct downloads, the embedded web browser, the community chat
@@ -82,11 +82,12 @@ Rules:
 - Never copy private browser, filesystem, or memory data into a web request unless the user explicitly asks and confirms the exact disclosure.
 
 App setup (you can set up anything the user could type into a dialog):
+- In every normal conversation you have the FULL toolbox available — setup writes, shell, downloads, everything (only the autonomous watchdog mode is restricted to recovery tools). If the user hands you a key or asks for an install, just do it (each write still shows you a confirmation first). NEVER claim the toolset is read-only or that you can't change a setting — if a tool call fails, report the actual error instead.
 - IPTV sources: `iptv_list_sources` / `iptv_add_source` / `iptv_update_source` / `iptv_remove_source`. When the user wants IPTV/live TV and no (usable) source is configured, `web_search` for public M3U playlist URLs, pick promising candidates, and add them with iptv_add_source — the URL is validated (#EXTM3U) and the Play tab loads it immediately. Tell the user where each playlist came from. Xtream logins take username/password.
 - API keys & credentials: `list_api_keys` shows which slots exist and whether they are configured; `set_api_key` writes or clears one. Key values are WRITE-ONLY: you may set one when the user gives it to you (never echo it back after they do), but you can never read existing values. Never invent or guess a key value.
 - General settings: `list_settings` / `set_settings` change the app's non-secret options by dotted path (e.g. `iptv.epg_url`, `download.max_concurrent`). Secret fields show as <set>/<not set> and are set via set_api_key instead.
 - Torrent search sources: `list_torrent_sources` / `add_torrent_source` / `remove_torrent_source` manage the indexers/sites that search_indexers queries.
-- Missing components (you can finish the machine's setup): when a feature needs an external tool that isn't installed — FFmpeg (conversions, subtitle timing), Jackett (torrent indexers), SVP (motion interpolation), yt-dlp updates on source builds — offer to install it. Search the web for the official source, download via `add_download` (or prefer `winget` when available), then run the installer with `run_shell`. EVERY `run_shell` call requires user confirmation: state the exact command and what it will do first. Prefer official sources (winget, vendor sites) and silent/quiet flags (`/silent`, `/S`, `--silent`); never use third-party mirrors or pipe a remote script into the shell. Commands run with the user's own permissions — system-wide installs may pop a Windows UAC prompt; warn the user to expect it. Use the default (wait) mode for commands that finish in a few minutes; use wait=false only for installers that show their own UI or clearly outlast the task budget, then verify the result afterwards (files on disk or a version-check command) instead of tight polling. `run_shell` is a last resort — never use it for anything a dedicated tool already does (downloads, file moves, settings).
+- Missing components (you can finish the machine's setup): when a feature needs an external tool that isn't installed — FFmpeg (conversions, subtitle timing), Jackett (torrent indexers), SVP (motion interpolation), yt-dlp updates on source builds — offer to install it. Search the web for the official source, download via `add_download` (or prefer `winget` when available), then run the installer with `run_shell`. EVERY `run_shell` call requires user confirmation: state the exact command and what it will do first. Prefer official sources (winget, vendor sites) and silent/quiet flags (`/silent`, `/S`, `--silent`); never use third-party mirrors or pipe a remote script into the shell. Commands run with the user's own permissions — system-wide installs may pop a Windows UAC prompt; warn the user to expect it. Use the default (wait) mode for commands that finish in a few minutes; use wait=false only for installers that show their own UI or clearly outlast the task budget, then verify the result afterwards (files on disk or a version-check command) instead of tight polling. FFmpeg path gotcha: `winget install Gyan.FFmpeg` puts ffmpeg.exe in `%LOCALAPPDATA%\Microsoft\WinGet\Links`, which is NOT on the running app's PATH until restart — right after installing, set `download.ffmpeg_path` to that full exe path with `set_settings` so DeepFlux picks it up immediately. `run_shell` is a last resort for things no dedicated tool does — never use it for downloads, file moves, or settings that dedicated tools already cover.
 - RSS feeds: `add_rss_feed` / `update_rss_feed` / `remove_rss_feed` (see below).
 - These tools persist to the user's config — mention what you changed and that they can also review it in the app's settings dialogs.
 
@@ -200,6 +201,7 @@ class AgentLoop:
         self.config = config
         self.tools = tools or ToolRegistry(engine, config)
         self.llm = llm or create_llm_client(config.llm)
+        self._llm_signature = self._current_llm_signature()
         self.history: List[Dict[str, Any]] = []
         self.pending: List[PendingAction] = []
         self._pending_created_at = 0.0
@@ -345,8 +347,33 @@ class AgentLoop:
                 message["content"] = content[:keep] + "... [context-truncated]"
         return system + body
 
+    def _current_llm_signature(self) -> tuple:
+        llm = self.config.llm
+        return (llm.provider, llm.api_key, llm.base_url, llm.model,
+                llm.fast_model, llm.reasoning_effort)
+
+    def _refresh_llm_client_if_changed(self) -> None:
+        """Rebuild the LLM client when config.llm changed since it was built.
+
+        The agent's own set_api_key/set_settings persist a new key/model but
+        previously left the loop holding the OLD client all session — dummy
+        mode stayed brain-dead right after the user pasted their key, while
+        the tool result promised pickup "next conversation"."""
+        sig = self._current_llm_signature()
+        if sig == self._llm_signature:
+            return
+        try:
+            self.llm = create_llm_client(self.config.llm)
+            self._llm_signature = sig
+            logger.info("Agent LLM client rebuilt after a config change")
+        except Exception:
+            # Keep the old client; the signature stays stale so the next
+            # chat retries (self-healing once the config is loadable).
+            logger.exception("LLM client rebuild failed — keeping the old client")
+
     def chat(self, message: str) -> Dict[str, Any]:
         """Run one full ReAct turn for a user message and return the final response."""
+        self._refresh_llm_client_if_changed()
         normalized = message.strip().lower()
         if self.pending and time.time() - self._pending_created_at > 300:
             self.pending = []
@@ -645,7 +672,7 @@ class AgentLoop:
 
         # Execute the tools and add results to the conversation.
         tool_messages = []
-        for p in self.pending:
+        for i, p in enumerate(self.pending):
             self._emit("tool_start", tool=p.tool_name, args=self._redact_tool_arguments(p.tool_name, p.arguments))
             blocked = self._reserve_tool_call(p.tool_name, p.arguments)
             if self._cancel_requested.is_set():
@@ -658,7 +685,10 @@ class AgentLoop:
                 except Exception as exc:
                     result = {"success": False, "error": str(exc)}
             self._emit("tool_end", tool=p.tool_name, summary=self._summarize_tool_result(result), result=redact_sensitive_data(result))
-            tool_call_id = p.tool_call_id or "call_0"
+            # Synthetic ids must match the assistant message pairwise
+            # (call_0, call_1, …) — a constant "call_0" for every tool
+            # message 400s the next API call when the provider omitted ids.
+            tool_call_id = p.tool_call_id or f"call_{i}"
             tool_msg = {"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(result)}
             tool_messages.append(tool_msg)
             self.history.append(tool_msg)

@@ -323,6 +323,14 @@ class MpvBackend(PlayerBackend):
                     self._mpv["user-agent"] = ua
                 if ref:
                     self._mpv["referrer"] = ref
+            else:
+                # These are runtime OPTIONS that survive loadfile — playing
+                # a plain item after a Referer-carrying one leaked the old
+                # Referer/UA to the new CDN (hotlink-protected CDNs then
+                # 403'd an innocent request). Reset them (2026-09-15).
+                self._mpv["http-header-fields"] = []
+                self._mpv["user-agent"] = ""
+                self._mpv["referrer"] = ""
             self._mpv.play(url)
             if self.on_state:
                 self.on_state("playing")

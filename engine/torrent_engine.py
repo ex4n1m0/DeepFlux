@@ -30,11 +30,22 @@ class EngineCommandError(Exception):
 
 def _hash_str(obj: Any) -> str:
     """Hex info-hash from a torrent_handle/torrent_info, preferring the
-    libtorrent 2.x ``info_hashes()`` API over the deprecated ``info_hash()``."""
+    libtorrent 2.x ``info_hashes()`` API over the deprecated ``info_hash()``.
+
+    V2-only torrents (urn:btmh magnets) carry an all-zero v1 sha1 — keying
+    on it collapsed every v2-only torrent onto the same hash (false
+    "already in the list", colliding state/resume files). Those get a
+    "v2:"-prefixed key instead."""
     try:
-        return str(obj.info_hashes().v1)
+        hashes = obj.info_hashes()
     except AttributeError:
         return str(obj.info_hash())
+    v1 = str(hashes.v1)
+    if set(v1) == {"0"}:
+        v2 = str(getattr(hashes, "v2", "") or "")
+        if v2:
+            return "v2:" + v2
+    return v1
 
 
 class Priority(IntEnum):
@@ -168,6 +179,26 @@ class TorrentEngine:
                     last_drain = now
         except Exception as exc:
             logger.exception("Engine worker crashed: %s", exc)
+            # A crashed worker must never leave pending futures unresolved —
+            # every public call waits on them and would hang the GUI/agent
+            # forever. Fail everything queued and everything submitted later.
+            self._worker_dead = True
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                item["future"].set_exception(
+                    EngineCommandError("torrent engine worker crashed"))
+        finally:
+            self._worker_dead = True
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                item["future"].set_exception(
+                    EngineCommandError("torrent engine worker stopped"))
 
     def _process_command(self, item: Dict[str, Any]) -> None:
         """Execute a queued command and resolve its Future."""
@@ -183,6 +214,9 @@ class TorrentEngine:
     def _enqueue(self, fn: Callable[[], Any], block: bool = True, timeout: Optional[float] = None) -> Future[Any]:
         """Submit a callable to the engine thread and return a Future."""
         future: Future[Any] = Future()
+        if getattr(self, "_worker_dead", False):
+            future.set_exception(EngineCommandError("torrent engine worker crashed"))
+            return future
         self._queue.put({"fn": fn, "future": future}, block=block, timeout=timeout)
         return future
 
@@ -351,9 +385,9 @@ class TorrentEngine:
         # Reject duplicates BEFORE touching the session, so a failed add
         # never leaves an untracked torrent behind in libtorrent.
         try:
-            info_hash = str(params.info_hashes.v1)
-        except AttributeError:
-            info_hash = str(params.info_hash) if hasattr(params, "info_hash") else ""
+            info_hash = _hash_str(params)
+        except Exception:
+            info_hash = ""
         with self._lock:
             if info_hash and info_hash in self._torrents:
                 raise EngineCommandError("This torrent is already in the list")

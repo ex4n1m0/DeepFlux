@@ -126,6 +126,13 @@ def parse_m3u(
         if not stripped:
             continue
 
+        # A UTF-8 BOM survives str.strip() and hid the #EXTM3U header from
+        # the startswith check — the playlist loaded but silently lost its
+        # url-tvg EPG link (looks_like_m3u always tolerated the BOM; the
+        # parse did not — review 2026-09-15). Lstrip unconditionally: the
+        # BOM only ever prefixes line 1 and a mid-line one is pathological.
+        stripped = stripped.lstrip("\ufeff")
+
         # #EXTM3U header — may declare an EPG url.
         if stripped.upper().startswith("#EXTM3U"):
             attrs, _ = _parse_attrs(stripped)

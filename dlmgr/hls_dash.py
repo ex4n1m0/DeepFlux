@@ -710,7 +710,11 @@ class HLSDownloader:
                 ),
                 0,
             )
-            self._download_segment(self._info.init_segment_url, init_path, init_index)
+            # RFC 8216: the Initialization Section is NOT encrypted even
+            # when the media segments are AES-128 — decrypting it corrupted
+            # the stream (or failed the 16-byte alignment) (review 2026-09-15).
+            self._download_segment(self._info.init_segment_url, init_path, init_index,
+                                   decrypt=False)
 
         # Download all segments in parallel.
         from concurrent.futures import ThreadPoolExecutor, as_completed

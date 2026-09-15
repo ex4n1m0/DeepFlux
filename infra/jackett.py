@@ -157,13 +157,22 @@ def merge_sources(existing: List[SourceConfig], fetched: List[SourceConfig],
     Existing ids keep their enabled state (a source the user disabled stays
     disabled across re-fetches); brand-new indexers get `enable_new` —
     default True: if it came from Jackett, the user wants it searched.
-    """
+    Manually added sources (agent tool / Sources dialog) are NOT in the
+    Jackett snapshot and must survive the merge — returning only the fetched
+    entries silently deleted them on every sync (review 2026-09-15)."""
     existing_enabled = {s.id: s.enabled for s in existing}
-    return [
+    merged = [
         SourceConfig(id=f.id, name=f.name, url=f.url, type=f.type,
                      enabled=existing_enabled.get(f.id, enable_new))
         for f in fetched
     ]
+    fetched_ids = {f.id for f in fetched}
+    merged.extend(
+        SourceConfig(id=s.id, name=s.name, url=s.url, type=s.type,
+                     enabled=s.enabled, categories=list(s.categories))
+        for s in existing if s.id not in fetched_ids
+    )
+    return merged
 
 
 def sync_sources(config: DeeptorrentConfig, config_path: Optional[str] = None,

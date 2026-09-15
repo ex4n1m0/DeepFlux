@@ -57,14 +57,32 @@ def _public_feed_get(url: str) -> requests.Response:
             timeout=30,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Deeptorrent/0.1 RSS Reader"},
             allow_redirects=False,
+            stream=True,
         )
-        if response.status_code not in (301, 302, 303, 307, 308):
-            return response
-        location = response.headers.get("Location")
-        response.close()
-        if not location:
-            raise ValueError("Feed redirect did not include a destination")
-        current = urljoin(current, location)
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                raise ValueError("Feed redirect did not include a destination")
+            current = urljoin(current, location)
+            continue
+        # Stream-read with the 5 MiB cap DURING the download — the old code
+        # buffered the whole body first and only then checked the size.
+        limit = 5 * 1024 * 1024
+        buffer = b""
+        too_large = False
+        try:
+            for chunk in response.iter_content(64 * 1024):
+                buffer += chunk
+                if len(buffer) > limit:
+                    too_large = True
+                    break
+        finally:
+            response.close()
+        if too_large:
+            raise ValueError("Feed response exceeds the 5 MiB limit")
+        response._content = buffer
+        return response
     raise ValueError("Too many feed redirects")
 
 
@@ -101,17 +119,19 @@ class RSSFeedClient:
     def __init__(self, feed: RSSFeed) -> None:
         self.feed = feed
 
-    def fetch(self) -> List[FeedItem]:
-        """Fetch the feed URL and return parsed items."""
+    def fetch(self) -> Optional[List[FeedItem]]:
+        """Fetch the feed URL and return parsed items.
+
+        None = fetch/parse FAILED; [] = a well-formed feed with zero (or all
+        title/link-less) items. check_feed must not report a clean empty feed
+        as broken (review 2026-09-15)."""
         try:
             resp = _public_feed_get(self.feed.url)
             resp.raise_for_status()
             content = resp.content
-            if len(content) > 5 * 1024 * 1024:
-                raise ValueError("Feed response exceeds the 5 MiB limit")
         except Exception as exc:
             logger.warning("RSS fetch failed for %s: %s", self.feed.url, exc)
-            return []
+            return None
 
         return self._parse(content)
 
@@ -238,7 +258,7 @@ class RSSMonitor:
         client = RSSFeedClient(feed)
         items = client.fetch()
 
-        if not items:
+        if items is None:
             return {
                 "feed_name": feed.name or feed.url,
                 "mode": feed.mode,
@@ -246,6 +266,16 @@ class RSSMonitor:
                 "new_items": 0,
                 "items": [],
                 "error": "Failed to fetch or parse feed",
+            }
+        if not items:
+            # A well-formed feed with nothing in it is a SUCCESS with zero
+            # items, not a broken feed.
+            return {
+                "feed_name": feed.name or feed.url,
+                "mode": feed.mode,
+                "total_items": 0,
+                "new_items": 0,
+                "items": [],
             }
 
         # Filter to only new items (by guid).

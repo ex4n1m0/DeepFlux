@@ -118,9 +118,18 @@ class SegmentWorker(threading.Thread):
                     if self._expected_file_size and match.group(3) != "*" and int(match.group(3)) != self._expected_file_size:
                         raise RuntimeError("Remote file size changed during download")
                 # The file may not exist yet (unknown-size jobs aren't
-                # pre-allocated) — create it in that case.
-                mode = "r+b" if ranged and os.path.isfile(self._file_path) else "w+b"
-                with open(self._file_path, mode) as f:
+                # pre-allocated) — create it WITHOUT truncating: a plain
+                # "w+b" open per ranged worker zeroed whatever earlier
+                # workers had already written whenever pre-allocation
+                # failed, completing jobs with corrupt zero-filled holes
+                # (review 2026-09-15). Non-ranged restarts keep w+b —
+                # they deliberately begin from byte 0.
+                if ranged and not os.path.isfile(self._file_path):
+                    fd = os.open(self._file_path, os.O_RDWR | os.O_CREAT)
+                    f = os.fdopen(fd, "r+b")
+                else:
+                    f = open(self._file_path, "r+b" if ranged else "w+b")
+                with f:
                     write_pos = request_start if ranged else 0
                     f.seek(write_pos)
                     response_bytes = 0

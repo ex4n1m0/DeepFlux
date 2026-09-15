@@ -99,7 +99,7 @@ SENSITIVE_TOOL_FIELDS = {
 
 UNTRUSTED_RESULT_TOOLS = frozenset({
     "web_search", "web_fetch", "search_indexers", "find_alt_trackers",
-    "find_alt_release", "get_rss_feed_items",
+    "find_alt_release", "get_rss_feed_items", "refresh_tracker_list",
     "browser_get_content", "browser_snapshot", "browser_wait",
     "run_shell",  # command output can echo arbitrary external text
 })
@@ -116,12 +116,6 @@ _SHELL_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _SHELL_OUTPUT_LIMIT = 16000
 _SHELL_TIMEOUT_MIN = 5
 _SHELL_TIMEOUT_MAX = 600
-
-# Keyword router for run_shell (word boundaries — see tool_names_for_context).
-_SHELL_ROUTE_RE = re.compile(
-    r"\b(shell|terminal|powershell|cmd|install\w*|uninstall\w*|execute|exe|winget|ffmpeg|jackett|svp)\b",
-    re.IGNORECASE,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +157,10 @@ _SETTINGS_SECTIONS = (
 _SETTINGS_DENY_PATHS = {
     ("llm", "stream"), ("llm", "memory_enabled"),  # from_file forces both True
     ("llm", "memory_dir"),                          # memory lives at a fixed root
+    # The full toolset (~89 schemas) ships in EVERY request now; an agent
+    # write that shrinks this below the schema floor would floor _fit_context
+    # and silently wipe the whole conversation on every turn.
+    ("llm", "context_budget_tokens"),
     ("sources", "last_jackett_fetch"),              # internal sync bookkeeping
     ("download", "ytdlp_last_check"),               # internal freshness bookkeeping
     ("download", "control_api_port"),               # running server binding
@@ -306,6 +304,29 @@ def redact_url_secrets(value: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment)) if changed else value
 
 
+def redact_source_credentials(url: str) -> str:
+    """Display form of a playlist/feed URL for agent-visible results.
+
+    Xtream's dominant format is get.php?username=…&password=… and XMLTV EPG
+    links often carry token params — the generic redactor misses `username`
+    (deliberately narrow elsewhere to avoid mangling benign ?user= params).
+    The agent references sources by id/name; it never needs raw credentials
+    echoed back into the LLM context."""
+    redacted = redact_url_secrets(url)
+    return re.sub(
+        r"(?i)([?&])(username|password|token|key|auth)=[^&]*",
+        r"\1\2=<redacted>",
+        redacted,
+    )
+
+
+def _scrub_query_secrets(text: str) -> str:
+    """Network/HTTP error strings embed the full request URL, query included —
+    strip queries so the Jackett apikey never reaches the LLM or logs on the
+    most common failure (Jackett not running)."""
+    return re.sub(r"\?[^\s'\"]+", "?<query-redacted>", text)
+
+
 def redact_tool_arguments(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     sensitive = set(tool_policy(name).sensitive_fields)
     sensitive.update(
@@ -390,20 +411,46 @@ def validate_public_http_url(url: str) -> str:
     return parsed.geturl()
 
 
-def public_http_get(url: str, *, timeout: int, headers: Dict[str, str]) -> requests.Response:
+# Cap for agent-fetched HTTP bodies (web_fetch pages, tracker lists). A
+# hostile URL can serve gigabytes within the 30s timeout — without a
+# stream-side cap the whole body lands in RAM in the GUI process before any
+# max_chars truncation happens (review 2026-09-15).
+FETCH_BODY_LIMIT = 8 * 1024 * 1024
+
+
+def public_http_get(url: str, *, timeout: int, headers: Dict[str, str],
+                    max_bytes: int = FETCH_BODY_LIMIT) -> requests.Response:
     from urllib.parse import urljoin
 
     current = url
     for _ in range(6):
         current = validate_public_http_url(current)
-        response = requests.get(current, timeout=timeout, headers=headers, allow_redirects=False)
-        if response.status_code not in (301, 302, 303, 307, 308):
-            return response
-        location = response.headers.get("Location")
-        response.close()
-        if not location:
-            raise ToolError("Redirect response did not include a destination")
-        current = urljoin(current, location)
+        response = requests.get(current, timeout=timeout, headers=headers,
+                                allow_redirects=False, stream=True)
+        if response.status_code in (301, 302, 303, 307, 308):
+            location = response.headers.get("Location")
+            response.close()
+            if not location:
+                raise ToolError("Redirect response did not include a destination")
+            current = urljoin(current, location)
+            continue
+        # Stream-read up to the cap so a huge body can't exhaust memory;
+        # stash the buffer back into the response so .text/.content work
+        # unchanged for callers.
+        buffer = b""
+        too_large = False
+        try:
+            for chunk in response.iter_content(64 * 1024):
+                buffer += chunk
+                if len(buffer) > max_bytes:
+                    too_large = True
+                    break
+        finally:
+            response.close()
+        if too_large:
+            raise ToolError(f"Response exceeded the {max_bytes // (1024 * 1024)} MiB fetch limit")
+        response._content = buffer
+        return response
     raise ToolError("Too many redirects")
 
 
@@ -469,55 +516,15 @@ class ToolRegistry:
         ]
 
     def tool_names_for_context(self, message: str) -> set[str]:
-        text = (message or "").lower()
-        all_names = set(self._tools)
-        if any(phrase in text for phrase in ("what can you do", "capabilities", "available tools", "agent help")):
-            return all_names
-        selected = {
-            "add_magnet", "add_torrent_file", "add_download", "list_downloads",
-            "pause_download", "resume_download", "retry_download", "cancel_download",
-            "remove_download", "pause_torrent", "resume_torrent", "remove_torrent",
-            "list_torrents", "get_torrent_status", "set_file_priority", "add_tracker",
-            "set_torrent_rate_limits", "set_sequential_download", "force_recheck",
-            "force_reannounce", "get_swarm_stats", "diagnose_swarm", "refresh_tracker_list",
-            "find_alt_trackers", "search_indexers", "find_alt_release",
-            "propose_rename_and_category", "analyze_organization", "apply_organization_plan",
-            "web_search", "web_fetch", "save_memory",
-            "search_memory", "list_memories", "edit_memory", "forget_memory", "agent_diagnostics",
-            # Cheap setup reads stay visible so the model knows it CAN set the
-            # app up (the mutations themselves are keyword-gated below).
-            "iptv_list_sources", "list_api_keys", "list_settings", "list_torrent_sources",
-        }
-        groups = {
-            "rss": {name for name in all_names if name.endswith("rss_feed") or "rss_feed" in name or name == "download_from_feed"},
-            "files": {"list_directory", "create_folder", "copy_path", "move_path", "rename_path", "delete_path"},
-            "iptv": {name for name in all_names if name.startswith("iptv_")},
-            "browser": {name for name in all_names if name.startswith("browser_")},
-            "setup": {"iptv_list_sources", "iptv_add_source", "iptv_update_source",
-                      "iptv_remove_source", "list_api_keys", "set_api_key",
-                      "list_settings", "set_settings", "list_torrent_sources",
-                      "add_torrent_source", "remove_torrent_source"},
-            "shell": {"run_shell"},
-        }
-        if any(word in text for word in ("rss", "feed", "subscription")):
-            selected.update(groups["rss"])
-        if any(word in text for word in ("file", "folder", "directory", "path", "rename", "move", "copy", "delete")):
-            selected.update(groups["files"])
-        if any(word in text for word in ("iptv", "playlist", "m3u", "play", "player", "channel", "epg", "subtitle", "volume", "movie", "series", "episode")):
-            selected.update(groups["iptv"])
-        if any(word in text for word in ("browser", "browse", "bookmark", "tab", "click", "form", "navigate", "web page", "website", "login", "log in")):
-            selected.update(groups["browser"])
-        if any(word in text for word in (
-            "setting", "settings", "config", "preference", "api key", "apikey",
-            "source", "indexer", "provider", "credential",
-        )):
-            selected.update(groups["setup"])
-        # Word-boundary matching: bare substrings over-trigger ("run a search",
-        # the app's own "Command" tab). Confirmation still gates every call —
-        # this only shapes which schema the model sees.
-        if _SHELL_ROUTE_RE.search(text):
-            selected.update(groups["shell"])
-        return selected & all_names
+        """Every tool rides in EVERY task (user decision 2026-09-15: the agent
+        gets the full toolbox). The old keyword routing hid the setup/shell
+        MUTATIONS whenever a message missed the magic words — "here's my
+        jackett key" didn't contain "api key", so set_api_key wasn't even in
+        the schema list and the agent truthfully told the user it couldn't
+        write settings; the same blind spot broke ffmpeg installs. Routing is
+        gone: correctness of "the agent can always set the app up" beats the
+        per-request token savings."""
+        return set(self._tools)
 
     def shutdown(self) -> None:
         if self._owns_dl_engine and self._dl_engine is not None:
@@ -2270,7 +2277,18 @@ class ToolRegistry:
             result["about"] = about
         if result.get("success") and isinstance(result.get("results"), list):
             with self._search_cache_lock:
-                self._search_cache[cache_key] = (time.time(), result)
+                # Prune + cap on insert: expired entries were previously only
+                # freed when their exact key was re-queried, so every distinct
+                # query kept its full ranked result set for the process
+                # lifetime (unbounded growth in a long GUI session).
+                now = time.time()
+                for key in [k for k, (ts, _) in self._search_cache.items()
+                            if now - ts > self.SEARCH_CACHE_TTL]:
+                    self._search_cache.pop(key, None)
+                while len(self._search_cache) >= 32:
+                    oldest = min(self._search_cache, key=lambda k: self._search_cache[k][0])
+                    self._search_cache.pop(oldest, None)
+                self._search_cache[cache_key] = (now, result)
         return self._page_result(result, offset)
 
     SEARCH_PAGE_SIZE = 40  # ranked rows per LLM-visible page
@@ -2456,6 +2474,14 @@ class ToolRegistry:
                         result["note"] = f"{result.get('note', '')} (auto deep sweep: quick pass found nothing)".strip()
                         return result
                     failure = result
+                else:
+                    # The deep sweep ran cleanly and the still-healthy
+                    # indexers simply have zero hits — the quick pass's
+                    # all-failed result is stale (those indexers are
+                    # dead-marked and were skipped). Report "no results"
+                    # and fall through to the web tiers instead of a
+                    # bogus connectivity failure.
+                    failure = None
             if failure is not None:
                 # Jackett itself failed (timeouts/network/auth) — tell the agent
                 # explicitly so it can retry, instead of silently substituting
@@ -2657,6 +2683,18 @@ class ToolRegistry:
                     "results": [],
                     "error": f"All {queried} Jackett indexer(s) failed to respond",
                     "errors": list(local_errors),
+                }
+            if not queried and dead:
+                # Every configured indexer was dead-marked earlier in this
+                # search (e.g. the deep sweep after an all-failed quick
+                # pass) — nothing could be queried. That is a connectivity
+                # failure, NOT a clean zero: without this, the search
+                # reported a bogus failure→web-fallback flip-flop.
+                return {
+                    "success": False,
+                    "results": [],
+                    "error": f"All {len(dead)} Jackett indexer(s) failed earlier in this search",
+                    "errors": list(dead.values()),
                 }
             result: Dict[str, Any] = {"success": False, "results": []}
             if local_errors:
@@ -3516,11 +3554,12 @@ class ToolRegistry:
         sources = []
         for s in self.config.iptv.sources:
             entry: Dict[str, Any] = {
-                "id": s.id, "name": s.name, "kind": s.kind, "url": s.url,
+                "id": s.id, "name": s.name, "kind": s.kind,
+                "url": redact_source_credentials(s.url),
                 "enabled": s.enabled, "auto_refresh_minutes": s.auto_refresh_minutes,
             }
             if s.epg_url:
-                entry["epg_url"] = s.epg_url
+                entry["epg_url"] = redact_source_credentials(s.epg_url)
             sources.append(entry)
         return {
             "success": True,
@@ -3977,7 +4016,7 @@ class ToolRegistry:
             "feeds": [
                 {
                     "name": f.name or f.url,
-                    "url": f.url,
+                    "url": redact_source_credentials(f.url),
                     "mode": f.mode,
                     "category": f.category,
                     "seen_items": len(f.seen_items),
@@ -4045,10 +4084,12 @@ class ToolRegistry:
                 "note": "Feed saved. auto_download feeds fetch new items on the monitor's schedule."}
 
     def _remove_rss_feed(self, url: str) -> Dict[str, Any]:
-        before = len(self.config.rss.feeds)
-        self.config.rss.feeds = [f for f in self.config.rss.feeds if f.url != url]
-        if len(self.config.rss.feeds) == before:
+        # Match through _find_feed so the redacted URL (or name) shown by
+        # list_rss_feeds works as the identifier too.
+        target = self._find_feed(url)
+        if target is None:
             return {"success": False, "error": f"No subscribed feed with URL: {url}"}
+        self.config.rss.feeds = [f for f in self.config.rss.feeds if f is not target]
         self._persist_rss_config()
         return {"success": True, "removed": url}
 
@@ -4158,11 +4199,17 @@ class ToolRegistry:
         }
 
     def _find_feed(self, url: str) -> Optional[Any]:
-        """Find a feed by URL."""
+        """Find a feed by URL — the exact URL, the REDACTED form the list
+        tool shows (credential params masked), or a unique name match."""
         for f in self.config.rss.feeds:
             if f.url == url:
                 return f
-        return None
+        for f in self.config.rss.feeds:
+            if redact_source_credentials(f.url) == url:
+                return f
+        matches = [f for f in self.config.rss.feeds
+                   if f.name and f.name.strip().lower() == (url or "").strip().lower()]
+        return matches[0] if len(matches) == 1 else None
 
     def _validate_torrent_download_url(self, url: str) -> str:
         from urllib.parse import urlsplit
@@ -4185,7 +4232,8 @@ class ToolRegistry:
             for _ in range(6):
                 current = self._validate_torrent_download_url(current)
                 resp = requests.get(
-                    current, timeout=30, headers={"User-Agent": BROWSER_UA}, allow_redirects=False)
+                    current, timeout=30, headers={"User-Agent": BROWSER_UA},
+                    allow_redirects=False, stream=True)
                 if resp.status_code not in (301, 302, 303, 307, 308):
                     break
                 location = resp.headers.get("Location", "")
@@ -4200,7 +4248,16 @@ class ToolRegistry:
             else:
                 raise ToolError("Too many torrent download redirects")
             resp.raise_for_status()
-            body = resp.content
+            # .torrent files are at most a few MiB — cap the read so a
+            # mis-resolved link can't pull a giant payload into memory.
+            body = b""
+            try:
+                for chunk in resp.iter_content(64 * 1024):
+                    body += chunk
+                    if len(body) > 32 * 1024 * 1024:
+                        raise ToolError("Torrent download exceeded 32 MiB — not a .torrent file?")
+            finally:
+                resp.close()
             # Some indexers return the magnet URI as the response body.
             if body.lstrip().startswith(b"magnet:"):
                 return self._add_magnet(body.decode("utf-8", "replace").strip(), save_path, category)
@@ -4398,9 +4455,23 @@ class WebSearchClient:
         def _fetch_one(url: str) -> Tuple[List[str], Optional[str]]:
             try:
                 self._throttle()
-                resp = requests.get(url, timeout=30)
+                # Streamed + capped: the lists are plain text < 1 MiB, but
+                # the URLs are remote — never buffer an unbounded body.
+                resp = requests.get(url, timeout=30, stream=True)
                 resp.raise_for_status()
-                lines = [l.strip() for l in resp.text.splitlines()]
+                buffer = b""
+                too_large = False
+                try:
+                    for chunk in resp.iter_content(64 * 1024):
+                        buffer += chunk
+                        if len(buffer) > FETCH_BODY_LIMIT:
+                            too_large = True
+                            break
+                finally:
+                    resp.close()
+                if too_large:
+                    return [], f"{url}: response exceeded the fetch limit"
+                lines = [l.strip() for l in buffer.decode("utf-8", "replace").splitlines()]
                 return [l for l in lines if l and not l.startswith("#")], None
             except Exception as exc:
                 logger.warning("Failed to fetch tracker list %s: %s", url, exc)
@@ -4529,8 +4600,12 @@ class TorznabClient:
             resp = requests.get(url, params=params, timeout=self.config.timeout)
             resp.raise_for_status()
         except Exception as exc:
-            logger.warning("Indexer search failed: %s", exc)
-            return {"success": False, "results": [], "error": str(exc)}
+            # Error text embeds the full URL — scrub the query so the
+            # Jackett apikey never reaches the LLM/logs (most common case:
+            # "Jackett not running").
+            err = _scrub_query_secrets(str(exc))
+            logger.warning("Indexer search failed: %s", err)
+            return {"success": False, "results": [], "error": err}
 
         return self._parse_torznab(resp.text)
 
@@ -4555,8 +4630,9 @@ class TorznabClient:
             resp = requests.get(url, params=params, timeout=self.config.timeout)
             resp.raise_for_status()
         except Exception as exc:
-            logger.warning("Indexer %s search failed: %s", indexer_id, exc)
-            return {"success": False, "results": [], "error": str(exc)}
+            err = _scrub_query_secrets(str(exc))
+            logger.warning("Indexer %s search failed: %s", indexer_id, err)
+            return {"success": False, "results": [], "error": err}
 
         return self._parse_torznab(resp.text)
 
