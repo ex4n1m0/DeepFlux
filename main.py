@@ -407,6 +407,12 @@ def main() -> None:
         help="Remove DeepFlux file/protocol associations and exit.",
     )
     parser.add_argument(
+        "--setup-jackett",
+        action="store_true",
+        help="Installer final step: install/locate the Jackett service, link its "
+             "API key, add all public indexers, and test the connection.",
+    )
+    parser.add_argument(
         "targets",
         nargs="*",
         help="Files or URIs to open (.torrent, magnet:, media files, html) — used by file associations.",
@@ -457,6 +463,11 @@ def main() -> None:
         from infra.file_associations import unregister_associations
         print(f"File associations: {'removed' if unregister_associations() else 'failed'}")
         return
+
+    # --- Installer final step: one-shot Jackett bootstrap -----------------
+    if args.setup_jackett:
+        from gui.jackett_setup_dialog import run_setup_jackett_dialog
+        return run_setup_jackett_dialog(config_path=args.config)
 
     # --- Single instance: forward opened files/URIs to a running DeepFlux ---
     if args.targets and _forward_to_running_instance(args.targets):

@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 4.6 — User Guide</h1>
+<h1>DeepFlux 4.7 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -61,7 +61,12 @@ organize files, all with your confirmation for sensitive actions.</p>
       demo mode.</li>
   <li><b>Set up Jackett (optional but recommended):</b> Download → Jackett Settings.
       Jackett connects to torrent indexers and gives the agent structured search results.
-      DeepFlux starts it automatically when it's not running.</li>
+      DeepFlux starts it automatically when it's not running. If you kept the
+      <i>“Set up Jackett torrent search now”</i> box checked at the end of the
+      DeepFlux installation, this is already done — the service is installed,
+      its public indexers are added, and its API key is linked. To redo it by
+      hand, run <code>"C:\Users\&lt;you&gt;\AppData\Local\Programs\DeepFlux\DeepFlux.exe"
+      --setup-jackett</code> (one Windows permission prompt appears).</li>
   <li><b>Optional search keys:</b> add a Brave or Perplexity API key (environment
       variables <code>BRAVE_API_KEY</code> / <code>DEEPSEEK_API_KEY</code> also work).
       Web searches then query DuckDuckGo, Brave, and Perplexity in parallel and
@@ -214,7 +219,10 @@ the torrent engine on completion.</p>
   <li><b>Sources:</b> Play → Playlist Sources — an M3U URL or file, an Xtream
       Codes login, or a local media folder (your own movies/series library,
       scanned and poster-matched like any provider). All enabled sources load at
-      once; the sidebar tree is Source → Section → Category.</li>
+      once; the sidebar tree is Source → Section → Category. A small sample
+      playlist (Macau — 7 free-to-air channels from iptv-org) ships
+      preinstalled so there is something to watch on first launch; remove it
+      there if you don't want it.</li>
   <li><b>Year grouping:</b> Movies and Series sub-group by release year under each
       category (2026, 2025, …), newest first; titles with no known year sit under
       "Others". The "Group" picker above the tree switches back to flat categories.</li>
@@ -463,6 +471,9 @@ once enough people have installed the release.
 <div class="warn">
 <b>No search results:</b> Make sure Jackett is running and your sources are enabled
 (Download → Sources). Without Jackett, the agent falls back to slower web searches.
+To set everything up in one go, run DeepFlux with <code>--setup-jackett</code>
+(see Getting Started) or re-run the DeepFlux installer and keep the
+<i>“Set up Jackett torrent search now”</i> box checked.
 </div>
 
 <div class="warn">
@@ -553,7 +564,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("4.6 — AI Deep Search")
+        version = QLabel("4.7 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

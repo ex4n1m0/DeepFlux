@@ -47,3 +47,7 @@ torrent file/
 
 # Local-only build secrets (bundled into releases, never committed)
 _embedded_keys.py
+
+# Bundled Jackett installer (~42 MB, fetched+hashed by packaging/fetch_jackett.py;
+# PINNED.json and the GPL notice ARE tracked so builds stay reviewable)
+packaging/jackett/*.exe

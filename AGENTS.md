@@ -52,6 +52,70 @@
   rendered lines or it gets cropped on machines with larger system fonts /
   text scaling — long instructions belong in the in-app User Guide, not the
   installer final page.
+- Jackett installer final step (added 2026-09-16): the finished page carries a
+  DEFAULT-CHECKED postinstall checkbox "Set up Jackett torrent search now"
+  (default-on is a `CurPageChanged(wpFinished)` hook that checks the RunList
+  item — Inno always creates postinstall checkboxes unchecked) which runs
+  `DeepFlux.exe --setup-jackett` (entry is BEFORE the launch entry, without
+  `nowait`, so the app only starts once the service is linked). The step is
+  `infra/jackett_setup.py::run_setup` with a standalone progress window
+  (`gui/jackett_setup_dialog.py`): discover ServerConfig.json → run the
+  BUNDLED official installer elevated (one UAC) → link `indexer.url/api_key`
+  into config.json → add every unconfigured public indexer → test + sync.
+  Idempotent: upgrades re-run it (config.json is wiped every install) and it
+  just re-links in seconds. VERIFIED facts — do not re-derive by guessing:
+  * Jackett's own installer is Inno Setup; its `windowsService` task is
+    CHECKED BY DEFAULT and its non-postinstall `[Run]` entries
+    (`JackettConsole --Install` / `--Start`) execute under `/VERYSILENT
+    /SUPPRESSMSGBOXES /NORESTART` → a silent install leaves the service
+    INSTALLED AND RUNNING. It requires elevation (default
+    PrivilegesRequired=admin), so we launch it via ctypes `ShellExecuteExW`
+    verb "runas" and wait on the process handle (declared argtypes — see the
+    compact-mode ctypes lesson); UAC decline surfaces as GetLastError 1223.
+  * Everything lands in `C:\ProgramData\Jackett` with `everyone-modify`, so
+    an unelevated process reads `ServerConfig.json` there (fields: `APIKey`,
+    `Port`, `BasePathOverride`, `AdminPassword`); user-mode installs keep it
+    under `%LOCALAPPDATA%\Jackett`.
+  * A FRESH Jackett has ZERO configured indexers (the 98 on this machine were
+    added over time) — installing alone gives no sources; the fan-out that
+    adds them is the point of the step.
+  * The API key alone is NOT accepted on the admin routes (plain apikey →
+    302 to the login page; the v2.2 admin prefix is gone and the v2.0 list
+    route 400s through redirect chains). Working recipe, verified live:
+    `GET /UI/Login?cookiesChecked=1` with a cookie jar (no admin password =
+    instant auth cookie), then per indexer `GET` + `POST` the SAME array to
+    `/api/v2.0/indexers/{id}/Config` — the web UI's OK button → 204. Jackett
+    saves an indexer only if its connection test passes, so dead sites /
+    FlareSolverr challenges / i2p hosts 500 and are counted and SKIPPED (that
+    is correct, not a bug to fix). An admin password blocks the session — the
+    step then skips the fan-out with an explanatory line.
+  * NEVER uninstall or reset Jackett from DeepFlux — the service is shared
+    infrastructure (Sonarr & co.).
+  * Build ritual: run `python packaging/fetch_jackett.py` on the build
+    machine before ISCC (like gen_logo_assets.py). It downloads the latest
+    official installer into `packaging/jackett/` (gitignored, ~42 MB) +
+    writes `PINNED.json` (version/sha256 — tracked) and the GPL-2.0 notice
+    (tracked; ships into `_internal\licenses\` next to the mpv/ffmpeg LGPL
+    notices). installer.iss uses `skipifsourcedoesntexist`, so a build
+    without the file still compiles — it just offers no Jackett step.
+  * Tests: `tests/test_jackett_setup.py` (mocked HTTP/ctypes/config writes,
+    plus an offscreen dialog run).
+- Installer-seeded config.json (CurStepChanged ssPostInstall): the seed is
+  MINIMAL and must stay that way — ONLY real overrides, never a copy of
+  defaults (config.py is the single source of truth; from_file fills the
+  rest). Shipped today: one sample IPTV playlist (user decision 2026-09-16)
+  — iptv-org's Macau country list (`macau-iptv-org`,
+  https://iptv-org.github.io/iptv/countries/mo.m3u, 7 free-to-air channels,
+  #EXTM3U-verified) so the Play tab has content on first launch; removable
+  by the user in Play → Sources, fixed id (not a uuid) keeps re-installs
+  idempotent. HISTORY (found 2026-09-16): the seed used to duplicate the
+  whole default config WITH trailing commas — invalid JSON that from_file
+  silently discarded, so fresh installs had ALWAYS run on config.py
+  defaults while the stale copy fossilized (youtube homepage, adblock off,
+  timeout 30…). tests/test_installer_seed.py pins: valid strict JSON,
+  loads through from_file, no seeded value equals its default, and the
+  playlist URL still serves #EXTM3U. This is an IPTV source, NOT a torrent
+  source — `DEFAULT_SOURCES` stays empty (rule below).
 - Code signing (SmartScreen, added 2026-09-13): builds are UNSIGNED until a
   certificate exists — downloaded setup exes therefore show the "Windows
   protected your PC" warning, and every release restarts file reputation

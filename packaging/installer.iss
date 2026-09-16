@@ -3,7 +3,7 @@
 ; Then open this script in Inno Setup and Compile.
 
 #define MyAppName "DeepFlux"
-#define MyAppVersion "4.6"
+#define MyAppVersion "4.7"
 #define MyAppPublisher "DeepFlux"
 #define MyAppExeName "DeepFlux.exe"
 ; PyInstaller onedir output, relative to this script (packaging/..\dist).
@@ -12,6 +12,11 @@
 #endif
 #ifndef BuildOutputDir
 #define BuildOutputDir BuildDir
+#endif
+; Bundled Jackett installer (fetched+hashed by packaging/fetch_jackett.py;
+; the .exe is gitignored — builds without it simply skip the Jackett step).
+#ifndef JackettDir
+#define JackettDir "jackett"
 #endif
 
 [Setup]
@@ -23,7 +28,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir={#BuildOutputDir}
-OutputBaseFilename=DeepFlux4.6Setup
+OutputBaseFilename=DeepFlux4.7Setup
 SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -77,6 +82,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#BuildDir}\DeepFlux\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs overwritereadonly
+; Jackett final step payload: the official installer (GPL-2.0, unmodified)
+; that --setup-jackett runs elevated, plus its license notice.
+Source: "{#JackettDir}\Jackett.Installer.Windows.exe"; DestDir: "{app}\_internal\jackett"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#JackettDir}\jackett-gpl2.txt"; DestDir: "{app}\_internal\licenses"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -86,6 +95,11 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--register-associations"; Description: "Register file associations (.torrent, magnet:, media, html)"; Flags: runhidden
+; Jackett final step — MUST stay BEFORE the launch entry so the app only
+; starts once the service is linked. Runs the bundled installer elevated
+; (one UAC), reads Jackett's API key, adds its public indexers and tests
+; the connection. No nowait: the entries are sequential.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-jackett"; Description: "Set up Jackett torrent search now (recommended) — installs the service and public sources"; Flags: postinstall skipifsilent
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
@@ -98,6 +112,25 @@ Type: filesandordirs; Name: "{app}\*"
 Type: dirifempty; Name: "{app}"
 
 [Code]
+procedure CurPageChanged(CurPageID: Integer);
+var
+  I: Integer;
+begin
+  // Default-CHECK the Jackett final-step checkbox: Inno always creates
+  // postinstall checkboxes unchecked, and the whole point of the step is
+  // that a default install ships a working torrent search (user decision
+  // 2026-09-16). Runs when the finished page is built, after the RunList
+  // is populated.
+  if CurPageID <> wpFinished then
+    Exit;
+  for I := 0 to WizardForm.RunList.Items.Count - 1 do
+    if Pos('Jackett', WizardForm.RunList.ItemCaption[I]) > 0 then
+    begin
+      WizardForm.RunList.Checked[I] := True;
+      Break;
+    end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   ConfigPath: String;
@@ -117,72 +150,26 @@ begin
   if FileExists(ConfigPath) then
     DeleteFile(ConfigPath);
 
-  // No API keys anywhere: the app ships no built-in/shared keys (config.py
-  // defaults are all empty), so the installer only seeds the non-sensitive
-  // structural defaults. All api_key fields below stay empty.
+  // The seed is MINIMAL on purpose: config.py is the single source of
+  // truth for every setting (from_file fills in all defaults), and the
+  // only shipped value is the sample IPTV playlist below. History
+  // (found 2026-09-16): this seed used to duplicate the whole default
+  // config WITH trailing commas — invalid JSON, which from_file silently
+  // discarded, so fresh installs always ran on config.py defaults anyway
+  // while the stale copy fossilized (youtube homepage, adblock off, …).
+  // Do NOT paste defaults back in here; ship only real overrides.
+  // The sample source: iptv-org Macau country playlist — 7 free-to-air
+  // channels, no credentials, verified to serve #EXTM3U — so the Play tab
+  // has content on first launch (user decision 2026-09-16). Users add
+  // their own in Play → Sources and can remove this one there. A fixed id
+  // (not a uuid) keeps re-installs idempotent.
   Config := '{' + #13#10 +
-    '  "llm": {' + #13#10 +
-    '    "provider": "deepseek",' + #13#10 +
-    '    "api_key": "",' + #13#10 +
-    '    "base_url": "",' + #13#10 +
-    '    "model": "deepseek-v4-pro",' + #13#10 +
-    '    "fast_model": "deepseek-v4-flash",' + #13#10 +
-    '  },' + #13#10 +
-    '  "indexer": {' + #13#10 +
-    '    "url": "http://localhost:9117",' + #13#10 +
-    '    "api_key": "",' + #13#10 +
-    '    "torznab_path": "/api/v2.0/indexers/all/results/torznab",' + #13#10 +
-    '    "timeout": 30' + #13#10 +
-    '  },' + #13#10 +
-    '  "web_search": {' + #13#10 +
-    '    "provider": "perplexity",' + #13#10 +
-    '    "api_key": "",' + #13#10 +
-    '    "cx": "",' + #13#10 +
-    '    "base_url": ""' + #13#10 +
-    '  },' + #13#10 +
-    '  "watchdog": {' + #13#10 +
-    '    "enabled": false,' + #13#10 +
-    '    "stall_threshold_seconds": 300,' + #13#10 +
-    '    "auto_heal": false' + #13#10 +
-    '  },' + #13#10 +
-    '  "rss": {' + #13#10 +
-    '    "feeds": [],' + #13#10 +
-    '    "check_interval_seconds": 300' + #13#10 +
-    '  },' + #13#10 +
-    '  "browser": {' + #13#10 +
-    '    "homepage": "https://www.youtube.com/",' + #13#10 +
-    '    "bookmarks": [],' + #13#10 +
-    '    "adblock_enabled": false' + #13#10 +
-    '  },' + #13#10 +
-    '  "download": {' + #13#10 +
-    '    "max_concurrent": 3,' + #13#10 +
-    '    "max_connections_per_download": 8,' + #13#10 +
-    '    "default_folder": "",' + #13#10 +
-    '    "bandwidth_limit_bps": 0,' + #13#10 +
-    '    "auto_start": true,' + #13#10 +
-    '    "segment_threshold_mb": 1,' + #13#10 +
-    '    "control_api_port": 53742,' + #13#10 +
-    '    "ffmpeg_path": "",' + #13#10 +
-    '    "categories": []' + #13#10 +
-    '  },' + #13#10 +
-    '  "sources": {' + #13#10 +
-    '    "use_jackett": true,' + #13#10 +
-    '    "sources": []' + #13#10 +
-    '  },' + #13#10 +
     '  "iptv": {' + #13#10 +
-    '    "sources": [],' + #13#10 +
-    '    "tmdb_api_key": "",' + #13#10 +
-    '    "cache_dir": "",' + #13#10 +
-    '    "cache_limit_mb": 10240,' + #13#10 +
-    '    "cache_seconds": 8,' + #13#10 +
-    '    "hwdec": "auto-safe",' + #13#10 +
-    '    "preferred_player": "mpv",' + #13#10 +
-    '    "enable_epg": true,' + #13#10 +
-    '    "auto_try_next_source": false' + #13#10 +
-    '  },' + #13#10 +
-    '  "default_save_path": "",' + #13#10 +
-    '  "categories": ["Movies", "TV", "Software", "Other"],' + #13#10 +
-    '  "log_level": "INFO"' + #13#10 +
+    '    "sources": [' + #13#10 +
+    '      {"id": "macau-iptv-org", "name": "Macau", "kind": "m3u_url", ' +
+    '"url": "https://iptv-org.github.io/iptv/countries/mo.m3u", "enabled": true}' + #13#10 +
+    '    ]' + #13#10 +
+    '  }' + #13#10 +
     '}';
 
   SaveStringToFile(ConfigPath, Config, False);

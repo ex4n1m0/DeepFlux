@@ -157,7 +157,7 @@
     animation: breathe 3.2s ease-in-out infinite;
   }
   @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
-  header.hero .banner-glow { position: relative; display: inline-block; }
+  header.hero .banner-glow { position: relative; display: block; }
   header.hero .banner-glow::before {
     content: "";
     position: absolute;
@@ -168,7 +168,10 @@
   }
   header.hero img.banner {
     position: relative;
-    width: min(86vw, 660px);
+    /* Full content width — the wordmark's sides align with the cards/pillars
+       below (the .page column). Natural art is 1280px wide, so the enlarged
+       render stays sharp. */
+    width: 100%;
     height: auto;
     display: block;
     margin: 0 auto;
@@ -177,7 +180,7 @@
        banner has no hard rectangle edges. */
     mix-blend-mode: screen;
   }
-  .hero-copy { max-width: 640px; margin: 20px auto 0; }
+  .hero-copy { margin: 20px auto 0; }
   .hero-copy p {
     font-size: 1.05rem;
     line-height: 1.7;
@@ -400,7 +403,6 @@
   }
   @media (max-width: 640px) {
     nav.top ul li.hide-mobile { display: none; }
-    header.hero img.banner { width: min(92vw, 560px); }
     .cards { grid-template-columns: minmax(0, 1fr); }
     a.btn { padding: 14px 26px; }
   }
@@ -423,7 +425,7 @@
         <li class="hide-mobile"><a class="navlink" href="#capabilities">Capabilities</a></li>
         <li class="hide-mobile"><a class="navlink" href="#trust">Privacy</a></li>
         <li><a class="navlink" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">GitHub</a></li>
-        <li class="sep"><span class="pill">v4.6</span></li>
+        <li class="sep"><span class="pill">v4.7</span></li>
       </ul>
     </nav>
 
@@ -446,7 +448,7 @@
       <div class="cta-row">
         <!-- /api/download counts the click (Upstash counter) then 302s to the
              static file; it redirects uncounted when the counter isn't set up. -->
-        <a class="btn btn-primary" href="/api/download?f=DeepFlux4.6Setup.exe" download>
+        <a class="btn btn-primary" href="/api/download?f=DeepFlux4.7Setup.exe" download>
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Download for Windows
         </a>
@@ -455,7 +457,7 @@
           Source code
         </a>
       </div>
-      <p class="cta-meta">DeepFlux 4.6 &middot; Windows 10/11 64-bit &middot; posted 2026-09-15 &middot; free</p>
+      <p class="cta-meta">DeepFlux 4.7 &middot; Windows 10/11 64-bit &middot; posted 2026-09-16 &middot; free</p>
       <p class="live" id="live" hidden
          title="The user count is anonymous — a random id per install, nothing else. Opt out in the app's Download settings."></p>
       <div class="smartscreen">
