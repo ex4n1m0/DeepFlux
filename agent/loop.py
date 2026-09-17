@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 import time
 from concurrent.futures import Future
@@ -174,6 +175,19 @@ Indexer configured: {indexer_configured}
 {memory}
 Today's date: {today}
 - Use this date for anything time-sensitive: when the user asks for "new", "latest", "recent", or "this week/month" content, include the current year (and month where relevant) in search queries instead of relying on training data.
+"""
+
+
+# macOS build: the Play/IPTV tab and the bundled FFmpeg don't exist there —
+# steer the agent to macOS-correct answers instead of Windows advice.
+if sys.platform == "darwin":
+    SYSTEM_PROMPT += """
+
+Platform note (macOS build):
+- This build has NO Play/IPTV tab, no in-app video player, and no iptv_* tools. Never suggest them; media files open in the user's system player. Stream-while-downloading is unavailable.
+- No FFmpeg is bundled. To install it: run `/opt/homebrew/bin/brew install ffmpeg` (Intel Macs: /usr/local/bin/brew) via run_shell, then set `download.ffmpeg_path` to `/opt/homebrew/bin/ffmpeg` with set_settings — apps launched from Finder/Dock do not inherit the shell PATH, so the explicit path is required.
+- winget does not exist on macOS; prefer Homebrew for packages.
+- Jackett runs as a normal app here (no Windows service): tell the user to launch Jackett themselves if it is unreachable.
 """
 
 

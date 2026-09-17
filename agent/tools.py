@@ -477,7 +477,7 @@ class ToolRegistry:
     def __init__(self, engine: TorrentEngine, config: DeeptorrentConfig,
                  on_progress: Optional[Callable[[str], None]] = None,
                  dl_engine=None, iptv_bridge=None,
-                 browser_bridge=None) -> None:
+                 browser_bridge=None, enable_iptv_tools: bool = True) -> None:
         self.engine = engine
         self.config = config
         self.on_progress = on_progress  # sub-step reporter, wired up by AgentLoop
@@ -496,7 +496,12 @@ class ToolRegistry:
         # Browser bridge (gui.browser_bridge.BrowserBridge) — injected by the
         # GUI; browser_* tools report unavailability without it (CLI).
         self._browser_bridge = browser_bridge
+        # macOS build: no Play tab -> no iptv_* tools (the playback bridge
+        # never exists and IPTV sources would have nothing to consume them).
         self._tools = self._build_tools()
+        if not enable_iptv_tools:
+            self._tools = {name: spec for name, spec in self._tools.items()
+                           if not name.startswith("iptv_")}
         self._web_search = WebSearchClient(config.web_search)
         self._indexer = TorznabClient(config.indexer)
         self._rss_monitor = RSSMonitor(config.rss)

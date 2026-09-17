@@ -887,6 +887,8 @@ class DownloadsTab(QWidget):
         if job.status == JobStatus.COMPLETED and os.path.isfile(job.save_path):
             if sys.platform == "win32":
                 os.startfile(job.save_path)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", job.save_path])
             else:
                 subprocess.Popen(["xdg-open", job.save_path])
 
@@ -898,6 +900,8 @@ class DownloadsTab(QWidget):
         if os.path.exists(folder):
             if sys.platform == "win32":
                 os.startfile(folder)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder])
             else:
                 subprocess.Popen(["xdg-open", folder])
 

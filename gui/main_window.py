@@ -85,8 +85,14 @@ from gui.commander_tab import CommanderTab
 from gui.browser_bridge import BrowserBridge, accept_language_header, normalize_browser_target
 from gui.browser_history import BrowserHistory
 from gui.browser_channel import create_channel, channel_injection_script
-from gui.iptv_tab import AgentIPTVBridge, IPTVTab
-from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog
+# The Play (IPTV/player) tab is Windows-only for now: libmpv cannot embed
+# into a Qt widget on macOS without rewriting playback on the mpv render
+# API, and SVP has no macOS build. Everything downstream (tab creation,
+# agent iptv_* tools, menus, stream-while-downloading) keys off this flag.
+_PLAY_TAB_SUPPORTED = sys.platform != "darwin"
+if _PLAY_TAB_SUPPORTED:
+    from gui.iptv_tab import AgentIPTVBridge, IPTVTab
+    from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog
 from gui.room_tab import RoomTab
 from gui.voice_input import MIN_SECONDS, SAMPLE_RATE as VOICE_SAMPLE_RATE, VoiceRecorder, VoiceTranscriber, pcm_to_whisper_audio
 from dlmgr.engine import DownloadEngine
@@ -736,6 +742,12 @@ class _TabMenuBar(QMenuBar):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
+        if sys.platform == "darwin":
+            # The native macOS menu bar lives at the top of the screen and
+            # ignores our custom painting — the tab-button row and the
+            # turquoise active-page box would vanish. Qt's own in-window
+            # menubar keeps the Windows layout intact.
+            self.setNativeMenuBar(False)
         self._tabs: Any = None  # QTabWidget to read/switch
         # PySide hands back Python-OWNED QMenu wrappers from addMenu(): drop
         # the last Python reference and the C++ menu is destroyed, silently
@@ -989,7 +1001,8 @@ class MainWindow(QMainWindow):
         self._dl_api.set_play_handler(self._play_signals.play_stream.emit)
         self._dl_api.start()
 
-        self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine)
+        self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine,
+                                  enable_iptv_tools=_PLAY_TAB_SUPPORTED)
         self.agent = AgentLoop(
             self.engine, self.config, tools=self.tools,
             on_event=lambda evt: self._agent_signals.event.emit(evt),
@@ -2042,18 +2055,19 @@ class MainWindow(QMainWindow):
         self._agents_tab = agents_tab
 
         # --- IPTV tab (M3U/Xtream player + metadata) ---
-        self.iptv_tab = IPTVTab(self.config, self)
-        self.iptv_tab.set_settings_callback(self._open_iptv_settings)
-        self.iptv_tab.set_engine(self.engine)
-        # VOD downloads (movies/series from the Play tab) queue into dlmgr.
-        self.iptv_tab.set_download_engine(self._dl_engine)
-        self.main_tabs.addTab(self.iptv_tab, "Play")
-        # Let the agent's iptv_* tools drive playback (queued onto the GUI
-        # thread) and read the playlist/player state.
-        self._iptv_bridge = AgentIPTVBridge(self.iptv_tab)
-        self.tools.set_iptv_bridge(self._iptv_bridge)
-        # Player position feeds the torrent-stream frontier cap.
-        self.iptv_tab._player.sig_position.connect(self._on_player_position)
+        if _PLAY_TAB_SUPPORTED:
+            self.iptv_tab = IPTVTab(self.config, self)
+            self.iptv_tab.set_settings_callback(self._open_iptv_settings)
+            self.iptv_tab.set_engine(self.engine)
+            # VOD downloads (movies/series from the Play tab) queue into dlmgr.
+            self.iptv_tab.set_download_engine(self._dl_engine)
+            self.main_tabs.addTab(self.iptv_tab, "Play")
+            # Let the agent's iptv_* tools drive playback (queued onto the GUI
+            # thread) and read the playlist/player state.
+            self._iptv_bridge = AgentIPTVBridge(self.iptv_tab)
+            self.tools.set_iptv_bridge(self._iptv_bridge)
+            # Player position feeds the torrent-stream frontier cap.
+            self.iptv_tab._player.sig_position.connect(self._on_player_position)
 
         # --- Commander tab (dual-pane file manager) ---
         self.commander_tab = CommanderTab(self.config, self)
@@ -2141,20 +2155,25 @@ class MainWindow(QMainWindow):
         rss_action2.triggered.connect(self._open_rss_dialog)
 
         # --- Former Play menu ---
-        _file_zone(file_menu, "Play")
-        for label, _cls in IPTV_SETTINGS_PAGES:
-            action = _file_item(file_menu, label)
-            action.triggered.connect(lambda _c=False, page_cls=_cls: self._open_iptv_page(page_cls))
+        if _PLAY_TAB_SUPPORTED:
+            _file_zone(file_menu, "Play")
+            for label, _cls in IPTV_SETTINGS_PAGES:
+                action = _file_item(file_menu, label)
+                action.triggered.connect(lambda _c=False, page_cls=_cls: self._open_iptv_page(page_cls))
 
         file_menu.addSeparator()
         exit_action = _file_item(file_menu, "Exit", indent=False)
         exit_action.triggered.connect(self._tray_quit)
 
         # The six page titles: pure tab buttons — a click always switches
-        # the page, and they never open a menu.
+        # the page, and they never open a menu. (macOS build: no Play tab.)
+        page_buttons = (("Browse", 0), ("Agent", 1), ("Download", 2),
+                        ("Play", 3), ("Command", 4), ("Room", 5))
+        if not _PLAY_TAB_SUPPORTED:
+            page_buttons = (("Browse", 0), ("Agent", 1), ("Download", 2),
+                            ("Command", 3), ("Room", 4))
         tab_buttons: List[QAction] = []
-        for title, idx in (("Browse", 0), ("Agent", 1), ("Download", 2),
-                           ("Play", 3), ("Command", 4), ("Room", 5)):
+        for title, idx in page_buttons:
             action = QAction(title, self)
             action.triggered.connect(
                 lambda _checked=False, i=idx: self.main_tabs.setCurrentIndex(i))
@@ -2174,7 +2193,7 @@ class MainWindow(QMainWindow):
 
         # Tab buttons carry the tab_index property (see link_tabs) so the
         # active page's title is boxed in the bar.
-        menubar.link_tabs(dict(zip(tab_buttons, (0, 1, 2, 3, 4, 5))), self.main_tabs)
+        menubar.link_tabs(dict(zip(tab_buttons, (idx for _t, idx in page_buttons))), self.main_tabs)
 
         # Right-click context menu on the torrent table
         self.torrent_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -2255,6 +2274,12 @@ class MainWindow(QMainWindow):
             s = QShortcut(QKeySequence(seq), parent or self)
             s.setContext(context)
             s.activated.connect(fn)
+            # macOS convention: shortcuts answered by Cmd (Meta), not Ctrl.
+            # Qt does not translate "Ctrl+X" strings, so register a twin.
+            if sys.platform == "darwin" and seq.startswith("Ctrl+"):
+                m = QShortcut(QKeySequence("Meta+" + seq[5:]), parent or self)
+                m.setContext(context)
+                m.activated.connect(fn)
 
         for i in range(self.main_tabs.count()):
             sc(f"Ctrl+{i + 1}", lambda idx=i: self.main_tabs.setCurrentIndex(idx))
@@ -5085,6 +5110,12 @@ class MainWindow(QMainWindow):
 
     def play_file_in_player(self, path: str) -> None:
         """Switch to the Player tab and play a local media file."""
+        iptv = getattr(self, "iptv_tab", None)
+        if iptv is None:
+            # No in-app player in this build (macOS) — hand off to the
+            # system player via Finder's default association.
+            self._reveal_path(path)
+            return
         self.main_tabs.setCurrentWidget(self.iptv_tab)
         self.iptv_tab.play_file(path)
 
@@ -5092,6 +5123,13 @@ class MainWindow(QMainWindow):
     def _stream_torrent(self, info_hash: str) -> None:
         """Enable sequential download and start playback once enough of the
         video is buffered (mpv reads the growing file from disk)."""
+        if getattr(self, "iptv_tab", None) is None:
+            QMessageBox.information(
+                self, "Stream",
+                "Stream-while-downloading needs the built-in player, which is "
+                "not available in this build. Let the download finish, then "
+                "open the file from the Downloads page.")
+            return
         try:
             status = self.engine.get_torrent_status(info_hash)
         except Exception as exc:
@@ -5284,6 +5322,10 @@ class MainWindow(QMainWindow):
         if active is None:
             self._stream_tick_timer.stop()
             return
+        if getattr(self, "iptv_tab", None) is None:
+            self._stream_active = None
+            self._stream_tick_timer.stop()
+            return
         player = self.iptv_tab._player
         item = player._current_item
         if item is None or getattr(item, "url", "") != active["path"]:
@@ -5391,6 +5433,11 @@ class MainWindow(QMainWindow):
         url = (payload.get("url") or "").strip()
         if not url:
             return
+        if getattr(self, "iptv_tab", None) is None:
+            self._append_agent(
+                "⚠ This build has no built-in video player — use the page's "
+                "download option instead of in-app playback.")
+            return
         headers = dict(payload.get("headers") or {})
         if payload.get("referrer"):
             headers.setdefault("Referer", payload["referrer"])
@@ -5421,7 +5468,9 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self.config.to_file(self.config_path)
             self._reload_agent()
-            self.iptv_tab.reload_config(self.config)
+            iptv = getattr(self, "iptv_tab", None)
+            if iptv is not None:
+                iptv.reload_config(self.config)
             self._append_agent(f"**API settings saved** ({dialog.windowTitle()}).")
 
     # ------------------------------------------------------------------
@@ -5699,7 +5748,8 @@ class MainWindow(QMainWindow):
             self.tools.shutdown()
         except Exception:
             pass
-        self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine)
+        self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine,
+                                  enable_iptv_tools=_PLAY_TAB_SUPPORTED)
         if getattr(self, "_iptv_bridge", None) is not None:
             self.tools.set_iptv_bridge(self._iptv_bridge)
         if getattr(self, "_browser_bridge", None) is not None:
@@ -6048,7 +6098,9 @@ class MainWindow(QMainWindow):
             pass
         # Stop IPTV subsystem (player backend + background threads + cache).
         try:
-            self.iptv_tab.shutdown()
+            iptv = getattr(self, "iptv_tab", None)
+            if iptv is not None:
+                iptv.shutdown()
         except Exception:
             pass
         # Stop the community room (withdraw host pointer, say goodbye).

@@ -176,6 +176,55 @@
   reach the functions after a redeploy. Tests:
   tests/test_telemetry.py (all network mocked).
 
+## macOS build (CI-only, added 2026-09-17)
+- Strategy: macOS ships the priority features (Browser, Agent, Torrents &
+  Downloads, plus Room/Commander which came free). The Play tab is
+  Windows-ONLY: `_PLAY_TAB_SUPPORTED = sys.platform != "darwin"` in
+  gui/main_window.py guards the iptv_tab imports, tab creation, File-menu
+  Play zone, tab-button indices, and every `self.iptv_tab` call site
+  (play_file_in_player falls back to `_reveal_path`, _stream_torrent and
+  play_web_stream show "no player in this build" notices).
+  `ToolRegistry(..., enable_iptv_tools=...)` filters every `iptv_*` tool
+  from the registry when False. Do NOT regress these guards — an unguarded
+  `self.iptv_tab` reference crashes the mac build at startup.
+- Build machine: `.github/workflows/macos-build.yml` (manual dispatch) on a
+  free macos-14 ARM runner — the repo is PUBLIC (macOS minutes are free),
+  and PyInstaller cannot cross-compile, so CI IS the macOS build machine.
+  There is no Apple Developer account: builds are UNSIGNED (Gatekeeper
+  shows "unidentified developer"; right-click → Open) and KEYLESS by design
+  (`_embedded_keys.py` is untracked, so users enter their own API keys —
+  everything degrades gracefully). Artifacts: `DeepFlux-<ver>-macOS-arm64.dmg`
+  (hdiutil UDZO; Actions' zip artifacts would strip the exec bit).
+- Files: `packaging/app_macos.spec` (BUNDLE .app; NO mpv/vlc/ffmpeg/
+  milkdrop; Info.plist carries NSMicrophoneUsageDescription for voice —
+  missing it makes macOS KILL the process on first mic access; version is
+  parsed from installer.iss MyAppVersion), `packaging/gen_macos_icon.py`
+  (Pillow writes packaging/icon.icns from the tracked DeepFlux4.png — keep
+  the PNG ≥512px), `packaging/verify_macos_boot.py` (offscreen boot smoke:
+  builds the REAL MainWindow, asserts tabs, no iptv_tab attr, no iptv_*
+  tools in the registry; run locally on Windows too — asserts flip by
+  platform. Needs QT_QPA_PLATFORM=offscreen +
+  QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu --no-sandbox" or Chromium
+  fails on a headless runner).
+- No ffmpeg is bundled on macOS: `find_ffmpeg` falls back to PATH, and the
+  agent's SYSTEM_PROMPT has a darwin-only note (run_shell
+  `/opt/homebrew/bin/brew install ffmpeg` then set download.ffmpeg_path —
+  Finder/Dock-launched apps do NOT inherit the shell PATH, so the explicit
+  path is mandatory; winget doesn't exist there).
+- POSIX gotchas fixed along the way (do not regress): `infra/jackett.py`
+  creationflags MUST come from `getattr(subprocess, "CREATE_NO_WINDOW", 0)`
+  (a hardcoded 0x08000000 makes POSIX Popen raise ValueError), the
+  `sc.exe` service path is behind `os.name == "nt"`, and Jackett's mac
+  executable candidates are the .app bundle console host; `_TabMenuBar`
+  calls `setNativeMenuBar(False)` on darwin (the native top-of-screen menu
+  bar ignores our custom painting — the tab-button row would vanish); the
+  `sc()` shortcut helper registers Meta (Cmd) twins for every Ctrl+…
+  sequence on darwin (Qt never translates "Ctrl+" strings).
+- macOS CI runs ONLY the boot smoke, not pytest: the suite has
+  Windows-specific tests (winreg paths, file associations) that would be
+  red noise there. Local gate before pushing mac-affecting changes: the
+  split a-c/d-z invocation PLUS `python packaging/verify_macos_boot.py`.
+
 ## Conventions
 - 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,
   ~30 fixed, all with file-level rationale comments + regression tests).

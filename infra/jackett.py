@@ -28,14 +28,23 @@ START_TIMEOUT = 30                 # Jackett cold start can take a while
 PING_TIMEOUT = 3.0                 # cheap t=caps health check
 
 # Per AGENTS.md: Windows subprocess spawns must not flash a console window.
-_CREATE_NO_WINDOW = 0x08000000
-_DETACHED_PROCESS = 0x00000008
+# getattr() keeps these 0 on POSIX, where Popen() rejects nonzero flags.
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0)
+
+_IS_WINDOWS = os.name == "nt"
 
 # Jackett Windows install locations + executables. Console first: it serves
 # the API in-process even when the (unstartable-without-elevation) service
 # is installed but stopped; the tray app can sit idle without serving in
 # that state. ProgramData is a real install location on some machines.
 _EXE_NAMES = ("JackettConsole.exe", "JackettTray.exe")
+
+# macOS: the official Jackett .app bundle's console host (serves in-process).
+_MACOS_EXE_CANDIDATES = (
+    "/Applications/Jackett.app/Contents/MacOS/jackett",
+    os.path.expanduser("~/Applications/Jackett.app/Contents/MacOS/jackett"),
+)
 
 
 def _torznab_url(config: DeeptorrentConfig) -> str:
@@ -64,10 +73,13 @@ def find_executable(configured_path: str = "") -> Optional[str]:
     candidates: List[str] = []
     if configured_path:
         candidates.append(configured_path)
-    for env_var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "ProgramData"):
-        base = os.environ.get(env_var)
-        if base:
-            candidates.extend(os.path.join(base, "Jackett", exe) for exe in _EXE_NAMES)
+    if _IS_WINDOWS:
+        for env_var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA", "ProgramData"):
+            base = os.environ.get(env_var)
+            if base:
+                candidates.extend(os.path.join(base, "Jackett", exe) for exe in _EXE_NAMES)
+    else:
+        candidates.extend(_MACOS_EXE_CANDIDATES)
     for path in candidates:
         if path and os.path.isfile(path):
             return path
@@ -80,20 +92,21 @@ def start(config: DeeptorrentConfig) -> bool:
     Returns True when something was launched (service start issued or process
     spawned) — readiness still needs wait_until_ready().
     """
-    try:
-        proc = subprocess.run(
-            ["sc.exe", "start", "Jackett"],
-            capture_output=True, text=True, timeout=15,
-            creationflags=_CREATE_NO_WINDOW,
-        )
-        output = (proc.stdout or "") + (proc.stderr or "")
-        if proc.returncode == 0 or "1056" in output:  # 1056 = already running
-            logger.info("Jackett service start issued (rc=%d)", proc.returncode)
-            return True
-        # 1060 = service not installed; 5 = access denied — fall through to exe.
-        logger.debug("sc start Jackett failed (rc=%d): %s", proc.returncode, output.strip())
-    except Exception as exc:
-        logger.debug("sc start Jackett failed: %s", exc)
+    if _IS_WINDOWS:
+        try:
+            proc = subprocess.run(
+                ["sc.exe", "start", "Jackett"],
+                capture_output=True, text=True, timeout=15,
+                creationflags=_CREATE_NO_WINDOW,
+            )
+            output = (proc.stdout or "") + (proc.stderr or "")
+            if proc.returncode == 0 or "1056" in output:  # 1056 = already running
+                logger.info("Jackett service start issued (rc=%d)", proc.returncode)
+                return True
+            # 1060 = service not installed; 5 = access denied — fall through to exe.
+            logger.debug("sc start Jackett failed (rc=%d): %s", proc.returncode, output.strip())
+        except Exception as exc:
+            logger.debug("sc start Jackett failed: %s", exc)
 
     exe = find_executable(config.indexer.jackett_path)
     if not exe:

@@ -1,6 +1,7 @@
 # DeepFlux
 
-LLM-Powered Browser, Downloader, File Manager & Player (Windows).
+LLM-Powered Browser, Downloader, File Manager & Player (Windows; macOS
+beta — see "macOS build" below).
 
 DeepFlux is a Python desktop app where an LLM agent drives the whole
 toolbox through structured tool calling: a Chromium browser, a BitTorrent
@@ -172,6 +173,19 @@ The installer `dist/DeepFlux<version>Setup.exe`:
 - writes a fresh config with every API-key field empty on each install (no
   keys are bundled; you enter your own in the GUI);
 - registers an uninstaller that also removes the app's data directory.
+
+### macOS build
+
+There is no macOS build machine — GitHub Actions builds it on a free macOS
+runner (Actions tab → **macOS build** → Run workflow). The artifact is an
+unsigned `DeepFlux-<version>-macOS-arm64.dmg`; macOS will warn about an
+unidentified developer on first launch (right-click → Open), and no API keys
+are bundled (enter your own in File → API Keys).
+
+The macOS build ships everything except the Play tab (IPTV/player/SVP):
+Browser, Agent, Torrents & Downloads, Commander, and Room. FFmpeg is not
+bundled — install it with Homebrew and the agent will wire it up, or point
+`download.ffmpeg_path` at it yourself.
 
 ## Stalled-torrent recovery example
 

@@ -10,6 +10,7 @@ dist/
 dist-*/
 *.spec
 !packaging/app.spec
+!packaging/app_macos.spec
 *.iss
 !packaging/installer.iss
 .venv/

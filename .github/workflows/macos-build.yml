@@ -1,0 +1,74 @@
+name: macOS build
+
+# Builds the unsigned macOS .app/.dmg on GitHub's free macOS runner
+# (repo is public -> macOS minutes cost nothing). PyInstaller cannot
+# cross-compile, so this workflow IS the macOS build machine.
+#
+# The build is KEYLESS by design: _embedded_keys.py is untracked, so the
+# bundle ships without shared API keys — users enter their own. It is also
+# UNSIGNED: Gatekeeper will show "unidentified developer" on first launch
+# (right-click -> Open). No Apple Developer account is attached.
+#
+# Trigger: manual (Actions tab -> macOS build -> Run workflow).
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Not in requirements.txt but imported by the app (dev machines
+          # carry them; CI must be explicit).
+          pip install cryptography defusedxml Pillow PyInstaller
+
+      - name: Generate app icon (.icns)
+        run: python packaging/gen_macos_icon.py
+
+      - name: Offscreen boot smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QTWEBENGINE_CHROMIUM_FLAGS: "--disable-gpu --no-sandbox --disable-dev-shm-usage"
+        run: |
+          # Guards against the event loop hanging on a headless runner.
+          TIMEOUT_CMD=$(command -v timeout || command -v gtimeout)
+          if [ -n "$TIMEOUT_CMD" ]; then
+            "$TIMEOUT_CMD" 120 python packaging/verify_macos_boot.py || {
+              echo "::error::boot smoke test failed or timed out"; exit 1; }
+          else
+            python packaging/verify_macos_boot.py
+          fi
+
+      - name: Read app version
+        id: ver
+        run: |
+          VER=$(sed -nE 's/^#define MyAppVersion "([^"]+)"/\1/p' packaging/installer.iss | head -1)
+          echo "version=${VER:-0.0.0}" >> "$GITHUB_OUTPUT"
+
+      - name: Build .app (PyInstaller)
+        run: python -m PyInstaller packaging/app_macos.spec --clean --noconfirm
+
+      - name: Package .dmg
+        run: |
+          hdiutil create -volname DeepFlux \
+            -srcfolder "dist/DeepFlux.app" \
+            -ov -format UDZO \
+            "dist/DeepFlux-${{ steps.ver.outputs.version }}-macOS-arm64.dmg"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepFlux-${{ steps.ver.outputs.version }}-macOS-arm64
+          path: dist/*.dmg
+          retention-days: 30
+          if-no-files-found: error
