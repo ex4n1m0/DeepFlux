@@ -22,7 +22,8 @@ import os
 import re
 import sys
 
-from PyInstaller.building.api import PYZ, EXE, COLLECT, BUNDLE
+from PyInstaller.building.api import PYZ, EXE, COLLECT
+from PyInstaller.building.osx import BUNDLE
 from PyInstaller.building.build_main import Analysis
 from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
 
