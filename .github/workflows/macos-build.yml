@@ -9,9 +9,12 @@ name: macOS build
 # UNSIGNED: Gatekeeper will show "unidentified developer" on first launch
 # (right-click -> Open). No Apple Developer account is attached.
 #
-# Trigger: manual (Actions tab -> macOS build -> Run workflow).
+# Trigger: every push to this branch (workflow_dispatch only works once
+# the file reaches the default branch) + manual dispatch after that.
 on:
   workflow_dispatch:
+  push:
+    branches: [macos-port]
 
 jobs:
   build:
