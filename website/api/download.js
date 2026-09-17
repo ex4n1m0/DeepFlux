@@ -1,12 +1,13 @@
 // Counted setup downloads.
 //
-// The landing page's Download button points here (?f=DeepFlux<X>Setup.exe).
-// This increments df:dl:total (+ a per-file counter) in Upstash and 302s to
-// the static file in the same deployment. Direct hits on the static file
-// still work (they just aren't counted). Without the Upstash env vars the
-// redirect happens uncounted — the download itself must never break.
+// The landing page's Download buttons point here (?f=DeepFlUX<X>Setup.exe
+// for Windows, ?f=DeepFlux-<X>-macOS-arm64.dmg for macOS). This increments
+// df:dl:total (+ a per-file counter) in Upstash and 302s to the static
+// file in the same deployment. Direct hits on the static file still work
+// (they just aren't counted). Without the Upstash env vars the redirect
+// happens uncounted — the download itself must never break.
 
-const FILE_RE = /^DeepFlux[0-9.]+Setup\.exe$/;
+const FILE_RE = /^DeepFlux(?:[0-9.]+Setup\.exe|-[0-9.]+-macOS-arm64\.dmg)$/;
 const TOTAL_KEY = 'df:dl:total';
 
 // Accept both naming schemes: UPSTASH_REDIS_REST_* (a manual Upstash token)

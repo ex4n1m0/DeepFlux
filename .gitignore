@@ -35,6 +35,7 @@ packaging/ffmpeg/*.exe
 
 # Release artifacts (installers are ~315 MB each, over GitHub's file limit).
 website/**/*.exe
+website/**/*.dmg
 Git/
 *.exe
 

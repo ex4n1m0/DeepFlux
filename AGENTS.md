@@ -138,6 +138,17 @@
   update index.html (title/href/meta date; there is no h1 any more — the logo is the top element), delete the old setup exe,
   then `vercel --prod --yes` from `website/`. Only files in the dir are
   deployed — removing the old exe from the dir removes it from production.
+  macOS (since 4.7, 2026-09-17): the page also carries
+  `DeepFlux-<X>-macOS-arm64.dmg` — fetch it from the CI artifact
+  (`gh run download <run-id> -n "DeepFlux-<X>-macOS-arm64" -D <tmp>`), move
+  the dmg into `website/deepflux/`, update BOTH download hrefs + the meta
+  line, delete the old dmg, redeploy. Both binaries are gitignored
+  (`website/**/*.exe`, `website/**/*.dmg`) — the deploy dir IS the
+  distribution, so a stale artifact on disk ships forever until deleted;
+  CI artifacts expire after 30 days, so a mac version bump means a fresh
+  CI run → fresh download → redeploy. The mac button routes through the
+  same `/api/download?f=…` counter (download.js's FILE_RE accepts the dmg
+  pattern); the smartscreen note covers Gatekeeper (right-click → Open).
   Vercel Web Analytics is enabled on the project (dashboard toggle or CLI ≥59
   `vercel project web-analytics`) — the static page carries the
   `/_vercel/insights/script.js` tag; don't remove it. If the CLI reports
