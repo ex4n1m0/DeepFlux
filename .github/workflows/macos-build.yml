@@ -43,14 +43,8 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           QTWEBENGINE_CHROMIUM_FLAGS: "--disable-gpu --no-sandbox --disable-dev-shm-usage"
         run: |
-          # Guards against the event loop hanging on a headless runner.
-          TIMEOUT_CMD=$(command -v timeout || command -v gtimeout)
-          if [ -n "$TIMEOUT_CMD" ]; then
-            "$TIMEOUT_CMD" 120 python packaging/verify_macos_boot.py || {
-              echo "::error::boot smoke test failed or timed out"; exit 1; }
-          else
-            python packaging/verify_macos_boot.py
-          fi
+          # The script carries its own 120s hang watchdog (faulthandler).
+          python -u packaging/verify_macos_boot.py
 
       - name: Read app version
         id: ver

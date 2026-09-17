@@ -11,15 +11,32 @@ Must run BEFORE QApplication is created (env vars):
 
 Exit code 0 = boot OK. Any exception = non-zero.
 """
+import faulthandler
 import os
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
     "--disable-gpu --no-sandbox --disable-dev-shm-usage")
+
+# In-process hang watchdog: if the Qt event loop never reaches quit(),
+# dump all thread stacks and die non-zero. (Shell `timeout` proved
+# unreliable on the macOS runner — this keeps the CI step bounded.)
+faulthandler.enable()
+
+
+def _watchdog() -> None:
+    time.sleep(120)
+    faulthandler.dump_traceback()
+    os._exit(3)
+
+
+threading.Thread(target=_watchdog, daemon=True).start()
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
