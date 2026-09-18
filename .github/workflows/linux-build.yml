@@ -105,6 +105,12 @@ jobs:
           Categories=Network;FileTransfer;
           EOF
           cp DeepFlux4.png "$APPDIR/usr/share/icons/hicolor/512x512/apps/DeepFlux.png"
+          # linuxdeploy resolves NEEDED entries via ldconfig + usr/lib only —
+          # NOT appdir subdirectories. PyInstaller's onedir keeps wheel libs
+          # (incl. hashed names like ctranslate2's libgomp-e985bcbb.so.1.0.0)
+          # in _internal/, so point the resolver there or bundling fails with
+          # "Could not find dependency".
+          export LD_LIBRARY_PATH="$PWD/dist/DeepFlux/_internal:$LD_LIBRARY_PATH"
           ./linuxdeploy.AppImage --appdir "$APPDIR" \
             --desktop-file "$APPDIR/usr/share/applications/DeepFlux.desktop" \
             --icon-file "$APPDIR/usr/share/icons/hicolor/512x512/apps/DeepFlux.png" \
