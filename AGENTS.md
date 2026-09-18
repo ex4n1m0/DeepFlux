@@ -257,6 +257,21 @@
   QtWebEngine runtime libs (libnss3, libasound2t64, libatk-bridge, the
   libxcb set incl. libxcb-cursor0 — a classic Qt6-on-Debian gap) for the
   offscreen boot smoke.
+- CI gotchas hit on the way to green (2026-09-18, do not re-derive):
+  * QtMultimedia links PulseAudio on Linux — `libpulse0` must be apt'd or
+    `import gui.voice_input` (module-level QAudioSource import in
+    main_window) dies with `libpulse.so.0: cannot open shared object`.
+  * linuxdeploy does NOT search appdir SUBDIRECTORIES when resolving
+    NEEDED entries, and PyInstaller keeps wheel libs (incl. hashed names
+    like ctranslate2's libgomp-e985bcbb.so.1.0.0) in `_internal/` — export
+    `LD_LIBRARY_PATH="$PWD/dist/DeepFlux/_internal"` before invoking it,
+    or it dies with "Could not find dependency".
+  * PyInstaller's PySide6 hooks drag in the whole Qt QML tree, whose
+    QtWayland compositor plugins need `libwayland-server0` (not on a
+    headless runner) — apt the three libwayland-* runtime packages.
+  * linuxdeploy rejects non-square icons ("invalid x resolution") — the
+    workflow pads DeepFlux4.png onto a square canvas and downscales to
+    512x512 with Pillow before calling it.
 - Artifacts: `DeepFlux-<ver>-Linux-x86_64.AppImage` (PRIMARY — linuxdeploy
   bundles the SYSTEM library closure so users need zero apt installs;
   APPIMAGE_EXTRACT_AND_RUN=1 because 24.04 runners lack libfuse2) and the
