@@ -105,7 +105,18 @@ jobs:
           Icon=DeepFlux
           Categories=Network;FileTransfer;
           EOF
-          cp DeepFlux4.png "$APPDIR/usr/share/icons/hicolor/512x512/apps/DeepFlux.png"
+          # linuxdeploy only accepts SQUARE icons in standard sizes — the
+          # source logo (DeepFlux4.png) is not square, so pad it onto a
+          # square transparent canvas and downscale to 512x512.
+          python - <<'PYEOF'
+          from PIL import Image
+          img = Image.open("DeepFlux4.png").convert("RGBA")
+          side = max(img.size)
+          canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+          canvas.paste(img, ((side - img.width) // 2, (side - img.height) // 2))
+          canvas.resize((512, 512), Image.LANCZOS).save(
+              "build/AppDir/usr/share/icons/hicolor/512x512/apps/DeepFlux.png")
+          PYEOF
           # linuxdeploy resolves NEEDED entries via ldconfig + usr/lib only —
           # NOT appdir subdirectories. PyInstaller's onedir keeps wheel libs
           # (incl. hashed names like ctranslate2's libgomp-e985bcbb.so.1.0.0)
