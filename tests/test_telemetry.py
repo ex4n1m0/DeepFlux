@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from unittest import mock
 
@@ -68,7 +69,7 @@ def test_beat_payload_is_minimal(tmp_path):
     assert set(payload) == {"id", "v", "os"}  # nothing else ever leaves the machine
     assert payload["id"] == install
     assert payload["v"] == APP_VERSION
-    assert payload["os"] == os.name
+    assert payload["os"] == sys.platform
 
 
 def test_leave_payload_carries_leave_flag(tmp_path):

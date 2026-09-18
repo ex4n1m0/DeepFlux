@@ -1,0 +1,130 @@
+name: Linux build
+
+# Builds the Linux AppImage + tar.gz on GitHub's free Ubuntu runner.
+# PyInstaller cannot cross-compile, so this workflow IS the Linux build
+# machine. Same feature scope as the macOS build: KEYLESS (users enter
+# their own API keys) and no Play/IPTV tab (see _PLAY_TAB_SUPPORTED in
+# gui/main_window.py). No signing exists on Linux at all — an AppImage
+# runs as soon as it has the exec bit (chmod +x), so there is no
+# Gatekeeper/SmartScreen step to worry about.
+#
+# Runner is pinned to ubuntu-24.04 (glibc 2.39 floor: Ubuntu 24.04+,
+# Debian 13, Fedora 40+, Arch). ubuntu-22.04 entered deprecation
+# 2026-09-17 (actions/runner-images#14254) — do not go back there; a
+# wider-compat manylinux_2_28 container job is the upgrade path if users
+# on older distros ever ask.
+#
+# Trigger: every push to this branch (workflow_dispatch only works once
+# the file reaches the default branch) + manual dispatch after that.
+on:
+  workflow_dispatch:
+  push:
+    branches: [linux-port]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install system libraries (Qt/Chromium runtime deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libnss3 libasound2t64 \
+            libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
+            libxkbcommon0 libxkbcommon-x11-0 libxcb-cursor0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xfixes0 \
+            libxcomposite1 libxdamage1 libxrandr2 libxtst6 libx11-6 \
+            libdrm2 libgbm1 libegl1 libgl1 \
+            libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Not in requirements.txt but imported by the app (dev machines
+          # carry them; CI must be explicit).
+          pip install cryptography defusedxml Pillow PyInstaller
+
+      - name: Offscreen boot smoke test
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QTWEBENGINE_CHROMIUM_FLAGS: "--disable-gpu --no-sandbox --disable-dev-shm-usage"
+        run: |
+          # The script carries its own 120s hang watchdog (faulthandler).
+          python -u packaging/verify_boot.py
+
+      - name: Read app version
+        id: ver
+        run: |
+          VER=$(sed -nE 's/^#define MyAppVersion "([^"]+)"/\1/p' packaging/installer.iss | head -1)
+          echo "version=${VER:-0.0.0}" >> "$GITHUB_OUTPUT"
+
+      - name: Build onedir (PyInstaller)
+        run: python -m PyInstaller packaging/app_linux.spec --clean --noconfirm
+
+      - name: Package tar.gz
+        run: |
+          cd dist
+          tar -czf "DeepFlux-${{ steps.ver.outputs.version }}-Linux-x86_64.tar.gz" DeepFlux
+
+      - name: Package AppImage (linuxdeploy)
+        env:
+          # 24.04 runners have no libfuse2; extract-and-run instead.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          # linuxdeploy bundles the SYSTEM library closure (nss/alsa/xcb/…)
+          # into the image; a bare PyInstaller onedir would require users
+          # to apt-install those libs themselves.
+          curl -fL -o linuxdeploy.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy.AppImage
+          APPDIR=build/AppDir
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib/DeepFlux" \
+                   "$APPDIR/usr/share/applications" \
+                   "$APPDIR/usr/share/icons/hicolor/512x512/apps"
+          cp -a dist/DeepFlux/. "$APPDIR/usr/lib/DeepFlux/"
+          printf '#!/bin/sh\nhere="$(dirname "$(readlink -f "$0")")"\nexec "$here/../lib/DeepFlux/DeepFlux" "$@"\n' \
+            > "$APPDIR/usr/bin/DeepFlux"
+          chmod +x "$APPDIR/usr/bin/DeepFlux"
+          cat > "$APPDIR/usr/share/applications/DeepFlux.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=DeepFlux
+          Comment=All-in-one media and download center
+          Exec=DeepFlux
+          Icon=DeepFlux
+          Categories=Network;FileTransfer;
+          EOF
+          cp DeepFlux4.png "$APPDIR/usr/share/icons/hicolor/512x512/apps/DeepFlux.png"
+          ./linuxdeploy.AppImage --appdir "$APPDIR" \
+            --desktop-file "$APPDIR/usr/share/applications/DeepFlux.desktop" \
+            --icon-file "$APPDIR/usr/share/icons/hicolor/512x512/apps/DeepFlux.png" \
+            --output appimage
+          OUT="$(ls -1 ./*.AppImage 2>/dev/null | head -1)"
+          mv "$OUT" "dist/DeepFlux-${{ steps.ver.outputs.version }}-Linux-x86_64.AppImage"
+
+      - name: AppImage smoke test (packaged binary runs)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          chmod +x dist/*.AppImage
+          QT_QPA_PLATFORM=offscreen ./dist/DeepFlux-*-Linux-x86_64.AppImage --help
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepFlux-${{ steps.ver.outputs.version }}-Linux-x86_64
+          path: |
+            dist/*.AppImage
+            dist/*.tar.gz
+          retention-days: 30
+          if-no-files-found: error

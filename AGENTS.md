@@ -190,14 +190,14 @@
 ## macOS build (CI-only, added 2026-09-17)
 - Strategy: macOS ships the priority features (Browser, Agent, Torrents &
   Downloads, plus Room/Commander which came free). The Play tab is
-  Windows-ONLY: `_PLAY_TAB_SUPPORTED = sys.platform != "darwin"` in
+  Windows-ONLY: `_PLAY_TAB_SUPPORTED = sys.platform == "win32"` in
   gui/main_window.py guards the iptv_tab imports, tab creation, File-menu
   Play zone, tab-button indices, and every `self.iptv_tab` call site
   (play_file_in_player falls back to `_reveal_path`, _stream_torrent and
   play_web_stream show "no player in this build" notices).
   `ToolRegistry(..., enable_iptv_tools=...)` filters every `iptv_*` tool
   from the registry when False. Do NOT regress these guards — an unguarded
-  `self.iptv_tab` reference crashes the mac build at startup.
+  `self.iptv_tab` reference crashes the mac AND Linux builds at startup.
 - Build machine: `.github/workflows/macos-build.yml` (manual dispatch) on a
   free macos-14 ARM runner — the repo is PUBLIC (macOS minutes are free),
   and PyInstaller cannot cross-compile, so CI IS the macOS build machine.
@@ -211,7 +211,7 @@
   missing it makes macOS KILL the process on first mic access; version is
   parsed from installer.iss MyAppVersion), `packaging/gen_macos_icon.py`
   (Pillow writes packaging/icon.icns from the tracked DeepFlux4.png — keep
-  the PNG ≥512px), `packaging/verify_macos_boot.py` (offscreen boot smoke:
+  the PNG ≥512px), `packaging/verify_boot.py` (offscreen boot smoke:
   builds the REAL MainWindow, asserts tabs, no iptv_tab attr, no iptv_*
   tools in the registry; run locally on Windows too — asserts flip by
   platform. Needs QT_QPA_PLATFORM=offscreen +
@@ -234,7 +234,63 @@
 - macOS CI runs ONLY the boot smoke, not pytest: the suite has
   Windows-specific tests (winreg paths, file associations) that would be
   red noise there. Local gate before pushing mac-affecting changes: the
-  split a-c/d-z invocation PLUS `python packaging/verify_macos_boot.py`.
+  split a-c/d-z invocation PLUS `python packaging/verify_boot.py`.
+
+## Linux build (CI-only, added 2026-09-18)
+- Same feature scope as macOS (Browser, Agent, Torrents & Downloads, Room,
+  Commander; NO Play tab) — the ONE guard `_PLAY_TAB_SUPPORTED =
+  sys.platform == "win32"` covers both platforms, and
+  `packaging/verify_boot.py` (renamed from verify_macos_boot.py) asserts
+  the right shape per platform. Do NOT regress the guard: an unguarded
+  `self.iptv_tab` reference crashes the Linux build at startup.
+- Keyless by design (same as macOS CI). No signing concept exists on Linux
+  at all: AppImages run with zero warnings once the exec bit is set — no
+  Gatekeeper/SmartScreen analog, no certificate to buy, publisher
+  reputation to rebuild, or "unblock file" note needed. Users just
+  `chmod +x DeepFlux-*.AppImage && ./DeepFlux-*.AppImage`.
+- Build machine: `.github/workflows/linux-build.yml` on ubuntu-24.04
+  (pin the version — `ubuntu-latest` can move under you; ubuntu-22.04
+  entered deprecation 2026-09-17, actions/runner-images#14254). The runner
+  choice sets the glibc floor: 24.04 = glibc 2.39 (Ubuntu 24.04+, Debian
+  13, Fedora 40+, Arch; Debian 12/Ubuntu 22.04 users are out until a
+  manylinux_2_28 container job exists). The workflow apt-installs the
+  QtWebEngine runtime libs (libnss3, libasound2t64, libatk-bridge, the
+  libxcb set incl. libxcb-cursor0 — a classic Qt6-on-Debian gap) for the
+  offscreen boot smoke.
+- Artifacts: `DeepFlux-<ver>-Linux-x86_64.AppImage` (PRIMARY — linuxdeploy
+  bundles the SYSTEM library closure so users need zero apt installs;
+  APPIMAGE_EXTRACT_AND_RUN=1 because 24.04 runners lack libfuse2) and the
+  same onedir as `...-Linux-x86_64.tar.gz` (fallback; needs the distro's
+  Qt/Chromium runtime libs). CI also smokes the packaged AppImage itself
+  (`--help` under offscreen) — catches bootloader/lib problems the source
+  boot test can't. linuxdeploy's continuous build URL is the standard one;
+  the AppImage icon is the tracked DeepFlux4.png directly (no generator).
+- Spec: `packaging/app_linux.spec` = app_macos.spec minus BUNDLE, minus
+  mac-only EXE args; keeps the mpv/vlc excludes (gitignore whitelists it
+  next to the other two specs).
+- No ffmpeg is bundled on Linux either: `find_ffmpeg` PATH-finds
+  /usr/bin/ffmpeg after the user (or the agent, via run_shell) installs
+  the distro package — the SYSTEM_PROMPT has a linux-only note (agent/loop.py)
+  with the apt/dnf/pacman guidance + Jackett at /opt/jackett/jackett or
+  ~/.config/Jackett/jackett (systemd service; starting it needs elevation
+  the app doesn't have — infra/jackett.py spawns the binary directly
+  instead, same as the mac .app path).
+- Telemetry now sends `sys.platform` (win32/darwin/linux) instead of
+  `os.name` — os.name collapsed mac+linux into one "posix" bucket; the
+  heartbeat payload is the only place they're distinguishable.
+- Website (PREPARED, not yet live): download.js FILE_RE accepts the
+  AppImage/tar.gz names, but the landing-page button + static file go in
+  only with a real artifact (same ritual as the macOS button: CI →
+  `gh run download` → drop the file in website/deepflux/ → index.html
+  button + meta → deploy). No Linux button ships until the build is
+  human-verified on a real Linux desktop.
+- Phase 2 option (NOT v1): the Play tab COULD come back on Linux — unlike
+  macOS, X11 XEmbed (mpv wid=winId()) is the native embedding path and
+  LibVLCBackend.set_xwindow already exists. Requires: bundling/depending
+  on libmpv, forcing QT_QPA_PLATFORM=xcb (wid embedding is X11-only;
+  Wayland sessions ride XWayland), re-checking vlc's --no-xlib instance
+  flag, flipping the guard to include linux. See the 2026-09-18
+  feasibility study in agent memory.
 
 ## Conventions
 - 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,

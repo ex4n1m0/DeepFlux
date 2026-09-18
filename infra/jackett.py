@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 import time
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
@@ -44,6 +45,15 @@ _EXE_NAMES = ("JackettConsole.exe", "JackettTray.exe")
 _MACOS_EXE_CANDIDATES = (
     "/Applications/Jackett.app/Contents/MacOS/jackett",
     os.path.expanduser("~/Applications/Jackett.app/Contents/MacOS/jackett"),
+)
+
+# Linux: the official installer script puts the console binary at /opt/jackett
+# (root/systemd install) or ~/.config/Jackett (user install); it serves the
+# API in-process just like the Windows console host. Starting the systemd
+# service needs elevation, so DeepFlux only ever spawns the binary directly.
+_LINUX_EXE_CANDIDATES = (
+    "/opt/jackett/jackett",
+    os.path.expanduser("~/.config/Jackett/jackett"),
 )
 
 
@@ -78,8 +88,10 @@ def find_executable(configured_path: str = "") -> Optional[str]:
             base = os.environ.get(env_var)
             if base:
                 candidates.extend(os.path.join(base, "Jackett", exe) for exe in _EXE_NAMES)
-    else:
+    elif sys.platform == "darwin":
         candidates.extend(_MACOS_EXE_CANDIDATES)
+    else:
+        candidates.extend(_LINUX_EXE_CANDIDATES)
     for path in candidates:
         if path and os.path.isfile(path):
             return path

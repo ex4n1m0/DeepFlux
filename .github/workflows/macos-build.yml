@@ -44,7 +44,7 @@ jobs:
           QTWEBENGINE_CHROMIUM_FLAGS: "--disable-gpu --no-sandbox --disable-dev-shm-usage"
         run: |
           # The script carries its own 120s hang watchdog (faulthandler).
-          python -u packaging/verify_macos_boot.py
+          python -u packaging/verify_boot.py
 
       - name: Read app version
         id: ver

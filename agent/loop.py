@@ -191,6 +191,19 @@ Platform note (macOS build):
 """
 
 
+# Linux build: same feature scope as macOS (no Play tab, no bundled FFmpeg)
+# but different package-manager and PATH answers.
+if sys.platform.startswith("linux"):
+    SYSTEM_PROMPT += """
+
+Platform note (Linux build):
+- This build has NO Play/IPTV tab, no in-app video player, and no iptv_* tools. Never suggest them; media files open in the user's system player. Stream-while-downloading is unavailable.
+- No FFmpeg is bundled. Install it with the distro's package manager via run_shell (`sudo apt install ffmpeg`, or dnf/pacman/zypper as appropriate). It lands in /usr/bin/ffmpeg, which the app auto-detects from PATH; only if detection fails, set `download.ffmpeg_path` to `/usr/bin/ffmpeg` with set_settings.
+- winget does not exist on Linux; use apt/dnf/pacman/zypper.
+- Jackett (if installed) lives at /opt/jackett/jackett (system install) or ~/.config/Jackett/jackett, usually managed as a systemd service: tell the user to run `sudo systemctl start jackett` themselves if it is unreachable — starting services needs elevation the app doesn't have.
+"""
+
+
 @dataclass
 class PendingAction:
     tool_name: str

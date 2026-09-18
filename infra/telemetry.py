@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import threading
 import uuid
 from typing import Optional
@@ -91,13 +92,16 @@ def _post(payload: dict) -> bool:
 
 def send_beat(install: str) -> bool:
     """Announce 'this install is running right now'."""
-    return _post({"id": install, "v": APP_VERSION, "os": os.name})
+    # sys.platform, not os.name: os.name collapses macOS and Linux into the
+    # same "posix" string, and the heartbeat is the only place the payload
+    # could ever tell the two apart.
+    return _post({"id": install, "v": APP_VERSION, "os": sys.platform})
 
 
 def send_leave(install: str) -> bool:
     """Best-effort 'this install is gone' — the 15-min window cleans up
     anything that never lands (crash, kill, offline)."""
-    return _post({"id": install, "v": APP_VERSION, "os": os.name, "leave": True})
+    return _post({"id": install, "v": APP_VERSION, "os": sys.platform, "leave": True})
 
 
 def _loop(data_dir: str) -> None:

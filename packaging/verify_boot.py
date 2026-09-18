@@ -1,8 +1,10 @@
-"""Offscreen boot smoke test for the macOS build (CI).
+"""Offscreen boot smoke test for the packaged builds (CI).
 
 Builds the real MainWindow with a throwaway config and lets the event loop
 run for a few seconds — catches import-time platform bugs, missing data
 files, and constructor crashes before PyInstaller wastes a build.
+Platform-aware: on Windows the Play tab must exist, on macOS/Linux it must
+not (everything keys off _PLAY_TAB_SUPPORTED in gui/main_window.py).
 
 Must run BEFORE QApplication is created (env vars):
     QT_QPA_PLATFORM=offscreen
@@ -66,15 +68,16 @@ def main() -> int:
         if _PLAY_TAB_SUPPORTED:
             assert "Play" in names, f"Play tab missing on a supported platform: {names}"
         else:
-            assert "Play" not in names, f"Play tab must not exist on macOS: {names}"
+            assert "Play" not in names, f"Play tab must not exist on {sys.platform}: {names}"
             assert not hasattr(window, "iptv_tab"), "iptv_tab attribute leaked"
         assert "Browse" in names and "Agent" in names and "Download" in names, names
 
-        # The iptv_* tools must be absent from the agent's registry on macOS.
+        # The iptv_* tools must be absent from the agent's registry on
+        # no-Play platforms.
         tool_names = set(window.tools._tools.keys())
         if not _PLAY_TAB_SUPPORTED:
             leaked = [t for t in tool_names if t.startswith("iptv_")]
-            assert not leaked, f"iptv tools leaked into the macOS registry: {leaked}"
+            assert not leaked, f"iptv tools leaked into the {sys.platform} registry: {leaked}"
 
         QTimer.singleShot(4000, app.quit)
         app.exec()
