@@ -85,12 +85,13 @@ from gui.commander_tab import CommanderTab
 from gui.browser_bridge import BrowserBridge, accept_language_header, normalize_browser_target
 from gui.browser_history import BrowserHistory
 from gui.browser_channel import create_channel, channel_injection_script
-# The Play (IPTV/player) tab is Windows-only for now: libmpv cannot embed
-# into a Qt widget on macOS without rewriting playback on the mpv render
-# API, and SVP has no macOS build. The Linux build ships without it too
-# (v1 parity with macOS) — though X11 XEmbed could bring it back there
-# later, unlike macOS. Everything downstream (tab creation, agent iptv_*
-# tools, menus, stream-while-downloading) keys off this flag.
+# The Play (IPTV/player) tab is Windows-ONLY — permanent owner decision
+# (2026-09-18) covering macOS AND Linux: libmpv cannot embed into a Qt
+# widget on macOS without rewriting playback on the mpv render API, and
+# the Linux build ships without it by the same decision (X11 XEmbed would
+# have been technically feasible there — do not re-litigate). Everything
+# downstream (tab creation, agent iptv_* tools, menus,
+# stream-while-downloading) keys off this flag.
 _PLAY_TAB_SUPPORTED = sys.platform == "win32"
 if _PLAY_TAB_SUPPORTED:
     from gui.iptv_tab import AgentIPTVBridge, IPTVTab

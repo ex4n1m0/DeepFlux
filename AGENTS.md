@@ -293,19 +293,23 @@
 - Telemetry now sends `sys.platform` (win32/darwin/linux) instead of
   `os.name` — os.name collapsed mac+linux into one "posix" bucket; the
   heartbeat payload is the only place they're distinguishable.
-- Website (PREPARED, not yet live): download.js FILE_RE accepts the
-  AppImage/tar.gz names, but the landing-page button + static file go in
-  only with a real artifact (same ritual as the macOS button: CI →
-  `gh run download` → drop the file in website/deepflux/ → index.html
-  button + meta → deploy). No Linux button ships until the build is
-  human-verified on a real Linux desktop.
-- Phase 2 option (NOT v1): the Play tab COULD come back on Linux — unlike
-  macOS, X11 XEmbed (mpv wid=winId()) is the native embedding path and
-  LibVLCBackend.set_xwindow already exists. Requires: bundling/depending
-  on libmpv, forcing QT_QPA_PLATFORM=xcb (wid embedding is X11-only;
-  Wayland sessions ride XWayland), re-checking vlc's --no-xlib instance
-  flag, flipping the guard to include linux. See the 2026-09-18
-  feasibility study in agent memory.
+- Website (LIVE since 2026-09-18): deepflux.space carries a third primary
+  button for `DeepFlux-<X>-Linux-x86_64.AppImage` through the same
+  /api/download counter (FILE_RE already accepts it). Only the AppImage is
+  hosted (the tar.gz stays a CI artifact — hosting both doubles the deploy
+  for little benefit); `website/**/*.AppImage` + `website/**/*.tar.gz` are
+  gitignored like the exe/dmg, and the same refresh ritual applies: fresh
+  CI run → `gh run download -n "DeepFlux-<X>-Linux-x86_64"` → swap the
+  AppImage in the dir → update hrefs + meta date → delete the old file →
+  `vercel --prod --yes --scope timedivision`. The smartscreen note covers
+  Linux with a chmod +x line (no security warnings exist there).
+- The Play tab is PERMANENTLY Windows-only (owner decision 2026-09-18,
+  extending the macOS call to Linux): do not propose re-enabling it on
+  either platform. For the record, Linux X11 XEmbed (mpv wid=winId(),
+  LibVLCBackend.set_xwindow) would have been technically feasible — the
+  decision is product scope, not a technical wall like macOS's render-API
+  rewrite. If it is ever revisited, the 2026-09-18 feasibility study in
+  agent memory lists what it would take (xcb forcing, libmpv bundling).
 
 ## Conventions
 - 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,
