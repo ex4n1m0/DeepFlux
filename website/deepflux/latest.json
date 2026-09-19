@@ -1,8 +1,8 @@
 {
-  "version": "4.9",
-  "file": "DeepFlux4.9Setup.exe",
-  "size": 370991229,
-  "sha256": "ab5353f7fd7f2bd86240c2e7509c7f4cbb568d01528233cd75a98e2329acb86c",
+  "version": "4.9.1",
+  "file": "DeepFlux4.9.1Setup.exe",
+  "size": 370988158,
+  "sha256": "fd50e02de2e0902a5450d12da5eee798034b1970b8a496a555594e97b552d1ae",
   "released": "2026-09-19",
-  "notes": "DeepFlux can now update itself: future versions install with one click (Help > Check for Updates). Your sources, API keys and settings carry over between versions. Rotated built-in AI key."
+  "notes": "Reliability fix: the built-in AI key now activates automatically even if an earlier version ever ran without one. First release with in-app auto-update."
 }
