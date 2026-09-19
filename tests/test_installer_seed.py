@@ -105,3 +105,21 @@ def test_installer_preserves_existing_config():
     guard = block.find("if FileExists(ConfigPath) then")
     seed = block.find("SaveStringToFile(ConfigPath")
     assert 0 < guard < seed, "the seed must be written only on fresh installs"
+
+
+def test_fresh_install_first_run_gets_shared_key(tmp_path):
+    """The exact bytes the installer seeds are the FIRST config a new
+    machine ever loads — the first thing the user tries (the startup
+    greeting) must reach the real LLM through the shipped shared key, in
+    provider "deepseek", never dummy mode (owner ask 2026-09-19)."""
+    from agent.llm import DeepSeekClient, DummyLLMClient, create_llm_client
+    from config import _SHARED_DEEPSEEK_API_KEY, DeeptorrentConfig
+    path = str(tmp_path / "config.json")
+    open(path, "w", encoding="utf-8").write(_extract_seed())
+
+    config = DeeptorrentConfig.from_file(path)
+    assert config.llm.provider == "deepseek"
+    assert config.llm.api_key == _SHARED_DEEPSEEK_API_KEY  # empty on keyless
+    client = create_llm_client(config.llm)
+    assert isinstance(client, DeepSeekClient)
+    assert not isinstance(client, DummyLLMClient)

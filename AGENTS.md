@@ -523,8 +523,13 @@
   stream / memory / agent-debug are assumed always-on — `from_file` forces
   `llm.stream=True`, `llm.memory_enabled=True`, `ui_agent_debug=True`
   regardless of what's saved; `reasoning_effort` stays a config.json-only
-  knob (default "high"). `DEEPSEEK_API_KEY` env injection is gated on
-  provider deepseek.
+  knob (default "high"). `DEEPSEEK_API_KEY` env injection and the shared
+  DeepSeek key are gated on provider ("", "deepseek", "dummy" — never
+  openrouter/custom). "dummy" is the no-key placeholder a keyless boot
+  writes, not a choice: since 2026-09-19 from_file injects the shared key
+  into a dummy config AND heals the provider back to "deepseek", so a
+  fossilized dummy (old keyless build + preserved config) can never keep a
+  fresh install keyless (tests/test_shared_keys.py::test_dummy_fossil_*).
 - `memory.py` — OpenClaw-style persistent memory in `~/.deeptorrent/memory/`
   (`USER.md`, `MEMORY.md`, `daily/YYYY-MM-DD.md`). Curated files are injected
   into the system prompt (budgeted); daily notes are search-only. Entries carry

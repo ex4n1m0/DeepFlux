@@ -633,11 +633,19 @@ class DeeptorrentConfig:
         # configured provider — it must not leak into OpenRouter calls.
         # Since 3.5 the shared DeepSeek key (see _SHARED_DEEPSEEK_API_KEY) is
         # the last-resort fallback for the same slot, under the same gate.
-        if (not data.get("llm", {}).get("api_key")
-                and data.get("llm", {}).get("provider", "deepseek") in ("", "deepseek")):
-            data.setdefault("llm", {})["api_key"] = (
+        # "dummy" is the no-key placeholder a keyless boot writes — never a
+        # deliberate provider choice — so a config that fossilized on it
+        # (e.g. an old keyless build, preserved by the no-wipe installer)
+        # still gets the shared key AND heals back to deepseek (2026-09-19:
+        # fresh installs must get the built-in key the first time they run).
+        _llm = data.setdefault("llm", {})
+        if (not _llm.get("api_key")
+                and _llm.get("provider", "deepseek") in ("", "deepseek", "dummy")):
+            _llm["api_key"] = (
                 os.environ.get("DEEPSEEK_API_KEY") or _SHARED_DEEPSEEK_API_KEY)
-            _remember_shared_slot("llm.api_key", data["llm"]["api_key"], _SHARED_DEEPSEEK_API_KEY)
+            _remember_shared_slot("llm.api_key", _llm["api_key"], _SHARED_DEEPSEEK_API_KEY)
+            if _llm.get("provider") == "dummy" and _llm["api_key"]:
+                _llm["provider"] = "deepseek"
         if not data.get("indexer", {}).get("api_key") and os.environ.get("JACKETT_API_KEY"):
             data.setdefault("indexer", {})["api_key"] = os.environ["JACKETT_API_KEY"]
         if not data.get("web_search", {}).get("brave_api_key") and os.environ.get("BRAVE_API_KEY"):

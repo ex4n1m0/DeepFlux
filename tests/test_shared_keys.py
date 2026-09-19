@@ -97,6 +97,43 @@ def test_fresh_install_injects_but_never_persists(tmp_path):
     assert reloaded.llm.api_key == SHARED["_SHARED_DEEPSEEK_API_KEY"]
 
 
+def test_dummy_fossil_heals_with_shared_key(tmp_path, monkeypatch):
+    """A config that fossilized on provider="dummy" (a keyless-era boot
+    wrote it; the installer now PRESERVES configs, so it can survive an
+    upgrade) must still get the shared key and heal back to deepseek —
+    fresh installs get the built-in key the first time they run
+    (owner ask 2026-09-19). Keyless builds stay in dummy mode."""
+    import config as config_module
+    monkeypatch.setattr(config_module, "_SHARED_DEEPSEEK_API_KEY", "sk-heal-test")
+    path = str(tmp_path / "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"llm": {"provider": "dummy", "api_key": ""}}, f)
+
+    cfg = DeeptorrentConfig.from_file(path)
+    assert cfg.llm.provider == "deepseek"          # healed, not stuck on dummy
+    assert cfg.llm.api_key == "sk-heal-test"       # shared key injected
+
+    cfg.to_file(path)
+    saved = _saved(path)
+    assert saved["llm"]["api_key"] == ""            # still never persisted
+    assert saved["llm"]["provider"] == "deepseek"   # the heal itself persists
+
+
+def test_dummy_fossil_stays_dummy_when_keyless(tmp_path, monkeypatch):
+    """Keyless builds (source clones, macOS/Linux CI) must keep their
+    demo-mode behavior — the heal only fires when a key actually exists."""
+    import config as config_module
+    monkeypatch.setattr(config_module, "_SHARED_DEEPSEEK_API_KEY", "")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    path = str(tmp_path / "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"llm": {"provider": "dummy", "api_key": ""}}, f)
+
+    cfg = DeeptorrentConfig.from_file(path)
+    assert cfg.llm.provider == "dummy"
+    assert cfg.llm.api_key == ""
+
+
 def test_pre_359_leaked_keys_are_scrubbed_on_upgrade(tmp_path):
     path = str(tmp_path / "config.json")
     cfg = DeeptorrentConfig.from_file(path)  # inject shared keys
