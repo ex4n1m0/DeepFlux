@@ -165,6 +165,39 @@ def make_banner(path: str) -> None:
     print("wrote", path)
 
 
+def make_og(path: str) -> None:
+    """1200x630 social card (og:image / twitter:summary_large_image).
+
+    Same identity as the banner — mark left, gradient wordmark, tagline —
+    sized to stay legible at the small previews link unfurlers show. A
+    VERSIONED filename (DeepOG5.jpg) is deliberate: Twitter/Facebook cache
+    OG images aggressively and re-fetch only when the URL changes.
+    """
+    W, H = 1200 * SS, 630 * SS
+    img = backdrop((W, H))
+    draw_mark(img, cx=0.185, cy=0.46, span=0.26)
+
+    tw = int(W * 0.60)
+    name_h = int(H * 0.34)
+    font = _fit_font("DeepFlux", int(tw * 0.96), int(H * 0.28))
+    name = gradient_text((tw, name_h), "DeepFlux", font,
+                         [TURQ, CYAN, (238, 244, 255)])
+    tag_h = int(H * 0.11)
+    tag_font = _fit_font("The AI-native media & download suite",
+                         int(tw * 0.96), int(H * 0.062))
+    tag = gradient_text((tw, tag_h), "The AI-native media & download suite",
+                        tag_font, [(138, 154, 176), (138, 154, 176)])
+
+    canvas = Image.new("RGB", (W, H), (0, 0, 0))
+    canvas.paste(name, (int(W * 0.355), int(H * 0.16)))
+    canvas.paste(tag, (int(W * 0.355), int(H * 0.58)))
+    img = ImageChops.screen(img, canvas)
+    img = img.resize((1200, 630), Image.LANCZOS)
+    img.save(path, format="JPEG", quality=92)
+    print("wrote", path)
+
+
 if __name__ == "__main__":
     make_logo("DeepFlux5.png")
     make_banner("website/deepflux/DeepFluxBanner.webp")
+    make_og("website/deepflux/DeepOG5.jpg")
