@@ -8,6 +8,7 @@ import re
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -90,6 +91,10 @@ from gui.downloads_tab import DownloadsTab
 from gui.column_sizing import AutoColumnSizer
 from gui.responsive import OverflowRow, ResponsiveRow
 from gui.commander_tab import CommanderTab
+from gui.activity_rail import ActivityRail
+from gui.settings_hub import SettingsHub
+from gui.agent_panel import AgentPanel
+from gui.win_taskbar import TaskbarProgress
 from gui.browser_bridge import BrowserBridge, accept_language_header, normalize_browser_target
 from gui.browser_history import BrowserHistory
 from gui.browser_channel import create_channel, channel_injection_script
@@ -732,178 +737,6 @@ class _BrowserPage(QWebEnginePage):
             return "JavaScript"
 
 
-class _TabMenuBar(QMenuBar):
-    """Menu bar whose tab-linked top-level titles double as tab buttons.
-
-    Clicking a linked title while NOT on its tab switches to that tab
-    instead of opening the menu; clicking it while already on the tab opens
-    the menu. Linked menus with no items left (Agent, Command) act as pure
-    buttons — a click never pops an empty popup. Unlinked menus (File,
-    Bookmarks, Help) behave normally.
-
-    Menus open on CLICK only: Qt's default mouse tracking lets a hover tear
-    down the open popup and open the hovered one whenever a menu is active —
-    that path is blocked here. A click-opened popup auto-closes once the
-    cursor has left the popup/submenus and the bar for ~450ms."""
-
-    # Active-tab box (see paintEvent) — turquoise against the blue accent.
-    _ACTIVE_COLOR = QColor("#a8edff")
-    _ACTIVE_FILL = QColor(46, 230, 200, 34)
-    _ACTIVE_BG = QColor("#0d1117")  # matches the QMenuBar background
-
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        if sys.platform == "darwin":
-            # The native macOS menu bar lives at the top of the screen and
-            # ignores our custom painting — the tab-button row and the
-            # turquoise active-page box would vanish. Qt's own in-window
-            # menubar keeps the Windows layout intact.
-            self.setNativeMenuBar(False)
-        self._tabs: Any = None  # QTabWidget to read/switch
-        # PySide hands back Python-OWNED QMenu wrappers from addMenu(): drop
-        # the last Python reference and the C++ menu is destroyed, silently
-        # removing the title from the bar. Keep them all alive here.
-        self._menus: List[Any] = []
-        # Auto-close for click-opened popups: poll the cursor; once it has
-        # been outside the popup (+submenus) and the bar for ~450ms, close.
-        self._mouse_menu: Any = None
-        self._outside_ticks = 0
-        self._close_timer = QTimer(self)
-        self._close_timer.setInterval(150)
-        self._close_timer.timeout.connect(self._auto_close_check)
-        # When a popup closed last — Qt may dismiss it as part of the very
-        # click we are about to handle (see mousePressEvent).
-        self._menu_closed_at = 0.0
-
-    def addMenu(self, *args, **kwargs):  # noqa: N802
-        menu = super().addMenu(*args, **kwargs)
-        if menu is not None:
-            self._menus.append(menu)
-            menu.aboutToHide.connect(self._note_menu_closed)
-        return menu
-
-    def _note_menu_closed(self) -> None:
-        self._menu_closed_at = time.monotonic()
-
-    def _popup_active(self) -> bool:
-        """True while a popup is open — or was, until this very click."""
-        for action in self.actions():
-            menu = action.menu()
-            if menu is not None and menu.isVisible():
-                return True
-        return (time.monotonic() - self._menu_closed_at) < 0.15
-
-    def _close_popups(self) -> None:
-        for action in self.actions():
-            menu = action.menu()
-            if menu is not None and menu.isVisible():
-                menu.close()
-        self._close_timer.stop()
-        self._mouse_menu = None
-
-    def link_tabs(self, links: Dict[Any, int], tabs: Any) -> None:
-        # Tab index is a dynamic property on the action (the C++ object),
-        # NOT a Python-side dict keyed by QMenu/QAction — a fresh wrapper
-        # for the same C++ object would silently break dict lookups.
-        # Keys are plain actions now (3.5.4: the six page titles are pure
-        # buttons), but menus are accepted too for compatibility.
-        self._tabs = tabs
-        for action_or_menu, idx in links.items():
-            action = (action_or_menu.menuAction() if hasattr(action_or_menu, "menuAction")
-                      else action_or_menu)
-            action.setProperty("tab_index", int(idx))
-        tabs.currentChanged.connect(lambda *_: self.update())
-
-    def _active_action(self) -> Any:
-        """The top-level action linked to the tab currently on screen."""
-        if self._tabs is None:
-            return None
-        current = self._tabs.currentIndex()
-        for action in self.actions():
-            idx = action.property("tab_index")
-            if idx is not None and int(idx) == current:
-                return action
-        return None
-
-    def paintEvent(self, event) -> None:  # noqa: N802
-        # The linked title of the visible tab is boxed in turquoise, so the
-        # menu bar reads as a tab strip (the real tab bar stays hidden).
-        super().paintEvent(event)
-        action = self._active_action()
-        if action is None:
-            return
-        rect = self.actionGeometry(action)
-        if rect.isEmpty():
-            return
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.fillRect(rect, self._ACTIVE_BG)  # drop the hover/open highlight
-        painter.setPen(QPen(self._ACTIVE_COLOR, 1))
-        painter.setBrush(self._ACTIVE_FILL)
-        painter.drawRoundedRect(QRectF(rect).adjusted(0.5, 1.5, -0.5, -1.5), 4, 4)
-        painter.setBrush(Qt.NoBrush)
-        painter.setFont(self.font())
-        painter.drawText(rect, Qt.AlignCenter, action.text().replace("&", ""))
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        # With a popup open, a click on the bar only dismisses it: no tab
-        # switch, no second menu. The bar is inert until the menu is gone.
-        if self._popup_active():
-            self._close_popups()
-            event.accept()
-            return
-        action = self.actionAt(event.position().toPoint())
-        idx = action.property("tab_index") if action is not None else None
-        if idx is not None and self._tabs is not None:
-            # Pure tab button (3.5.4): a click ALWAYS switches the page —
-            # the page titles carry no menus any more.
-            self._tabs.setCurrentIndex(int(idx))
-            event.accept()
-            return
-        super().mousePressEvent(event)
-        # Click-opened popup → arm auto-close-on-mouse-away. Keyboard-opened
-        # menus are never armed, so arrow-key navigation survives with the
-        # mouse parked elsewhere.
-        menu = action.menu() if action is not None else None
-        if menu is not None and menu.isVisible():
-            self._mouse_menu = menu
-            self._outside_ticks = 0
-            self._close_timer.start()
-
-    def _auto_close_check(self) -> None:
-        menu = self._mouse_menu
-        if menu is None or not menu.isVisible():
-            self._close_timer.stop()
-            self._mouse_menu = None
-            return
-        pos = QCursor.pos()
-        # "Inside" = over the bar, the open popup, or any visible submenu
-        # (submenus are separate windows beyond the parent popup's rect).
-        inside = self.rect().contains(self.mapFromGlobal(pos))
-        if not inside:
-            popups = [menu] + [s for s in menu.findChildren(QMenu) if s.isVisible()]
-            inside = any(m.geometry().contains(pos) for m in popups)
-        if inside:
-            self._outside_ticks = 0
-        else:
-            self._outside_ticks += 1
-            if self._outside_ticks >= 3:  # ~450ms grace
-                menu.close()
-                self._close_timer.stop()
-                self._mouse_menu = None
-
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        # While any popup is open, swallow bar hover so the mouse can cross
-        # other titles without switching the open menu. With no popup open,
-        # hover only highlights (default behavior).
-        for action in self.actions():
-            menu = action.menu()
-            if menu is not None and menu.isVisible():
-                event.accept()
-                return
-        super().mouseMoveEvent(event)
-
-
 # Small text indent that marks a File-menu row as belonging to a zone
 # (headers sit flush left, items are pushed in — see _file_zone/_file_item).
 _FILE_ITEM_INDENT = "    "
@@ -1064,7 +897,7 @@ class MainWindow(QMainWindow):
             logger.debug("telemetry heartbeat failed to start", exc_info=True)
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 4.9.1 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 5.0 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1100,6 +933,87 @@ class MainWindow(QMainWindow):
             }
             QMenuBar::item { padding: 2px 10px; }
             QMenuBar::item:selected { background-color: #1a2a4a; border-radius: 4px; }
+
+            /* === Activity rail (v5 navigation) === */
+            #activity_rail { background-color: #0d1117; border-right: 3px solid #1a2a4a; }
+            QFrame[railBtn="true"] {
+                background: transparent;
+                border: 1px solid transparent;
+                border-radius: 6px;
+            }
+            QFrame[railBtn="true"]:hover {
+                background-color: #111827;
+                border: 1px solid #1a2a4a;
+            }
+            QFrame[railBtn="true"][active="true"] {
+                background-color: #1a2a4a;
+                border: 1px solid #2a7abf;
+            }
+            QLabel[railIcon="true"] {
+                background: transparent; border: none;
+                font-size: 21px;
+            }
+            QLabel[railText="true"] {
+                background: transparent; border: none;
+                font-size: 11px; color: #8a9ab0;
+            }
+            QFrame[railBtn="true"][active="true"] QLabel[railText="true"] { color: #a8edff; }
+            QLabel[railBadge="true"] {
+                background-color: #2a7abf; color: #ffffff;
+                border-radius: 7px; font-size: 11px; font-weight: 700;
+                padding: 0px 4px; min-width: 10px; min-height: 12px;
+            }
+
+            /* === Agent quick-ask panel (v5) === */
+            #agent_panel { background-color: #0d1117; border-left: 3px solid #1a2a4a; }
+            #agent_panel QLabel#panel_title { font-size: 16px; font-weight: 700; }
+
+            /* === Agent first-run setup cards (v5.1) === */
+            QPushButton#setup_card {
+                background-color: #111827;
+                color: #ffffff;
+                border: 2px solid #1a2a4a;
+                border-radius: 8px;
+                padding: 10px 16px;
+                font-size: 16px;
+                font-weight: 600;
+                text-align: left;
+            }
+            QPushButton#setup_card:hover {
+                background-color: #1a2a4a;
+                border: 2px solid #2a7abf;
+            }
+
+            /* === Play section chips (v5.1) === */
+            QPushButton#chip_btn {
+                background: transparent;
+                color: #8a9ab0;
+                border: 1px solid #1a2a4a;
+                border-radius: 999px;
+                padding: 2px 14px;
+                font-size: 15px;
+            }
+            QPushButton#chip_btn:hover { color: #ffffff; border-color: #2a7abf; }
+            QPushButton#chip_btn[on="true"] {
+                background-color: #1a2a4a;
+                color: #a8edff;
+                border: 1px solid #2a7abf;
+            }
+
+            /* === Status-bar chips + bell (v5) === */
+            QPushButton#status_chip {
+                background: transparent;
+                color: #8a9ab0;
+                border: 1px solid transparent;
+                border-radius: 4px;
+                padding: 1px 8px;
+                font-size: 15px;
+            }
+            QPushButton#status_chip:hover {
+                background-color: #111827;
+                color: #ffffff;
+                border: 1px solid #1a2a4a;
+            }
             QMenu {
                 background-color: #111827;
                 color: #ffffff;
@@ -1376,7 +1290,7 @@ class MainWindow(QMainWindow):
         # default ratio changes, bump the key so stale saved states from the
         # old layout don't override the new default.
         for name, splitter in (
-            ("agent_v5", self.agent_splitter),
+            ("download_v5_stack", self.agent_splitter),
             ("commander_v1", self.commander_tab.splitter),
         ):
             state = self.config.ui_splitters.get(name, "")
@@ -1389,7 +1303,7 @@ class MainWindow(QMainWindow):
     def _save_splitters(self) -> None:
         """Persist splitter sizes so the layout survives restarts."""
         for name, splitter in (
-            ("agent_v5", self.agent_splitter),
+            ("download_v5_stack", self.agent_splitter),
             ("commander_v1", self.commander_tab.splitter),
         ):
             try:
@@ -1416,9 +1330,9 @@ class MainWindow(QMainWindow):
         """Find the logo PNG for the branding header."""
         candidates = [
             os.path.join(os.path.dirname(__file__), "..", "packaging", "logo_48.png"),
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux4.png"),
+            os.path.join(os.path.dirname(__file__), "..", "DeepFlux5.png"),
             os.path.join(sys._MEIPASS, "packaging", "logo_48.png") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(sys._MEIPASS, "DeepFlux4.png") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(sys._MEIPASS, "DeepFlux5.png") if hasattr(sys, "_MEIPASS") else "",
         ]
         for path in candidates:
             if path and os.path.isfile(path):
@@ -1432,8 +1346,8 @@ class MainWindow(QMainWindow):
         candidates = [
             os.path.join(os.path.dirname(__file__), "..", "website", "deepflux", "DeepFluxBanner.webp"),
             os.path.join(sys._MEIPASS, "DeepFluxBanner.webp") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux4.png"),
-            os.path.join(sys._MEIPASS, "DeepFlux4.png") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(os.path.dirname(__file__), "..", "DeepFlux5.png"),
+            os.path.join(sys._MEIPASS, "DeepFlux5.png") if hasattr(sys, "_MEIPASS") else "",
         ]
         for path in candidates:
             if path and os.path.isfile(path):
@@ -1443,8 +1357,8 @@ class MainWindow(QMainWindow):
     def _resolve_watermark_path(self) -> str:
         """Find the full-size logo PNG for the chat watermark (prefers high-res)."""
         candidates = [
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux4.png"),
-            os.path.join(sys._MEIPASS, "DeepFlux4.png") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(os.path.dirname(__file__), "..", "DeepFlux5.png"),
+            os.path.join(sys._MEIPASS, "DeepFlux5.png") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "packaging", "logo_48.png"),
             os.path.join(sys._MEIPASS, "packaging", "logo_48.png") if hasattr(sys, "_MEIPASS") else "",
         ]
@@ -1521,6 +1435,23 @@ class MainWindow(QMainWindow):
         self.chat_history.document().setDefaultStyleSheet(CHAT_CSS)
         self.chat_history.setStyleSheet("QTextBrowser { background-color: transparent; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 3px; padding: 2px; }")
         agents_tab_layout.addWidget(self.chat_history)
+
+        # First-run setup cards (v5.1): visible while the chat is fresh, so a
+        # new install lands on "what do I do first" instead of a black void.
+        # Hidden by the first real user message (the auto-greeting keeps them
+        # up); Clear brings them back.
+        self._onboarding = QWidget()
+        onb_row = QHBoxLayout(self._onboarding)
+        onb_row.setContentsMargins(2, 2, 2, 6)
+        onb_row.setSpacing(10)
+        for icon, title, tip, handler in self._onboarding_cards():
+            card = QPushButton(f"{icon}  {title}")
+            card.setObjectName("setup_card")
+            card.setToolTip(tip)
+            card.clicked.connect(handler)
+            onb_row.addWidget(card)
+        onb_row.addStretch(1)
+        agents_tab_layout.addWidget(self._onboarding)
 
         agent_input_layout = QHBoxLayout()
         self.chat_input = QLineEdit()
@@ -1638,20 +1569,51 @@ class MainWindow(QMainWindow):
             lambda job: self._notify("Download complete", job.filename, path=job.save_path))
         downloads_panel_layout.addWidget(self.downloads_tab)
 
-        # Downloads tab: torrents on the left / direct downloads on the right,
-        # full width — the merged deep-search window lives on the Agents tab.
-        self.agent_splitter = QSplitter(Qt.Horizontal)
+        # Downloads page (v5.1): torrents ABOVE direct downloads — each list
+        # gets the full window width (the old side-by-side split starved two
+        # 10-column tables at half width each). View chips focus one pane.
+        page = QWidget()
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(4)
+
+        chips = QWidget()
+        chips_row = QHBoxLayout(chips)
+        chips_row.setContentsMargins(2, 0, 2, 0)
+        from PySide6.QtWidgets import QButtonGroup
+        self._dl_view_group = QButtonGroup(self)
+        self._dl_view_group.setExclusive(True)
+        self._dl_panes = {"torrents": torrents_tab, "downloads": downloads_panel}
+        for mode, label, tip in (
+            ("both", "Both", "Torrents and direct downloads, stacked"),
+            ("torrents", "Torrents", "Focus the torrent list (full height)"),
+            ("downloads", "Downloads", "Focus the direct-download queue (full height)"),
+        ):
+            chip = QPushButton(label)
+            chip.setObjectName("status_chip")
+            chip.setCheckable(True)
+            chip.setToolTip(tip)
+            chip.clicked.connect(lambda _c=False, m=mode: self._set_dl_view(m))
+            self._dl_view_group.addButton(chip)
+            chips_row.addWidget(chip)
+            if mode == "both":
+                chip.setChecked(True)
+        chips_row.addStretch(1)
+        page_layout.addWidget(chips)
+
+        self.agent_splitter = QSplitter(Qt.Vertical)
         self.agent_splitter.addWidget(torrents_tab)
         self.agent_splitter.addWidget(downloads_panel)
         self.agent_splitter.setStretchFactor(0, 1)
         self.agent_splitter.setStretchFactor(1, 1)
         self.agent_splitter.setChildrenCollapsible(True)
+        page_layout.addWidget(self.agent_splitter)
         # setSizes() before the window is shown gets overridden by widget size
-        # hints; enforce the 50/50 split once the real width is known.
+        # hints; enforce the 50/50 split once the real height is known.
         self._agent_ratio_applied = False
-        self.main_tabs.addTab(self.agent_splitter, "Download")
+        self.main_tabs.addTab(page, "Download")
         # Drag & drop and other flows surface this tab to show the torrent list.
-        self._torrents_tab = self.agent_splitter
+        self._torrents_tab = page
         # Enforce 50/50 when the Download tab becomes visible (it's not the
         # default tab, so the splitter has no width at startup).
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
@@ -2074,10 +2036,10 @@ class MainWindow(QMainWindow):
         self.tools.set_browser_bridge(self._browser_bridge)
 
         # Agents tab (leftmost): the merged deep-search window.
-        self.main_tabs.insertTab(0, agents_tab, "Agent")
-
-        # Browser tab: the browser alone takes the whole tab.
+        # v5: Agent is the landing page, so Browse inserts first and Agent
+        # lands at index 0 — Ctrl+1 finally matches the page the app opens on.
         self.main_tabs.insertTab(0, browser_tab, "Browse")
+        self.main_tabs.insertTab(0, agents_tab, "Agent")
         self._browser_tab = browser_tab
         self._agents_tab = agents_tab
 
@@ -2107,105 +2069,114 @@ class MainWindow(QMainWindow):
         # Restore saved splitter positions (user-adjusted sizes persist).
         self._restore_splitters()
 
-        # Menu bar — File and Help are the only real menus; the six page
-        # titles are pure tab buttons (see _TabMenuBar). Everything the old
-        # per-tab menus carried lives under File in labeled sections
-        # (user request 3.5.4: one menu to rule them all, buttons for pages).
-        menubar = _TabMenuBar(self)
+        # Menu bar — v5: plain menus only. Page navigation moved to the left
+        # activity rail (the 3.5-era menu-bar page-buttons violated the
+        # platform contract: menu items that were really tab switches). File
+        # holds actions on content + session; Settings gathers every settings
+        # surface in labeled zones; Help is unchanged.
+        menubar = QMenuBar(self)
+        if sys.platform == "darwin":
+            # The native macOS menu bar lives at the top of the screen — keep
+            # the in-window bar so the layout stays intact there too.
+            menubar.setNativeMenuBar(False)
         self.setMenuBar(menubar)
         file_menu = menubar.addMenu("File")
 
-        # Flat menu: labeled zones instead of submenus — every entry is
-        # one click deep (user request 3.5.4: no nested settings submenus).
-        # Zones get a separator line + a bold header row, and their items a
-        # small indent, so each group reads as a distinct block (user
-        # request 2026-09-10). QMenu.addSection() is NOT usable here: its
-        # text does not render under the app stylesheet (verified offscreen
-        # — the menu showed only thin unlabeled lines), so zones are built
-        # from addSeparator() + a disabled bold QAction instead.
-        _file_zone(file_menu, "API Keys", first=True)
-        for label, page in API_KEY_PAGES:
-            action = _file_item(file_menu, label)
-            action.triggered.connect(
-                lambda _checked=False, selected=page: self._open_api_keys(selected))
+        add_magnet_action = _file_item(file_menu, "Add Magnet Link...", indent=False)
+        add_magnet_action.triggered.connect(self._add_magnet_dialog)
 
+        add_torrent_action = _file_item(file_menu, "Add .torrent File...")
+        add_torrent_action.triggered.connect(self._add_torrent_file_dialog)
+
+        save_pdf_action = _file_item(file_menu, "Save Page as PDF...")
+        save_pdf_action.triggered.connect(self._browser_save_pdf)
+
+        file_menu.addSeparator()
         export_action = _file_item(file_menu, "Back Up All Settings...")
         export_action.triggered.connect(self._export_settings)
 
         import_action = _file_item(file_menu, "Restore Settings from Backup...")
         import_action.triggered.connect(self._import_settings)
 
-        file_menu.addSeparator()
         assoc_action = _file_item(file_menu, "Set as Default App for Magnets && Media...")
         assoc_action.triggered.connect(self._register_file_associations)
-
-        # --- Former Browse menu ---
-        _file_zone(file_menu, "Browser Settings")
-        for label, page in BROWSER_SETTINGS_PAGES:
-            action = _file_item(file_menu, label)
-            action.triggered.connect(
-                lambda _checked=False, selected=page: self._open_browser_settings(selected))
-
-        # Bookmarks live ONLY under the browser toolbar's Bookmarks button
-        # (import/export + the folder tree) — nothing bookmark-related in
-        # File (user request 3.5.6).
-        self._bookmarks_menu = QMenu("Bookmarks", self)
-        self._rebuild_bookmarks_bar()
-
-        history_action = _file_item(file_menu, "Browser History...")
-        history_action.triggered.connect(self._show_browser_history)
-        save_pdf_action = _file_item(file_menu, "Save Page as PDF...")
-        save_pdf_action.triggered.connect(self._browser_save_pdf)
-        devtools_action = _file_item(file_menu, "Browser Developer Tools")
-        devtools_action.triggered.connect(self._browser_open_devtools)
-
-        # --- Former Download menu ---
-        _file_zone(file_menu, "Download")
-        add_magnet_action = _file_item(file_menu, "Add Magnet Link...")
-        add_magnet_action.triggered.connect(self._add_magnet_dialog)
-
-        add_torrent_action = _file_item(file_menu, "Add .torrent File...")
-        add_torrent_action.triggered.connect(self._add_torrent_file_dialog)
-
-        indexer_settings_action = _file_item(file_menu, "Jackett Indexer Settings...")
-        indexer_settings_action.triggered.connect(self._open_indexer_settings)
-
-        for label, page in DOWNLOAD_SETTINGS_PAGES:
-            action = _file_item(file_menu, label)
-            action.triggered.connect(
-                lambda _checked=False, selected=page: self._open_downloads_settings(selected))
-
-        sources_action = _file_item(file_menu, "Torrent Search Sources...")
-        sources_action.triggered.connect(self._open_sources)
-
-        rss_action2 = _file_item(file_menu, "RSS Feed Subscriptions...")
-        rss_action2.triggered.connect(self._open_rss_dialog)
-
-        # --- Former Play menu ---
-        if _PLAY_TAB_SUPPORTED:
-            _file_zone(file_menu, "Play")
-            for label, _cls in IPTV_SETTINGS_PAGES:
-                action = _file_item(file_menu, label)
-                action.triggered.connect(lambda _c=False, page_cls=_cls: self._open_iptv_page(page_cls))
 
         file_menu.addSeparator()
         exit_action = _file_item(file_menu, "Exit", indent=False)
         exit_action.triggered.connect(self._tray_quit)
 
-        # The six page titles: pure tab buttons — a click always switches
-        # the page, and they never open a menu. (macOS build: no Play tab.)
-        page_buttons = (("Browse", 0), ("Agent", 1), ("Download", 2),
-                        ("Play", 3), ("Command", 4), ("Room", 5))
-        if not _PLAY_TAB_SUPPORTED:
-            page_buttons = (("Browse", 0), ("Agent", 1), ("Download", 2),
-                            ("Command", 3), ("Room", 4))
-        tab_buttons: List[QAction] = []
-        for title, idx in page_buttons:
-            action = QAction(title, self)
+        # --- Settings menu: every settings surface, one entry point (v5) ---
+        # Same labeled-zone pattern the File menu used since 3.5.6 (zones are
+        # separator + bold disabled header — QMenu.addSection() text does not
+        # render under the app stylesheet). Ctrl+, opens this menu anywhere.
+        settings_menu = menubar.addMenu("Settings")
+        self._settings_menu = settings_menu
+
+        hub_action = _file_item(settings_menu, "Settings Hub… (search)", indent=False)
+        hub_action.triggered.connect(self._open_settings_hub)
+        settings_menu.addSeparator()
+
+        _file_zone(settings_menu, "AI & API Keys", first=True)
+        for label, page in API_KEY_PAGES:
+            action = _file_item(settings_menu, label)
             action.triggered.connect(
-                lambda _checked=False, i=idx: self.main_tabs.setCurrentIndex(i))
-            menubar.addAction(action)
-            tab_buttons.append(action)
+                lambda _checked=False, selected=page: self._open_api_keys(selected))
+
+        _file_zone(settings_menu, "Downloads && Sources")
+        indexer_settings_action = _file_item(settings_menu, "Jackett Indexer Settings...")
+        indexer_settings_action.triggered.connect(self._open_indexer_settings)
+
+        for label, page in DOWNLOAD_SETTINGS_PAGES:
+            action = _file_item(settings_menu, label)
+            action.triggered.connect(
+                lambda _checked=False, selected=page: self._open_downloads_settings(selected))
+
+        sources_action = _file_item(settings_menu, "Torrent Search Sources...")
+        sources_action.triggered.connect(self._open_sources)
+
+        rss_action2 = _file_item(settings_menu, "RSS Feed Subscriptions...")
+        rss_action2.triggered.connect(self._open_rss_dialog)
+
+        _file_zone(settings_menu, "Browser")
+        for label, page in BROWSER_SETTINGS_PAGES:
+            action = _file_item(settings_menu, label)
+            action.triggered.connect(
+                lambda _checked=False, selected=page: self._open_browser_settings(selected))
+
+        history_action = _file_item(settings_menu, "Browser History...")
+        history_action.triggered.connect(self._show_browser_history)
+
+        devtools_action = _file_item(settings_menu, "Browser Developer Tools")
+        devtools_action.triggered.connect(self._browser_open_devtools)
+
+        if _PLAY_TAB_SUPPORTED:
+            _file_zone(settings_menu, "Play")
+            for label, _cls in IPTV_SETTINGS_PAGES:
+                action = _file_item(settings_menu, label)
+                action.triggered.connect(lambda _c=False, page_cls=_cls: self._open_iptv_page(page_cls))
+
+        # Bookmarks live ONLY under the browser toolbar's Bookmarks button
+        # (import/export + the folder tree) — nothing bookmark-related in the
+        # menus (user request 3.5.6).
+        self._bookmarks_menu = QMenu("Bookmarks", self)
+        self._rebuild_bookmarks_bar()
+
+        # --- Activity rail (v5 navigation) + agent side panel ---------------
+        self.activity_rail = ActivityRail(self.main_tabs, self)
+        self.activity_rail.page_requested.connect(self.main_tabs.setCurrentIndex)
+        self.activity_rail.settings_requested.connect(self._open_settings_hub)
+        layout.insertWidget(0, self.activity_rail)
+
+        self.agent_panel = AgentPanel(self)
+        self.agent_panel.setVisible(False)
+        self.agent_panel.submit_requested.connect(self._on_agent_panel_submit)
+        self.agent_panel.open_chat_requested.connect(
+            lambda: self.main_tabs.setCurrentWidget(self._agents_tab))
+        self.agent_panel.close_requested.connect(lambda: self._toggle_agent_panel(False))
+        layout.addWidget(self.agent_panel, 0)
+        # v5 quick-ask panel restores with the window (session preference).
+        if getattr(self.config, "ui_agent_panel", False):
+            self.agent_panel.setVisible(True)
 
         # Help dropdown menu
         help_menu = menubar.addMenu("Help")
@@ -2221,10 +2192,6 @@ class MainWindow(QMainWindow):
         about_action = QAction("About", self)
         about_action.triggered.connect(self._open_about)
         help_menu.addAction(about_action)
-
-        # Tab buttons carry the tab_index property (see link_tabs) so the
-        # active page's title is boxed in the bar.
-        menubar.link_tabs(dict(zip(tab_buttons, (idx for _t, idx in page_buttons))), self.main_tabs)
 
         # Right-click context menu on the torrent table
         self.torrent_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -2254,17 +2221,70 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _setup_status_bar(self) -> None:
-        """Status strip: hover URL on the left, live transfer summary right."""
+        """Status strip (v5): hover URL left; activity chips + event bell +
+        transfer summary right. The chips make global state visible from any
+        page and jump to their page on click; the bell keeps a persistent log
+        of events that previously lived only in the Agent transcript or a
+        six-second tray balloon."""
         self.statusBar().setStyleSheet("QStatusBar { background: #0d1117; border-top: 3px solid #1a2a4a; }")
         # Left: hovered link URL (browser linkHovered).
         self._hover_label = QLabel("")
         self._hover_label.setStyleSheet("color: #8a9ab0; font-size: 17px; padding: 2px 8px;")
         self.statusBar().addWidget(self._hover_label, 1)
+
+        # Center-right chips: downloads + agent. Flat buttons styled by QSS.
+        self._dl_chip = QPushButton("⬇ idle")
+        self._dl_chip.setObjectName("status_chip")
+        self._dl_chip.setToolTip("Active downloads — click to open the Download page")
+        self._dl_chip.clicked.connect(
+            lambda: self.main_tabs.setCurrentWidget(self._torrents_tab))
+        self.statusBar().addPermanentWidget(self._dl_chip)
+
+        self._agent_chip = QPushButton("🧠 agent")
+        self._agent_chip.setObjectName("status_chip")
+        self._agent_chip.setToolTip("Agent state — click to open the quick-ask panel (Ctrl+K)")
+        self._agent_chip.clicked.connect(lambda: self._focus_agent_ask())
+        self.statusBar().addPermanentWidget(self._agent_chip)
+
+        self._bell_btn = QPushButton("🔔")
+        self._bell_btn.setObjectName("status_chip")
+        self._bell_btn.setToolTip("Recent events — completions, syncs, updates")
+        self._bell_btn.clicked.connect(self._show_event_log)
+        self.statusBar().addPermanentWidget(self._bell_btn)
+
         # Right: permanent transfer summary.
         self._status_label = QLabel("Ready")
         self._status_label.setStyleSheet("color: #8a9ab0; font-size: 17px; padding: 2px 8px;")
         self._status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.statusBar().addPermanentWidget(self._status_label)
+
+        # Persistent event log feeding the bell (newest first when shown).
+        self._events = deque(maxlen=40)
+        self._new_events = 0
+
+    def _push_event(self, icon: str, text: str) -> None:
+        """Record an event for the bell log (adjacent duplicates collapse)."""
+        stamp = time.strftime("%H:%M")
+        if self._events and self._events[0][2] == text:
+            _icon, _stamp, _text, n = self._events.popleft()
+            self._events.appendleft((icon, stamp, _text, n + 1))
+        else:
+            self._events.appendleft((icon, stamp, text, 1))
+        self._new_events += 1
+        self._bell_btn.setText(f"🔔 {self._new_events}" if self._new_events else "🔔")
+
+    def _show_event_log(self) -> None:
+        menu = QMenu(self)
+        if not self._events:
+            act = menu.addAction("(nothing yet)")
+            act.setEnabled(False)
+        else:
+            for icon, stamp, text, n in list(self._events)[:30]:
+                suffix = f"  ×{n}" if n > 1 else ""
+                menu.addAction(f"{icon} {stamp}  {text}{suffix}").setEnabled(False)
+        self._new_events = 0
+        self._bell_btn.setText("🔔")
+        menu.exec(QCursor.pos())
 
     def _update_status_bar(self, torrents: List[Dict[str, Any]]) -> None:
         """Refresh the status bar summary (called from _render_torrents)."""
@@ -2299,6 +2319,40 @@ class MainWindow(QMainWindow):
             parts.append(f"Downloads: {d_active} active  ↓ {format_rate(d_speed)}")
         self._status_label.setText("   •   ".join(parts) if parts else "Ready")
 
+        # v5: rail badge + download chip + taskbar progress.
+        active = t_downloading + d_active
+        self._dl_chip.setText(f"⬇ {active} · {format_rate(t_down + d_speed)}" if active else "⬇ idle")
+        try:
+            self.activity_rail.set_badge("Download", str(active) if active else "")
+        except Exception:
+            pass  # rail not built yet during early refreshes
+        busy = bool(self._agent_thread and self._agent_thread.is_alive())
+        self._agent_chip.setText("🧠 busy…" if busy else "🧠 agent")
+        self._update_taskbar_progress(torrents, jobs, active)
+
+    def _update_taskbar_progress(self, torrents: List[Dict[str, Any]], jobs: List[Any], active: int) -> None:
+        """Aggregate progress of ACTIVE transfers onto the Windows taskbar."""
+        tb = getattr(self, "_taskbar", None)
+        if tb is None:
+            return
+        try:
+            if not active:
+                tb.clear()
+                return
+            done = den = 0.0
+            for t in torrents:
+                if t.get("state") == "downloading" and not t.get("paused"):
+                    total = float(t.get("total_wanted") or t.get("size") or 0)
+                    if total > 0:
+                        done += float(t.get("progress", 0.0)) * total
+                        den += total
+            if den > 0:
+                tb.set_progress(done, den)
+            else:
+                tb.set_indeterminate()
+        except Exception:
+            logger.debug("taskbar progress update failed", exc_info=True)
+
     def _setup_shortcuts(self) -> None:
         """Global + browser-scoped keyboard shortcuts."""
         def sc(seq: str, fn, parent=None, context=Qt.ApplicationShortcut) -> None:
@@ -2314,6 +2368,9 @@ class MainWindow(QMainWindow):
 
         for i in range(self.main_tabs.count()):
             sc(f"Ctrl+{i + 1}", lambda idx=i: self.main_tabs.setCurrentIndex(idx))
+        # v5: agent quick-ask panel + Settings menu.
+        sc("Ctrl+K", self._focus_agent_ask)
+        sc("Ctrl+,", self._open_settings_hub)
         sc("Ctrl+M", self._add_magnet_dialog)
         sc("Ctrl+O", self._add_torrent_file_dialog)
         sc("Ctrl+F", self._browser_or_agent_find)
@@ -2331,6 +2388,118 @@ class MainWindow(QMainWindow):
         sc("Ctrl+-", lambda: self._browser_zoom(-0.1), parent=bt, context=Qt.WidgetWithChildrenShortcut)
         sc("Ctrl+0", lambda: self._browser_set_zoom(1.0), parent=bt, context=Qt.WidgetWithChildrenShortcut)
         sc("F12", self._browser_open_devtools, parent=bt, context=Qt.WidgetWithChildrenShortcut)
+
+    # ------------------------------------------------------------------
+    # v5: agent quick-ask panel + Settings popup + window chrome
+    # ------------------------------------------------------------------
+
+    def _focus_agent_ask(self) -> None:
+        """Ctrl+K: focus the agent's ask box — the side panel off the Agent
+        page, the main input on it."""
+        if self.main_tabs.currentWidget() is self._agents_tab:
+            self.chat_input.setFocus()
+            self.chat_input.selectAll()
+            return
+        self._toggle_agent_panel(True)
+        self.agent_panel.focus_input()
+
+    def _toggle_agent_panel(self, visible: bool) -> None:
+        was = self.agent_panel.isVisible()
+        self.agent_panel.setVisible(visible)
+        if was != visible:
+            self.config.ui_agent_panel = visible
+
+    def _on_agent_panel_submit(self, text: str) -> None:
+        """Route a panel send through the ONE agent pipeline: the panel and
+        the Agent page share a conversation, so we reuse _on_send verbatim
+        (busy guards, input history, mirrors) instead of a second pipeline."""
+        if self._agent_thread and self._agent_thread.is_alive():
+            self.agent_panel.append_exchange("error", "The agent is still working — please wait.")
+            return
+        self.chat_input.setText(text)
+        self._on_send()
+
+    def _onboarding_cards(self):
+        """(icon, title, tooltip, handler) rows for the first-run cards."""
+        cards = [
+            ("⬇", "Add a download", "Paste a magnet link or add a .torrent file",
+             self._add_magnet_dialog),
+            ("🔑", "Add an AI key", "The built-in shared key works out of the "
+             "box; add your own to be independent", lambda: self._open_api_keys("ai")),
+            ("🔎", "Connect Jackett", "Link Jackett to search dozens of torrent "
+             "indexers from the agent", self._open_indexer_settings),
+        ]
+        if _PLAY_TAB_SUPPORTED:
+            cards.append(("▶", "Add a playlist", "Add an IPTV playlist (M3U or "
+                          "Xtream) for live TV, movies and series",
+                          lambda: self._open_iptv_page(IPTV_SETTINGS_PAGES[0][1])))
+        return cards
+
+    def _open_settings_hub(self) -> None:
+        """Ctrl+, / rail pin: searchable launcher for every settings surface."""
+        entries = []
+        for label, page in API_KEY_PAGES:
+            entries.append({"category": "AI & API Keys", "title": label.rstrip("…"),
+                            "description": "Open the key manager",
+                            "open": lambda p=page: self._open_api_keys(p)})
+        zone = [("Jackett Indexer Settings", "Service URL, key, auto-start, sync",
+                 self._open_indexer_settings)]
+        for label, page in DOWNLOAD_SETTINGS_PAGES:
+            zone.append((label.rstrip("…"), "Torrent / queue / manager preferences",
+                         lambda p=page: self._open_downloads_settings(p)))
+        zone += [
+            ("Torrent Search Sources", "Which indexers the agent searches",
+             self._open_sources),
+            ("RSS Feed Subscriptions", "Feeds and auto-download rules",
+             self._open_rss_dialog),
+        ]
+        for title, desc, cb in zone:
+            entries.append({"category": "Downloads & Sources", "title": title,
+                            "description": desc, "open": cb})
+        for label, page in BROWSER_SETTINGS_PAGES:
+            entries.append({"category": "Browser", "title": label.rstrip("…"),
+                            "description": "Browser preferences",
+                            "open": lambda p=page: self._open_browser_settings(p)})
+        zone = [
+            ("Browser History", "Recently visited pages", self._show_browser_history),
+            ("Back Up All Settings", "Export everything as an encrypted .dfc",
+             self._export_settings),
+        ]
+        for title, desc, cb in zone:
+            entries.append({"category": "Browser", "title": title,
+                            "description": desc, "open": cb})
+        if _PLAY_TAB_SUPPORTED:
+            for label, _cls in IPTV_SETTINGS_PAGES:
+                entries.append({"category": "Play", "title": label.rstrip("…"),
+                                "description": "IPTV / player preferences",
+                                "open": lambda c=_cls: self._open_iptv_page(c)})
+        SettingsHub(entries, self).exec()
+
+    def _popup_settings_menu(self) -> None:
+        """Ctrl+,: open the Settings menu pinned under its menu-bar title."""
+        bar = self.menuBar()
+        act = next((a for a in bar.actions() if a.text().replace("&", "") == "Settings"), None)
+        if act is None or self._settings_menu is None:
+            return
+        rect = bar.actionGeometry(act)
+        self._settings_menu.popup(bar.mapToGlobal(rect.bottomLeft()))
+
+    def _apply_dark_titlebar(self) -> None:
+        """Match the OS title bar to the dark theme (Windows-only, v5)."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (19 on pre-20H1 builds).
+            for attr in (20, 19):
+                value = ctypes.c_int(1)
+                hr = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(value), ctypes.sizeof(value))
+                if hr == 0:
+                    return
+        except Exception:
+            logger.debug("dark titlebar failed", exc_info=True)
 
     def _browser_or_agent_find(self) -> None:
         if self.main_tabs.currentWidget() is self._browser_tab:
@@ -2670,7 +2839,11 @@ class MainWindow(QMainWindow):
         if self.chat_input.text().strip():
             return
         self.chat_input.setText("Hello")
-        self._on_send()
+        self._onboarding_greeting = True
+        try:
+            self._on_send()
+        finally:
+            self._onboarding_greeting = False
 
     # ------------------------------------------------------------------
     # Voice input (mic button next to the agent input)
@@ -2821,6 +2994,7 @@ class MainWindow(QMainWindow):
         else:
             self._busy_timer.stop()
         self._refresh_input_placeholder()
+        self.agent_panel.set_busy(busy)
 
     def _tick_busy(self) -> None:
         """Update the elapsed-time indicator while the agent is working."""
@@ -3844,6 +4018,7 @@ class MainWindow(QMainWindow):
             return
         self._update_force_prompt = False
         self._update_notice_shown = True
+        self._push_event("⟳", f"Update available: {info.version}")
         dialog = UpdateDialog(self, info, APP_VERSION)
         result = dialog.exec()
         if result == RESULT_UPDATE_NOW:
@@ -4584,6 +4759,14 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        # Window chrome once (v5): dark OS title bar + taskbar progress hook.
+        if not getattr(self, "_chrome_applied", False):
+            self._chrome_applied = True
+            self._apply_dark_titlebar()
+            try:
+                self._taskbar = TaskbarProgress(int(self.winId()))
+            except Exception:
+                self._taskbar = None
         # Enforce default split ratios once the splitters have real
         # dimensions — pre-show setSizes() gets overridden by content size hints.
         if not self._agent_ratio_applied:
@@ -4592,6 +4775,11 @@ class MainWindow(QMainWindow):
             # Defer to the next event-loop tick so the splitter has its real
             # width (the Download tab may not be the current tab at startup).
             QTimer.singleShot(0, self._enforce_agent_split)
+
+    def _set_dl_view(self, mode: str) -> None:
+        """Download page view chips: both panes, or focus one (v5.1)."""
+        self._dl_panes["torrents"].setVisible(mode in ("both", "torrents"))
+        self._dl_panes["downloads"].setVisible(mode in ("both", "downloads"))
 
     def _enforce_agent_split(self) -> None:
         """Set the Download tab splitter to 50/50 if no saved state restored it."""
@@ -4813,6 +5001,9 @@ class MainWindow(QMainWindow):
         self.chat_history.set_logo_visible(False)
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         self._insert_html(f'<div class="msg-user"><b>You:</b> {safe}</div>')
+        self.agent_panel.append_exchange("user", text)
+        if not getattr(self, "_onboarding_greeting", False):
+            self._onboarding.hide()
 
     def _clear_chat(self) -> None:
         """Clear the merged Agents history and restore the logo background."""
@@ -4823,15 +5014,30 @@ class MainWindow(QMainWindow):
         # Reset the agent's conversation history so old context doesn't leak back in.
         self.agent.history.clear()
         self.agent.pending.clear()
+        self._onboarding.show()
 
     def _append_agent(self, text: str) -> None:
         """Render an agent message as a styled bubble with markdown rendering."""
         body = _markdown_to_html(text)
         self._insert_html(f'<div class="msg-agent"><b>Agent:</b><br>{body}</div>')
+        self.agent_panel.append_exchange("agent", text)
 
     def _append_event(self, text: str) -> None:
         """Render a lightweight progress event (tool call, thinking, etc.)."""
         self._insert_html(f'<div class="msg-event">{text}</div>')
+        # Status-bar bell: strip the lightweight events' HTML-ish wrapper so
+        # the log stays readable plain text.
+        import re as _re
+        plain = _re.sub(r"<[^>]+>", "", text).strip()
+        if plain:
+            self._push_event("·", plain[:120])
+
+    def _append_error(self, text: str) -> None:
+        """Render an error message."""
+        safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        self._insert_html(f'<div class="msg-error"><b>Error:</b> {safe}</div>')
+        self.agent_panel.append_exchange("error", text)
+        self._push_event("⚠", text[:120])
 
     def _append_debug(self, data) -> None:
         """Render raw tool data in debug mode (preformatted, capped)."""
@@ -4843,11 +5049,6 @@ class MainWindow(QMainWindow):
             text = text[:4000] + "\n… (truncated)"
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         self._insert_html(f'<div class="msg-debug">{safe}</div>')
-
-    def _append_error(self, text: str) -> None:
-        """Render an error message."""
-        safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        self._insert_html(f'<div class="msg-error"><b>Error:</b> {safe}</div>')
 
     def _append_pending(self, text: str) -> None:
         """Render a pending-confirmation prompt."""
@@ -5593,6 +5794,7 @@ class MainWindow(QMainWindow):
 
     def _notify(self, title: str, text: str, path: str = "") -> None:
         """Windows toast/balloon via the tray icon. path powers click-through."""
+        self._push_event("🔔", f"{title} — {text}" if text else title)
         if self._tray is None or not self.config.ui_notifications:
             return
         self._last_notify_path = path
@@ -6249,6 +6451,7 @@ class MainWindow(QMainWindow):
                 self._persist_browser_session()
                 self.config.ui_geometry = bytes(self.saveGeometry().toBase64()).decode("ascii")
                 self.config.ui_last_tab = self.main_tabs.currentIndex()
+                self.config.ui_agent_panel = self.agent_panel.isVisible()
                 self._save_splitters()
                 self.commander_tab.persist_pane_paths()
                 self.config.to_file(self.config_path)

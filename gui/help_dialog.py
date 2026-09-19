@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 4.9.1 — User Guide</h1>
+<h1>DeepFlux 5.0 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -55,7 +55,7 @@ organize files, all with your confirmation for sensitive actions.</p>
 <h2>Getting Started</h2>
 
 <ol>
-  <li><b>Add your API key:</b> File → API Keys: <i>AI Agent…</i> (pick the
+  <li><b>Add your API key:</b> Settings → AI &amp; API Keys: <i>AI Agent…</i> (pick the
       DeepSeek endpoint, or DeepSeek via OpenRouter), adjust the base URL if
       needed, and paste your key. Without one, the agent runs in offline
       demo mode.</li>
@@ -95,10 +95,21 @@ reachable, nothing disappears.</p>
   <tr><td><b>Room</b></td><td>DeepFlux Room — serverless community chat (peer to peer; the first person to join hosts it).</td><td>—</td></tr>
 </table>
 
-<p>Switch tabs with <code>Ctrl+1</code>–<code>Ctrl+6</code>, or click a page button in the
-menu bar: <b>Browse</b>, <b>Agent</b>, <b>Download</b>, <b>Play</b>, <b>Command</b> and
-<b>Room</b> are pure page buttons — a click always takes you to that page. All commands
-live under the two real menus, <b>File</b> and <b>Help</b>.</p>
+<p>Switch pages with <code>Ctrl+1</code>–<code>Ctrl+6</code> or by clicking the
+<b>activity rail</b> on the left edge: <b>Agent</b>, <b>Browse</b>, <b>Download</b>,
+<b>Play</b>, <b>Command</b> and <b>Room</b>. The rail always shows where you are,
+carries the active-download count as a badge, and pins <b>Settings</b> at the
+bottom — <code>Ctrl+,</code> opens the searchable <b>Settings Hub</b> (type
+"jackett" or "api key" to find any setting). <b>Ctrl+K</b> opens the <b>agent
+quick-ask panel</b> — ask anything from any page; the conversation is shared with
+the Agent page. The status strip at the bottom shows live activity chips
+(downloads, agent state) and the 🔔 bell keeps a log of recent events
+(completions, syncs, updates). On the Download page, view chips
+(<b>Both / Torrents / Downloads</b>) focus either list at full width; on the
+Play page, section chips jump straight to Live TV / Movies / Series /
+Favorites / Recent. All commands live under the three real menus:
+<b>File</b> (actions), <b>Settings</b> (hub + labeled zones) and
+<b>Help</b>.</p>
 
 <h2>Using the Agent</h2>
 
@@ -425,7 +436,7 @@ internet by default:</p>
   online" count. It carries only a random install id (a file on your disk, not
   tied to you), the app version and your OS name — nothing else: no username,
   no machine name, no file names, no browsing or download activity. Turn it
-  off in File → Download → Download Manager Settings.</li>
+  off in Settings → Downloads → Download Manager Settings.</li>
   <li><b>Update checks</b> — a daily check for an outdated YouTube downloader
   (warn-only). Same settings page.</li>
 </ul>
@@ -441,7 +452,9 @@ the network when you ask it to.</p>
 
 <table>
   <tr><th>Key</th><th>Action</th></tr>
-  <tr><td><code>Ctrl+1</code>–<code>Ctrl+6</code></td><td>Switch tabs (Browse / Agent / Download / Play / Command / Room)</td></tr>
+  <tr><td><code>Ctrl+1</code>–<code>Ctrl+6</code></td><td>Switch pages (Agent / Browse / Download / Play / Command / Room)</td></tr>
+  <tr><td><code>Ctrl+K</code></td><td>Agent quick-ask panel (from any page)</td></tr>
+  <tr><td><code>Ctrl+,</code></td><td>Open the Settings menu</td></tr>
   <tr><td><code>Ctrl+F</code></td><td>Jump to Agent input</td></tr>
   <tr><td><code>Ctrl+M</code> / <code>Ctrl+O</code></td><td>Add magnet / open torrent file</td></tr>
   <tr><td><code>Ctrl+T</code> / <code>Ctrl+W</code></td><td>New / close browser tab</td></tr>
@@ -483,12 +496,12 @@ once enough people have installed the release.
 </div>
 
 <div class="warn">
-<b>Agent not responding:</b> Check your API key in File → API Keys. The
+<b>Agent not responding:</b> Check your API key in Settings → AI &amp; API Keys. The
 built-in shared AI key is rotated in every new DeepFlux release, so an
 outdated copy can lose AI access — update to the latest version
 (Help → Check for Updates…), or set your own key to be independent of the
 shared one. (The macOS and Linux builds ship without a built-in key — add
-your own under File → API Keys.)
+your own under Settings → AI &amp; API Keys.)
 </div>
 
 <div class="warn">
@@ -587,7 +600,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("4.9.1 — AI Deep Search")
+        version = QLabel("5.0 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

@@ -74,7 +74,7 @@ if os.path.isfile(iss_path):
     if m:
         app_version = m.group(1)
 
-# Icon: generated from the tracked DeepFlux4.png by packaging/gen_macos_icon.py
+# Icon: generated from the tracked DeepFlux5.png by packaging/gen_macos_icon.py
 # (Pillow .icns) before this spec runs — CI does it, local builds can too.
 icns_path = os.path.join(project_root, "packaging", "icon.icns")
 
@@ -84,7 +84,7 @@ _wanted_datas = [
     (os.path.join(project_root, "packaging", "fonts", "JetBrainsMono.ttf"), "packaging/fonts"),
     (os.path.join(project_root, "packaging", "fonts", "Inter-OFL.txt"), "packaging/fonts"),
     (os.path.join(project_root, "packaging", "fonts", "JetBrainsMono-OFL.txt"), "packaging/fonts"),
-    (os.path.join(project_root, "DeepFlux4.png"), "."),
+    (os.path.join(project_root, "DeepFlux5.png"), "."),
     # Agent-tab watermark: the website hero banner (same file as deepflux.space).
     (os.path.join(project_root, "website", "deepflux", "DeepFluxBanner.webp"), "."),
     (os.path.join(project_root, "packaging", "icons", "back.svg"), "packaging/icons"),

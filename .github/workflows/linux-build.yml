@@ -106,11 +106,11 @@ jobs:
           Categories=Network;FileTransfer;
           EOF
           # linuxdeploy only accepts SQUARE icons in standard sizes — the
-          # source logo (DeepFlux4.png) is not square, so pad it onto a
+          # source logo (DeepFlux5.png) is not square, so pad it onto a
           # square transparent canvas and downscale to 512x512.
           python - <<'PYEOF'
           from PIL import Image
-          img = Image.open("DeepFlux4.png").convert("RGBA")
+          img = Image.open("DeepFlux5.png").convert("RGBA")
           side = max(img.size)
           canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
           canvas.paste(img, ((side - img.width) // 2, (side - img.height) // 2))

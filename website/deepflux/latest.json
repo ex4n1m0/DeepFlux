@@ -1,8 +1,8 @@
 {
-  "version": "4.9.1",
-  "file": "DeepFlux4.9.1Setup.exe",
-  "size": 370988158,
-  "sha256": "fd50e02de2e0902a5450d12da5eee798034b1970b8a496a555594e97b552d1ae",
+  "version": "5.0",
+  "file": "DeepFlux5.0Setup.exe",
+  "size": 370218886,
+  "sha256": "ebac3f4a425a6a32c24cfcd2804d3ac607f8d4091474d7ac93a8fb273c4a5dcb",
   "released": "2026-09-19",
-  "notes": "Reliability fix: the built-in AI key now activates automatically even if an earlier version ever ran without one. First release with in-app auto-update."
+  "notes": "DeepFlux 5.0 \u2014 the biggest UI update yet: left activity rail navigation, agent quick-ask panel on every page (Ctrl+K), searchable Settings Hub (Ctrl+,), status strip with activity chips and an event log, dark title bar, Windows taskbar progress, full-width Download lists with view chips, Play section chips, and a new logo."
 }

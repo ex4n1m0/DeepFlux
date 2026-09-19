@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DeepFlux — The AI-Native Media &amp; Download Suite</title>
 <meta name="description" content="DeepFlux — an AI-powered download manager with a built-in browser, media player, community chat room, and file manager. The agent drives the whole app.">
-<link rel="icon" type="image/webp" href="DeepFlux4.webp">
+<meta name="theme-color" content="#050507">
+<link rel="icon" type="image/webp" href="DeepFlux5.webp">
 <!-- Open Graph -->
 <meta property="og:title" content="DeepFlux — The AI-Native Media &amp; Download Suite">
 <meta property="og:description" content="An AI-powered download manager with a built-in browser, media player, community chat room, and file manager. The agent drives the whole app.">
@@ -25,9 +26,9 @@
   :root {
     --bg: #050507;
     --ink: #eef4ff;
-    --muted: rgba(238, 244, 255, 0.68);
-    --faint: rgba(238, 244, 255, 0.55);
-    --ghost: rgba(238, 244, 255, 0.40);
+    --muted: rgba(238, 244, 255, 0.70);
+    --faint: rgba(238, 244, 255, 0.62);
+    --ghost: rgba(238, 244, 255, 0.52);
     --line: rgba(255, 255, 255, 0.08);
     --card: rgba(255, 255, 255, 0.024);
     --cyan: #5bc8f5;
@@ -38,9 +39,12 @@
     --grad: linear-gradient(90deg, #5bc8f5 0%, #4f7df9 42%, #8b5cf6 72%, #b44bf0 100%);
     --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
     --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html { scroll-behavior: smooth; }
+  /* clip (not hidden) so position: sticky keeps working */
+  html, body { overflow-x: clip; }
   body {
     background: var(--bg);
     color: var(--ink);
@@ -48,14 +52,22 @@
     font-size: 16px;
     line-height: 1.6;
     min-height: 100vh;
-    overflow-x: hidden;
-    /* Top-anchored (user preference): hero flush at the top; the footer
-       provides the page-bottom breathing room. */
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: flex-start;
   }
+  ::selection { background: rgba(139, 92, 246, 0.45); }
+  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; border-radius: 4px; }
+
+  a.skip {
+    position: absolute; left: -9999px; top: 0; z-index: 100;
+    background: var(--ink); color: #050507;
+    padding: 10px 18px; border-radius: 0 0 12px 0;
+    font-weight: 600; font-size: 0.85rem; text-decoration: none;
+  }
+  a.skip:focus { left: 0; }
+
   /* ---- Ambient background: echoes the wordmark's cyan→violet bloom ---- */
   .ambient {
     position: fixed;
@@ -83,15 +95,30 @@
   .page {
     width: 100%;
     max-width: 1080px;
+    /* margin auto: .page also lives inside the full-width .topbar, where it
+       is a plain block child — without this the nav column sits flush left
+       while main.page (a flex child of body) is centered. */
+    margin: 0 auto;
     padding: 0 24px;
   }
 
-  /* ---- Top bar ---- */
+  /* ---- Sticky top bar ---- */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 40;
+    width: 100%;
+    background: rgba(5, 5, 7, 0.78);
+    -webkit-backdrop-filter: blur(16px);
+            backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--line);
+  }
   nav.top {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 22px 0 10px;
+    gap: 14px;
+    padding: 12px 0;
   }
   nav.top .brand {
     display: flex;
@@ -111,9 +138,8 @@
     list-style: none;
     display: flex;
     align-items: center;
-    gap: 26px;
+    gap: 24px;
   }
-  nav.top ul li.sep { margin-left: 10px; }
   nav.top a.navlink {
     color: var(--muted);
     text-decoration: none;
@@ -125,20 +151,61 @@
   .pill {
     display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 6px 14px;
+    padding: 5px 13px;
     border: 1px solid var(--line);
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.03);
-    font-size: 0.78rem;
+    font-size: 0.76rem;
     letter-spacing: 0.07em;
     color: var(--muted);
     white-space: nowrap;
   }
-  .pill .seam { width: 1px; height: 10px; background: var(--line); }
+
+  /* ---- Buttons ---- */
+  a.btn, button.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    text-decoration: none;
+    border-radius: 999px;
+    padding: 14px 30px;
+    font-family: var(--font-display);
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease, color 0.2s ease;
+  }
+  a.btn-primary, button.btn-primary {
+    color: #fff;
+    background: linear-gradient(90deg, rgba(91, 200, 245, 0.16), rgba(79, 125, 249, 0.20) 45%, rgba(139, 92, 246, 0.22));
+    border: 1px solid rgba(139, 92, 246, 0.55);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03) inset, 0 10px 42px rgba(79, 125, 249, 0.28);
+  }
+  a.btn-primary:hover, a.btn-primary:focus-visible,
+  button.btn-primary:hover, button.btn-primary:focus-visible {
+    transform: translateY(-2px);
+    border-color: rgba(180, 75, 240, 0.75);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 14px 56px rgba(139, 92, 246, 0.42);
+  }
+  a.btn-ghost {
+    color: var(--muted);
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.02);
+  }
+  a.btn-ghost:hover, a.btn-ghost:focus-visible {
+    color: var(--ink);
+    border-color: rgba(255, 255, 255, 0.28);
+    transform: translateY(-2px);
+  }
+  .btn-xl { padding: 17px 42px; font-size: 1.04rem; }
+  .btn-nav { padding: 9px 20px; font-size: 0.84rem; white-space: nowrap; }
+  .btn-panel { padding: 12px 26px; font-size: 0.9rem; white-space: nowrap; }
+  a.btn svg { flex-shrink: 0; }
 
   /* ---- Hero ---- */
-  header.hero { text-align: center; padding: 26px 0 0; }
+  header.hero { text-align: center; padding: 34px 0 0; }
   header.hero .eyebrow {
     display: flex;
     justify-content: center;
@@ -168,76 +235,42 @@
   }
   header.hero img.banner {
     position: relative;
-    /* Full content width — the wordmark's sides align with the cards/pillars
-       below (the .page column). Natural art is 1280px wide, so the enlarged
-       render stays sharp. */
+    /* Full content width — the wordmark's sides align with the sections below. */
     width: 100%;
     height: auto;
     display: block;
     margin: 0 auto;
-    /* The wordmark is neon art on a pure-black canvas — screen blending
-       drops the black and lets it melt into the page + its glow, so the
-       banner has no hard rectangle edges. */
+    /* Neon art on pure black: screen blending drops the black rectangle. */
     mix-blend-mode: screen;
   }
-  .hero-copy { margin: 20px auto 0; }
+  .hero-copy { margin: 14px auto 0; max-width: 760px; }
   .hero-copy p {
     font-size: 1.05rem;
-    line-height: 1.7;
+    line-height: 1.65;
     color: var(--muted);
     letter-spacing: 0.01em;
   }
 
-  /* ---- CTA ---- */
-  section.cta { text-align: center; padding: 40px 0 6px; }
-  .cta-row { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
-  a.btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    text-decoration: none;
-    border-radius: 999px;
-    padding: 15px 34px;
-    font-family: var(--font-display);
-    font-size: 0.98rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    transition: transform 0.2s ease, box-shadow 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+  section.cta { text-align: center; padding: 34px 0 0; }
+  .cta-row { display: flex; justify-content: center; }
+  p.also {
+    margin-top: 16px;
+    font-size: 0.86rem;
+    color: var(--faint);
+    letter-spacing: 0.02em;
   }
-  a.btn-primary {
-    color: #fff;
-    background: linear-gradient(90deg, rgba(91, 200, 245, 0.16), rgba(79, 125, 249, 0.20) 45%, rgba(139, 92, 246, 0.22));
-    border: 1px solid rgba(139, 92, 246, 0.55);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03) inset, 0 10px 42px rgba(79, 125, 249, 0.28);
-  }
-  a.btn-primary:hover, a.btn-primary:focus-visible {
-    transform: translateY(-2px);
-    border-color: rgba(180, 75, 240, 0.75);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05) inset, 0 14px 56px rgba(139, 92, 246, 0.42);
-  }
-  a.btn-ghost {
-    color: var(--muted);
-    border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.02);
-  }
-  a.btn-ghost:hover, a.btn-ghost:focus-visible {
-    color: var(--ink);
-    border-color: rgba(255, 255, 255, 0.28);
-    transform: translateY(-2px);
-  }
-  a.btn svg { flex-shrink: 0; }
-  .cta-meta {
-    margin-top: 26px;
-    font-size: 0.8rem;
-    letter-spacing: 0.1em;
+  p.also a { color: var(--muted); text-decoration: none; border-bottom: 1px solid rgba(139, 92, 246, 0.4); transition: color 0.2s; }
+  p.also a:hover, p.also a:focus-visible { color: var(--ink); }
+  p.also a[hidden] { display: none; }
+  p.also .sep { margin: 0 7px; color: var(--ghost); }
+  p.meta-row {
+    margin-top: 20px;
+    font-size: 0.82rem;
+    letter-spacing: 0.06em;
     color: var(--faint);
   }
-  p.live {
-    margin-top: 12px;
-    font-size: 0.8rem;
-    letter-spacing: 0.08em;
-    color: var(--faint);
-  }
+  p.meta-row .live { color: var(--faint); }
+  p.meta-row .live:not([hidden])::before { content: " · "; color: var(--ghost); }
   p.live .dot {
     display: inline-block;
     width: 7px; height: 7px; border-radius: 50%;
@@ -247,25 +280,65 @@
     vertical-align: 1px;
   }
 
-  /* ---- SmartScreen note ---- */
-  .smartscreen {
-    margin: 26px auto 0;
-    max-width: 620px;
-    display: flex;
-    gap: 14px;
-    align-items: center;
-    text-align: left;
-    padding: 14px 18px;
+  /* ---- Hero app-window mock (CSS-only stand-in until a real capture lands) ---- */
+  .shot {
+    margin: 52px auto 0;
     border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 14px;
-    background: var(--card);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.012));
+    box-shadow: 0 34px 90px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+    overflow: hidden;
+    text-align: left;
   }
-  .smartscreen svg { flex-shrink: 0; margin-top: 2px; }
-  .smartscreen p { font-size: 0.8rem; line-height: 1.55; color: var(--faint); }
-  .smartscreen b { color: var(--muted); font-weight: 600; }
+  .shot-titlebar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .shot-titlebar .dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,0.14); }
+  .shot-titlebar .title {
+    flex: 1; text-align: center;
+    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ghost);
+  }
+  .shot-body { display: flex; min-height: 250px; }
+  .shot-rail {
+    width: 148px; flex-shrink: 0;
+    border-right: 1px solid var(--line);
+    padding: 12px 10px;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .rail-item {
+    padding: 7px 11px; border-radius: 9px;
+    font-size: 0.78rem; color: var(--faint); letter-spacing: 0.02em;
+  }
+  .rail-item.active {
+    background: rgba(79, 125, 249, 0.16);
+    color: var(--ink);
+    box-shadow: 0 0 0 1px rgba(79, 125, 249, 0.25) inset;
+  }
+  .shot-main { flex: 1; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .shot-toolbar { display: flex; align-items: center; gap: 8px; font-size: 0.72rem; color: var(--ghost); }
+  .shot-toolbar .tbtn {
+    padding: 4px 11px; border: 1px solid var(--line); border-radius: 999px;
+    background: rgba(255,255,255,0.02); color: var(--faint);
+  }
+  .shot-toolbar .grow { flex: 1; }
+  .dl-row {
+    padding: 10px 13px;
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .dl-row .top-line { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .dl-row .name { font-size: 0.8rem; color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dl-row .sub { font-size: 0.7rem; color: var(--faint); white-space: nowrap; font-family: var(--font-mono); }
+  .bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.07); margin-top: 9px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--grad); border-radius: 2px; }
+  .bar.done i { background: rgba(74, 222, 128, 0.55); }
 
   /* ---- Sections ---- */
-  section.block { padding: 72px 0 0; }
+  section.block { padding: 78px 0 0; scroll-margin-top: 84px; }
   .section-head { text-align: center; margin-bottom: 40px; }
   .section-head .kicker {
     font-size: 0.72rem;
@@ -286,13 +359,107 @@
     color: transparent;
   }
 
-  /* ---- Feature cards ---- */
-  .cards {
+  /* ---- Meet the agent ---- */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: 1.02fr 1fr;
+    gap: 44px;
+    align-items: start;
+  }
+  .agent-grid .lead { color: var(--muted); font-size: 1rem; margin-bottom: 18px; }
+  ul.agent-points { list-style: none; display: flex; flex-direction: column; gap: 13px; }
+  ul.agent-points li {
+    position: relative;
+    padding-left: 26px;
+    font-size: 0.92rem;
+    line-height: 1.55;
+    color: var(--faint);
+  }
+  ul.agent-points li::before {
+    content: "✦";
+    position: absolute; left: 2px; top: 0;
+    color: var(--cyan);
+    font-size: 0.85rem;
+    text-shadow: 0 0 10px rgba(91, 200, 245, 0.6);
+  }
+  ul.agent-points li b { color: var(--muted); font-weight: 600; }
+
+  .chat {
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 18px;
+    background: var(--card);
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+  }
+  .chat-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 18px;
+    border-bottom: 1px solid var(--line);
+    font-family: var(--font-display);
+    font-size: 0.85rem; font-weight: 600;
+  }
+  .chat-head .chat-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 10px 1px rgba(74, 222, 128, 0.55);
+  }
+  .chat-head .chat-tag {
+    margin-left: auto;
+    font-family: var(--font-body);
+    font-size: 0.68rem; font-weight: 500;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--ghost);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 3px 10px;
+  }
+  .chat-body { padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .msg {
+    max-width: 86%;
+    padding: 9px 14px;
+    border-radius: 14px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  .msg .who {
+    display: block;
+    font-size: 0.64rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ghost);
+    margin-bottom: 2px;
+  }
+  .msg.user {
+    align-self: flex-end;
+    background: linear-gradient(90deg, rgba(91, 200, 245, 0.13), rgba(139, 92, 246, 0.18));
+    border: 1px solid rgba(139, 92, 246, 0.35);
+    border-bottom-right-radius: 4px;
+  }
+  .msg.bot {
+    align-self: flex-start;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom-left-radius: 4px;
+    color: var(--muted);
+  }
+  .msg.bot .li { display: block; font-family: var(--font-mono); font-size: 0.76rem; padding: 1px 0; }
+  .msg.bot b { color: var(--ink); }
+  .chat-foot {
+    padding: 10px 18px;
+    border-top: 1px solid var(--line);
+    font-size: 0.72rem;
+    letter-spacing: 0.05em;
+    color: var(--ghost);
+    text-align: center;
+  }
+
+  /* ---- Capabilities bento ---- */
+  .bento {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 14px;
   }
-  article.card {
+  .tile {
     position: relative;
     padding: 22px 20px 20px;
     border: 1px solid var(--line);
@@ -301,7 +468,7 @@
     overflow: hidden;
     transition: transform 0.22s ease, border-color 0.25s ease, background 0.25s ease;
   }
-  article.card::before {
+  .tile::before {
     content: "";
     position: absolute;
     top: 0; left: 10%; right: 10%;
@@ -310,13 +477,14 @@
     opacity: 0;
     transition: opacity 0.3s ease;
   }
-  article.card:hover, article.card:focus-within {
+  .tile:hover, .tile:focus-within {
     transform: translateY(-3px);
     border-color: rgba(139, 92, 246, 0.35);
     background: rgba(255, 255, 255, 0.04);
   }
-  article.card:hover::before, article.card:focus-within::before { opacity: 0.9; }
-  article.card .icon {
+  .tile:hover::before, .tile:focus-within::before { opacity: 0.9; }
+  .tile.span2 { grid-column: span 2; }
+  .tile .icon {
     width: 40px; height: 40px;
     display: flex; align-items: center; justify-content: center;
     border-radius: 11px;
@@ -324,14 +492,133 @@
     background: linear-gradient(135deg, rgba(91, 200, 245, 0.13), rgba(139, 92, 246, 0.17));
     margin-bottom: 14px;
   }
-  article.card h3 {
+  .tile h3 {
     font-family: var(--font-display);
     font-size: 0.95rem;
     font-weight: 600;
     letter-spacing: 0.01em;
     margin-bottom: 6px;
   }
-  article.card p { font-size: 0.82rem; line-height: 1.55; color: var(--faint); }
+  .tile p { font-size: 0.82rem; line-height: 1.55; color: var(--faint); }
+  .tile.big h3 { font-size: 1.08rem; }
+  .tile.big p { font-size: 0.88rem; }
+  .streamline {
+    margin-top: 20px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    background: rgba(0, 0, 0, 0.25);
+  }
+  .streamline .row1 { display: flex; align-items: center; gap: 9px; font-size: 0.74rem; color: var(--muted); }
+  .streamline .play {
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    border: 1px solid rgba(91, 200, 245, 0.5);
+    color: var(--cyan);
+    font-size: 0.6rem;
+  }
+  .streamline .sub { margin-left: auto; font-family: var(--font-mono); font-size: 0.68rem; color: var(--ghost); }
+  .streamline .bar { margin-top: 10px; }
+
+  /* ---- Install tabs ---- */
+  .tabs {
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 18px;
+    background: var(--card);
+    overflow: hidden;
+  }
+  .tablist {
+    display: flex;
+    border-bottom: 1px solid var(--line);
+  }
+  .tab {
+    flex: 1;
+    appearance: none; background: none; border: none;
+    padding: 15px 10px 13px;
+    font-family: var(--font-display);
+    font-size: 0.92rem; font-weight: 600; letter-spacing: 0.03em;
+    color: var(--faint);
+    cursor: pointer;
+    position: relative;
+    transition: color 0.2s ease, background 0.2s ease;
+  }
+  .tab + .tab { border-left: 1px solid var(--line); }
+  .tab:hover { color: var(--ink); background: rgba(255, 255, 255, 0.02); }
+  .tab[aria-selected="true"] { color: var(--ink); }
+  .tab[aria-selected="true"]::after {
+    content: "";
+    position: absolute; left: 14%; right: 14%; bottom: -1px;
+    height: 2px;
+    background: var(--grad);
+    border-radius: 2px;
+  }
+  .tab small { display: block; font-family: var(--font-body); font-weight: 500; font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ghost); margin-top: 2px; }
+  .tabpanel { padding: 28px 30px 26px; }
+  .tabpanel[hidden] { display: none; }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 20px; flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .panel-title { font-family: var(--font-display); font-size: 1.05rem; font-weight: 600; }
+  .panel-sub { font-size: 0.8rem; color: var(--faint); margin-top: 3px; }
+  ol.steps { list-style: none; counter-reset: step; display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+  ol.steps li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 44px;
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: var(--faint);
+  }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 1px;
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    border: 1px solid rgba(139, 92, 246, 0.45);
+    background: linear-gradient(135deg, rgba(91, 200, 245, 0.10), rgba(139, 92, 246, 0.14));
+    font-family: var(--font-display);
+    font-size: 0.8rem; font-weight: 600;
+    color: var(--muted);
+  }
+  ol.steps b, .note b { color: var(--muted); font-weight: 600; }
+  .note {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 13px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 12px;
+    background: rgba(255, 255, 255, 0.02);
+    font-size: 0.8rem; line-height: 1.55; color: var(--faint);
+    margin-bottom: 16px;
+  }
+  .note svg { flex-shrink: 0; margin-top: 2px; }
+  .checksum { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .checksum .lbl { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ghost); }
+  .checksum code {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--faint);
+    word-break: break-all;
+    flex: 1;
+    min-width: 200px;
+    line-height: 1.7;
+  }
+  .checksum .copy {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--muted);
+    border-radius: 999px;
+    padding: 5px 14px;
+    font-size: 0.74rem;
+    font-family: var(--font-display);
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s;
+  }
+  .checksum .copy:hover, .checksum .copy:focus-visible { color: var(--ink); border-color: rgba(255, 255, 255, 0.3); }
 
   /* ---- Trust pillars ---- */
   .pillars {
@@ -362,6 +649,25 @@
     margin-bottom: 5px;
   }
   .pillar p { font-size: 0.82rem; line-height: 1.55; color: var(--faint); }
+
+  /* ---- Final CTA ---- */
+  .final {
+    margin-top: 90px;
+    text-align: center;
+    padding: 46px 24px 50px;
+    border: 1px solid rgba(139, 92, 246, 0.25);
+    border-radius: 22px;
+    background:
+      radial-gradient(60% 120% at 50% 0%, rgba(79, 125, 249, 0.10), transparent 70%),
+      var(--card);
+  }
+  .final h2 {
+    font-family: var(--font-display);
+    font-size: clamp(1.5rem, 3vw, 2rem);
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .final p { color: var(--faint); font-size: 0.92rem; margin-bottom: 24px; }
 
   /* ---- Footer ---- */
   footer.social {
@@ -398,94 +704,179 @@
   }
 
   @media (max-width: 960px) {
-    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .tile.span2 { grid-column: span 2; }
     .pillars { grid-template-columns: minmax(0, 1fr); }
+    .agent-grid { grid-template-columns: minmax(0, 1fr); gap: 34px; }
+    .panel-head { flex-direction: column; align-items: flex-start; }
+    .shot-rail { width: 120px; }
   }
   @media (max-width: 640px) {
     nav.top ul li.hide-mobile { display: none; }
-    .cards { grid-template-columns: minmax(0, 1fr); }
-    a.btn { padding: 14px 26px; }
+    /* "Download for Windows" is too wide next to the brand at 390px —
+       collapse to an icon-only pill (aria-label keeps it accessible). */
+    .btn-nav .os-label { display: none; }
+    .btn-nav { padding: 9px 13px; }
+    .bento { grid-template-columns: minmax(0, 1fr); }
+    .tile.span2 { grid-column: auto; }
+    .shot-rail { display: none; }
+    .tabpanel { padding: 22px 18px; }
+    .tab { font-size: 0.82rem; padding: 12px 6px 11px; }
+    .cta-row .btn { width: 100%; }
+    .btn-xl { padding: 16px 24px; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation: none !important; transition: none !important; }
+    html { scroll-behavior: auto; }
   }
 </style>
 </head>
 <body>
+  <a class="skip" href="#main">Skip to content</a>
   <div class="ambient" aria-hidden="true"></div>
   <div class="grid-overlay" aria-hidden="true"></div>
 
-  <div class="page">
-    <nav class="top" aria-label="Main">
-      <a class="brand" href="/">
-        <img src="DeepFlux4.webp" alt="DeepFlux logo">
-        <span>DeepFlux</span>
-      </a>
-      <ul>
-        <li class="hide-mobile"><a class="navlink" href="#capabilities">Capabilities</a></li>
-        <li class="hide-mobile"><a class="navlink" href="#trust">Privacy</a></li>
-        <li><a class="navlink" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">GitHub</a></li>
-        <li class="sep"><span class="pill">v4.9.1</span></li>
-      </ul>
-    </nav>
+  <div class="topbar">
+    <div class="page">
+      <nav class="top" aria-label="Main">
+        <a class="brand" href="/">
+          <img src="DeepFlux5.webp" alt="DeepFlux logo">
+          <span>DeepFlux</span>
+        </a>
+        <ul>
+          <li class="hide-mobile"><a class="navlink" href="#capabilities">Capabilities</a></li>
+          <li class="hide-mobile"><a class="navlink" href="#install">Install</a></li>
+          <li class="hide-mobile"><a class="navlink" href="#trust">Privacy</a></li>
+          <li class="hide-mobile"><a class="navlink" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">GitHub</a></li>
+          <li class="hide-mobile"><span class="pill">v5.0</span></li>
+          <li>
+            <a class="btn btn-primary btn-nav" data-os-primary aria-label="Download DeepFlux" href="/api/download?f=DeepFlux5.0Setup.exe" download>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span class="os-label">Download</span>
+            </a>
+          </li>
+        </ul>
+      </nav>
+    </div>
+  </div>
 
+  <main id="main" class="page" tabindex="-1">
     <header class="hero">
       <div class="eyebrow"><span class="spark" aria-hidden="true"></span> AI agent &middot; built in</div>
       <div class="banner-glow">
         <img class="banner" src="DeepFluxBanner.webp" alt="DeepFlux wordmark artwork">
       </div>
       <div class="hero-copy">
-        <p>DeepFlux is an AI-powered download manager with a built-in browser,
-        media player, community chat room, and file manager. Its agent can
-        search for and download files, manage your library — and drive the app
-        itself: navigate the browser, manage the download queue, play IPTV,
-        and organize files, always with your confirmation for
-        sensitive&nbsp;actions.</p>
+        <p>An AI-powered download manager with a built-in browser, media player
+        and file manager &mdash; and an agent that runs all of it for you.</p>
       </div>
     </header>
 
-    <section class="cta">
+    <section class="cta" aria-label="Get DeepFlux">
       <div class="cta-row">
         <!-- /api/download counts the click (Upstash counter) then 302s to the
              static file; it redirects uncounted when the counter isn't set up. -->
-        <a class="btn btn-primary" href="/api/download?f=DeepFlux4.9.1Setup.exe" download>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download for Windows
-        </a>
-        <a class="btn btn-primary" href="/api/download?f=DeepFlux-4.7-macOS-arm64.dmg" download>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download for macOS
-        </a>
-        <a class="btn btn-primary" href="/api/download?f=DeepFlux-4.7-Linux-x86_64.AppImage" download>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download for Linux
-        </a>
-        <a class="btn btn-ghost" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55 0-.27-.01-1.17-.02-2.12-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.19 1.76 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.12 3.05.74.81 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.66.41.35.77 1.05.77 2.12 0 1.53-.01 2.76-.01 3.14 0 .3.2.67.8.55A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
-          Source code
+        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.0Setup.exe" download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="os-label">Download for Windows</span>
         </a>
       </div>
-      <p class="cta-meta">Windows 4.9.1 &middot; macOS/Linux 4.7 &middot; Windows 10/11 64-bit &middot; macOS 14+ Apple&nbsp;Silicon &middot; Linux x86-64 (AppImage, glibc&nbsp;2.39+; macOS/Linux beta &mdash; no media player) &middot; posted 2026-09-19 &middot; free</p>
-      <p class="live" id="live" hidden
-         title="The user count is anonymous — a random id per install, nothing else. Opt out in the app's Download settings."></p>
-      <div class="smartscreen">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <p>Unsigned builds — if Windows shows &ldquo;protected your PC&rdquo;, choose
-        <b>More info&nbsp;&rarr;&nbsp;Run anyway</b>, or right-click the downloaded
-        file&nbsp;&rarr;&nbsp;<b>Properties&nbsp;&rarr;&nbsp;Unblock</b> before running it.
-        On macOS, right-click DeepFlux.app&nbsp;&rarr;&nbsp;<b>Open&nbsp;&rarr;&nbsp;Open</b>
-        the first time. On Linux, make the AppImage executable once
-        (<b>chmod +x</b> in a terminal, or file Properties&nbsp;&rarr;&nbsp;Permissions) and
-        run it &mdash; no security warnings there.</p>
+      <p class="also">
+        Also for
+        <a data-os-link="windows" href="/api/download?f=DeepFlux5.0Setup.exe" download>Windows</a><span class="sep">&middot;</span><a data-os-link="mac" href="/api/download?f=DeepFlux-4.7-macOS-arm64.dmg" download>macOS</a><span class="sep">&middot;</span><a data-os-link="linux" href="/api/download?f=DeepFlux-4.7-Linux-x86_64.AppImage" download>Linux</a>
+        &nbsp;&mdash;&nbsp;<a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">source code</a>
+      </p>
+      <p class="meta-row">Free &middot; no account &middot; your files stay on your machine<span class="live" id="live" hidden
+         title="The user count is anonymous — a random id per install, nothing else. Opt out in the app's Download settings."></span></p>
+    </section>
+
+    <div class="shot" role="img" aria-label="The DeepFlux app: a downloads list with active torrents, streaming progress and transfer speeds.">
+      <div class="shot-titlebar" aria-hidden="true">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="title">DeepFlux</span>
       </div>
-      <div class="smartscreen">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-        <p><b>The built-in AI key rotates with every release.</b> The Windows
-        setup ships with a shared AI key so the agent works out of the box &mdash;
-        it is replaced in each new version, and older copies can eventually
-        lose AI access. Keep DeepFlux updated, or set your own key under
-        <b>File&nbsp;&rarr;&nbsp;API Keys</b> to be independent. The macOS and
-        Linux builds ship without a built-in key &mdash; bring your own.</p>
+      <div class="shot-body" aria-hidden="true">
+        <div class="shot-rail">
+          <div class="rail-item">Agent</div>
+          <div class="rail-item">Browser</div>
+          <div class="rail-item">Torrents</div>
+          <div class="rail-item active">Downloads</div>
+          <div class="rail-item">Room</div>
+          <div class="rail-item">Command</div>
+        </div>
+        <div class="shot-main">
+          <div class="shot-toolbar">
+            <span class="tbtn">＋ Add</span>
+            <span class="tbtn">⏸ Pause</span>
+            <span class="tbtn">⟳ Retry</span>
+            <span class="grow"></span>
+            <span>3 active &middot; 46 MB/s</span>
+          </div>
+          <div class="dl-row">
+            <div class="top-line">
+              <span class="name">ubuntu-26.04.1-desktop-amd64.iso</span>
+              <span class="sub">68% &middot; 24.0 MB/s &middot; 3 min left</span>
+            </div>
+            <div class="bar"><i style="width:68%"></i></div>
+          </div>
+          <div class="dl-row">
+            <div class="top-line">
+              <span class="name">debian-13.2.0-amd64-netinst.iso</span>
+              <span class="sub">31% &middot; 18.2 MB/s &middot; 9 min left</span>
+            </div>
+            <div class="bar"><i style="width:31%"></i></div>
+          </div>
+          <div class="dl-row">
+            <div class="top-line">
+              <span class="name">blender-5.0-linux-x64.tar.xz</span>
+              <span class="sub">done &middot; seeding</span>
+            </div>
+            <div class="bar done"><i style="width:100%"></i></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <section class="block" id="agent" aria-label="Meet the agent">
+      <div class="section-head">
+        <div class="kicker">The differentiator</div>
+        <h2>An agent that actually does things</h2>
+      </div>
+      <div class="agent-grid">
+        <div>
+          <p class="lead">Chat with your downloads like a colleague. The agent
+          searches, fetches and organizes &mdash; and drives the app itself.</p>
+          <ul class="agent-points">
+            <li><b>Searches and fetches.</b> Torrent indexers and the web, then
+            downloads &mdash; or streams while it downloads.</li>
+            <li><b>Runs the app for you.</b> Browser tabs, the download queue,
+            playback, file organization &mdash; by chat.</li>
+            <li><b>Sets itself up.</b> FFmpeg, Jackett search, sources and API
+            keys &mdash; asking you first, every time.</li>
+            <li><b>Stays on your machine.</b> Local-first; nothing leaves
+            without your say-so.</li>
+          </ul>
+        </div>
+        <div class="chat" role="img" aria-label="Example conversation: the user asks the agent to download the latest Ubuntu and Debian installer ISOs; the agent finds sources, asks for confirmation, then reports the download is running.">
+          <div class="chat-head" aria-hidden="true">
+            <span class="chat-dot"></span> DeepFlux Agent
+            <span class="chat-tag">you approve every action</span>
+          </div>
+          <div class="chat-body" aria-hidden="true">
+            <div class="msg user"><span class="who">You</span>Download the latest Ubuntu and Debian installer ISOs</div>
+            <div class="msg bot"><span class="who">Agent</span>Searching 12 indexers &mdash; 3 sources found:</div>
+            <div class="msg bot">
+              <span class="who">Agent</span>
+              <span class="li">Ubuntu 26.04.1 desktop &middot; 6.2 GB</span>
+              <span class="li">Debian 13.2.0 netinst &middot; 0.8 GB</span>
+              <b>Download both?</b>
+            </div>
+            <div class="msg user"><span class="who">You</span>Yes &mdash; put them in Downloads/ISOs</div>
+            <div class="msg bot"><span class="who">Agent</span>Confirmed &mdash; both queued. Ubuntu is coming down at
+            24&nbsp;MB/s; I&rsquo;ll let you know when it&rsquo;s done.</div>
+          </div>
+          <div class="chat-foot" aria-hidden="true">Ask in plain language &middot; it confirms before it acts</div>
+        </div>
       </div>
     </section>
 
@@ -494,46 +885,46 @@
         <div class="kicker">Capabilities</div>
         <h2>One app, the whole pipeline</h2>
       </div>
-      <div class="cards">
-        <article class="card">
-          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg></div>
-          <h3>AI agent</h3>
-          <p>Finds, downloads and sets the whole app up by chat.</p>
-        </article>
-        <article class="card">
-          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 20l-4-4 4.5-4.5a2.12 2.12 0 0 0-3-3z"/><path d="M5.5 11.5l7 7"/></svg></div>
+      <div class="bento">
+        <article class="tile big span2">
+          <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 20l-4-4 4.5-4.5a2.12 2.12 0 0 0-3-3z"/><path d="M5.5 11.5l7 7"/></svg></div>
           <h3>Torrent engine</h3>
-          <p>Full engine with stream-while-downloading.</p>
+          <p>A full BitTorrent engine with stream-while-downloading &mdash; start
+          watching from the first megabytes while the rest arrives. Rate limits,
+          sequential mode and rechecks are one chat message away.</p>
+          <div class="streamline" aria-hidden="true">
+            <div class="row1">
+              <span class="play">&#9654;</span>
+              Streaming at 00:42 &mdash; buffer ahead of playback
+              <span class="sub">8.1 MB/s &middot; 96 peers</span>
+            </div>
+            <div class="bar"><i style="width:54%"></i></div>
+          </div>
         </article>
-        <article class="card">
-          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="13" rx="2"/><polyline points="17 2 12 7 7 2"/></svg></div>
-          <h3>IPTV &amp; EPG</h3>
-          <p>Live TV, movies and series with a full guide.</p>
-        </article>
-        <article class="card">
+        <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
           <h3>Embedded browser</h3>
-          <p>Chromium inside, driven by the agent.</p>
+          <p>Chromium inside the app &mdash; private tabs, bookmarks, and the agent can drive pages for you.</p>
         </article>
-        <article class="card">
-          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M4 19h16"/></svg></div>
-          <h3>Download manager</h3>
-          <p>HTTP, HLS/DASH streams and YouTube.</p>
-        </article>
-        <article class="card">
+        <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><polygon points="9 8 16 11 9 14 9 8"/></svg></div>
           <h3>Player</h3>
-          <p>Dolby Vision, SVP motion and online subtitles.</p>
+          <p>Dolby Vision, SVP motion smoothing and online subtitles. Music gets a MilkDrop visualizer.</p>
         </article>
-        <article class="card">
-          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12h2l2-7 3 14 3-9 2 4h2l2-2h4"/></svg></div>
-          <h3>Audio + visuals</h3>
-          <p>Music player with a MilkDrop visualizer.</p>
+        <article class="tile">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="13" rx="2"/><polyline points="17 2 12 7 7 2"/></svg></div>
+          <h3>IPTV &amp; EPG</h3>
+          <p>Live TV, movies and series with a full programme guide.</p>
         </article>
-        <article class="card">
+        <article class="tile">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M4 19h16"/></svg></div>
+          <h3>Downloads</h3>
+          <p>HTTP, HLS/DASH streams and YouTube &mdash; resumable and rate-limited.</p>
+        </article>
+        <article class="tile span2">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg></div>
-          <h3>And the rest</h3>
-          <p>Community room, RSS, voice input, file manager.</p>
+          <h3>&hellip;and the rest</h3>
+          <p>Community chat room, RSS auto-downloads, voice input and a dual-pane file manager &mdash; all agent-reachable.</p>
         </article>
       </div>
       <svg width="0" height="0" aria-hidden="true"><defs>
@@ -541,6 +932,120 @@
           <stop offset="0" stop-color="#5bc8f5"/><stop offset="1" stop-color="#b44bf0"/>
         </linearGradient>
       </defs></svg>
+    </section>
+
+    <section class="block" id="install" aria-label="Install DeepFlux">
+      <div class="section-head">
+        <div class="kicker">Install &amp; trust</div>
+        <h2>Know exactly what you&rsquo;re running</h2>
+      </div>
+      <div class="tabs">
+        <div class="tablist" role="tablist" aria-label="Choose your platform">
+          <button class="tab" type="button" role="tab" id="tab-win" data-os="win" aria-controls="panel-win" aria-selected="true">Windows<small>v4.9.1</small></button>
+          <button class="tab" type="button" role="tab" id="tab-mac" data-os="mac" aria-controls="panel-mac" aria-selected="false" tabindex="-1">macOS<small>v4.7 &middot; beta</small></button>
+          <button class="tab" type="button" role="tab" id="tab-linux" data-os="linux" aria-controls="panel-linux" aria-selected="false" tabindex="-1">Linux<small>v4.7 &middot; beta</small></button>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-win" aria-labelledby="tab-win">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Windows 10 / 11 &middot; 64-bit</div>
+              <div class="panel-sub">v4.9.1 &middot; 353.8 MB &middot; per-user install, no admin &middot; updates itself in-app</div>
+            </div>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux5.0Setup.exe" download>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download setup
+            </a>
+          </div>
+          <ol class="steps">
+            <li><b>Download</b> the setup file above and run it &mdash; it installs
+            per-user, no UAC prompt, and keeps your settings on upgrades.</li>
+            <li>Optionally let the installer <b>set up Jackett torrent search</b>
+            for you (one checkbox, one click).</li>
+            <li>If Windows shows <b>&ldquo;protected your PC&rdquo;</b>: <b>More info
+            &rarr; Run anyway</b>. The build is unsigned &mdash; an independent
+            developer certificate is the one thing still on the shopping list.
+            The checksum below is your integrity check.</li>
+          </ol>
+          <div class="note">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+            <p>A <b>shared AI key is built in</b>, so the agent works out of the box.
+            It is replaced with every release &mdash; keep DeepFlux updated, or set
+            your own key under <b>File&nbsp;&rarr;&nbsp;API Keys</b> to be fully independent.</p>
+          </div>
+          <div class="checksum">
+            <span class="lbl">sha256</span>
+            <code>ebac3f4a425a6a32c24cfcd2804d3ac607f8d4091474d7ac93a8fb273c4a5dcb</code>
+            <button class="copy" type="button" data-copy="ebac3f4a425a6a32c24cfcd2804d3ac607f8d4091474d7ac93a8fb273c4a5dcb">Copy</button>
+          </div>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-mac" aria-labelledby="tab-mac" hidden>
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">macOS 14+ &middot; Apple Silicon (M1&ndash;M4)</div>
+              <div class="panel-sub">v4.7 &middot; 336.6 MB &middot; beta &mdash; Intel Macs not supported yet</div>
+            </div>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-4.7-macOS-arm64.dmg" download>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download .dmg
+            </a>
+          </div>
+          <ol class="steps">
+            <li><b>Download</b> the .dmg, open it and drag DeepFlux to
+            <b>Applications</b>.</li>
+            <li>First launch: <b>right-click DeepFlux.app &rarr; Open &rarr;
+            Open</b>. The build is unsigned, so Gatekeeper needs that explicit
+            first OK (once only).</li>
+            <li>Add your AI key under <b>File&nbsp;&rarr;&nbsp;API Keys</b> &mdash;
+            DeepSeek, OpenRouter or any OpenAI-compatible endpoint.</li>
+          </ol>
+          <div class="note">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <p>No built-in AI key on macOS &mdash; <b>bring your own</b>. The beta
+            carries everything except the media-player tab: agent, browser,
+            torrents &amp; downloads, room and file manager.</p>
+          </div>
+          <div class="checksum">
+            <span class="lbl">sha256</span>
+            <code>feda9211d166c6d7c2b45481a0ae41e81d8f0e5879cfdf6f8c3b2d21765ba916</code>
+            <button class="copy" type="button" data-copy="feda9211d166c6d7c2b45481a0ae41e81d8f0e5879cfdf6f8c3b2d21765ba916">Copy</button>
+          </div>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux" hidden>
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Linux x86-64 &middot; glibc 2.39+</div>
+              <div class="panel-sub">v4.7 &middot; 419.5 MB &middot; AppImage &mdash; Ubuntu 24.04+, Debian 13, Fedora 40+, Arch</div>
+            </div>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-4.7-Linux-x86_64.AppImage" download>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download AppImage
+            </a>
+          </div>
+          <ol class="steps">
+            <li><b>Download</b> the AppImage &mdash; one file, no installer.</li>
+            <li>Make it executable once: <b>chmod +x DeepFlux-*.AppImage</b> in a
+            terminal, or file <b>Properties&nbsp;&rarr;&nbsp;Permissions</b> in your
+            file manager. No security warnings on Linux.</li>
+            <li>Add your AI key under <b>File&nbsp;&rarr;&nbsp;API Keys</b>. If a
+            stream needs FFmpeg, your package manager has it &mdash; or just ask
+            the agent to install it.</li>
+          </ol>
+          <div class="note">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <p>No built-in AI key on Linux &mdash; <b>bring your own</b>. The beta
+            carries everything except the media-player tab: agent, browser,
+            torrents &amp; downloads, room and file manager.</p>
+          </div>
+          <div class="checksum">
+            <span class="lbl">sha256</span>
+            <code>7080485e63a51af508c504667df67acdf6a8ec392674a24b3157e402e7ccc7c2</code>
+            <button class="copy" type="button" data-copy="7080485e63a51af508c504667df67acdf6a8ec392674a24b3157e402e7ccc7c2">Copy</button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="block" id="trust" aria-label="How DeepFlux treats you">
@@ -553,7 +1058,7 @@
           <div class="mark"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5bc8f5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg></div>
           <div>
             <h3>You approve every action</h3>
-            <p>The agent asks before anything sensitive — installs, deletions,
+            <p>The agent asks before anything sensitive &mdash; installs, deletions,
             downloads and page interactions all pass through you first.</p>
           </div>
         </div>
@@ -561,7 +1066,7 @@
           <div class="mark"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5bc8f5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
           <div>
             <h3>Runs on your machine</h3>
-            <p>Everything lives locally — your files, your history and your
+            <p>Everything lives locally &mdash; your files, your history and your
             keys stay on your PC. The optional usage ping is anonymous and
             one click to disable.</p>
           </div>
@@ -571,12 +1076,21 @@
           <div>
             <h3>No account, no lock-in</h3>
             <p>Free download, bring your own API key if you want a different
-            AI provider — your setup exports and moves with you.</p>
+            AI provider &mdash; your setup exports and moves with you.</p>
           </div>
         </div>
       </div>
     </section>
-  </div>
+
+    <section class="final" aria-label="Download DeepFlux">
+      <h2>Ready when you are.</h2>
+      <p>Free download &middot; no account &middot; your machine, your files.</p>
+      <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.0Setup.exe" download>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span class="os-label">Download for Windows</span>
+      </a>
+    </section>
+  </main>
 
   <footer class="social">
     <div class="icons">
@@ -624,6 +1138,85 @@
       }
       refresh();
       setInterval(refresh, 60000);
+    })();
+
+    // OS detection: one primary download button for the visitor's platform,
+    // Windows as the default when unknown (no iOS/Android build exists).
+    (function () {
+      var p = ((navigator.userAgentData && navigator.userAgentData.platform) ||
+               navigator.platform || navigator.userAgent || '').toLowerCase();
+      var os = 'windows';
+      if (p.indexOf('win') >= 0) os = 'windows';
+      else if (p.indexOf('mac') >= 0) os = 'mac';
+      else if (p.indexOf('linux') >= 0 || p.indexOf('x11') >= 0) os = 'linux';
+
+      var FILES = {
+        windows: { label: 'Download for Windows', file: 'DeepFlux5.0Setup.exe' },
+        mac:     { label: 'Download for macOS',   file: 'DeepFlux-4.7-macOS-arm64.dmg' },
+        linux:   { label: 'Download for Linux',   file: 'DeepFlux-4.7-Linux-x86_64.AppImage' }
+      };
+      var m = FILES[os];
+      document.querySelectorAll('[data-os-primary]').forEach(function (a) {
+        a.setAttribute('href', '/api/download?f=' + encodeURIComponent(m.file));
+        a.setAttribute('download', '');
+        var lbl = a.querySelector('.os-label');
+        if (lbl) lbl.textContent = m.label;
+      });
+      document.querySelectorAll('[data-os-link="' + os + '"]').forEach(function (a) {
+        a.hidden = true;
+      });
+
+      // Install tabs: ARIA pattern with roving tabindex + arrow keys.
+      var TABS = ['win', 'mac', 'linux'];
+      var initial = (os === 'mac') ? 'mac' : (os === 'linux') ? 'linux' : 'win';
+      if (location.hash.indexOf('#install-') === 0) {
+        var h = location.hash.slice(9);
+        if (TABS.indexOf(h) >= 0) initial = h;
+      }
+      function selectTab(id, focus) {
+        TABS.forEach(function (t) {
+          var btn = document.getElementById('tab-' + t);
+          var panel = document.getElementById('panel-' + t);
+          var on = (t === id);
+          btn.setAttribute('aria-selected', on ? 'true' : 'false');
+          btn.tabIndex = on ? 0 : -1;
+          panel.hidden = !on;
+          if (on && focus) btn.focus();
+        });
+      }
+      document.querySelectorAll('.tab').forEach(function (btn) {
+        btn.addEventListener('click', function () { selectTab(btn.dataset.os); });
+        btn.addEventListener('keydown', function (e) {
+          var i = TABS.indexOf(btn.dataset.os), n = null;
+          if (e.key === 'ArrowRight') n = (i + 1) % TABS.length;
+          else if (e.key === 'ArrowLeft') n = (i + TABS.length - 1) % TABS.length;
+          else if (e.key === 'Home') n = 0;
+          else if (e.key === 'End') n = TABS.length - 1;
+          if (n !== null) { e.preventDefault(); selectTab(TABS[n], true); }
+        });
+      });
+      selectTab(initial);
+
+      // Checksum copy buttons.
+      document.querySelectorAll('[data-copy]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var done = function () {
+            btn.textContent = 'Copied \u2713';
+            setTimeout(function () { btn.textContent = 'Copy'; }, 1600);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(btn.dataset.copy).then(done, done);
+          } else {
+            var ta = document.createElement('textarea');
+            ta.value = btn.dataset.copy;
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (err) {}
+            document.body.removeChild(ta);
+            done();
+          }
+        });
+      });
     })();
   </script>
 </body>

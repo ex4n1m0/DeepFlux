@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "4.9.1"
+APP_VERSION = "5.0"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -594,6 +594,8 @@ class DeeptorrentConfig:
     ui_commander_paths: Dict[str, str] = field(default_factory=dict)
     # Agent debug mode: raw tool args/results, full reasoning, watchdog activity in chat.
     ui_agent_debug: bool = True
+    # v5: the agent quick-ask side panel is open (restored on launch).
+    ui_agent_panel: bool = False
 
     @classmethod
     def from_file(cls, path: str) -> "DeeptorrentConfig":
@@ -930,6 +932,7 @@ class DeeptorrentConfig:
             ui_geometry=data.get("ui_geometry", ""),
             ui_last_tab=int(data.get("ui_last_tab", 0) or 0),
             ui_notifications=bool(data.get("ui_notifications", True)),
+            ui_agent_panel=bool(data.get("ui_agent_panel", False)),
             ui_splitters=data.get("ui_splitters", {}) if isinstance(data.get("ui_splitters"), dict) else {},
             ui_commander_paths={
                 key: value for key, value in data.get("ui_commander_paths", {}).items()

@@ -3594,6 +3594,16 @@ class IPTVTab(QWidget):
         toolbar.addWidget(self._settings_btn)
         layout.addWidget(self._toolbar_w)
 
+        # Section quick-jump chips (v5.1): Live / Movies / Series / Favorites /
+        # Recent for the CURRENT source — one click instead of digging the
+        # tree. The tree stays for categories/years; chips are the fast lane.
+        self._section_chips_w = QWidget()
+        chips_row = QHBoxLayout(self._section_chips_w)
+        chips_row.setContentsMargins(2, 0, 2, 0)
+        chips_row.setSpacing(6)
+        self._section_chip_btns = {}
+        layout.addWidget(self._section_chips_w)
+
         # --- Body: splitter sidebar | content | player ---
         splitter = QSplitter(Qt.Horizontal)
 
@@ -3784,6 +3794,7 @@ class IPTVTab(QWidget):
         self._update_search_placeholder()
         self._select_tree_node((sid, self._current_section, ""))
         self._show_section(self._current_section, "", sid)
+        self._rebuild_section_chips()
 
     def _refresh(self) -> None:
         """Load every enabled source in the background.
@@ -4115,6 +4126,7 @@ class IPTVTab(QWidget):
 
         if selected is not None:
             self._select_tree_node(selected)
+        self._rebuild_section_chips()
 
     def _add_year_or_bulk_node(self, parent: QTreeWidgetItem, src_id: str,
                                sid: str, cat_name: str, yc, expanded: set) -> None:
@@ -4207,6 +4219,7 @@ class IPTVTab(QWidget):
                                    item.text(0)).strip() or item.text(0)
         self._update_search_placeholder()
         self._show_section(section, category, source_id, year=year, bulk=bulk)
+        self._sync_section_chips()
 
     @staticmethod
     def _has_bulk_children(item: QTreeWidgetItem) -> bool:
@@ -4216,6 +4229,53 @@ class IPTVTab(QWidget):
             if len(child_key) >= 5:
                 return True
         return False
+
+    # -- section quick-jump chips (v5.1) -------------------------------------
+    def _rebuild_section_chips(self) -> None:
+        """Rebuild the chip row for the current source (counts when loaded)."""
+        for btn in self._section_chip_btns.values():
+            btn.deleteLater()
+        self._section_chip_btns = {}
+        sid_source = self._current_source_id
+        loaded = sid_source in self._manager.loaded_source_ids() if sid_source else False
+        for sid, label in self._SECTIONS:
+            btn = QPushButton(label)
+            btn.setObjectName("chip_btn")
+            btn.setCheckable(False)
+            btn.setCursor(Qt.PointingHandCursor)
+            if loaded:
+                btn.setToolTip(f"{label} — {self._section_count(sid, sid_source)} items")
+            else:
+                btn.setToolTip(label)
+                btn.setEnabled(False)
+            btn.clicked.connect(lambda _c=False, s=sid: self._goto_section(s))
+            self._section_chips_w.layout().addWidget(btn)
+            self._section_chip_btns[sid] = btn
+        self._section_chips_w.layout().addStretch(1)
+        self._sync_section_chips()
+
+    def _sync_section_chips(self) -> None:
+        """Mark the chip matching the current section; none for sub folders."""
+        for sid, btn in self._section_chip_btns.items():
+            on = (sid == self._current_section and not self._current_category
+                  and not self._current_year)
+            if bool(btn.property("on")) != on:
+                btn.setProperty("on", on)
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
+    def _goto_section(self, sid: str) -> None:
+        """Chip click: jump to a top-level section of the current source."""
+        self._current_section = sid
+        self._current_category = ""
+        self._current_year = ""
+        sid_source = self._current_source_id or None
+        self._scope_key = (self._current_source_id, sid, "")
+        self._scope_label = self._scope_label_for(self._current_source_id, sid)
+        self._update_search_placeholder()
+        self._show_section(sid, "", sid_source)
+        self._select_tree_node((self._current_source_id, sid, ""))
+        self._sync_section_chips()
 
     # -- content display -----------------------------------------------------
     def _show_section(self, section: str, category: str = "",
