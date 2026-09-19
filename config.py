@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "4.7"
+APP_VERSION = "4.9"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -548,6 +548,20 @@ class StatsConfig:
 
 
 @dataclass
+class UpdaterConfig:
+    """In-app auto-update, Windows frozen builds only (infra/updater.py).
+
+    The app checks deepflux.space/deepflux/latest.json daily; when a newer
+    version is out it offers to download the new setup exe and reinstall
+    silently (the install is per-user, so no UAC). Checking is on by
+    default; INSTALLING always requires an explicit click in the update
+    dialog — nothing is ever installed automatically."""
+    check_enabled: bool = True
+    skip_version: str = ""    # version the user dismissed with "Skip this version"
+    last_check: float = 0.0   # epoch of the last feed probe; 0 = never
+
+
+@dataclass
 class DeeptorrentConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     indexer: IndexerConfig = field(default_factory=IndexerConfig)
@@ -561,6 +575,7 @@ class DeeptorrentConfig:
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
     stats: StatsConfig = field(default_factory=StatsConfig)
+    updater: UpdaterConfig = field(default_factory=UpdaterConfig)
     sources: SourcesConfig = field(default_factory=SourcesConfig)
     default_save_path: str = str(Path.home() / "Downloads" / "DeepFlux")
     categories: List[str] = field(default_factory=lambda: ["Movies", "TV", "Software", "Other"])
@@ -887,6 +902,11 @@ class DeeptorrentConfig:
             ),
             stats=StatsConfig(**{k: v for k, v in data.get("stats", {}).items()
                                  if k in StatsConfig.__dataclass_fields__}),
+            updater=UpdaterConfig(
+                check_enabled=bool(data.get("updater", {}).get("check_enabled", True)),
+                skip_version=str(data.get("updater", {}).get("skip_version", "") or "")[:16],
+                last_check=float(data.get("updater", {}).get("last_check", 0.0) or 0.0),
+            ),
             sources=SourcesConfig(
                 sources=merged_sources,
                 use_jackett=data.get("sources", {}).get("use_jackett", True),

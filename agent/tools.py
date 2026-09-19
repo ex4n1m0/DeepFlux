@@ -164,6 +164,8 @@ _SETTINGS_DENY_PATHS = {
     ("sources", "last_jackett_fetch"),              # internal sync bookkeeping
     ("download", "ytdlp_last_check"),               # internal freshness bookkeeping
     ("download", "control_api_port"),               # running server binding
+    ("updater", "last_check"),                      # internal probe bookkeeping
+    ("updater", "skip_version"),                    # set via the update dialog
 }
 
 # Fields that accept only a fixed set of values — validated on write so a

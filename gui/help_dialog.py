@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 4.7 — User Guide</h1>
+<h1>DeepFlux 4.9 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -453,6 +453,24 @@ the network when you ask it to.</p>
   <tr><td><code>Ctrl+Q</code></td><td>Quit</td></tr>
 </table>
 
+<h2>Keeping DeepFlux Updated</h2>
+
+<p>DeepFlux checks for new versions automatically (once a day, Windows
+installs only — the checkbox lives in Download → Download Settings). When a
+new version is out, a small dialog offers <b>Update now</b>, <b>Remind me
+later</b> and <b>Skip this version</b>. You can also check any time via
+<b>Help → Check for Updates…</b></p>
+
+<p><b>Update now</b> downloads the new setup file and verifies it, then
+closes DeepFlux, installs the new version and restarts it — no downloads
+from the website, no setup wizard. Nothing is ever installed without your
+click. Your sources, API keys and settings are carried over (the update
+reinstalls in place and keeps your config), and active downloads pause and
+resume automatically. The update log is at
+<code>~/.deeptorrent/logs/update.log</code> if you ever need to check what
+happened. The automatic check can be turned off in Download → Download
+Settings.</p>
+
 <h2>Troubleshooting</h2>
 
 <div class="warn">
@@ -465,7 +483,12 @@ once enough people have installed the release.
 </div>
 
 <div class="warn">
-<b>Agent not responding:</b> Check your API key in File → API Keys.
+<b>Agent not responding:</b> Check your API key in File → API Keys. The
+built-in shared AI key is rotated in every new DeepFlux release, so an
+outdated copy can lose AI access — update to the latest version
+(Help → Check for Updates…), or set your own key to be independent of the
+shared one. (The macOS and Linux builds ship without a built-in key — add
+your own under File → API Keys.)
 </div>
 
 <div class="warn">
@@ -564,7 +587,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("4.7 — AI Deep Search")
+        version = QLabel("4.9 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

@@ -3,7 +3,7 @@
 ; Then open this script in Inno Setup and Compile.
 
 #define MyAppName "DeepFlux"
-#define MyAppVersion "4.7"
+#define MyAppVersion "4.9"
 #define MyAppPublisher "DeepFlux"
 #define MyAppExeName "DeepFlux.exe"
 ; PyInstaller onedir output, relative to this script (packaging/..\dist).
@@ -28,7 +28,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir={#BuildOutputDir}
-OutputBaseFilename=DeepFlux4.7Setup
+OutputBaseFilename=DeepFlux4.9Setup
 SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -144,11 +144,16 @@ begin
   ConfigPath := GetEnv('USERPROFILE') + '\.deeptorrent\config.json';
   ForceDirectories(ExtractFilePath(ConfigPath));
 
-  // Fresh config on EVERY install: delete any existing file so keys and
-  // settings from older builds never linger — no .bak, no leftovers.
-  // Users re-enter any custom keys after each update.
+  // PRESERVE the user's config across installs and updates (owner decision
+  // 2026-09-19): the seed below only lands on FRESH installs (no config
+  // yet). Deleting an existing config here would silently wipe every
+  // source, API key and setting on each upgrade — the in-app auto-updater
+  // (infra/updater.py) relies on upgrades keeping the file. Key-rotation
+  // safety: config.from_file re-injects the CURRENT shared key on every
+  // load (and scrubs any saved copy of it), so a preserved config can never
+  // pin a rotated-out key over the new one.
   if FileExists(ConfigPath) then
-    DeleteFile(ConfigPath);
+    Exit;
 
   // The seed is MINIMAL on purpose: config.py is the single source of
   // truth for every setting (from_file fills in all defaults), and the

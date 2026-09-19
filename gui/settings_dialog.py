@@ -334,6 +334,18 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_youtube_update_check = QCheckBox("Warn when the YouTube downloader (yt-dlp) is outdated")
         dm_layout.addRow("", self.dm_youtube_update_check)
 
+        self.dm_update_check = QCheckBox(
+            "Check for DeepFlux updates automatically (Windows installs)")
+        dm_layout.addRow("", self.dm_update_check)
+
+        self.dm_update_hint = QLabel(
+            "When a new version is out the app offers to download and install it "
+            "itself — nothing is ever installed without your click, and your "
+            "sources, API keys and settings are kept.")
+        self.dm_update_hint.setObjectName("hint")
+        self.dm_update_hint.setWordWrap(True)
+        dm_layout.addRow("", self.dm_update_hint)
+
         self.dm_usage_ping = QCheckBox(
             "Send an anonymous usage ping (powers the live user count on deepflux.space)")
         dm_layout.addRow("", self.dm_usage_ping)
@@ -393,6 +405,7 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_youtube_subtitles.setChecked(self.config.download.youtube_subtitles)
         self.dm_youtube_playlists.setChecked(self.config.download.youtube_playlists)
         self.dm_youtube_update_check.setChecked(self.config.download.youtube_update_check)
+        self.dm_update_check.setChecked(self.config.updater.check_enabled)
         self.dm_usage_ping.setChecked(self.config.stats.ping_enabled)
         self.dm_categories.setPlainText("\n".join(
             f"{category.name}|{category.folder}|{','.join(category.extensions)}"
@@ -454,6 +467,8 @@ class DownloadsSettingsDialog(QDialog):
             # flag once at startup (stopping mid-session would flicker the
             # online count for a setting the user rarely touches).
             self.config.stats.ping_enabled = self.dm_usage_ping.isChecked()
+            # Same for the update probe: it reads the flag at startup.
+            self.config.updater.check_enabled = self.dm_update_check.isChecked()
         self.accept()
 
 

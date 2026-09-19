@@ -67,6 +67,14 @@ from infra.config_backup import (
 from engine.state import TorrentStateManager
 from gui.rss_dialog import RSSDialog
 from gui.rss_viewer import RSSViewer
+from gui.update_dialog import (
+    RESULT_LATER,
+    RESULT_SKIP,
+    RESULT_UPDATE_NOW,
+    UpdateDialog,
+    UpdateProgressDialog,
+    _UpdateSignals,
+)
 from gui.settings_dialog import (
     API_KEY_PAGES,
     BROWSER_SETTINGS_PAGES,
@@ -1029,6 +1037,22 @@ class MainWindow(QMainWindow):
         threading.Thread(target=self._ytdlp_update_worker, daemon=True,
                          name="ytdlp-update").start()
 
+        # In-app auto-update (Windows frozen builds only — the worker checks
+        # and no-ops elsewhere). Daily-gated feed probe; installing always
+        # goes through the update dialog's explicit "Update now".
+        self._update_signals = _UpdateSignals()
+        self._update_signals.found.connect(self._on_update_found)
+        self._update_signals.status.connect(self._on_update_check_status)
+        self._update_signals.download_done.connect(self._on_update_downloaded)
+        self._update_signals.download_failed.connect(self._on_update_download_failed)
+        self._update_notice_shown = False   # auto-prompt: once per session
+        self._update_force_prompt = False   # manual check bypasses that guard
+        self._update_check_running = False
+        self._update_in_progress = False    # set while the apply helper owns our shutdown
+        self._pending_update = None         # UpdateInfo for the running download
+        threading.Thread(target=self._update_check_worker, daemon=True,
+                         kwargs={"force": False}, name="update-check").start()
+
         # Anonymous usage ping — powers the live "users online" count on the
         # website (deepflux.space). Payload: random install id + version + OS;
         # off-switch in Download settings. Every failure is silent.
@@ -1040,7 +1064,7 @@ class MainWindow(QMainWindow):
             logger.debug("telemetry heartbeat failed to start", exc_info=True)
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 4.7 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 4.9 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -2189,6 +2213,10 @@ class MainWindow(QMainWindow):
         guide_action = QAction("User Guide", self)
         guide_action.triggered.connect(self._open_help)
         help_menu.addAction(guide_action)
+
+        check_update_action = QAction("Check for Updates…", self)
+        check_update_action.triggered.connect(self._check_for_updates_manually)
+        help_menu.addAction(check_update_action)
 
         about_action = QAction("About", self)
         about_action.triggered.connect(self._open_about)
@@ -3758,6 +3786,159 @@ class MainWindow(QMainWindow):
             return
         if result:
             self._agent_signals.event.emit({"type": "ytdlp_update", **result})
+
+    # ------------------------------------------------------------------
+    # In-app auto-update (Windows frozen builds; see infra/updater.py)
+    # ------------------------------------------------------------------
+
+    def _update_check_worker(self, force: bool) -> None:
+        from infra import updater
+        if self._update_check_running:
+            return
+        self._update_check_running = True
+        try:
+            try:
+                info = updater.maybe_check_update(self.config, self.config_path,
+                                                  force=force)
+            except Exception as exc:
+                logger.debug("update check failed: %s", exc, exc_info=True)
+                if force:
+                    self._update_signals.status.emit(
+                        f"Update check failed: {exc}")
+                return
+            if info is None:
+                if force:
+                    if updater.updates_supported():
+                        from config import APP_VERSION
+                        self._update_signals.status.emit(
+                            f"You're up to date — DeepFlux {APP_VERSION} "
+                            f"is the newest version.")
+                    else:
+                        self._update_signals.status.emit(
+                            "Automatic updates are only available in the "
+                            "installed Windows build. New versions are at "
+                            "deepflux.space.")
+                return
+            if force:
+                # A manual check re-offers even a skipped/already-prompted
+                # version — the user asked.
+                self._update_force_prompt = True
+            self._update_signals.found.emit(info)
+        finally:
+            self._update_check_running = False
+
+    def _check_for_updates_manually(self) -> None:
+        """Help → Check for Updates…: a forced probe that also reports the
+        'up to date' / 'unsupported build' outcomes the silent startup
+        check never shows."""
+        threading.Thread(target=self._update_check_worker, daemon=True,
+                         kwargs={"force": True}, name="update-check").start()
+
+    def _on_update_check_status(self, message: str) -> None:
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "DeepFlux updates", message)
+
+    def _on_update_found(self, info) -> None:
+        from config import APP_VERSION
+        if self._update_notice_shown and not self._update_force_prompt:
+            return
+        self._update_force_prompt = False
+        self._update_notice_shown = True
+        dialog = UpdateDialog(self, info, APP_VERSION)
+        result = dialog.exec()
+        if result == RESULT_UPDATE_NOW:
+            self._start_update_download(info)
+        elif result == RESULT_SKIP:
+            self.config.updater.skip_version = info.version
+            try:
+                self.config.to_file(self.config_path)
+            except Exception as exc:
+                logger.warning("Could not persist skipped version: %s", exc)
+
+    def _start_update_download(self, info) -> None:
+        self._pending_update = info
+        progress = UpdateProgressDialog(self, info, self._update_signals)
+        progress.exec()
+
+    def _on_update_downloaded(self, path) -> None:
+        info = self._pending_update
+        self._pending_update = None
+        if info is not None:
+            self._confirm_and_apply(info, path)
+
+    def _on_update_download_failed(self, message: str) -> None:
+        self._pending_update = None
+        if "cancel" in (message or "").lower():
+            return  # the user pressed Cancel — not an error to report
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(
+            self, "Update download failed",
+            f"The update could not be downloaded:\n{message}\n\n"
+            "A partially downloaded file is kept and resumed if you try "
+            "again. You can also download the setup file from "
+            "deepflux.space at any time.")
+
+    def _confirm_and_apply(self, info, path) -> None:
+        """Last stop before the helper takes over: verify the environment,
+        spell out what will happen, then hand shutdown to the helper."""
+        from PySide6.QtWidgets import QMessageBox
+        from infra import updater
+        if path is None or not updater.verify_file(path, info):
+            QMessageBox.warning(self, "Update",
+                                "The downloaded file did not pass the "
+                                "integrity check. Please try again.")
+            return
+        others = updater.other_instances_running()
+        if others:
+            QMessageBox.warning(
+                self, "Update",
+                f"{others} other DeepFlux window(s) are open. Close them "
+                f"first — the update replaces the program files while it "
+                f"runs.")
+            return
+        if not updater.install_dir_writable():
+            # Machine-wide install (the installer's elevation dialog was
+            # used) or an unwritable dir: degrade to a manual run.
+            QMessageBox.information(
+                self, "Update downloaded",
+                f"The new version was downloaded to:\n{path}\n\n"
+                "This install needs the setup file to be run by hand — "
+                "close DeepFlux and double-click it when convenient.")
+            return
+        try:
+            active = sum(
+                1 for t in self.engine.list_torrents()
+                if t.get("state") == "downloading" and not t.get("paused")
+            ) + sum(
+                1 for j in self._dl_engine.list_jobs()
+                if j.status.value in ("downloading", "queued")
+            )
+        except Exception:
+            active = 0
+        transfers = (f"{active} active transfer(s) will pause and resume "
+                     f"automatically.\n" if active else "")
+        reply = QMessageBox.question(
+            self, f"Install DeepFlux {info.version}?",
+            f"DeepFlux will close, install version {info.version} and "
+            f"restart.\n{transfers}Your sources, API keys and settings are "
+            f"kept.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            updater.apply_update(path)
+        except Exception as exc:
+            QMessageBox.critical(
+                self, "Update",
+                f"The update could not be started: {exc}\n"
+                f"The setup file is at:\n{path}")
+            return
+        # The helper waits for our exit — shut down through the normal
+        # close path (resume data, config, telemetry leave all happen).
+        self._update_in_progress = True
+        self.close()
+
 
     # ------------------------------------------------------------------
     # Tool event formatting helpers
@@ -6024,7 +6205,8 @@ class MainWindow(QMainWindow):
         # Closing the window (X) quits the app — no background instance is
         # left running in the tray.
 
-        # Confirm before quitting with active transfers.
+        # Confirm before quitting with active transfers — EXCEPT during an
+        # update: the apply dialog already spelled out the consequences.
         try:
             active_t = sum(
                 1 for t in self.engine.list_torrents()
@@ -6036,7 +6218,7 @@ class MainWindow(QMainWindow):
             )
         except Exception:
             active_t = active_d = 0
-        if active_t or active_d:
+        if (active_t or active_d) and not self._update_in_progress:
             reply = QMessageBox.question(
                 self, "Quit DeepFlux",
                 f"{active_t + active_d} transfer(s) still in progress "

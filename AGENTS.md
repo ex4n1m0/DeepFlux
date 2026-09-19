@@ -21,7 +21,9 @@
   SPLIT invocation are 100% stable, and reverting any single app file does
   not prevent it. Release gate: run the suite split —
   `python -m pytest tests/test_a*.py tests/test_b*.py tests/test_c*.py -q`
-  then the same for d–z globs (d e f g h i j l m n o r s t v x y).
+  then the same for d–z globs (d e f g h i j l m n o r s t u v x y —
+  re-check `ls tests/ | cut -c9 | sort -u` when a test file with a NEW
+  first letter lands, like test_updater.py's "u" in 2026-09-19).
 - Tests must NEVER write the real `~/.deeptorrent/config.json`: the autouse
   fixture in `tests/conftest.py` redirects `DeeptorrentConfig.default_config_path`
   for every test; still pass explicit paths whenever
@@ -161,10 +163,12 @@
   Version bumps touch: installer.iss (MyAppVersion + OutputBaseFilename),
   main_window title, help_dialog (H1/Version/About), opensubtitles UA,
   config.py APP_VERSION (the telemetry ping's version), website index.html
-  (meta line AND the /api/download?f=… href), README.md ("Current version"
-  line — a pre-commit hook in .git/hooks/ re-syncs it from installer.iss
-  MyAppVersion on every commit and auto-stages the change; if the hook is
-  missing on a fresh clone, reinstall it from this note).
+  (meta line AND the /api/download?f=… href), website/deepflux/latest.json
+  (the auto-update feed: version, file, size, sha256 of the exe just
+  deployed — compute from the file in the deploy dir), README.md ("Current
+  version" line — a pre-commit hook in .git/hooks/ re-syncs it from
+  installer.iss MyAppVersion on every commit and auto-stages the change;
+  if the hook is missing on a fresh clone, reinstall it from this note).
 - Live stats (since 3.8): the app sends an anonymous usage ping
   (`infra/telemetry.py`, started by GUI `__init__` and the CLI Repl, stopped
   in closeEvent/shutdown with a best-effort "leave" note) to
@@ -172,7 +176,7 @@
   {install id, APP_VERSION, os.name}; the id is a random hex file at
   `~/.deeptorrent/install_id` (deliberately NOT in config.json so Settings
   Export can't transplant one machine's identity onto another; survives
-  installs since the installer only deletes config.json). Off-switch:
+  installs since the installer never touches it). Off-switch:
   `stats.ping_enabled` (Download Manager settings page, applies next launch),
   default ON by owner decision 2026-09-13. Every failure is silent by
   contract. The website side lives in `website/api/` (heartbeat.js =
@@ -311,6 +315,52 @@
   rewrite. If it is ever revisited, the 2026-09-18 feasibility study in
   agent memory lists what it would take (xcb forcing, libmpv bundling).
 
+## Auto-update (Windows, since 4.9)
+- The Windows build updates ITSELF: `infra/updater.py` (Qt-free) checks
+  `https://deepflux.space/deepflux/latest.json` daily (startup background
+  thread + Help → "Check for Updates…"), the GUI (`gui/update_dialog.py` +
+  main_window `_update_*` methods) offers Update now / Later / Skip this
+  version, downloads the setup exe with a Range-resumable streamed transfer
+  to `%LOCALAPPDATA%\DeepFlux\updates\`, verifies size + sha256 against the
+  feed, then a detached PowerShell helper (apply_update → apply_update.ps1)
+  waits for our PID to exit, runs `setup.exe /VERYSILENT
+  /SUPPRESSMSGBOXES /NORESTART`, relaunches DeepFlux and deletes the setup
+  file. Log: `~/.deeptorrent/logs/update.log`. Nothing ever installs
+  without the user's click, and the updater is deliberately NOT an agent
+  tool (prompt injection must never trigger an installer run).
+- VERIFIED facts (2026-09-19 study) — do not re-derive:
+  * The install is PER-USER: installer.iss `PrivilegesRequired=lowest` →
+    `{autopf}` = `%LOCALAPPDATA%\Programs\DeepFlux` (HKCU uninstall key), so
+    the silent reinstall needs NO UAC. A machine-wide install (the user
+    picked "for everyone" in the installer dialog) is detected via
+    `install_dir_writable()` and degrades to "downloaded, run it manually".
+  * `/VERYSILENT` skips BOTH postinstall entries (they carry `skipifsilent`
+    — the Jackett setup step and the launch entry) but still runs the
+    `--register-associations` entry; Inno reuses the previous install dir
+    from the uninstall key.
+  * A file downloaded by the app carries NO Mark-of-the-Web → no
+    SmartScreen on the silent run (only Smart App Control, opt-in, remains
+    — same as a manual install). Integrity = HTTPS + sha256 pinned in the
+    feed (same trust root as the website).
+- Feed: `website/deepflux/latest.json` — {version, file, size, sha256,
+  released, notes}. `parse_feed` is STRICT (basename-only file, hex sha256,
+  size sanity) and returns None on anything malformed. Release ritual:
+  during the website exe swap, write the new version + the sha256/size of
+  the exe sitting in the deploy dir (the feed is TRACKED in git, unlike the
+  exe). `is_newer` reuses `ytdlp_update.is_outdated`'s tuple compare
+  (4.10 > 4.9). Gating: `updates_supported()` = win32 AND frozen; config
+  `updater` section (`check_enabled` default on — toggle on the Download
+  Manager settings page; `skip_version`/`last_check` are bookkeeping and
+  DENY-listed from the agent settings tool). A manual check (force=True)
+  re-offers a skipped version.
+- The installer no longer deletes config.json (owner decision 2026-09-19 —
+  see the seed paragraph under Build/package): updates keep sources, API
+  keys and settings. The helper waits up to 90s for the graceful close
+  (fast-resume + config save) before installing; closeEvent skips its
+  active-transfers confirm when `_update_in_progress` (already confirmed in
+  the apply dialog). Multiple instances: `other_instances_running()` blocks
+  the apply until the extra windows are closed.
+
 ## Conventions
 - 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,
   ~30 fixed, all with file-level rationale comments + regression tests).
@@ -413,12 +463,15 @@
   builds each tab and asserts minimumSizeHint ≤ 700×460, with long status
   text; every tab landed at ≤ ~620px.
 - No built-in torrent sources ship: `DEFAULT_SOURCES` in `config.py` is
-  empty, and the installer deletes `~/.deeptorrent/config.json` on EVERY
-  install — fresh installs and upgrades both start with zero sources, users
-  add their own or fetch from Jackett. `DEFAULT_SOURCE_POPULARITY` still
-  ranks user-added sources by `id`. If a built-in source is ever added back
-  to `DEFAULT_SOURCES`, `from_file` merges it into existing user configs
-  (match by `id`, Jackett-style).
+  empty — users add their own or fetch from Jackett. The installer's seed
+  (the sample Macau playlist) only lands on FRESH installs; since 2026-09-19
+  (owner decision) an EXISTING `~/.deeptorrent/config.json` is PRESERVED on
+  every install/upgrade — the auto-updater relies on it, and key rotation
+  stays safe because `from_file` re-injects the CURRENT shared key on every
+  load (a saved copy of a shared key is scrubbed at load). `DEFAULT_SOURCE_POPULARITY`
+  still ranks user-added sources by `id`. If a built-in source is ever added
+  back to `DEFAULT_SOURCES`, `from_file` merges it into existing user
+  configs (match by `id`, Jackett-style).
 - YouTube downloads run yt-dlp (`add_youtube_job` in dlmgr/engine.py).
   YouTube breaks older yt-dlp releases with mid-download HTTP 403s from the
   googlevideo CDN (verified 2026-09: 2026.07.04 died at 8% of a real video,
@@ -565,9 +618,12 @@
   * Rotation gotcha: the load-time scrub matches only CURRENT shared
     values, so a rotated-out key saved into a config.json by a ≤3.5.8
     build keeps winning (saved keys beat the shared fallback) and the
-    agent 401s. End users are covered (the installer deletes config.json
-    every install); a dev machine needs the stale `llm.api_key` cleared
-    once by hand (done on this machine 2026-09-10, backup at
+    agent 401s. Since the installer now PRESERVES config.json (2026-09-19)
+    such a fossil can survive upgrades; only ≤3.5.8 installs could ever
+    persist one (post-3.5.9 to_file never writes shared keys) and the
+    User Guide's "Agent not responding" entry tells those users to clear
+    or replace the key. A dev machine may need the stale `llm.api_key`
+    cleared once by hand (done on this machine 2026-09-10, backup at
     `config.json.bak-stalekey`).
 - DeepSeek model lineup (checked against the pricing page 2026-09-10):
   `deepseek-flash` (= V4.1-Flash, DeepSeek's own current default — cheaper

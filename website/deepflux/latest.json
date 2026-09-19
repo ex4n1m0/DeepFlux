@@ -1,0 +1,8 @@
+{
+  "version": "4.9",
+  "file": "DeepFlux4.9Setup.exe",
+  "size": 370991229,
+  "sha256": "ab5353f7fd7f2bd86240c2e7509c7f4cbb568d01528233cd75a98e2329acb86c",
+  "released": "2026-09-19",
+  "notes": "DeepFlux can now update itself: future versions install with one click (Help > Check for Updates). Your sources, API keys and settings carry over between versions. Rotated built-in AI key."
+}

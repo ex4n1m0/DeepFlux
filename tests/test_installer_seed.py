@@ -92,3 +92,16 @@ def test_seeded_iptv_url_serves_extm3u(monkeypatch):
     except Exception:
         pytest.skip("offline")
     assert head.startswith("#EXTM3U"), head
+
+
+def test_installer_preserves_existing_config():
+    """Owner decision 2026-09-19: the installer must NEVER delete
+    ~/.deeptorrent/config.json — the seed only lands when no config exists.
+    The auto-updater and every upgrade depend on the file surviving."""
+    iss = open(ISS_PATH, encoding="utf-8").read()
+    block = iss.split("procedure CurStepChanged")[1].split(
+        "procedure CurUninstallStepChanged")[0]
+    assert "DeleteFile" not in block, "config wipe crept back in"
+    guard = block.find("if FileExists(ConfigPath) then")
+    seed = block.find("SaveStringToFile(ConfigPath")
+    assert 0 < guard < seed, "the seed must be written only on fresh installs"
