@@ -1,9 +1,9 @@
-"""Room tab — the DeepFlux Room community chat (ircmgr/room.py).
+"""Room tab — the DeepFlux community chat over the OnlyHumans protocol.
 
 Layout:
     +---------------------------------------------------------------+
-    | join bar: DeepFlux Room [nickname] [Host…] [ip:port] [Join]   |
-    |           [Make private…] · status…                           |
+    | join bar: DeepFlux Room [name] [room word] [🎲] [Join]        |
+    |           [Seal room…] · status…                               |
     +--------------------------------------------+------------------+
     | chat view (HTML transcript)               | members          |
     +--------------------------------------------+------------------+
@@ -11,14 +11,18 @@ Layout:
     | [input line……………………………………] [Send]                           |
     +---------------------------------------------------------------+
 
-The room is NOT IRC and uses no chat server: the first person to press
-Join hosts a small chat server in-app; everyone else connects to them
-directly (star topology, host takeover on leave). The controller
-(:class:`ircmgr.room.RoomController`) owns all networking on daemon
-threads and mirrors everything into an :class:`ircmgr.state.IRCState`;
-events arrive here through a single queued Qt signal so no widget is
-ever touched off the GUI thread. The room never auto-joins — nickname
-+ Join, every session.
+    Every word is a room: the Room tab speaks the OnlyHumans protocol
+    (ircmgr/oh_room.py) as a mailbox-only member — the same peer class as
+    the OnlyHumans browser portal — so DeepFlux users share rooms with the
+    OnlyHumans Windows app and anyone at onlyhumans.deepflux.space/join.
+    The word "deepflux" is the shared community room; any other word is a
+    separate room. Messages are sealed end-to-end on this device and
+    travel through the site's sealed inbox (⇄ site delivery). The
+    controller owns all networking on one daemon thread and mirrors
+    everything into an :class:`ircmgr.state.IRCState`; events arrive here
+    through a single queued Qt signal so no widget is ever touched off
+    the GUI thread. The room auto-joins at launch (chat.auto_join) with
+    the saved name (a "deepfluxuser####" name is generated on first run).
 """
 from __future__ import annotations
 
@@ -46,8 +50,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config import DeeptorrentConfig, shared_room_secret
-from ircmgr.room import ROOM_CHANNEL, RoomController
+from config import DeeptorrentConfig
+from ircmgr.oh_room import (
+    ROOM_CHANNEL,
+    OhRoomController,
+    generate_default_name,
+    gen_room_phrase,
+)
 from ircmgr.state import IRCState, ROOM_NET_ID
 from gui.responsive import ResponsiveRow, shrink_label
 
@@ -137,7 +146,7 @@ class RoomTab(QWidget):
 
     def __init__(self, config: DeeptorrentConfig,
                  parent: Optional[QWidget] = None,
-                 room: Optional[RoomController] = None) -> None:
+                 room: Optional[OhRoomController] = None) -> None:
         super().__init__(parent)
         self._config = config
         self._signals = _RoomSignals()
@@ -148,8 +157,7 @@ class RoomTab(QWidget):
         self._state.ensure_network(ROOM_NET_ID, host="DeepFlux Room", port=0,
                                    tls=False)
         self._state.ensure_channel(ROOM_NET_ID, ROOM_CHANNEL)
-        self._room = room or RoomController(config.chat, self._state,
-                                            secret=shared_room_secret())
+        self._room = room or OhRoomController(config.chat, self._state)
         self._room.add_listener(self._signals.event.emit)
 
         # Transcript placeholder tracking (avoids serializing the whole
@@ -163,6 +171,30 @@ class RoomTab(QWidget):
         self._topic_label.setText(self._state.topic_of(ROOM_NET_ID, "#lounge")
                                   or self._room_topic())
         self._update_room_bar()
+        self._maybe_auto_join()
+
+    # ------------------------------------------------------------------
+    # auto-join
+    # ------------------------------------------------------------------
+
+    def _maybe_auto_join(self) -> None:
+        """Launch-time join: the room runs in the background from app
+        start so messages accumulate before the tab is ever opened.
+        DF_NO_ROOM=1 (boot smokes, CI) keeps offline runs quiet."""
+        import os
+        if os.environ.get("DF_NO_ROOM"):
+            return
+        if not self._config.chat.auto_join or self._room.is_joined() \
+                or self._room.role != "left":
+            return
+        name = self._config.chat.nickname or generate_default_name()
+        if not self._config.chat.nickname:
+            self._config.chat.nickname = name
+            self._save_config()
+        self._nick_edit.setText(name)
+        self._word_edit.setText(self._config.chat.last_word
+                                 or self._config.chat.default_word)
+        self._room.join(name)
 
     # ------------------------------------------------------------------
     # UI construction
@@ -173,40 +205,44 @@ class RoomTab(QWidget):
         root.setContentsMargins(6, 6, 6, 6)
         root.setSpacing(4)
 
-        # Join bar. ResponsiveRow + OverflowRow: the row shrinks gracefully
-        # on narrow windows instead of locking the window wide.
+        # Join bar. ResponsiveRow: the row shrinks gracefully on narrow
+        # windows instead of locking the window wide.
         self._join_bar_w = ResponsiveRow()
         bar = QHBoxLayout(self._join_bar_w)
         room_label = QLabel("DeepFlux Room")
         room_label.setStyleSheet("color:#a8edff;font-weight:600")
         bar.addWidget(room_label)
         self._nick_edit = QLineEdit()
-        self._nick_edit.setPlaceholderText("Nickname")
-        self._nick_edit.setMaximumWidth(140)
+        self._nick_edit.setPlaceholderText("Your name")
+        self._nick_edit.setMaximumWidth(150)
         self._nick_edit.setClearButtonEnabled(True)
-        self._nick_edit.returnPressed.connect(self._on_join_clicked)
         self._nick_edit.setText(self._config.chat.nickname)
+        self._nick_edit.returnPressed.connect(self._on_name_committed)
         bar.addWidget(self._nick_edit)
-        self._advanced_btn = QPushButton("Host…")
-        self._advanced_btn.setCheckable(True)
-        self._advanced_btn.setToolTip(
-            "Advanced: connect directly to a hosting peer (ip:port) instead "
-            "of using automatic discovery")
-        self._advanced_btn.toggled.connect(self._on_advanced_toggled)
-        bar.addWidget(self._advanced_btn)
-        self._host_edit = QLineEdit()
-        self._host_edit.setPlaceholderText("ip:port — direct host")
-        self._host_edit.setMaximumWidth(200)
-        self._host_edit.setVisible(False)
-        self._host_edit.setText(self._config.chat.manual_host)
-        bar.addWidget(self._host_edit)
+        self._word_edit = QLineEdit()
+        self._word_edit.setPlaceholderText("room word")
+        self._word_edit.setMaximumWidth(160)
+        self._word_edit.setClearButtonEnabled(True)
+        word = (self._config.chat.last_word
+                or self._config.chat.default_word or "deepflux")
+        self._word_edit.setText(word)
+        self._word_edit.returnPressed.connect(self._on_join_clicked)
+        bar.addWidget(self._word_edit)
+        self._dice_btn = QPushButton("🎲")
+        self._dice_btn.setFixedWidth(36)
+        self._dice_btn.setToolTip(
+            "Generate a random unguessable room phrase — share it only with "
+            "the people you want in that room")
+        self._dice_btn.clicked.connect(self._on_dice_clicked)
+        bar.addWidget(self._dice_btn)
         self._join_btn = QPushButton("Join")
         self._join_btn.clicked.connect(self._on_join_clicked)
         bar.addWidget(self._join_btn)
-        self._private_btn = QPushButton("Make private…")
+        self._private_btn = QPushButton("Seal room…")
         self._private_btn.setToolTip(
-            "Generate a new random room key shared only with the people in "
-            "the room right now — people joining later will not see this room")
+            "Rotate the room key (host only): the people in the room right "
+            "now move onto a new key — people who join later with this word "
+            "will not see this room")
         self._private_btn.clicked.connect(self._on_private_clicked)
         self._private_btn.setVisible(False)
         bar.addWidget(self._private_btn)
@@ -214,7 +250,7 @@ class RoomTab(QWidget):
         self._status_label = QLabel("")
         self._status_label.setStyleSheet(f"color:{_MUTED_COLOR}")
         shrink_label(self._status_label)  # live status must not grow the window min
-        # Right-click while hosting → copy the address others join through.
+        # Right-click → copy the room word / an invite line for this room.
         self._status_label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._status_label.customContextMenuRequested.connect(self._show_status_menu)
         bar.addWidget(self._status_label)
@@ -287,85 +323,108 @@ class RoomTab(QWidget):
     def _room_topic(self) -> str:
         return self._state.topic_of(ROOM_NET_ID, ROOM_CHANNEL)
 
-    def _on_advanced_toggled(self, checked: bool) -> None:
-        self._host_edit.setVisible(checked)
-        self._advanced_btn.setText("Host…" if not checked else "Hide")
-
     def _update_room_bar(self) -> None:
         joined = self._room.is_joined()
-        self._join_btn.setText("Leave" if joined else "Join")
+        connecting = self._room.role == "connecting"
+        self._join_btn.setText("Leave" if (joined or connecting) else "Join")
         self._join_btn.setToolTip(
-            "Leave the room" if joined else
-            "Connect to the DeepFlux Room community chat (first person in hosts it)")
-        self._nick_edit.setEnabled(not joined)
-        self._private_btn.setVisible(joined)
-        mode = "encrypted" if self._room.encrypted else "UNENCRYPTED (source build)"
-        if joined and "private room" in (self._room_topic() or ""):
-            mode = "private · " + mode
+            "Leave the room" if joined or connecting else
+            "Join a room: same word = same room (works with the OnlyHumans "
+            "app and the /join browser portal too)")
+        word = self._room.word or self._word_edit.text().strip() or "deepflux"
         role = self._room.role
+        online = self._room.online
+        suffix = f" · {online} online" if online else ""
         if joined and role == "host":
-            endpoints = self._room.endpoints()
-            where = f" — others join via {endpoints[0]}" if endpoints else ""
-            self._status_label.setText(f"hosting{where} · {mode}")
+            self._status_label.setText(
+                f"room “{word}” — hosting · sealed end-to-end (⇄ site){suffix}")
         elif joined:
-            self._status_label.setText(f"connected as {self._room.nick} · {mode}")
-        elif role == "connecting":
-            self._status_label.setText(f"connecting… · {mode}")
+            self._status_label.setText(
+                f"room “{word}” — connected as {self._room.nick} · "
+                f"sealed end-to-end (⇄ site){suffix}")
+        elif connecting:
+            self._status_label.setText(f"finding room “{word}”…{suffix}")
         else:
-            self._status_label.setText("first one in hosts the room · " + mode)
+            self._status_label.setText(
+                "every word is a room · sealed end-to-end (⇄ site)")
+        self._private_btn.setVisible(joined and role == "host")
+
+    def _on_name_committed(self) -> None:
+        """The name box doubles as a live rename control while joined."""
+        name = self._nick_edit.text().strip()
+        if not name:
+            return
+        if not self._room.is_joined() and self._room.role == "left":
+            self._on_join_clicked()
+            return
+        if name != self._room.nick:
+            self._room.rename(name)
+            self._update_room_bar()
+
+    def _on_dice_clicked(self) -> None:
+        self._word_edit.setText(gen_room_phrase())
+        self._word_edit.setFocus()
 
     def _on_join_clicked(self) -> None:
-        if self._room.is_joined():
+        if self._room.is_joined() or self._room.role == "connecting":
+            if self._room.role == "connecting" and not self._room.is_joined():
+                self._show_local("server",
+                                 "Still finding the room — leaving anyway.")
             self._room.leave()
             self._update_room_bar()  # instant feedback; the state event re-syncs
             return
-        nick = self._nick_edit.text().strip()
-        if not nick:
-            self._status_label.setText("Enter a nickname first.")
+        name = self._nick_edit.text().strip()
+        if not name:
+            self._status_label.setText("Enter a name first.")
             self._nick_edit.setFocus()
             return
-        if re.search(r"[\s,\r\n]", nick) or len(nick) > 24:
-            self._show_local("error", "Invalid nickname (no spaces or commas, "
-                                      "max 24 chars).")
+        if len(name) > 32:
+            self._show_local("error", "Name too long (max 32 chars).")
             return
-        manual = ""
-        if self._advanced_btn.isChecked():
-            manual = self._host_edit.text().strip()
-        self._config.chat.nickname = nick
-        self._config.chat.manual_host = manual
+        word = self._word_edit.text().strip().lower()
+        if not word:
+            self._status_label.setText("Enter a room word first (or press 🎲).")
+            self._word_edit.setFocus()
+            return
+        if len(word) > 64:
+            self._show_local("error", "Room word too long (max 64 chars).")
+            return
+        self._config.chat.nickname = name
         self._save_config()
-        self._room.join(nick, manual)
+        self._room.join(name, word)
         self._update_room_bar()
 
     def _show_status_menu(self, pos) -> None:
         menu = QMenu(self)
-        copy_action = menu.addAction("Copy room address")
-        copy_action.setEnabled(self._room.role == "host"
-                               and bool(self._room.endpoints()))
+        word = self._room.word or self._word_edit.text().strip() or "deepflux"
+        copy_word = menu.addAction("Copy room word")
+        copy_invite = menu.addAction("Copy invite text")
         chosen = menu.exec(self._status_label.mapToGlobal(pos))
-        if chosen == copy_action:
-            endpoints = self._room.endpoints()
-            if endpoints:
-                QApplication.clipboard().setText(endpoints[0])
+        if chosen == copy_word:
+            QApplication.clipboard().setText(word)
+        elif chosen == copy_invite:
+            QApplication.clipboard().setText(
+                f"Join me on DeepFlux / OnlyHumans — open "
+                f"https://onlyhumans.deepflux.space/join (or the app), enter "
+                f"any name, then use the room word: {word}")
 
     def _on_private_clicked(self) -> None:
-        if not self._room.is_joined():
+        if not self._room.is_joined() or self._room.role != "host":
             return
         answer = QMessageBox.question(
-            self, "Make the room private",
-            "Generate a new random key and share it only with the people in "
-            "the room right now?\n\n"
-            "From that moment, people who join later will not see this room "
-            "— they get a separate, empty lounge instead. Everyone currently "
-            "here moves together onto the new key.",
+            self, "Seal the room",
+            "Rotate the room key now?\n\n"
+            "Everyone currently in the room moves together onto the new key. "
+            "People who join later with this word will NOT see this room — "
+            "they get a separate, empty room instead.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer == QMessageBox.StandardButton.Yes:
-            if not self._room.make_private():
+            if not self._room.rotate():
                 self._show_local("error",
-                                 "Could not rotate the room key — try again in "
-                                 "a few seconds.")
+                                 "Could not rotate the room key — try again "
+                                 "in a few seconds.")
 
     def _save_config(self) -> None:
         try:
@@ -651,8 +710,8 @@ class RoomTab(QWidget):
     # ------------------------------------------------------------------
 
     def shutdown(self) -> None:
-        # Graceful exit first: it withdraws the discovery pointer and tells
-        # members the host is going away (room continuity).
+        # Graceful exit first: it mails a best-effort Leave so hosts and
+        # members drop us immediately instead of waiting out the TTLs.
         try:
             self._room.shutdown()
         except Exception:

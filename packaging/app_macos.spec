@@ -134,7 +134,7 @@ a = Analysis(
         "gui.voice_input",
         "ircmgr",
         "ircmgr.state",
-        "ircmgr.room",
+        "ircmgr.oh_room",
         "dlmgr",
         "dlmgr.engine",
         "dlmgr.job",

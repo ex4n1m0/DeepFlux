@@ -187,7 +187,9 @@ def test_tabs_stay_shrinkable(tmp_path, tab_name):
         if tab_name == "room":
             from config import DeeptorrentConfig
             from gui.room_tab import RoomTab
-            return RoomTab(DeeptorrentConfig()), lambda t: t.shutdown()
+            cfg = DeeptorrentConfig()
+            cfg.chat.auto_join = False  # never touch the network in tests
+            return RoomTab(cfg), lambda t: t.shutdown()
         from PySide6.QtCore import QObject, Signal
         from config import DeeptorrentConfig
         from gui.downloads_tab import DownloadsTab

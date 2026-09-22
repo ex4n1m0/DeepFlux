@@ -42,6 +42,12 @@ fake_useragent_datas, fake_useragent_binaries, fake_useragent_hiddenimports = co
 # a Rust native extension that PyInstaller can't discover statically.
 crypto_datas, crypto_binaries, crypto_hiddenimports = collect_all("cryptography")
 
+# OnlyHumans room stack (ircmgr/oh_room.py): PyNaCl bundles libsodium
+# (XChaCha20-Poly1305 AEAD) and argon2-cffi the Argon2id word stretch —
+# both native extensions.
+nacl_datas, nacl_binaries, nacl_hiddenimports = collect_all("nacl")
+argon2_datas, argon2_binaries, argon2_hiddenimports = collect_all("argon2")
+
 # Voice input stack (agent-box mic): faster-whisper runs on ctranslate2 with
 # native DLLs; its VAD filter runs on onnxruntime (native + model assets);
 # tokenizers ships a Rust extension; huggingface_hub drives the one-time
@@ -122,8 +128,8 @@ if len(datas) != len(_wanted_datas):
 a = Analysis(
     [os.path.join(project_root, "main.py")],
     pathex=[project_root],
-    binaries=libtorrent_binaries + yt_dlp_binaries + mpv_binaries + vlc_binaries + curl_cffi_binaries + ddgs_binaries + primp_binaries + fake_useragent_binaries + crypto_binaries + fw_binaries + ct2_binaries + ort_binaries + tok_binaries + hf_binaries,
-    datas=datas + yt_dlp_datas + curl_cffi_datas + ddgs_datas + primp_datas + fake_useragent_datas + crypto_datas + license_datas + fw_datas + ct2_datas + ort_datas + tok_datas + hf_datas,
+    binaries=libtorrent_binaries + yt_dlp_binaries + mpv_binaries + vlc_binaries + curl_cffi_binaries + ddgs_binaries + primp_binaries + fake_useragent_binaries + crypto_binaries + nacl_binaries + argon2_binaries + fw_binaries + ct2_binaries + ort_binaries + tok_binaries + hf_binaries,
+    datas=datas + yt_dlp_datas + curl_cffi_datas + ddgs_datas + primp_datas + fake_useragent_datas + crypto_datas + nacl_datas + argon2_datas + license_datas + fw_datas + ct2_datas + ort_datas + tok_datas + hf_datas,
     hiddenimports=[
         "engine",
         "engine.torrent_engine",
@@ -150,7 +156,7 @@ a = Analysis(
         "gui.voice_input",
         "ircmgr",
         "ircmgr.state",
-        "ircmgr.room",
+        "ircmgr.oh_room",
         "iptv",
         "iptv.models",
         "iptv.m3u_parser",
@@ -220,7 +226,7 @@ a = Analysis(
         "primp",
         "fake_useragent",
         "infra.config_backup",
-    ] + yt_dlp_hiddenimports + curl_cffi_hiddenimports + ddgs_hiddenimports + primp_hiddenimports + fake_useragent_hiddenimports + crypto_hiddenimports + fw_hiddenimports + ct2_hiddenimports + ort_hiddenimports + tok_hiddenimports + hf_hiddenimports,
+    ] + yt_dlp_hiddenimports + curl_cffi_hiddenimports + ddgs_hiddenimports + primp_hiddenimports + fake_useragent_hiddenimports + crypto_hiddenimports + nacl_hiddenimports + argon2_hiddenimports + fw_hiddenimports + ct2_hiddenimports + ort_hiddenimports + tok_hiddenimports + hf_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

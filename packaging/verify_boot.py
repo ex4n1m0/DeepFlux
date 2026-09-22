@@ -22,6 +22,9 @@ import time
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Boot smokes must not join the community room (throwaway identities
+# hammering the real hub from every CI run).
+os.environ.setdefault("DF_NO_ROOM", "1")
 os.environ.setdefault(
     "QTWEBENGINE_CHROMIUM_FLAGS",
     "--disable-gpu --no-sandbox --disable-dev-shm-usage")

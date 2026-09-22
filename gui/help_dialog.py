@@ -44,7 +44,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 5.0 — User Guide</h1>
+<h1>DeepFlux 5.1 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -92,7 +92,7 @@ reachable, nothing disappears.</p>
   <tr><td><b>Download</b></td><td>Torrents on top, download manager below. Auto-focused whenever a transfer is added.</td><td>Full queue control: list, pause, resume, retry, cancel</td></tr>
   <tr><td><b>Play</b></td><td>IPTV and media player — live TV, movies, series, and your own local media folders.</td><td>Search playlist, play, pause, stop, volume, EPG</td></tr>
   <tr><td><b>Command</b></td><td>Dual-pane file manager (Double Commander style).</td><td>Browse, copy, move, rename, delete, new folder</td></tr>
-  <tr><td><b>Room</b></td><td>DeepFlux Room — serverless community chat (peer to peer; the first person to join hosts it).</td><td>—</td></tr>
+  <tr><td><b>Room</b></td><td>DeepFlux Room — community chat over the OnlyHumans word rooms (every word is a room; auto-joins the “deepflux” room).</td><td>—</td></tr>
 </table>
 
 <p>Switch pages with <code>Ctrl+1</code>–<code>Ctrl+6</code> or by clicking the
@@ -389,45 +389,46 @@ browser toolbar's Bookmarks button.</p>
 <h2>DeepFlux Room — Community Chat</h2>
 
 <p>The <b>Room</b> page is the <span style="color:#a8edff">DeepFlux Room</span>,
-the app's community chat. It uses no chat server: the <b>first person to
-join hosts the room inside the app</b>, and everyone else connects to them
-directly, peer to peer. When the host leaves, another member automatically
-takes over, so the room keeps living.</p>
+the app's community chat. It speaks the <b>OnlyHumans</b> protocol:
+<b>every word is a room</b>. DeepFlux joins the shared community room word
+<b>“deepflux”</b> automatically at launch (a <span style="color:#a8edff">deepfluxuser####</span>
+name is generated for you on first run — change it any time), and you can
+enter any other word to land in a different room. People using the
+OnlyHumans Windows app or the browser portal at
+onlyhumans.deepflux.space/join who type the same word are in the SAME room
+with you.</p>
 
 <ul>
-  <li><b>Joining:</b> open the Room page, type a nickname, press
-  <b>Join</b>. You are never joined automatically — every session starts at
-  this bar. <b>Leave</b> is the same button.</li>
-  <li><b>Finding the host:</b> a tiny pointer on deepflux.space says who is
-  currently hosting (address + timestamp only — <b>no messages, ever</b>).
-  The "Host…" button next to the nickname skips that and connects straight
-  to an address you type (<code>ip:port</code>) — handy on tricky networks,
-  or when discovery is down.</li>
-  <li><b>Encryption:</b> in the downloaded setup build every message is
-  sealed with a key that ships only inside the app (AES-GCM, per-message
-  keys, tamper-proof). Builds compiled from the GitHub source have no key
-  and their lounge runs unencrypted — a separate room that never sees the
-  encrypted one. Sealed means sealed on the wire: anyone holding the same
-  app can read the room; it is a group key, not a secret channel.</li>
-  <li><b>Making the room private:</b> anyone in the room can press
-  <b>Make private…</b> to generate a fresh random key that is handed only
-  to the people in the room at that moment. From then on, people who join
-  later cannot read — or even find — this room; they get a separate, empty
-  lounge. The private room lives as long as its members stay connected
-  (the rotated key is held in memory, never written to disk), and it
-  survives its host leaving — the next member re-hosts it under the same
-  private key.</li>
-  <li><b>Hosting notes:</b> the host's app tries to open a port on your
-  router automatically (UPnP) and shows the address others can use in the
-  status line — right-click that line → <b>Copy room address</b>. Windows
-  may ask once to allow DeepFlux through the firewall — the room works best
-  if you allow it. No port open? Joiners on your local network still reach
-  you, and anyone can use a direct address.</li>
+  <li><b>Auto-join:</b> the room connects in the background from app start,
+  so messages are already waiting when you open the page. Turn it off for a
+  launch with the Join button (Join again whenever you want in). Your name
+  and last room word are remembered.</li>
+  <li><b>Your name:</b> edit the name box and press Enter — works while
+  joined, no reconnect needed. Names are not unique (they are display
+  labels); your identity is a key pair generated on this machine and never
+  leaves it.</li>
+  <li><b>Rooms:</b> type any word in the room-word box and press
+  <b>Join</b> to switch rooms — same word = same room, anywhere. The 🎲
+  button generates a long random phrase for a private room: share it only
+  with the people you want there (a guessable word is <i>not</i> access
+  control — it is convenience isolation; the app stretches every word with
+  a memory-hard function so room words cannot be brute-forced).</li>
+  <li><b>Sealing a room (host only):</b> <b>Seal room…</b> rotates the room
+  key: everyone present moves to the new key together, and people who join
+  later with the same word land in a separate, empty room instead.</li>
+  <li><b>Encryption &amp; delivery:</b> every message is sealed on your
+  device (end-to-end; per-message keys, padded frames). DeepFlux delivers
+  through the OnlyHumans hub's sealed mailbox (the “⇄ site” path — the hub
+  stores only signatures and ciphertext it cannot read). That means chat
+  with portal users is near-instant, while people on the OnlyHumans
+  <i>desktop app</i> may take up to about half a minute to see and reply
+  (their apps pick mail up on a slower cycle). Room history is kept on this
+  machine only, sealed at rest with a device key.</li>
 </ul>
 
 <h2>Privacy</h2>
 
-<p>DeepFlux works fully offline if you want it to. Two things talk to the
+<p>DeepFlux works fully offline if you want it to. Three things talk to the
 internet by default:</p>
 
 <ul>
@@ -439,11 +440,11 @@ internet by default:</p>
   off in Settings → Downloads → Download Manager Settings.</li>
   <li><b>Update checks</b> — a daily check for an outdated YouTube downloader
   (warn-only). Same settings page.</li>
+  <li><b>The Room</b> — while joined, the room keeps a connection to the
+  OnlyHumans hub (onlyhumans.deepflux.space): signed presence records and
+  sealed mail envelopes. The hub sees <i>that</i> an app is online and which
+  sealed envelopes move, but never a message, a room word or your name.</li>
 </ul>
-
-<p>The DeepFlux Room adds one more, only while you use it: the discovery
-pointer described above (a sealed host address — chat itself never touches
-any server).</p>
 
 <p>Everything else — searching, downloading, playing, the agent — only uses
 the network when you ask it to.</p>
@@ -600,7 +601,7 @@ class AboutDialog(QDialog):
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("5.0 — AI Deep Search")
+        version = QLabel("5.1 — AI Deep Search")
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 

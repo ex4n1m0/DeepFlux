@@ -1280,92 +1280,94 @@
 
 ## Room subsystem (ircmgr/ + gui/room_tab.py)
 - `ircmgr` is a HISTORICAL name: the IRC client was REMOVED completely in
-  4.1 (user decision — the page was confusing). The package now holds only
-  the DeepFlux Room: `state.py` (thread-safe chat state: ring buffers +
-  nick lists, keyed by the ROOM_NET_ID pseudo-network) and `room.py`.
-  Do not re-add IRC client code, IRC agent tools, `config.irc`, or the
-  PyPI `irc` dependency. Old config.json files may still carry a stale
-  `"irc"` section — it is ignored on load and dropped on the next save.
-- `gui/room_tab.py::RoomTab` (tab title "Room", index 5, Ctrl+6):
-  nickname + Join/Leave bar (never auto-joined), optional direct-host
-  "Host…" field, transcript (QTextBrowser + linkify), member list, topic
-  line, /me /clear /help commands, Tab nick-completion, transcript search,
-  mention highlighting. `RoomTab(config, parent, room=None)` — MainWindow
-  passes the parent POSITIONALLY as the second arg; keep it there (3.9
-  lesson). Shutdown (`closeEvent`) calls `room_tab.shutdown()` only.
-- DeepFlux Room (`ircmgr/room.py`, added 2026-09-13): a SERVERLESS
-  community chat — it reuses IRCState and emits dict events
-  (state/names/topic/message/join/part/notice), so the tab renders it
-  through one queued Qt signal. NOT IRC: the first user to press Join hosts
-  a TCP chat server in-app (star topology — the host relays and is
-  authoritative for nick→connection, so clients cannot forge nicks);
-  everyone else connects directly. Discovery needs one shared point:
-  `website/api/room.js` (Upstash, same env names as heartbeat) stores ONLY
-  a host pointer {endpoints, ts, token} under `df:room:<id>` with a 120s
-  TTL — never a message; announce uses atomic SET NX so a live foreign
-  host's slot is never clobbered, refresh/leave verify the host token, and
-  `?mode=myip` echoes the caller IP so a host can advertise its public
-  address. Everything degrades: no env vars / site down → host still works
-  LAN-only + direct-address. Controller lifecycle: left → connecting →
-  member|host → left; a member whose link dies re-runs discovery with
-  backoff (5 tries) and promotes itself to host when the pointer is gone;
-  a demoted/stopped host recovers the same way; only a `taken` refresh
-  demotes (offline discovery must never tear down a working room).
-  NEVER auto-joined: the join bar is the only way in, per user decision.
-  `RoomClient.connect` RACES all advertised endpoints (public + LAN) so
-  LAN joiners don't sit through the public timeout.
-  CRYPTO (owner decision): messages are sealed AES-256-GCM under a secret
-  that ships ONLY in the setup exe (`SHARED_ROOM_KEY` slot in
-  _embedded_keys.py; `config.shared_room_secret()` reads it — it is NOT a
-  config field, so to_file/sanitized_dict can never persist it). Keys are
-  derived per direction (c2h != h2c, AAD binds record kind — no reflection,
-  no cross-purpose replay); joins carry an HMAC proof (2-min window), the
-  discovery pointer is sealed+verified, and the encrypted room's discovery
-  id is key-derived so source builds cannot even SEE it. Source builds
-  (no key) run the same room UNENCRYPTED as a separate `lounge` slot —
-  by design, do not "fix". Group-key ceiling: any exe holder can read the
-  room; it is sealed in transit/at the rendezvous, not secret from
-  members. Host hardening: nick regex (1-24, no spaces/commas,
-  case-insensitive-unique, "room"/"lounge" reserved), 64-user cap,
-  2000-char/8-msg-per-5s rate limit (flooders dropped), 16KB wire cap,
-  last-100 history replayed in the welcome (replayed records land in the
-  state buffer WITHOUT events — the tab re-renders on the `connected`
-  state event, which BOTH member and host paths now emit).
-  KEY ROTATION / "Make private…" (user decision, 2026-09-13): any member
-  may press the button (GUI confirms first); the HOST performs the
-  rotation — `RoomHost.rotate()` generates a 256-bit secret, sends one
-  {"t":"rekey"} record sealed under the CURRENT key (so only people
-  already in the room receive it; a member's ability to seal a rekey_req IS
-  the permission — forged requests drop the connection), then swaps codecs
-  with a 10s cooldown. Both host and client keep the immediately-previous
-  codec for a 60s grace window so in-flight records sealed moments before
-  the rotation still decode. The controller (`_on_rotated`) swaps its
-  codec, retitles the room "private room (rotated key)", and — when
-  hosting — withdraws the OLD discovery slot and claims the NEW one (room
-  id derives from the key, so key-less latecomers cannot even find the
-  room; they host a fresh lounge). Rotation always generates a REAL
-  secret, so even a source-build room becomes encrypted after rotating.
-  The rotated key lives in memory only (leave + rejoin = back to the base
-  room); takeover after rotation re-hosts under the rotated id.
-  SOCKET GOTCHAS (each one bit us — measured, 2026-09-13): (1) sock.close()
-  is DEFERRED while a makefile() reader still references the socket, so the
-  FIN never goes out and the peer only times out — ALWAYS shutdown(SHUT_RDWR)
-  first (it also unblocks a reader parked in readline); (2) file.close()
-  from another thread BLOCKS on the reader's buffer lock until its read
-  returns (a full 75s read timeout here) — never close the makefile
-  cross-thread before shutdown. Host listens on port `chat.listen_port`
-  (7766, scans +20), best-effort UPnP IGD mapping (`_upnp_map_port`,
-  SSDP+SOAP, cached per process) so internet joiners can reach a home
-  host; Windows Firewall may prompt once on first host (documented in the
-  User Guide, cannot be automated). Tests: tests/test_chatroom.py —
-  FakeRendezvous mirrors room.js, UPnP patched out, everything on
-  loopback; the GUI section builds the real RoomTab offscreen. The loopback
-  host/controller tests are TIMING-SENSITIVE under full-suite load —
-  the flooder test tolerates the RST, controller joins wait up to 20s.
-  The release build needs the owner to add the room secret: set
-  SHARED_ROOM_KEY in _embedded_keys.py and run packaging/gen_embedded_keys.py
-  (ATTRS already lists it; absent = source behavior, encrypted room simply
-  absent). Deploy note: room.js is additive — old exes never call it.
+  4.1, and the homegrown P2P room (ircmgr/room.py, TCP star topology +
+  SHARED_ROOM_KEY + website/api/room.js rendezvous) was RETIRED in 5.1.
+  The package now holds `state.py` (thread-safe chat state: ring buffers +
+  nick lists, keyed by the ROOM_NET_ID pseudo-network) and `oh_room.py`.
+  Do not re-add IRC client code, IRC agent tools, `config.irc`, the PyPI
+  `irc` dependency, or the old room.py protocol. `config.shared_room_secret`
+  and the SHARED_ROOM_KEY slot are KEPT but UNUSED (old builds keep
+  loading; gen_embedded_keys.py unchanged). website/api/room.js stays
+  DEPLOYED (old exes 4.1–5.0 still call it) — never delete it from the
+  site; it costs nothing.
+- `gui/room_tab.py::RoomTab` (tab title "Room", index 5, Ctrl+6): name +
+  room-word + 🎲 + Join/Leave bar, transcript (QTextBrowser + linkify),
+  member list, topic line, /me /clear /help commands, Tab
+  nick-completion, transcript search, mention highlighting.
+  `RoomTab(config, parent, room=None)` — MainWindow passes the parent
+  POSITIONALLY as the second arg; keep it there (3.9 lesson). Shutdown
+  (`closeEvent`) calls `room_tab.shutdown()` only.
+- DeepFlux Room (`ircmgr/oh_room.py`, 5.1): the chat now speaks the
+  ONLYHUMANS protocol (onlyhumans.deepflux.space — same owner) as a
+  native Python MAILBOX-ONLY member, the same peer class as the /join
+  browser portal. Every word is a room; DeepFlux auto-joins the community
+  word "deepflux" at launch (chat.auto_join; a deepfluxuser#### name is
+  generated on first run and persisted in chat.nickname; the last word
+  sticks in chat.last_word). Users can rename live (member: re-Join to
+  the host updates the member table; host: broadcast), switch words, 🎲
+  a random phrase room, and the HOST can "Seal room…" (rotate → epoch+1,
+  room closed to newcomers). Room "deepflux" is shared with the
+  OnlyHumans Windows app and the browser portal — same word, same room.
+  PROTOCOL (port of C:\OnlyHumans-main\portal\portal.ts + app.ts,
+  KAT-verified against the Rust core's kat.json — a copy is embedded in
+  tests/test_oh_room.py; the OnlyHumans repos are the spec, do not
+  re-derive): word → egk = Argon2id(m=64MiB t=3 p=1, salt=SHA256(
+  "OH1-pass-v2|"|gk|word)); room = SHA256("OH1-room-v1|"|egk)[:16];
+  GK ("universe key") is PUBLIC by design, fetched from /api/gk (60s
+  cache) and rotated per OnlyHumans release; identity = local Ed25519
+  seed at ~/.deeptorrent/room_identity (NOT in config.json — Settings
+  Export must never transplant a chat identity), peer id = base58btc
+  identity multihash of the libp2p pubkey protobuf; admission proof =
+  HKDF(egk, salt=[], info="adm"|peer|nonce); host mints a random room
+  key at epoch 1, delivers it sealed (XChaCha20-Poly1305, HKDF-derived
+  per (egk,room,epoch,recipient) — epoch-bound so old deliveries can't
+  XOR out newer keys); chat/members/rotate frames use per-message
+  subkeys HKDF(room_key, room|epoch, kind|sender|seq) with AAD binding
+  kind/room/epoch/sender/seq and PADDED to size buckets; replay guard =
+  per-sender monotonic seq; host election = PUT /api/room NX
+  (first-writer-wins, 409 = live record); a member silent-hosted >45s
+  re-runs discovery and TAKES OVER keeping the same key+epoch; epoch>1 =
+  sealed (Join refused with an Error envelope). All delivery goes
+  through the hub's sealed inbox (PUT /api/inbox ≤16 items, ~4s
+  per-sender throttle → one 4.2s retry; destructive drain every ~2-3.5s
+  seated/2s seeking; reg + presence every 31s; host refresh 45s vs the
+  record's 300s TTL). Latency: ↔ portal ≈ seconds, ↔ OnlyHumans DESKTOP
+  peers up to ~30s (their 30s drain) — that is the documented "⇄ site"
+  fallback, not a bug.
+  GOTCHAS (measured/verified 2026-09-22 — do not re-derive): (1)
+  `cryptography` 46 has NO XChaCha20Poly1305 AEAD — PyNaCl's
+  `nacl.bindings.crypto_aead_xchacha20poly1305_ietf_*` is the AEAD;
+  Ed25519/HKDF/SHA256 come from `cryptography`, Argon2id from
+  `argon2-cffi` (requirements floor + app.spec collect_all both; the
+  other two specs list ircmgr.oh_room in hiddenimports).
+  (2) argon2-cffi's `Type.I` is Argon2i — the protocol needs
+  `Type.ID` (Argon2id); the argon2d KAT row is what proves the call
+  path when debugging this again. (3) The b64 is the URL-safe alphabet
+  without padding, hand-rolled (exact round trip pinned by KAT).
+  (4) The controller keeps `_role` ∈ {left, connecting, active} and
+  DERIVES the public role ("host"/"member") from `_is_host` — takeover
+  and 409-demotion flip only `_is_host`; never store them separately or
+  they desync. (5) `_stop_room` must clear `_room_hex` or the next
+  join's retry pacing (REJOIN_RETRY on `_room_hex` set) delays the
+  first attempt. (6) KeyDelivery acceptance is gated on
+  sender == host_id (GK is public — anyone can SEAL a key; only the
+  host we asked may seat us) and epoch ≥ current (adopts missed
+  rotations). (7) History: sealed-at-rest JSONL under
+  ~/.deeptorrent/rooms/<roomhex>.jsonl, XChaCha key HKDF-derived from
+  the identity seed, loaded once per join session (_history_loaded)
+  BEFORE the connected event so the tab's re-render shows it.
+  (8) Auto-join runs at app start in the background (reverses the
+  2026-09-13 "never auto-joined" decision — owner choice 2026-09-22);
+  `DF_NO_ROOM=1` (set by packaging/verify_boot.py) keeps boot smokes
+  and CI from registering throwaway peers with the production hub, and
+  GUI tests set cfg.chat.auto_join = False (see test_responsive).
+  (9) E2E recipe (proved 2026-09-22): two temp-identity controllers
+  against the REAL hub seat in ~12s; the browser portal at /join joins
+  the same word and exchanges messages both ways — full cross-client
+  interop. Chat content is NEVER fed to the LLM and must stay
+  non-agent-callable. Tests: tests/test_oh_room.py (KAT + FakeHub
+  flows + offscreen RoomTab; FakeHub mirrors the real endpoints
+  including NX election + destructive drain).
 - PySide6 test gotcha: patching `QMenu.exec` (or any C++ method) on the
   CLASS does NOT intercept instance calls — shiboken resolves instance
   methods through the C++ method table, bypassing Python class attributes,

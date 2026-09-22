@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "5.0"
+APP_VERSION = "5.1"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -99,18 +99,18 @@ _SHARED_TPDB_API_KEY = _load_shared_key("SHARED_TPDB_API_KEY")
 _SHARED_STASHDB_API_KEY = _load_shared_key("SHARED_STASHDB_API_KEY")
 _SHARED_OMDB_API_KEY = _load_shared_key("SHARED_OMDB_API_KEY")
 _SHARED_FANARTTV_API_KEY = _load_shared_key("SHARED_FANARTTV_API_KEY")
-# Community-room crypto secret. Deliberately NOT a config field: it is read
-# directly by ircmgr.room via shared_room_secret(), so there is no slot that
-# to_file()/sanitized_dict() could ever persist or scrub. Empty (source
-# builds) = the room runs unencrypted with its own public discovery slot.
+# Legacy community-room crypto secret from the pre-5.1 homegrown Room
+# (retired: the Room tab now speaks the OnlyHumans protocol, which needs no
+# embedded secret — its "universe key" is public-by-design and fetched from
+# the hub at runtime). The slot stays so old installs keep loading and
+# gen_embedded_keys.py needs no change; nothing reads it any more.
 _SHARED_ROOM_KEY = _load_shared_key("SHARED_ROOM_KEY")
 
 
 def shared_room_secret() -> str:
-    """In-box secret for the DeepFlux Room chat (setup builds only).
-
-    Same hygiene as the other shared keys: obfuscated inside the untracked
-    _embedded_keys.py, shipped only in the frozen bundle, absent from git."""
+    """Legacy slot kept for compatibility — unused since the 5.1 OnlyHumans
+    Room (the new room derives everything from a local identity keypair and
+    the hub's public universe key)."""
     return _SHARED_ROOM_KEY
 
 
@@ -527,12 +527,15 @@ class VoiceConfig:
 
 @dataclass
 class ChatConfig:
-    """DeepFlux Room — the serverless community chat on the Room page
-    (ircmgr/room.py). Nothing here auto-connects: the user types a nickname
-    and presses Join every session (the nickname is only a prefill)."""
-    nickname: str = ""       # prefill for the join bar
-    listen_port: int = 7766  # host's preferred TCP port (scans +20 when busy)
-    manual_host: str = ""    # last used direct "ip:port" (advanced join)
+    """DeepFlux Room — the OnlyHumans word-room community chat on the Room
+    page (ircmgr/oh_room.py). The room auto-joins at launch when auto_join
+    is on; the word "deepflux" is the shared DeepFlux community room and
+    any other word is a separate room (same word = same room, across
+    DeepFlux, the OnlyHumans app and the /join browser portal)."""
+    nickname: str = ""         # display name ("deepfluxuser####" generated on first run)
+    auto_join: bool = True     # join the room automatically at app launch
+    default_word: str = "deepflux"  # the DeepFlux community room word
+    last_word: str = ""        # sticky: the last word this user joined
 
 
 @dataclass
@@ -905,10 +908,13 @@ class DeeptorrentConfig:
             voice=VoiceConfig(**{k: v for k, v in data.get("voice", {}).items()
                                  if k in VoiceConfig.__dataclass_fields__}),
             chat=ChatConfig(
-                nickname=str(data.get("chat", {}).get("nickname", "") or "")[:24],
-                listen_port=max(1024, min(65535, int(
-                    data.get("chat", {}).get("listen_port", 7766) or 7766))),
-                manual_host=str(data.get("chat", {}).get("manual_host", "") or "")[:64],
+                nickname=str(data.get("chat", {}).get("nickname", "") or "")[:32],
+                auto_join=bool(data.get("chat", {}).get("auto_join", True)),
+                default_word=str(data.get("chat", {}).get("default_word",
+                                                         "deepflux")
+                                or "deepflux")[:64],
+                last_word=str(data.get("chat", {}).get("last_word", "")
+                              or "")[:64],
             ),
             stats=StatsConfig(**{k: v for k, v in data.get("stats", {}).items()
                                  if k in StatsConfig.__dataclass_fields__}),
