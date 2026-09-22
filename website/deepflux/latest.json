@@ -1,8 +1,8 @@
 {
-  "version": "5.0",
-  "file": "DeepFlux5.0Setup.exe",
-  "size": 370218886,
-  "sha256": "ebac3f4a425a6a32c24cfcd2804d3ac607f8d4091474d7ac93a8fb273c4a5dcb",
-  "released": "2026-09-19",
-  "notes": "DeepFlux 5.0 \u2014 the biggest UI update yet: left activity rail navigation, agent quick-ask panel on every page (Ctrl+K), searchable Settings Hub (Ctrl+,), status strip with activity chips and an event log, dark title bar, Windows taskbar progress, full-width Download lists with view chips, Play section chips, and a new logo."
+  "version": "5.1",
+  "file": "DeepFlux5.1Setup.exe",
+  "size": 370470054,
+  "sha256": "da73d0183f12e747b9b2c67b889c216f89fe97d587bd86c7381c2e275f16e56f",
+  "released": "2026-09-22",
+  "notes": "DeepFlux 5.1 \u2014 the Room tab now speaks the OnlyHumans protocol: every word is a room. DeepFlux auto-joins the community room \u201cdeepflux\u201d at launch (a deepfluxuser#### name is generated for you), you can rename live, create rooms from any word, and chat with people on the OnlyHumans app and the browser portal \u2014 same word, same room. Messages are sealed end-to-end; room history stays on your machine."
 }
