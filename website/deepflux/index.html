@@ -260,9 +260,9 @@
   header.hero .banner-glow {
     position: relative;
     display: block;
-    /* Square logo mark shown at the art's NATIVE size (1254px), clamped
-       to the content column on narrower screens. */
-    width: min(1254px, 100%);
+    /* Square logo mark: large but not full-column — clamped to the
+       content width on narrow screens. */
+    width: min(768px, 100%);
     margin: 0 auto;
   }
   header.hero .banner-glow::before {
