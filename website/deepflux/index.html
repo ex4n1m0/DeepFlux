@@ -258,8 +258,9 @@
   }
   @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
   header.hero h1 {
-    /* Overlaid EXACTLY centered on the logo mark: absolute inside the
-       banner-glow wrapper (which wraps the image edge-to-edge). */
+    /* Overlaid on the logo mark, centered in its UPPER-MIDDLE band
+       (owner-marked spot): bottom padding lifts the flex-centered text
+       so its center sits at ~43% of the image height. */
     position: absolute;
     inset: 0;
     z-index: 1;
@@ -267,7 +268,7 @@
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 0 9%;
+    padding: 0 9% 14%;
     pointer-events: none;
     font-family: var(--font-display);
     font-weight: 700;
