@@ -257,24 +257,30 @@
     animation: breathe 3.2s ease-in-out infinite;
   }
   @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
-  header.hero .banner-glow { position: relative; display: block; }
+  header.hero .banner-glow {
+    position: relative;
+    display: block;
+    /* Square logo mark: the glow hugs the art instead of spanning a banner. */
+    width: min(320px, 70vw);
+    margin: 0 auto;
+  }
   header.hero .banner-glow::before {
     content: "";
     position: absolute;
-    inset: -16% -10%;
+    inset: -14%;
     background: radial-gradient(58% 58% at 40% 50%, rgba(79, 125, 249, 0.22), transparent 70%),
                 radial-gradient(52% 56% at 68% 46%, rgba(139, 92, 246, 0.18), transparent 70%);
     filter: blur(22px);
   }
   header.hero img.banner {
     position: relative;
-    /* Full content width — the wordmark's sides align with the sections below. */
     width: 100%;
     height: auto;
     display: block;
     margin: 0 auto;
-    /* Neon art on pure black: screen blending drops the black rectangle. */
-    mix-blend-mode: screen;
+    /* The original mark carries real alpha and a dark body — normal
+       compositing over the page, lit by the glow behind it. The retired
+       wordmark's mix-blend-mode: screen would blank a dark logo. */
   }
   .hero-copy { margin: 14px auto 0; max-width: 760px; }
   .hero-copy p {
@@ -810,7 +816,7 @@
     <header class="hero">
       <div class="eyebrow"><span class="spark" aria-hidden="true"></span> AI agent &middot; built in</div>
       <div class="banner-glow">
-        <img class="banner" src="DeepFluxBanner.webp" alt="DeepFlux wordmark artwork">
+        <img class="banner" src="DeepFlux.webp" alt="DeepFlux logo">
       </div>
       <div class="hero-copy">
         <p>An AI-powered download manager with a built-in browser, media player

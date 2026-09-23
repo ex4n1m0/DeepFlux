@@ -57,8 +57,8 @@ for side in (16, 48, 128):
     resized(side).save(f"chrome_extension/icons/{side}.png")
 print("wrote chrome_extension/icons/16.png, 48.png, 128.png")
 
-# --- Website logo (displayed at max 512px; keep transparency) ---
-# Filename differs from the retired DeepFlux5.webp so a cached CDN copy of
-# the old art can never be served for the reverted logo.
-resized(512).save("website/deepflux/DeepFlux.webp", format="WEBP", quality=90)
+# --- Website logo (hero mark at ~320px + 26px nav brand; keep alpha) ---
+# 768px covers the hero at 2x DPR. Filename differs from the retired
+# DeepFlux5.webp so a cached CDN copy of the old art can never be served.
+resized(768).save("website/deepflux/DeepFlux.webp", format="WEBP", quality=90)
 print("wrote website/deepflux/DeepFlux.webp")
