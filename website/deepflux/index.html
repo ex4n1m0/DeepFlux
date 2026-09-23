@@ -257,6 +257,15 @@
     animation: breathe 3.2s ease-in-out infinite;
   }
   @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+  header.hero h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(2.4rem, 5.5vw, 4rem);
+    line-height: 1.08;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    margin: 0 0 20px;
+  }
   header.hero .banner-glow {
     position: relative;
     display: block;
@@ -816,6 +825,7 @@
   <main id="main" class="page" tabindex="-1">
     <header class="hero">
       <div class="eyebrow"><span class="spark" aria-hidden="true"></span> AI agent &middot; built in</div>
+      <h1>Power Download Tools</h1>
       <div class="banner-glow">
         <img class="banner" src="DeepFlux.webp" alt="DeepFlux logo">
       </div>
