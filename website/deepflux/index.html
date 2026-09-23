@@ -260,8 +260,9 @@
   header.hero .banner-glow {
     position: relative;
     display: block;
-    /* Square logo mark: the glow hugs the art instead of spanning a banner. */
-    width: min(320px, 70vw);
+    /* Square logo mark shown at the art's NATIVE size (1254px), clamped
+       to the content column on narrower screens. */
+    width: min(1254px, 100%);
     margin: 0 auto;
   }
   header.hero .banner-glow::before {
