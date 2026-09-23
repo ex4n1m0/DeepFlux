@@ -1,6 +1,6 @@
-"""Regenerate every logo-derived asset from the root DeepFlux5.png.
+"""Regenerate every logo-derived asset from the root DeepFlux.png.
 
-Run from the repo root after updating DeepFlux5.png:
+Run from the repo root after updating DeepFlux.png:
 
     python packaging/gen_logo_assets.py
 
@@ -10,17 +10,19 @@ Outputs:
   packaging/wizard_image.png         — Inno wizard left panel (164x314, black bg)
   packaging/wizard_small.png         — Inno wizard top-right (55x55, black bg)
   chrome_extension/icons/*.png       — browser extension icons (16/48/128)
-  website/deepflux/DeepFlux5.webp    — website logo (512px, keeps alpha)
+  website/deepflux/DeepFlux.webp     — website logo (512px, keeps alpha)
 
-DeepFlux5.png has a black background baked in — it matches the installer's
-WizardBackColor (#000000) exactly, and wizard images are pasted onto black.
-Supersedes gen_wizard_images.py.
+Since 5.2 the source is the ORIGINAL DeepFlux.png (owner decision
+2026-09-23: the 5.0-era DeepFlux5.png art is retired from the app icon
+and the landing hero). It carries real alpha; the wizard images paste it
+onto the installer's WizardBackColor (#000000). Supersedes
+gen_wizard_images.py.
 """
 from PIL import Image
 
 BG = (0, 0, 0)  # installer wizard pages are pure black (WizardBackColor)
 
-logo = Image.open("DeepFlux5.png").convert("RGBA")
+logo = Image.open("DeepFlux.png").convert("RGBA")
 
 
 def resized(side: int) -> Image.Image:
@@ -56,6 +58,7 @@ for side in (16, 48, 128):
 print("wrote chrome_extension/icons/16.png, 48.png, 128.png")
 
 # --- Website logo (displayed at max 512px; keep transparency) ---
-# Version-stamped so a new release can't be served from a stale CDN cache.
-resized(512).save("website/deepflux/DeepFlux5.webp", format="WEBP", quality=90)
-print("wrote website/deepflux/DeepFlux5.webp")
+# Filename differs from the retired DeepFlux5.webp so a cached CDN copy of
+# the old art can never be served for the reverted logo.
+resized(512).save("website/deepflux/DeepFlux.webp", format="WEBP", quality=90)
+print("wrote website/deepflux/DeepFlux.webp")

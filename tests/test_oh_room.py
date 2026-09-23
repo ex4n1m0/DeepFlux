@@ -505,6 +505,10 @@ class TestRoomBasics:
 # ----------------------------------------------------------------- GUI tab
 
 class TestRoomTab:
+    """The Room tab hosts the OnlyHumans join portal in a web view.
+    tests/conftest.py keeps DF_NO_ROOM=1, so the default build path here
+    is fully offline — the web view itself is only created without it."""
+
     @staticmethod
     def _app():
         from PySide6.QtWidgets import QApplication
@@ -513,124 +517,63 @@ class TestRoomTab:
             app = QApplication([])
         return app
 
-    def _tab(self, tmp_path, room=None):
+    def _tab(self, **cfg_overrides):
         from config import DeeptorrentConfig
         from gui.room_tab import RoomTab
         cfg = DeeptorrentConfig()
-        cfg.chat.auto_join = False  # no network in GUI tests
-        tab = RoomTab(cfg, None,
-                      room=room or self._offline_room(tmp_path))
-        return tab, cfg
+        for key, value in cfg_overrides.items():
+            setattr(cfg.chat, key, value)
+        return RoomTab(cfg, None), cfg
 
-    @staticmethod
-    def _offline_room(tmp_path):
-        return make_controller(tmp_path, FakeHub(), name="tabpeer")
-
-    def test_bar_states(self, tmp_path):
+    def test_portal_url_prefills_default_word(self):
         app = self._app()
-        room = self._offline_room(tmp_path)
-        tab, _ = self._tab(tmp_path, room=room)
-        assert "every word is a room" in tab._status_label.text()
-        room.join("tabster", "deepflux")
-        tab._update_room_bar()
-        assert "finding room" in tab._status_label.text()
-        room._join_pass()
-        tab._update_room_bar()
-        assert "hosting" in tab._status_label.text()
-        assert tab._join_btn.text() == "Leave"
-        room.leave()
-        tab._update_room_bar()
-        assert tab._join_btn.text() == "Join"
+        tab, _ = self._tab()
+        assert tab.portal_url == \
+            "https://onlyhumans.deepflux.space/join#room=deepflux"
         tab.shutdown()
 
-    def test_join_click_requires_name_and_word(self, tmp_path):
+    def test_portal_url_uses_configured_word_and_quotes_it(self):
         app = self._app()
-        tab, _ = self._tab(tmp_path)
-        tab._nick_edit.setText("")
-        tab._on_join_clicked()
-        assert "name" in tab._status_label.text().lower()
-        tab._nick_edit.setText("someone")
-        tab._word_edit.setText("")
-        tab._on_join_clicked()
-        assert "word" in tab._status_label.text().lower()
+        tab, _ = self._tab(default_word="My Word")
+        assert tab.portal_url.endswith("#room=My%20Word")
         tab.shutdown()
 
-    def test_join_click_passes_word(self, tmp_path, monkeypatch):
-        app = self._app()
-        room = self._offline_room(tmp_path)
-        tab, _ = self._tab(tmp_path, room=room)
-        calls = []
-        monkeypatch.setattr(room, "join",
-                            lambda name="", word="": calls.append((name, word))
-                            or True)
-        tab._nick_edit.setText("tester")
-        tab._word_edit.setText("MyWord")
-        tab._on_join_clicked()
-        assert calls == [("tester", "myword")]  # word is normalized
-        tab.shutdown()
+    def test_df_no_room_builds_no_view(self):
+        app = self._app()  # conftest keeps DF_NO_ROOM=1
+        tab, _ = self._tab()
+        assert tab._view is None and tab.web_profile is None
+        tab.shutdown()  # must be a safe no-op
 
-    def test_dice_generates_phrase(self, tmp_path):
+    def test_view_created_with_dedicated_persistent_profile(self,
+                                                            monkeypatch):
+        """Full view-creation path, offline: the portal URL is swapped for
+        about:blank so the real site is never fetched."""
         app = self._app()
-        tab, _ = self._tab(tmp_path)
-        tab._on_dice_clicked()
-        parts = tab._word_edit.text().split("-")
-        assert len(parts) == 6 and parts[-1].isdigit()
-        tab.shutdown()
-
-    def test_auto_join_disabled_by_config(self, tmp_path, monkeypatch):
-        app = self._app()
-        room = self._offline_room(tmp_path)
-        calls = []
-        monkeypatch.setattr(room, "join",
-                            lambda name="", word="": calls.append(name)
-                            or True)
-        from config import DeeptorrentConfig
-        from gui.room_tab import RoomTab
-        cfg = DeeptorrentConfig()
-        cfg.chat.auto_join = False
         monkeypatch.delenv("DF_NO_ROOM", raising=False)
-        tab = RoomTab(cfg, None, room=room)
-        assert calls == []
-        tab.shutdown()
-
-    def test_auto_join_generates_default_name(self, tmp_path, monkeypatch):
-        app = self._app()
-        # a REAL controller (auto_loop off, fake hub): auto-join runs the
-        # real word-fallback logic inside join(), no network.
-        hub = FakeHub()
+        import gui.room_tab as mod
+        monkeypatch.setattr(mod, "PORTAL_URL", "about:blank")
         from config import DeeptorrentConfig
-        from gui.room_tab import RoomTab
-        cfg = DeeptorrentConfig()
-        cfg.chat.auto_join = True
-        cfg.chat.nickname = ""
-        monkeypatch.delenv("DF_NO_ROOM", raising=False)
-        room = OhRoomController(cfg.chat, IRCState(), hub=hub,
-                                identity_path=tmp_path / "identity-autojoin",
-                                history_dir=tmp_path / "rooms-autojoin",
-                                auto_loop=False)
-        tab = RoomTab(cfg, None, room=room)
-        assert room.role == "connecting"  # join() was called at launch
-        assert room.nick.startswith("deepfluxuser")
-        assert room.word == "deepflux"
-        assert cfg.chat.nickname == room.nick  # persisted for next launch
-        room._join_pass()
-        assert room.role == "host"
-        tab.shutdown()
-
-    def test_live_controller_events_render(self, tmp_path):
-        """End to end offscreen: real controller + real tab, events pumped."""
-        app = self._app()
-        hub = FakeHub()
-        from config import DeeptorrentConfig
-        from gui.room_tab import RoomTab
-        cfg = DeeptorrentConfig()
-        cfg.chat.auto_join = False
-        room = make_controller(tmp_path, hub, name="renderer")
-        tab = RoomTab(cfg, None, room=room)
-        room.join("renderer", "deepflux")
-        room._join_pass()
-        room.send_message("hello myself")
-        for _ in range(10):
+        try:
+            tab = mod.RoomTab(DeeptorrentConfig(), None)
+        except Exception:
+            pytest.skip("QWebEngineView unavailable in this environment")
+        try:
+            assert tab._view is not None
+            assert tab.portal_url == "about:blank#room=deepflux"
+            # Persistent + dedicated: the portal identity key in its
+            # localStorage must survive restarts and never share storage
+            # with the Browser tab's profile.
+            assert not tab.web_profile.isOffTheRecord()
+            assert tab.web_profile.storageName() == "deeptorrent-room"
+            # The download hook is attachable (MainWindow wires the
+            # browser save flow through it).
+            assert tab.attach_download_handler(lambda *a: None) is True
+        finally:
+            # Tear the page down before the profile (QtWebEngine warns
+            # when a profile is released with live pages).
+            tab._view.page().deleteLater()
+            tab._view.deleteLater()
             app.processEvents()
-        assert "hello myself" in tab.chat.toPlainText()
-        tab.shutdown()
+            tab.shutdown()
+
+

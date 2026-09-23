@@ -897,7 +897,7 @@ class MainWindow(QMainWindow):
             logger.debug("telemetry heartbeat failed to start", exc_info=True)
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 5.1 - AI Deep Search")
+        self.setWindowTitle("DeepFlux 5.2 - AI Deep Search")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -2062,8 +2062,12 @@ class MainWindow(QMainWindow):
         self.commander_tab = CommanderTab(self.config, self)
         self.main_tabs.addTab(self.commander_tab, "Command")
 
-        # --- Room tab (DeepFlux Room — serverless community chat) ---
+        # --- Room tab (DeepFlux Room — the embedded OnlyHumans portal) ---
         self.room_tab = RoomTab(self.config, self)
+        # Portal file chips download through blob URLs — route them into
+        # the browser save flow (without a downloadRequested consumer,
+        # QtWebEngine silently drops the download).
+        self.room_tab.attach_download_handler(self._on_browser_download_requested)
         self.main_tabs.addTab(self.room_tab, "Room")
 
         # Restore saved splitter positions (user-adjusted sizes persist).
@@ -6491,7 +6495,8 @@ class MainWindow(QMainWindow):
                 iptv.shutdown()
         except Exception:
             pass
-        # Stop the community room (withdraw host pointer, say goodbye).
+        # Stop the room page (best-effort graceful leave via the portal's
+        # pagehide handler).
         try:
             self.room_tab.shutdown()
         except Exception:

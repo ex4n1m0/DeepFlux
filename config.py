@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "5.1"
+APP_VERSION = "5.2"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -527,15 +527,16 @@ class VoiceConfig:
 
 @dataclass
 class ChatConfig:
-    """DeepFlux Room — the OnlyHumans word-room community chat on the Room
-    page (ircmgr/oh_room.py). The room auto-joins at launch when auto_join
-    is on; the word "deepflux" is the shared DeepFlux community room and
-    any other word is a separate room (same word = same room, across
-    DeepFlux, the OnlyHumans app and the /join browser portal)."""
-    nickname: str = ""         # display name ("deepfluxuser####" generated on first run)
-    auto_join: bool = True     # join the room automatically at app launch
+    """DeepFlux Room — the Room page embeds the OnlyHumans join portal
+    (onlyhumans.deepflux.space/join) with the community word pre-filled
+    (#room=deepflux; same word = same room across DeepFlux, the
+    OnlyHumans app and the browser). default_word feeds that URL;
+    nickname/auto_join/last_word are the 5.1 native-member fields — kept
+    so old configs load unchanged, no longer consumed by the GUI."""
+    nickname: str = ""         # 5.1 native member (unused by the portal host)
+    auto_join: bool = True     # 5.1 native member (unused by the portal host)
     default_word: str = "deepflux"  # the DeepFlux community room word
-    last_word: str = ""        # sticky: the last word this user joined
+    last_word: str = ""        # 5.1 native member (unused by the portal host)
 
 
 @dataclass

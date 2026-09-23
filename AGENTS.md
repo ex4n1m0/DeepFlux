@@ -1290,23 +1290,39 @@
   loading; gen_embedded_keys.py unchanged). website/api/room.js stays
   DEPLOYED (old exes 4.1–5.0 still call it) — never delete it from the
   site; it costs nothing.
-- `gui/room_tab.py::RoomTab` (tab title "Room", index 5, Ctrl+6): name +
-  room-word + 🎲 + Join/Leave bar, transcript (QTextBrowser + linkify),
-  member list, topic line, /me /clear /help commands, Tab
-  nick-completion, transcript search, mention highlighting.
-  `RoomTab(config, parent, room=None)` — MainWindow passes the parent
-  POSITIONALLY as the second arg; keep it there (3.9 lesson). Shutdown
-  (`closeEvent`) calls `room_tab.shutdown()` only.
-- DeepFlux Room (`ircmgr/oh_room.py`, 5.1): the chat now speaks the
-  ONLYHUMANS protocol (onlyhumans.deepflux.space — same owner) as a
-  native Python MAILBOX-ONLY member, the same peer class as the /join
-  browser portal. Every word is a room; DeepFlux auto-joins the community
-  word "deepflux" at launch (chat.auto_join; a deepfluxuser#### name is
-  generated on first run and persisted in chat.nickname; the last word
-  sticks in chat.last_word). Users can rename live (member: re-Join to
-  the host updates the member table; host: broadcast), switch words, 🎲
-  a random phrase room, and the HOST can "Seal room…" (rotate → epoch+1,
-  room closed to newcomers). Room "deepflux" is shared with the
+- `gui/room_tab.py::RoomTab` (tab title "Room", index 5, Ctrl+6), since
+  2026-09-23: the tab EMBEDS the OnlyHumans join portal
+  (https://onlyhumans.deepflux.space/join) in a QWebEngineView — the exact
+  web app the site serves, so portal chat updates land in the app with the
+  site's next deploy and the chat UI is not duplicated here. The room word
+  is prefilled through the URL FRAGMENT (`/join#room=deepflux` from
+  `chat.default_word` — the portal reads the hash client-side as
+  `invitedWord`; the word is never part of any HTTP request), and the name
+  field is deliberately LEFT EMPTY (owner choice: the user types a name;
+  the portal's own "remember my name and rooms" checkbox then persists in
+  the app's storage). DEDICATED persistent QWebEngineProfile
+  ("deeptorrent-room", storage ~/.deeptorrent/room-portal) — never the
+  Browser tab's profile: the portal identity key (localStorage
+  `oh-portal-seed`) must survive restarts and must not be wiped by
+  Clear-Browsing-Data. Portal file chips download via blob URLs — without
+  a downloadRequested consumer QtWebEngine silently drops them, so
+  MainWindow calls `room_tab.attach_download_handler(
+  self._on_browser_download_requested)` right after construction.
+  `DF_NO_ROOM=1` skips creating the view entirely (no page load, no
+  /api/gk fetch — set by packaging/verify_boot.py AND tests/conftest.py
+  for every test; the one view test delenvs it and swaps PORTAL_URL for
+  about:blank so the real site is never fetched). `RoomTab(config,
+  parent)` — MainWindow passes the parent POSITIONALLY as the second arg;
+  keep it there (3.9 lesson). Shutdown (`closeEvent` → `room_tab.
+  shutdown()`) best-effort dispatches a synthetic `pagehide` into the page
+  (the portal's listener mails the Leave + presence beacon; abrupt death
+  also heals via host TTLs, so it is strictly best-effort).
+- DeepFlux Room (`ircmgr/oh_room.py`, 5.1): the native Python
+  MAILBOX-ONLY member of the same protocol. Since the 2026-09-23 portal
+  switch the GUI no longer RUNS it (a second member next to the portal
+  page would double the user's presence in the room) — the module + its
+  tests stay in the tree as the protocol reference and spec port; keep it
+  working. Every word is a room; Room "deepflux" is shared with the
   OnlyHumans Windows app and the browser portal — same word, same room.
   PROTOCOL (port of C:\OnlyHumans-main\portal\portal.ts + app.ts,
   KAT-verified against the Rust core's kat.json — a copy is embedded in
@@ -1356,18 +1372,19 @@
   ~/.deeptorrent/rooms/<roomhex>.jsonl, XChaCha key HKDF-derived from
   the identity seed, loaded once per join session (_history_loaded)
   BEFORE the connected event so the tab's re-render shows it.
-  (8) Auto-join runs at app start in the background (reverses the
-  2026-09-13 "never auto-joined" decision — owner choice 2026-09-22);
-  `DF_NO_ROOM=1` (set by packaging/verify_boot.py) keeps boot smokes
-  and CI from registering throwaway peers with the production hub, and
-  GUI tests set cfg.chat.auto_join = False (see test_responsive).
+  (8) The 5.1 GUI auto-joined "deepflux" at launch — RETIRED 2026-09-23
+  with the portal switch (the join gate needs a typed name; the portal's
+  remember checkbox replaces it). `chat.nickname`/`auto_join`/`last_word`
+  are kept in ChatConfig for old configs but no longer consumed; only
+  `chat.default_word` feeds the embedded URL. `DF_NO_ROOM=1` (verify_boot
+  + tests/conftest.py) now means NO web view at all.
   (9) E2E recipe (proved 2026-09-22): two temp-identity controllers
   against the REAL hub seat in ~12s; the browser portal at /join joins
   the same word and exchanges messages both ways — full cross-client
   interop. Chat content is NEVER fed to the LLM and must stay
   non-agent-callable. Tests: tests/test_oh_room.py (KAT + FakeHub
-  flows + offscreen RoomTab; FakeHub mirrors the real endpoints
-  including NX election + destructive drain).
+  flows + the portal-host RoomTab tests; FakeHub mirrors the real
+  endpoints including NX election + destructive drain).
 - PySide6 test gotcha: patching `QMenu.exec` (or any C++ method) on the
   CLASS does NOT intercept instance calls — shiboken resolves instance
   methods through the C++ method table, bypassing Python class attributes,
@@ -1375,11 +1392,6 @@
   construction from execution, or call via the class (static methods like
   `QInputDialog.getText` / `QMessageBox.question` DO patch fine because the
   code calls them on the class).
-- GUI perf invariant (kept from the IRC era): `_append_html` NEVER
-  serializes the document — the "Nothing here yet" placeholder is tracked
-  by the `_chat_empty` flag; search match counts update incrementally per
-  appended line (`_search_count`), full recounts only on query change /
-  re-render.
 
 ## IPTV + filesystem agent tools (Play / Command tabs)
 - Play-tab folder search: the search box has a 📍 Folder scope toggle.
