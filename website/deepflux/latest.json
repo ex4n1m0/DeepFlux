@@ -1,8 +1,8 @@
 {
-  "version": "5.1",
-  "file": "DeepFlux5.1Setup.exe",
-  "size": 370470054,
-  "sha256": "da73d0183f12e747b9b2c67b889c216f89fe97d587bd86c7381c2e275f16e56f",
-  "released": "2026-09-22",
-  "notes": "DeepFlux 5.1 \u2014 the Room tab now speaks the OnlyHumans protocol: every word is a room. DeepFlux auto-joins the community room \u201cdeepflux\u201d at launch (a deepfluxuser#### name is generated for you), you can rename live, create rooms from any word, and chat with people on the OnlyHumans app and the browser portal \u2014 same word, same room. Messages are sealed end-to-end; room history stays on your machine."
+  "version": "5.2",
+  "file": "DeepFlux5.2Setup.exe",
+  "size": 370602197,
+  "sha256": "8b34d2ee685ec4bb5225df4d87b95eb5b53177783e2340be0d74eb4f5b907937",
+  "released": "2026-09-23",
+  "notes": "DeepFlux 5.2 — the Room tab now embeds the OnlyHumans room portal: the same chat you get at onlyhumans.deepflux.space/join, always the latest version. It opens on the community room word “deepflux” with an empty name — type any name and press Enter. Pictures, files, profiles and private chats live in the page; your chat identity stays on your machine. The app icon and the website logo return to the original DeepFlux mark."
 }

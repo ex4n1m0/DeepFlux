@@ -6,7 +6,7 @@
 <title>DeepFlux — The AI-Native Media &amp; Download Suite</title>
 <meta name="description" content="DeepFlux — an AI-powered download manager with a built-in browser, media player, community chat room, and file manager. The agent drives the whole app.">
 <meta name="theme-color" content="#050507">
-<link rel="icon" type="image/webp" href="DeepFlux5.webp">
+<link rel="icon" type="image/webp" href="DeepFlux.webp">
 <!-- Open Graph -->
 <meta property="og:title" content="DeepFlux — The AI-Native Media &amp; Download Suite">
 <meta property="og:description" content="An AI-powered download manager with a built-in browser, media player, community chat room, and file manager. The agent drives the whole app.">
@@ -101,6 +101,39 @@
     margin: 0 auto;
     padding: 0 24px;
   }
+
+  /* ---- Sibling-projects strip (very top, above the sticky nav) ---- */
+  .kin {
+    width: 100%;
+    border-bottom: 1px solid var(--line);
+    background: rgba(5, 5, 7, 0.55);
+  }
+  .kin-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    padding: 8px 0;
+    font-size: 0.74rem;
+    color: var(--ghost);
+  }
+  .kin-label {
+    font-size: 0.62rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ghost);
+  }
+  .kin-sep { width: 3px; height: 3px; border-radius: 50%; background: rgba(238, 244, 255, 0.22); }
+  a.kin-link {
+    color: var(--faint);
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color 0.2s;
+  }
+  a.kin-link b { font-weight: 600; color: var(--muted); }
+  a.kin-link:hover, a.kin-link:focus-visible { color: var(--ink); }
+  a.kin-link:hover b, a.kin-link:focus-visible b { color: var(--ink); }
 
   /* ---- Sticky top bar ---- */
   .topbar {
@@ -712,6 +745,9 @@
     .shot-rail { width: 120px; }
   }
   @media (max-width: 640px) {
+    /* Taglines drop off so the sibling strip stays one slim line */
+    .kin-sub { display: none; }
+    .kin-row { gap: 5px 8px; }
     nav.top ul li.hide-mobile { display: none; }
     /* "Download for Windows" is too wide next to the brand at 390px —
        collapse to an icon-only pill (aria-label keeps it accessible). */
@@ -736,11 +772,21 @@
   <div class="ambient" aria-hidden="true"></div>
   <div class="grid-overlay" aria-hidden="true"></div>
 
+  <!-- Sibling projects: discreet cross-links to the maker's other work -->
+  <div class="kin">
+    <div class="page kin-row">
+      <span class="kin-label">From the same maker</span>
+      <a class="kin-link" href="https://onlyhumans.deepflux.space/" target="_blank" rel="noopener"><b>OnlyHumans</b><span class="kin-sub"> &mdash; every word is a room</span></a>
+      <span class="kin-sep" aria-hidden="true"></span>
+      <a class="kin-link" href="https://n38worth.com/" target="_blank" rel="noopener"><b>n38worth</b><span class="kin-sub"> &mdash; the human trading simulation</span></a>
+    </div>
+  </div>
+
   <div class="topbar">
     <div class="page">
       <nav class="top" aria-label="Main">
         <a class="brand" href="/">
-          <img src="DeepFlux5.webp" alt="DeepFlux logo">
+          <img src="DeepFlux.webp" alt="DeepFlux logo">
           <span>DeepFlux</span>
         </a>
         <ul>
@@ -748,9 +794,9 @@
           <li class="hide-mobile"><a class="navlink" href="#install">Install</a></li>
           <li class="hide-mobile"><a class="navlink" href="#trust">Privacy</a></li>
           <li class="hide-mobile"><a class="navlink" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">GitHub</a></li>
-          <li class="hide-mobile"><span class="pill">v5.1</span></li>
+          <li class="hide-mobile"><span class="pill">v5.2</span></li>
           <li>
-            <a class="btn btn-primary btn-nav" data-os-primary aria-label="Download DeepFlux" href="/api/download?f=DeepFlux5.1Setup.exe" download>
+            <a class="btn btn-primary btn-nav" data-os-primary aria-label="Download DeepFlux" href="/api/download?f=DeepFlux5.2Setup.exe" download>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span class="os-label">Download</span>
             </a>
@@ -776,14 +822,14 @@
       <div class="cta-row">
         <!-- /api/download counts the click (Upstash counter) then 302s to the
              static file; it redirects uncounted when the counter isn't set up. -->
-        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.1Setup.exe" download>
+        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.2Setup.exe" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Download for Windows</span>
         </a>
       </div>
       <p class="also">
         Also for
-        <a data-os-link="windows" href="/api/download?f=DeepFlux5.1Setup.exe" download>Windows</a><span class="sep">&middot;</span><a data-os-link="mac" href="/api/download?f=DeepFlux-4.7-macOS-arm64.dmg" download>macOS</a><span class="sep">&middot;</span><a data-os-link="linux" href="/api/download?f=DeepFlux-4.7-Linux-x86_64.AppImage" download>Linux</a>
+        <a data-os-link="windows" href="/api/download?f=DeepFlux5.2Setup.exe" download>Windows</a><span class="sep">&middot;</span><a data-os-link="mac" href="/api/download?f=DeepFlux-4.7-macOS-arm64.dmg" download>macOS</a><span class="sep">&middot;</span><a data-os-link="linux" href="/api/download?f=DeepFlux-4.7-Linux-x86_64.AppImage" download>Linux</a>
         &nbsp;&mdash;&nbsp;<a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">source code</a>
       </p>
       <p class="meta-row">Free &middot; no account &middot; your files stay on your machine<span class="live" id="live" hidden
@@ -941,7 +987,7 @@
       </div>
       <div class="tabs">
         <div class="tablist" role="tablist" aria-label="Choose your platform">
-          <button class="tab" type="button" role="tab" id="tab-win" data-os="win" aria-controls="panel-win" aria-selected="true">Windows<small>v5.1</small></button>
+          <button class="tab" type="button" role="tab" id="tab-win" data-os="win" aria-controls="panel-win" aria-selected="true">Windows<small>v5.2</small></button>
           <button class="tab" type="button" role="tab" id="tab-mac" data-os="mac" aria-controls="panel-mac" aria-selected="false" tabindex="-1">macOS<small>v4.7 &middot; beta</small></button>
           <button class="tab" type="button" role="tab" id="tab-linux" data-os="linux" aria-controls="panel-linux" aria-selected="false" tabindex="-1">Linux<small>v4.7 &middot; beta</small></button>
         </div>
@@ -950,9 +996,9 @@
           <div class="panel-head">
             <div>
               <div class="panel-title">Windows 10 / 11 &middot; 64-bit</div>
-              <div class="panel-sub">v5.1 &middot; 370.5 MB &middot; per-user install, no admin &middot; updates itself in-app</div>
+              <div class="panel-sub">v5.2 &middot; 370.6 MB &middot; per-user install, no admin &middot; updates itself in-app</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux5.1Setup.exe" download>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux5.2Setup.exe" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Download setup
             </a>
@@ -1085,7 +1131,7 @@
     <section class="final" aria-label="Download DeepFlux">
       <h2>Ready when you are.</h2>
       <p>Free download &middot; no account &middot; your machine, your files.</p>
-      <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.1Setup.exe" download>
+      <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.2Setup.exe" download>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         <span class="os-label">Download for Windows</span>
       </a>
@@ -1151,7 +1197,7 @@
       else if (p.indexOf('linux') >= 0 || p.indexOf('x11') >= 0) os = 'linux';
 
       var FILES = {
-        windows: { label: 'Download for Windows', file: 'DeepFlux5.1Setup.exe' },
+        windows: { label: 'Download for Windows', file: 'DeepFlux5.2Setup.exe' },
         mac:     { label: 'Download for macOS',   file: 'DeepFlux-4.7-macOS-arm64.dmg' },
         linux:   { label: 'Download for Linux',   file: 'DeepFlux-4.7-Linux-x86_64.AppImage' }
       };
