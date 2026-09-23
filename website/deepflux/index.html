@@ -258,26 +258,16 @@
   }
   @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
   header.hero h1 {
-    /* Overlaid on the logo mark, centered in its UPPER-MIDDLE band
-       (owner-marked spot): bottom padding lifts the flex-centered text
-       so its center sits at ~43% of the image height. */
-    position: absolute;
-    inset: 0;
-    z-index: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    padding: 0 9% 14%;
-    pointer-events: none;
+    /* In the empty band between the eyebrow and the top of the sphere
+       (owner-marked spot): normal flow, centered, modest gaps both sides. */
     font-family: var(--font-display);
     font-weight: 700;
     font-size: clamp(2.4rem, 5.5vw, 4rem);
     line-height: 1.08;
     letter-spacing: -0.01em;
     color: var(--ink);
-    margin: 0;
-    text-shadow: 0 2px 28px rgba(0, 0, 0, 0.85), 0 0 14px rgba(0, 0, 0, 0.65);
+    text-align: center;
+    margin: 30px 0 34px;
   }
   header.hero .banner-glow {
     position: relative;
@@ -838,8 +828,8 @@
   <main id="main" class="page" tabindex="-1">
     <header class="hero">
       <div class="eyebrow"><span class="spark" aria-hidden="true"></span> AI agent &middot; built in</div>
+      <h1>Power Download Tools</h1>
       <div class="banner-glow">
-        <h1>Power Download Tools</h1>
         <img class="banner" src="DeepFlux.webp" alt="DeepFlux logo">
       </div>
       <div class="hero-copy">
