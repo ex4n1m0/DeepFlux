@@ -911,8 +911,7 @@
         </a>
       </div>
       <p class="also">
-        其他版本：
-        <a data-os-link="windows" href="/api/download?f=DeepFlux5.3Setup.exe" download>Windows</a><span class="sep">&middot;</span><a data-os-link="mac" href="/api/download?f=DeepFlux-4.7-macOS-arm64.dmg" download>macOS</a><span class="sep">&middot;</span><a data-os-link="linux" href="/api/download?f=DeepFlux-4.7-Linux-x86_64.AppImage" download>Linux</a>
+        Windows 10 / 11 &middot; 64 位
         &mdash;&nbsp;<a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">源代码</a>
       </p>
       <p class="meta-row">免费 &middot; 无需账号 &middot; 文件只保存在你的电脑上<span class="live" id="live" hidden
@@ -1068,13 +1067,7 @@
         <h2>清楚知道自己装的是什么</h2>
       </div>
       <div class="tabs">
-        <div class="tablist" role="tablist" aria-label="选择你的平台">
-          <button class="tab" type="button" role="tab" id="tab-win" data-os="win" aria-controls="panel-win" aria-selected="true">Windows<small>v5.3</small></button>
-          <button class="tab" type="button" role="tab" id="tab-mac" data-os="mac" aria-controls="panel-mac" aria-selected="false" tabindex="-1">macOS<small>v4.7 &middot; 测试版</small></button>
-          <button class="tab" type="button" role="tab" id="tab-linux" data-os="linux" aria-controls="panel-linux" aria-selected="false" tabindex="-1">Linux<small>v4.7 &middot; 测试版</small></button>
-        </div>
-
-        <div class="tabpanel" role="tabpanel" id="panel-win" aria-labelledby="tab-win">
+<div class="tabpanel">
           <div class="panel-head">
             <div>
               <div class="panel-title">Windows 10 / 11 &middot; 64 位</div>
@@ -1107,71 +1100,6 @@
           </div>
         </div>
 
-        <div class="tabpanel" role="tabpanel" id="panel-mac" aria-labelledby="tab-mac" hidden>
-          <div class="panel-head">
-            <div>
-              <div class="panel-title">macOS 14+ &middot; Apple Silicon（M1&ndash;M4）</div>
-              <div class="panel-sub">v4.7 &middot; 336.6 MB &middot; 测试版 —— 暂不支持 Intel Mac</div>
-            </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-4.7-macOS-arm64.dmg" download>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              下载 .dmg
-            </a>
-          </div>
-          <ol class="steps">
-            <li><b>下载</b> .dmg，打开后把 DeepFlux 拖进
-            <b>&ldquo;应用程序&rdquo;</b>。</li>
-            <li>首次启动：<b>右键 DeepFlux.app &rarr; 打开 &rarr;
-            打开</b>。构建未签名，Gatekeeper 需要你第一次明确点一次
-            &ldquo;打开&rdquo;（仅此一次）。</li>
-            <li>在<b>&ldquo;文件&nbsp;&rarr;&nbsp;API 密钥&rdquo;</b>里添加你的 AI 密钥 ——
-            DeepSeek、OpenRouter 或任何 OpenAI 兼容接口。</li>
-          </ol>
-          <div class="note">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <p>macOS 版不内置 AI 密钥 —— <b>请自备</b>。测试版除媒体
-            播放器标签外的功能都在：智能体、浏览器、种子与下载、
-            聊天室和文件管理器。</p>
-          </div>
-          <div class="checksum">
-            <span class="lbl">sha256</span>
-            <code>feda9211d166c6d7c2b45481a0ae41e81d8f0e5879cfdf6f8c3b2d21765ba916</code>
-            <button class="copy" type="button" data-copy="feda9211d166c6d7c2b45481a0ae41e81d8f0e5879cfdf6f8c3b2d21765ba916">复制</button>
-          </div>
-        </div>
-
-        <div class="tabpanel" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux" hidden>
-          <div class="panel-head">
-            <div>
-              <div class="panel-title">Linux x86-64 &middot; glibc 2.39+</div>
-              <div class="panel-sub">v4.7 &middot; 419.5 MB &middot; AppImage —— Ubuntu 24.04+、Debian 13、Fedora 40+、Arch</div>
-            </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-4.7-Linux-x86_64.AppImage" download>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              下载 AppImage
-            </a>
-          </div>
-          <ol class="steps">
-            <li><b>下载</b> AppImage —— 单文件，无需安装。</li>
-            <li>赋予一次可执行权限：在终端执行 <b>chmod +x DeepFlux-*.AppImage</b>，
-            或在文件管理器的<b>&ldquo;属性&nbsp;&rarr;&nbsp;权限&rdquo;</b>里勾选。Linux 上
-            没有安全警告。</li>
-            <li>在<b>&ldquo;文件&nbsp;&rarr;&nbsp;API 密钥&rdquo;</b>里添加你的 AI 密钥。如果
-            播放流媒体需要 FFmpeg，包管理器就能装 —— 或者直接让
-            智能体帮你装。</li>
-          </ol>
-          <div class="note">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <p>Linux 版不内置 AI 密钥 —— <b>请自备</b>。测试版除媒体
-            播放器标签外的功能都在：智能体、浏览器、种子与下载、
-            聊天室和文件管理器。</p>
-          </div>
-          <div class="checksum">
-            <span class="lbl">sha256</span>
-            <code>7080485e63a51af508c504667df67acdf6a8ec392674a24b3157e402e7ccc7c2</code>
-            <button class="copy" type="button" data-copy="7080485e63a51af508c504667df67acdf6a8ec392674a24b3157e402e7ccc7c2">复制</button>
-          </div>
-        </div>
       </div>
     </section>
 
@@ -1220,15 +1148,6 @@
 
   <footer class="social">
     <div class="icons">
-      <a class="icon" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener" aria-label="GitHub">
-        <img src="../GitHub.png" alt="GitHub">
-      </a>
-      <a class="icon" href="https://www.linkedin.com/in/igorcarlier/" target="_blank" rel="noopener" aria-label="LinkedIn">
-        <img src="../Linked.png" alt="LinkedIn">
-      </a>
-      <a class="icon" href="https://x.com/igorcarlier" target="_blank" rel="noopener" aria-label="X">
-        <img src="../X.png" alt="X">
-      </a>
       <a class="icon" href="https://buymeacoffee.com/ex4n1m0" target="_blank" rel="noopener" aria-label="请我喝杯咖啡">
         <img src="../BuyMeCoffee.png" alt="请我喝杯咖啡">
       </a>
@@ -1274,63 +1193,7 @@
       });
     })();
 
-    // 操作系统检测：为访客平台显示一个主下载按钮，
-    // 无法识别时默认 Windows（没有 iOS/Android 版本）。
     (function () {
-      var p = ((navigator.userAgentData && navigator.userAgentData.platform) ||
-               navigator.platform || navigator.userAgent || '').toLowerCase();
-      var os = 'windows';
-      if (p.indexOf('win') >= 0) os = 'windows';
-      else if (p.indexOf('mac') >= 0) os = 'mac';
-      else if (p.indexOf('linux') >= 0 || p.indexOf('x11') >= 0) os = 'linux';
-
-      var FILES = {
-        windows: { label: '下载 Windows 版', file: 'DeepFlux5.3Setup.exe' },
-        mac:     { label: '下载 macOS 版',   file: 'DeepFlux-4.7-macOS-arm64.dmg' },
-        linux:   { label: '下载 Linux 版',   file: 'DeepFlux-4.7-Linux-x86_64.AppImage' }
-      };
-      var m = FILES[os];
-      document.querySelectorAll('[data-os-primary]').forEach(function (a) {
-        a.setAttribute('href', '/api/download?f=' + encodeURIComponent(m.file));
-        a.setAttribute('download', '');
-        var lbl = a.querySelector('.os-label');
-        if (lbl) lbl.textContent = m.label;
-      });
-      document.querySelectorAll('[data-os-link="' + os + '"]').forEach(function (a) {
-        a.hidden = true;
-      });
-
-      // 安装标签页：ARIA 模式，roving tabindex + 方向键。
-      var TABS = ['win', 'mac', 'linux'];
-      var initial = (os === 'mac') ? 'mac' : (os === 'linux') ? 'linux' : 'win';
-      if (location.hash.indexOf('#install-') === 0) {
-        var h = location.hash.slice(9);
-        if (TABS.indexOf(h) >= 0) initial = h;
-      }
-      function selectTab(id, focus) {
-        TABS.forEach(function (t) {
-          var btn = document.getElementById('tab-' + t);
-          var panel = document.getElementById('panel-' + t);
-          var on = (t === id);
-          btn.setAttribute('aria-selected', on ? 'true' : 'false');
-          btn.tabIndex = on ? 0 : -1;
-          panel.hidden = !on;
-          if (on && focus) btn.focus();
-        });
-      }
-      document.querySelectorAll('.tab').forEach(function (btn) {
-        btn.addEventListener('click', function () { selectTab(btn.dataset.os); });
-        btn.addEventListener('keydown', function (e) {
-          var i = TABS.indexOf(btn.dataset.os), n = null;
-          if (e.key === 'ArrowRight') n = (i + 1) % TABS.length;
-          else if (e.key === 'ArrowLeft') n = (i + TABS.length - 1) % TABS.length;
-          else if (e.key === 'Home') n = 0;
-          else if (e.key === 'End') n = TABS.length - 1;
-          if (n !== null) { e.preventDefault(); selectTab(TABS[n], true); }
-        });
-      });
-      selectTab(initial);
-
       // 校验和复制按钮。
       document.querySelectorAll('[data-copy]').forEach(function (btn) {
         btn.addEventListener('click', function () {
