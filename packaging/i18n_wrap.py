@@ -38,6 +38,8 @@ _TEXTY_CALLS = {
     "QListWidgetItem": 1, "QListWidget": 1,
     "addAction": 1, "addMenu": 1, "addTab": 2, "insertTab": 3,
     "setTabText": 2, "addItem": 1, "setCurrentText": 1,
+    "addRow": 1,        # QFormLayout.addRow(label, widget) — arg 0 is the label
+    "addButton": 1,     # QMessageBox.addButton(text, role)
 }
 
 # Full dotted statics: (parent, name) -> positional indices of label args,

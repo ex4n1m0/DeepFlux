@@ -110,3 +110,23 @@ def test_settings_pages_constants_stay_english_but_translate():
         assert any("\u4e00" <= ch <= "\u9fff" for ch in _CATALOG[lbl]), lbl
         # the Settings Hub rstrip("…") contract survives translation
         assert _CATALOG[lbl].rstrip("…")
+
+
+def test_help_dialog_shows_chinese_guide_under_zh():
+    """The in-app User Guide swaps to the translated copy (phase 3)."""
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication, QTextBrowser
+    _app = QApplication.instance() or QApplication([])
+    set_language("zh")
+    try:
+        from gui.help_dialog import HelpDialog
+        dlg = HelpDialog()
+        browser = dlg.findChild(QTextBrowser)
+        assert browser is not None, "guide text browser not found"
+        html = browser.toHtml()
+        assert "用户指南" in html
+        assert "DeepFlux 5.2" in html  # version string travels with the guide
+        assert "Quick Start" not in html
+        dlg.deleteLater()
+    finally:
+        set_language("en")

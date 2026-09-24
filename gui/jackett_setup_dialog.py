@@ -86,8 +86,8 @@ class JackettSetupDialog(QDialog):
 
         heading = QLabel(tr('Setting up torrent search'), objectName="heading")
         subline = QLabel(
-            "Installing and linking the Jackett service, then adding its public "
-            "indexers. You may see one Windows permission prompt.",
+            tr("Installing and linking the Jackett service, then adding its public "
+               "indexers. You may see one Windows permission prompt."),
             objectName="subline",
         )
         subline.setWordWrap(True)

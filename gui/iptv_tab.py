@@ -3568,8 +3568,8 @@ class IPTVTab(QWidget):
         self._scope_btn = QPushButton(tr('📍 Folder'))
         self._scope_btn.setCheckable(True)
         self._scope_btn.setToolTip(
-            "Search only inside the folder selected in the tree (subfolders "
-            "included). Off = search the whole playlist.")
+            tr("Search only inside the folder selected in the tree (subfolders "
+               "included). Off = search the whole playlist."))
         self._scope_btn.toggled.connect(self._on_scope_toggled)
         toolbar.addWidget(self._scope_btn)
         toolbar.addWidget(self._search, 1)

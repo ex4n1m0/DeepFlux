@@ -5973,11 +5973,11 @@ class MainWindow(QMainWindow):
         box = QMessageBox(self)
         box.setWindowTitle(tr('Import Settings'))
         box.setText(
-            "Settings imported successfully.\n\n"
-            "They take effect after a restart. Your previous settings were "
-            "backed up next to the config file (config.json.bak).")
-        restart_btn = box.addButton("Restart now", QMessageBox.AcceptRole)
-        box.addButton("Later", QMessageBox.RejectRole)
+            tr("Settings imported successfully.\n\n"
+               "They take effect after a restart. Your previous settings were "
+               "backed up next to the config file (config.json.bak)."))
+        restart_btn = box.addButton(tr('Restart now'), QMessageBox.AcceptRole)
+        box.addButton(tr('Later'), QMessageBox.RejectRole)
         box.exec()
         # Both branches must guard the freshly imported file: the periodic
         # browser-session save and closeEvent re-write the (stale) in-memory

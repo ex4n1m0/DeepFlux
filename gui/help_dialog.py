@@ -532,7 +532,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 3.8 — AI Deep Search</p>
+<p>DeepFlux 5.2 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -553,7 +553,12 @@ class HelpDialog(QDialog):
         layout = QVBoxLayout(self)
 
         browser = QTextBrowser()
-        browser.setHtml(HELP_HTML)
+        # Guide copy per language — the EN blob stays the editing surface for
+        # content changes; when the guide changes, BOTH blobs must be updated
+        # (gui/help_dialog_zh.py mirrors this file section for section).
+        from gui.help_dialog_zh import HELP_HTML_ZH
+        from gui.i18n import active_language
+        browser.setHtml(HELP_HTML_ZH if active_language() == "zh" else HELP_HTML)
         browser.setOpenExternalLinks(True)
         browser.setStyleSheet("""
             QTextBrowser {
@@ -605,9 +610,9 @@ class AboutDialog(QDialog):
         layout.addWidget(version)
 
         desc = QLabel(
-            "AI-powered download manager with browser, player, community room, and file manager.\n\n"
-            "AI via DeepSeek / OpenRouter / custom\n"
-            "Web search via DuckDuckGo, Brave, Perplexity (parallel)"
+            tr("AI-powered download manager with browser, player, community room, and file manager.\n\n"
+               "AI via DeepSeek / OpenRouter / custom\n"
+               "Web search via DuckDuckGo, Brave, Perplexity (parallel)")
         )
         desc.setStyleSheet("color: #8a9ab0; font-size: 18px;")
         layout.addWidget(desc)

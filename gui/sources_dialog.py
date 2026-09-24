@@ -75,9 +75,9 @@ class SourcesDialog(QDialog):
         layout.addWidget(header)
 
         hint = QLabel(
-            "These sources are used by the agent when searching for torrents. "
-            "Sources marked as configured in Jackett are searched via the Torznab API. "
-            "You can add custom sources or remove ones you don't want the agent to use."
+            tr("These sources are used by the agent when searching for torrents. "
+               "Sources marked as configured in Jackett are searched via the Torznab API. "
+               "You can add custom sources or remove ones you don't want the agent to use.")
         )
         hint.setObjectName("hint")
         hint.setWordWrap(True)

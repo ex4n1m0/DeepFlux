@@ -871,9 +871,9 @@ class CommanderTab(QWidget):
         box.setText(
             f"Choose what to do with:\n{QDir.toNativeSeparators(os.path.abspath(src))}\n\n"
             f"Existing destination:\n{QDir.toNativeSeparators(os.path.abspath(dst))}")
-        overwrite_btn = box.addButton("Overwrite", QMessageBox.ButtonRole.DestructiveRole)
-        keep_btn = box.addButton("Keep Both", QMessageBox.ButtonRole.AcceptRole)
-        skip_btn = box.addButton("Skip", QMessageBox.ButtonRole.NoRole)
+        overwrite_btn = box.addButton(tr('Overwrite'), QMessageBox.ButtonRole.DestructiveRole)
+        keep_btn = box.addButton(tr('Keep Both'), QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = box.addButton(tr('Skip'), QMessageBox.ButtonRole.NoRole)
         cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
         overwrite_btn.setToolTip(tr('Replace this destination item transactionally'))
         keep_btn.setToolTip(tr('Copy or move this item under a unique name'))

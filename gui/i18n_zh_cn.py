@@ -626,4 +626,100 @@ ZH_CN: dict[str, str] = {
     "About DeepFlux": "关于 DeepFlux",
     "DeepFlux — User Guide": "DeepFlux —— 用户指南",
     "5.2 — AI Deep Search": "5.2 —— AI 深度搜索",
+
+    # --- form-layout labels (addRow/addButton pass) ---
+    "API Token:": "API 令牌：",
+    "API endpoint:": "API 端点：",
+    "Audio language:": "音频语言：",
+    "Audio sync offset:": "音频同步偏移：",
+    "Auto-manage interval:": "自动管理间隔：",
+    "Auto-refresh:": "自动刷新：",
+    "Auto-save state interval:": "状态自动保存间隔：",
+    "Bandwidth Limit:": "带宽限制：",
+    "Base URL:": "Base URL：",
+    "Brave API Key:": "Brave API 密钥：",
+    "Cache location:": "缓存位置：",
+    "Cache size limit:": "缓存大小上限：",
+    "Categories (Name|Folder|extensions):": "分类（名称|文件夹|扩展名）：",
+    "Default Download Folder:": "默认下载文件夹：",
+    "Default Save Path:": "默认保存路径：",
+    "Display name:": "显示名称：",
+    "Download Rate Limit:": "下载速率限制：",
+    "EPG URL (all sources):": "EPG 链接（全部源）：",
+    "EPG URL:": "EPG 链接：",
+    "Executable:": "可执行文件：",
+    "HLS Maximum Height:": "HLS 最大分辨率：",
+    "Hardware decoding:": "硬件解码：",
+    "History retention:": "历史保留时长：",
+    "Homepage:": "主页：",
+    "Keep Both": "两者都保留",
+    "Later": "稍后",
+    "Listen Port (requires restart):": "监听端口（需重启）：",
+    "Live bounded pause buffer:": "直播有界暂停缓冲：",
+    "Max Concurrent Downloads:": "最大同时下载数：",
+    "Max Connections (requires restart):": "最大连接数（需重启）：",
+    "Max Connections per Download:": "单任务最大连接数：",
+    "Max active torrents:": "最大活动种子数：",
+    "Max downloading at once:": "同时下载数上限：",
+    "Max queued torrents:": "排队种子数上限：",
+    "Max seeding at once:": "同时做种数上限：",
+    "MilkDrop preset:": "MilkDrop 预设：",
+    "Model:": "模型：",
+    "Overwrite": "覆盖",
+    "Password (optional):": "密码（可选）：",
+    "Perplexity API Key:": "Perplexity API 密钥：",
+    "Preferred player:": "首选播放器：",
+    "Recording folder:": "录制文件夹：",
+    "Referer:": "Referer：",
+    "Restart now": "立即重启",
+    "Search engine:": "搜索引擎：",
+    "Segment Threshold (files smaller than this use single-stream):":
+        "分片阈值（小于此值的文件用单流下载）：",
+    "Skip": "跳过",
+    "Startup buffer:": "启动缓冲：",
+    "Stop seeding after:": "停止做种时间：",
+    "Stop seeding at ratio:": "达到分享率停止做种：",
+    "Subtitle language:": "字幕语言：",
+    "Torrent download cap:": "种子下载上限：",
+    "Torrent upload cap:": "种子上传上限：",
+    "Torznab Path:": "Torznab 路径：",
+    "Type:": "类型：",
+    "URL / file path:": "URL / 文件路径：",
+    "URL:": "URL：",
+    "Upload Rate Limit:": "上传速率限制：",
+    "User-Agent:": "User-Agent：",
+    "Username (optional):": "用户名（可选）：",
+    "Video overscan:": "视频过扫描：",
+    "Xtream password:": "Xtream 密码：",
+    "Xtream series requests:": "Xtream 剧集请求数：",
+    "Xtream username:": "Xtream 用户名：",
+    "YouTube Maximum Height:": "YouTube 最大分辨率：",
+
+    # --- multi-line literals the codemod skips (hand-wrapped) ---
+    "Queue results automatically after every search — no Download click needed (capped by the limit on the right)":
+        "每次搜索后自动排队结果 —— 无需点击下载（受右侧上限约束）",
+    "Plays audio files with a MilkDrop (Butterchurn) visualization\n"
+    "instead of a black screen. Presets are .milk files — drop more\n"
+    "into the MilkDrop folder or %USERPROFILE%\\.deeptorrent\\presets.":
+        "播放音频文件时显示 MilkDrop（Butterchurn）可视化，\n"
+        "而不是黑屏。预设是 .milk 文件 —— 可以往 MilkDrop 文件夹或\n"
+        "%USERPROFILE%\\.deeptorrent\\presets 里放更多。",
+    "Search only inside the folder selected in the tree (subfolders included). Off = search the whole playlist.":
+        "只搜索树中所选文件夹（含子文件夹）。关闭 = 搜索整个播放列表。",
+    "Installing and linking the Jackett service, then adding its public indexers. You may see one Windows permission prompt.":
+        "正在安装并关联 Jackett 服务，随后添加其公共索引器。期间可能出现一次 Windows 权限提示。",
+    "Another tile is already playing an IPTV stream.\nProviders reject multiple simultaneous connections — clear that tile first.":
+        "已有另一格在播放 IPTV 流。\n服务商不接受多个并发连接 —— 请先清空那一格。",
+    "The download manager uses segmented downloading with dynamic rebalancing\nfor maximum speed, similar to Internet Download Manager.":
+        "下载管理器采用动态均衡的分段下载以获得最高速度，\n类似 Internet Download Manager。",
+    "These sources are used by the agent when searching for torrents. Sources marked as configured in Jackett are searched via the Torznab API. You can add custom sources or remove ones you don't want the agent to use.":
+        "这些源供智能体搜索种子时使用。在 Jackett 中标记为已配置的源通过 Torznab API 搜索。你可以添加自定义源，或移除不想让智能体使用的源。",
+    "Settings imported successfully.\n\nThey take effect after a restart. Your previous settings were backed up next to the config file (config.json.bak).":
+        "设置导入成功。\n\n重启后生效。原有设置已备份到配置文件旁边（config.json.bak）。",
+    "AI-powered download manager with browser, player, community room, and file manager.\n\n"
+    "AI via DeepSeek / OpenRouter / custom\n"
+    "Web search via DuckDuckGo, Brave, Perplexity (parallel)":
+        "AI 驱动的下载管理器，内置浏览器、播放器、社区聊天室和文件管理器。\n\n"
+        "AI：DeepSeek / OpenRouter / 自定义\n"
+        "网页搜索：DuckDuckGo、Brave、Perplexity（并行）",
 }

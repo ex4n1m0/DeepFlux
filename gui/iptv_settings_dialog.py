@@ -177,7 +177,7 @@ class _SourceEditDialog(QDialog):
         form = QFormLayout()
 
         self.name = QLineEdit()
-        form.addRow("Display name:", self.name)
+        form.addRow(tr('Display name:'), self.name)
 
         self.kind = QComboBox()
         self.kind.addItems(["M3U URL", "Local M3U file", "Xtream Codes API",
@@ -187,37 +187,37 @@ class _SourceEditDialog(QDialog):
         self.kind.setItemData(2, "xtream")
         self.kind.setItemData(3, "local_folder")
         self.kind.currentIndexChanged.connect(self._on_kind_changed)
-        form.addRow("Type:", self.kind)
+        form.addRow(tr('Type:'), self.kind)
 
         self.url = QLineEdit()
         self.url.setPlaceholderText("http://provider/playlist.m3u8")
-        form.addRow("URL / file path:", self.url)
+        form.addRow(tr('URL / file path:'), self.url)
 
         self.browse_btn = QPushButton(tr('Browse…'))
         self.browse_btn.clicked.connect(self._browse_file)
         form.addRow("", self.browse_btn)
 
         self.user_agent = QLineEdit()
-        form.addRow("User-Agent:", self.user_agent)
+        form.addRow(tr('User-Agent:'), self.user_agent)
 
         self.referer = QLineEdit()
-        form.addRow("Referer:", self.referer)
+        form.addRow(tr('Referer:'), self.referer)
 
         self.username = QLineEdit()
-        form.addRow("Xtream username:", self.username)
+        form.addRow(tr('Xtream username:'), self.username)
 
         self.password = QLineEdit()
         self.password.setEchoMode(QLineEdit.Password)
-        form.addRow("Xtream password:", self.password)
+        form.addRow(tr('Xtream password:'), self.password)
 
         self.epg_url = QLineEdit()
         self.epg_url.setPlaceholderText("http://provider/epg.xml (optional)")
-        form.addRow("EPG URL:", self.epg_url)
+        form.addRow(tr('EPG URL:'), self.epg_url)
 
         self.auto_refresh = QSpinBox()
         self.auto_refresh.setRange(0, 10080)
         self.auto_refresh.setSuffix(" min")
-        form.addRow("Auto-refresh:", self.auto_refresh)
+        form.addRow(tr('Auto-refresh:'), self.auto_refresh)
 
         self.enabled = QCheckBox(tr('Enabled'))
         self.enabled.setChecked(True)
@@ -399,7 +399,7 @@ class IPTVMetadataDialog(_SettingsPage):
         cl = QFormLayout(cache_group)
         self.cache_dir = QLineEdit()
         self.cache_dir.setPlaceholderText(tr('Default: ~/.deeptorrent/iptv'))
-        cl.addRow("Cache location:", self.cache_dir)
+        cl.addRow(tr('Cache location:'), self.cache_dir)
         browse = QPushButton(tr('Browse…'))
         browse.clicked.connect(self._browse_cache_dir)
         cl.addRow("", browse)
@@ -409,7 +409,7 @@ class IPTVMetadataDialog(_SettingsPage):
         self.cache_limit.setToolTip(
             "Disk cap for cached covers/artwork. When the cache grows past\n"
             "this, the least-recently-viewed images are evicted first.")
-        cl.addRow("Cache size limit:", self.cache_limit)
+        cl.addRow(tr('Cache size limit:'), self.cache_limit)
         self.framegrab = QCheckBox(tr('Frame-grab poster fallback'))
         self.framegrab.setToolTip(
             "When no metadata provider finds a poster for a movie/series,\n"
@@ -428,13 +428,13 @@ class IPTVMetadataDialog(_SettingsPage):
             "playlist's own url-tvg. Programme times are stored with their\n"
             "UTC offsets, so the guide always shows correctly in your\n"
             "system's timezone.")
-        cl.addRow("EPG URL (all sources):", self.epg_url)
+        cl.addRow(tr('EPG URL (all sources):'), self.epg_url)
         self.xtream_series_concurrency = QSpinBox()
         self.xtream_series_concurrency.setRange(1, 6)
         self.xtream_series_concurrency.setToolTip(
             "Maximum simultaneous Xtream get_series_info requests. A low value\n"
             "reduces provider rate limiting; changes apply on the next refresh.")
-        cl.addRow("Xtream series requests:", self.xtream_series_concurrency)
+        cl.addRow(tr('Xtream series requests:'), self.xtream_series_concurrency)
         self.body.addWidget(cache_group)
 
         if manager is not None:
@@ -563,9 +563,9 @@ class IPTVSubtitlesDialog(_SettingsPage):
         lang_group = QGroupBox(tr('Preferred Languages'))
         ll = QFormLayout(lang_group)
         self.pref_audio_lang = _lang_combo()
-        ll.addRow("Audio language:", self.pref_audio_lang)
+        ll.addRow(tr('Audio language:'), self.pref_audio_lang)
         self.pref_sub_lang = _lang_combo()
-        ll.addRow("Subtitle language:", self.pref_sub_lang)
+        ll.addRow(tr('Subtitle language:'), self.pref_sub_lang)
         ll.addRow("", _make_hint(
             "When a file has multiple tracks, the one in this language is selected "
             "automatically on playback. Also the default language for subtitle searches "
@@ -593,19 +593,19 @@ class IPTVPlaybackDialog(_SettingsPage):
         self.player.addItems(["mpv (libmpv)", "libVLC"])
         self.player.setItemData(0, "mpv")
         self.player.setItemData(1, "vlc")
-        pl.addRow("Preferred player:", self.player)
+        pl.addRow(tr('Preferred player:'), self.player)
 
         self.hwdec = QComboBox()
         self.hwdec.addItems(["auto-safe (recommended)", "auto", "no (software)"])
         self.hwdec.setItemData(0, "auto-safe")
         self.hwdec.setItemData(1, "auto")
         self.hwdec.setItemData(2, "no")
-        pl.addRow("Hardware decoding:", self.hwdec)
+        pl.addRow(tr('Hardware decoding:'), self.hwdec)
 
         self.cache = QSpinBox()
         self.cache.setRange(1, 120)
         self.cache.setSuffix(" s")
-        pl.addRow("Startup buffer:", self.cache)
+        pl.addRow(tr('Startup buffer:'), self.cache)
 
         self.live_pause_buffer = QSpinBox()
         self.live_pause_buffer.setRange(0, 3600)
@@ -617,7 +617,7 @@ class IPTVPlaybackDialog(_SettingsPage):
             "paused and briefly rewound. This is not durable timeshift; the\n"
             "buffer is lost on stop and high-bitrate channels retain less time."
         )
-        pl.addRow("Live bounded pause buffer:", self.live_pause_buffer)
+        pl.addRow(tr('Live bounded pause buffer:'), self.live_pause_buffer)
 
         self.recording_dir = QLineEdit()
         self.recording_dir.setPlaceholderText(tr('Default: ~/Videos/DeepFlux Recordings'))
@@ -625,7 +625,7 @@ class IPTVPlaybackDialog(_SettingsPage):
             "Folder for explicit live/network stream recordings. Recordings\n"
             "use FFmpeg stream copy and unique, sanitized .mkv filenames."
         )
-        pl.addRow("Recording folder:", self.recording_dir)
+        pl.addRow(tr('Recording folder:'), self.recording_dir)
         recording_browse = QPushButton(tr('Browse…'))
         recording_browse.clicked.connect(self._browse_recording_dir)
         pl.addRow("", recording_browse)
@@ -639,7 +639,7 @@ class IPTVPlaybackDialog(_SettingsPage):
             "pushed off-screen instead of showing as a faint bright line at the\n"
             "frame edge (0.5% ≈ 5 px per side at 1080p). mpv backend only."
         )
-        pl.addRow("Video overscan:", self.overscan)
+        pl.addRow(tr('Video overscan:'), self.overscan)
 
         self.audio_delay = QDoubleSpinBox()
         self.audio_delay.setRange(-1.0, 1.0)
@@ -654,7 +654,7 @@ class IPTVPlaybackDialog(_SettingsPage):
             "clock. Adjusted live from the player's audio menu or the +/-\n"
             "keys; this is the default applied on every playback."
         )
-        pl.addRow("Audio sync offset:", self.audio_delay)
+        pl.addRow(tr('Audio sync offset:'), self.audio_delay)
 
         self.interpolation = QCheckBox(tr('Smooth motion (frame interpolation)'))
         self.interpolation.setToolTip(
@@ -703,9 +703,9 @@ class IPTVPlaybackDialog(_SettingsPage):
 
         self.milkdrop = QCheckBox(tr('MilkDrop visualizer for audio files'))
         self.milkdrop.setToolTip(
-            "Plays audio files with a MilkDrop (Butterchurn) visualization\n"
-            "instead of a black screen. Presets are .milk files — drop more\n"
-            "into the MilkDrop folder or %USERPROFILE%\\.deeptorrent\\presets."
+            tr("Plays audio files with a MilkDrop (Butterchurn) visualization\n"
+               "instead of a black screen. Presets are .milk files — drop more\n"
+               "into the MilkDrop folder or %USERPROFILE%\\.deeptorrent\\presets.")
         )
         pl.addRow("", self.milkdrop)
 
@@ -715,7 +715,7 @@ class IPTVPlaybackDialog(_SettingsPage):
         if self.preset.count() == 0:
             self.preset.addItem(tr('(no .milk presets found)'), "")
         self.preset.setToolTip(tr('Which MilkDrop preset to start with.'))
-        pl.addRow("MilkDrop preset:", self.preset)
+        pl.addRow(tr('MilkDrop preset:'), self.preset)
 
         self.auto_next = QCheckBox(tr('Auto-try next source on dead stream'))
         pl.addRow("", self.auto_next)
@@ -729,11 +729,11 @@ class IPTVPlaybackDialog(_SettingsPage):
         self.throttle_dl = QSpinBox()
         self.throttle_dl.setRange(0, 1000000)
         self.throttle_dl.setSuffix(" KB/s")
-        tl.addRow("Torrent download cap:", self.throttle_dl)
+        tl.addRow(tr('Torrent download cap:'), self.throttle_dl)
         self.throttle_ul = QSpinBox()
         self.throttle_ul.setRange(0, 1000000)
         self.throttle_ul.setSuffix(" KB/s")
-        tl.addRow("Torrent upload cap:", self.throttle_ul)
+        tl.addRow(tr('Torrent upload cap:'), self.throttle_ul)
         self.body.addWidget(throttle_group)
 
         idx = max(0, self.player.findData(self.config.iptv.preferred_player))

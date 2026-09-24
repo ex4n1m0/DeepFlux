@@ -117,8 +117,8 @@ class SiteGrabberDialog(QDialog):
         # a Download click (keywords in → downloads out). Opt-in, persisted.
         self.auto_queue_cb = QCheckBox(tr('Auto-queue'))
         self.auto_queue_cb.setToolTip(
-            "Queue results automatically after every search — no Download "
-            "click needed (capped by the limit on the right)")
+            tr("Queue results automatically after every search — no Download "
+               "click needed (capped by the limit on the right)"))
         self.auto_queue_cb.toggled.connect(self._on_auto_toggled)
         search_row.addWidget(self.auto_queue_cb)
 

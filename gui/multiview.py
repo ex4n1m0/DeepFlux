@@ -507,9 +507,9 @@ class MultiViewGrid(QWidget):
         if self.stream_tile not in (None, tile):
             QMessageBox.information(
                 self, tr('One stream per grid'),
-                "Another tile is already playing an IPTV stream.\n"
-                "Providers reject multiple simultaneous connections — "
-                "clear that tile first.")
+                tr("Another tile is already playing an IPTV stream.\n"
+                   "Providers reject multiple simultaneous connections — "
+                   "clear that tile first."))
             return
         dlg = ChannelPickDialog(self._manager, self)
         if dlg.exec() == QDialog.Accepted:

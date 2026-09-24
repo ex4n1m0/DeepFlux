@@ -87,7 +87,7 @@ class IndexerSettingsDialog(QDialog):
 
         self.idx_url = QLineEdit()
         self.idx_url.setPlaceholderText("http://localhost:9117")
-        idx_layout.addRow("URL:", self.idx_url)
+        idx_layout.addRow(tr('URL:'), self.idx_url)
 
         key_note = QLabel(tr('API key is managed in File → API Keys.'))
         key_note.setObjectName("hint")
@@ -95,7 +95,7 @@ class IndexerSettingsDialog(QDialog):
 
         self.idx_torznab_path = QLineEdit()
         self.idx_torznab_path.setPlaceholderText(tr('/api/v2.0/indexers/all/results/torznab'))
-        idx_layout.addRow("Torznab Path:", self.idx_torznab_path)
+        idx_layout.addRow(tr('Torznab Path:'), self.idx_torznab_path)
 
         self.idx_auto_start = QCheckBox(tr("Start Jackett automatically when it's not running"))
         self.idx_auto_start.setToolTip(
@@ -107,7 +107,7 @@ class IndexerSettingsDialog(QDialog):
 
         self.idx_jackett_path = QLineEdit()
         self.idx_jackett_path.setPlaceholderText(tr('Optional — path to JackettTray.exe (auto-detect when blank)'))
-        idx_layout.addRow("Executable:", self.idx_jackett_path)
+        idx_layout.addRow(tr('Executable:'), self.idx_jackett_path)
 
         idx_hint = QLabel(
             "Jackett runs on port 9117 — download from https://github.com/Jackett/Jackett\n"
@@ -187,7 +187,7 @@ class DownloadsSettingsDialog(QDialog):
 
         self.save_path = QLineEdit()
         self.save_path.setPlaceholderText(tr('C:\\Users\\...\\Downloads\\DeepFlux'))
-        dl_layout.addRow("Default Save Path:", self.save_path)
+        dl_layout.addRow(tr('Default Save Path:'), self.save_path)
 
         browse_btn = QPushButton(tr('Browse...'))
         browse_btn.clicked.connect(self._browse_save_path)
@@ -197,23 +197,23 @@ class DownloadsSettingsDialog(QDialog):
         self.tor_download_limit.setRange(0, 999999)
         self.tor_download_limit.setSuffix(" KB/s")
         self.tor_download_limit.setSpecialValueText("Unlimited")
-        dl_layout.addRow("Download Rate Limit:", self.tor_download_limit)
+        dl_layout.addRow(tr('Download Rate Limit:'), self.tor_download_limit)
 
         self.tor_upload_limit = QSpinBox()
         self.tor_upload_limit.setRange(0, 999999)
         self.tor_upload_limit.setSuffix(" KB/s")
         self.tor_upload_limit.setSpecialValueText("Unlimited")
-        dl_layout.addRow("Upload Rate Limit:", self.tor_upload_limit)
+        dl_layout.addRow(tr('Upload Rate Limit:'), self.tor_upload_limit)
 
         self.tor_listen_port = QSpinBox()
         self.tor_listen_port.setRange(0, 65535)
         self.tor_listen_port.setSpecialValueText("Random")
-        dl_layout.addRow("Listen Port (requires restart):", self.tor_listen_port)
+        dl_layout.addRow(tr('Listen Port (requires restart):'), self.tor_listen_port)
 
         self.tor_max_connections = QSpinBox()
         self.tor_max_connections.setRange(0, 10000)
         self.tor_max_connections.setSpecialValueText("Default")
-        dl_layout.addRow("Max Connections (requires restart):", self.tor_max_connections)
+        dl_layout.addRow(tr('Max Connections (requires restart):'), self.tor_max_connections)
 
         self.tor_restore_completed = QCheckBox(tr('Keep completed torrents in the list across restarts'))
         dl_layout.addRow("", self.tor_restore_completed)
@@ -226,51 +226,51 @@ class DownloadsSettingsDialog(QDialog):
         self.tor_max_downloading.setRange(0, 1000)
         self.tor_max_downloading.setSpecialValueText("Unlimited")
         self.tor_max_downloading.setValue(5)
-        queue_layout.addRow("Max downloading at once:", self.tor_max_downloading)
+        queue_layout.addRow(tr('Max downloading at once:'), self.tor_max_downloading)
 
         self.tor_max_seeding = QSpinBox()
         self.tor_max_seeding.setRange(0, 1000)
         self.tor_max_seeding.setSpecialValueText("Unlimited")
         self.tor_max_seeding.setValue(5)
-        queue_layout.addRow("Max seeding at once:", self.tor_max_seeding)
+        queue_layout.addRow(tr('Max seeding at once:'), self.tor_max_seeding)
 
         self.tor_max_active = QSpinBox()
         self.tor_max_active.setRange(0, 1000)
         self.tor_max_active.setSpecialValueText("Unlimited")
         self.tor_max_active.setValue(10)
-        queue_layout.addRow("Max active torrents:", self.tor_max_active)
+        queue_layout.addRow(tr('Max active torrents:'), self.tor_max_active)
 
         self.tor_max_queued = QSpinBox()
         self.tor_max_queued.setRange(0, 10000)
         self.tor_max_queued.setSpecialValueText("Unlimited")
         self.tor_max_queued.setValue(0)
-        queue_layout.addRow("Max queued torrents:", self.tor_max_queued)
+        queue_layout.addRow(tr('Max queued torrents:'), self.tor_max_queued)
 
         self.tor_auto_manage_interval = QSpinBox()
         self.tor_auto_manage_interval.setRange(5, 3600)
         self.tor_auto_manage_interval.setSuffix(" s")
         self.tor_auto_manage_interval.setValue(30)
-        queue_layout.addRow("Auto-manage interval:", self.tor_auto_manage_interval)
+        queue_layout.addRow(tr('Auto-manage interval:'), self.tor_auto_manage_interval)
 
         self.tor_seed_ratio = QDoubleSpinBox()
         self.tor_seed_ratio.setRange(0.0, 100.0)
         self.tor_seed_ratio.setSingleStep(0.1)
         self.tor_seed_ratio.setSpecialValueText("Unlimited")
         self.tor_seed_ratio.setSuffix(" x")
-        queue_layout.addRow("Stop seeding at ratio:", self.tor_seed_ratio)
+        queue_layout.addRow(tr('Stop seeding at ratio:'), self.tor_seed_ratio)
 
         self.tor_seed_time = QSpinBox()
         self.tor_seed_time.setRange(0, 10080)
         self.tor_seed_time.setSingleStep(60)
         self.tor_seed_time.setSpecialValueText("Unlimited")
         self.tor_seed_time.setSuffix(" min")
-        queue_layout.addRow("Stop seeding after:", self.tor_seed_time)
+        queue_layout.addRow(tr('Stop seeding after:'), self.tor_seed_time)
 
         self.tor_auto_save = QSpinBox()
         self.tor_auto_save.setRange(10, 3600)
         self.tor_auto_save.setSuffix(" s")
         self.tor_auto_save.setValue(60)
-        queue_layout.addRow("Auto-save state interval:", self.tor_auto_save)
+        queue_layout.addRow(tr('Auto-save state interval:'), self.tor_auto_save)
 
         layout.addWidget(dl_group)
         layout.addWidget(queue_group)
@@ -284,16 +284,16 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_max_concurrent = QSpinBox()
         self.dm_max_concurrent.setRange(1, 20)
         self.dm_max_concurrent.setValue(3)
-        dm_layout.addRow("Max Concurrent Downloads:", self.dm_max_concurrent)
+        dm_layout.addRow(tr('Max Concurrent Downloads:'), self.dm_max_concurrent)
 
         self.dm_max_connections = QSpinBox()
         self.dm_max_connections.setRange(1, 32)
         self.dm_max_connections.setValue(8)
-        dm_layout.addRow("Max Connections per Download:", self.dm_max_connections)
+        dm_layout.addRow(tr('Max Connections per Download:'), self.dm_max_connections)
 
         self.dm_default_folder = QLineEdit()
         self.dm_default_folder.setPlaceholderText(tr('C:\\Users\\...\\Downloads\\DeepFlux'))
-        dm_layout.addRow("Default Download Folder:", self.dm_default_folder)
+        dm_layout.addRow(tr('Default Download Folder:'), self.dm_default_folder)
 
         dm_browse_btn = QPushButton(tr('Browse...'))
         dm_browse_btn.clicked.connect(self._browse_dm_folder)
@@ -304,7 +304,7 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_bandwidth.setSuffix(" KB/s")
         self.dm_bandwidth.setSpecialValueText("Unlimited")
         self.dm_bandwidth.setValue(0)
-        dm_layout.addRow("Bandwidth Limit:", self.dm_bandwidth)
+        dm_layout.addRow(tr('Bandwidth Limit:'), self.dm_bandwidth)
 
         self.dm_auto_start = QCheckBox(tr('Automatically start downloads when added'))
         dm_layout.addRow("", self.dm_auto_start)
@@ -313,18 +313,18 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_segment_threshold.setRange(1, 1000)
         self.dm_segment_threshold.setSuffix(" MB")
         self.dm_segment_threshold.setValue(1)
-        dm_layout.addRow("Segment Threshold (files smaller than this use single-stream):", self.dm_segment_threshold)
+        dm_layout.addRow(tr('Segment Threshold (files smaller than this use single-stream):'), self.dm_segment_threshold)
 
         self.dm_stream_height = QSpinBox()
         self.dm_stream_height.setRange(0, 4320)
         self.dm_stream_height.setSpecialValueText("Highest available")
         self.dm_stream_height.setSuffix("p")
-        dm_layout.addRow("HLS Maximum Height:", self.dm_stream_height)
+        dm_layout.addRow(tr('HLS Maximum Height:'), self.dm_stream_height)
 
         self.dm_youtube_height = QSpinBox()
         self.dm_youtube_height.setRange(144, 4320)
         self.dm_youtube_height.setSuffix("p")
-        dm_layout.addRow("YouTube Maximum Height:", self.dm_youtube_height)
+        dm_layout.addRow(tr('YouTube Maximum Height:'), self.dm_youtube_height)
 
         self.dm_youtube_subtitles = QCheckBox(tr('Download and embed available subtitles'))
         dm_layout.addRow("", self.dm_youtube_subtitles)
@@ -361,10 +361,10 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_categories = QPlainTextEdit()
         self.dm_categories.setMaximumHeight(90)
         self.dm_categories.setPlaceholderText(tr('Videos|D:\\Media\\Videos|mp4,mkv,webm'))
-        dm_layout.addRow("Categories (Name|Folder|extensions):", self.dm_categories)
+        dm_layout.addRow(tr('Categories (Name|Folder|extensions):'), self.dm_categories)
 
-        dm_hint = QLabel("The download manager uses segmented downloading with dynamic rebalancing\n"
-                         "for maximum speed, similar to Internet Download Manager.")
+        dm_hint = QLabel(tr("The download manager uses segmented downloading with dynamic rebalancing\n"
+                            "for maximum speed, similar to Internet Download Manager."))
         dm_hint.setObjectName("hint")
         dm_hint.setWordWrap(True)
         dm_layout.addRow("", dm_hint)
@@ -516,12 +516,12 @@ class BrowserSettingsDialog(QDialog):
 
         self.browser_homepage = QLineEdit()
         self.browser_homepage.setPlaceholderText("Default: https://deepflux.space/")
-        general_layout.addRow("Homepage:", self.browser_homepage)
+        general_layout.addRow(tr('Homepage:'), self.browser_homepage)
 
         self.browser_search_engine = QComboBox()
         for engine in BROWSER_SEARCH_ENGINES:
             self.browser_search_engine.addItem(engine.title(), engine)
-        general_layout.addRow("Search engine:", self.browser_search_engine)
+        general_layout.addRow(tr('Search engine:'), self.browser_search_engine)
 
         hint = QLabel("The page loaded when the Browse tab opens or the Home button is clicked. Default: https://deepflux.space/ — leave empty to reset to the default.")
         hint.setObjectName("hint")
@@ -559,7 +559,7 @@ class BrowserSettingsDialog(QDialog):
         self.browser_history_days = QSpinBox()
         self.browser_history_days.setRange(1, 3650)
         self.browser_history_days.setSuffix(" days")
-        privacy_layout.addRow("History retention:", self.browser_history_days)
+        privacy_layout.addRow(tr('History retention:'), self.browser_history_days)
 
         self.clear_history_btn = QPushButton(tr('Clear Browsing History'))
         self.clear_history_btn.setObjectName("btn_secondary")
@@ -712,17 +712,17 @@ class APIKeysDialog(QDialog):
         for pid, preset in LLM_PROVIDER_PRESETS.items():
             self.llm_endpoint.addItem(preset["label"], pid)
         self.llm_endpoint.currentIndexChanged.connect(self._on_endpoint_changed)
-        fl.addRow("API endpoint:", self.llm_endpoint)
+        fl.addRow(tr('API endpoint:'), self.llm_endpoint)
         self.llm_base_url = QLineEdit()
-        fl.addRow("Base URL:", self.llm_base_url)
+        fl.addRow(tr('Base URL:'), self.llm_base_url)
         self.llm_model = QLineEdit()
-        fl.addRow("Model:", self.llm_model)
+        fl.addRow(tr('Model:'), self.llm_model)
         self.llm_reasoning_effort = QCheckBox(tr('Send reasoning_effort to custom endpoint'))
         fl.addRow("", self.llm_reasoning_effort)
         self.llm_key = QLineEdit()
         self.llm_key.setEchoMode(QLineEdit.Password)
         self.llm_key.setPlaceholderText(tr('sk-...'))
-        fl.addRow("API Key:", self.llm_key)
+        fl.addRow(tr('API Key:'), self.llm_key)
         fl.addRow("", _api_hint(
             "DeepSeek or OpenRouter key — powers the conversational agent. "
             "Get one at https://platform.deepseek.com/api_keys (DeepSeek) or "
@@ -736,7 +736,7 @@ class APIKeysDialog(QDialog):
         self.jkt_key = QLineEdit()
         self.jkt_key.setEchoMode(QLineEdit.Password)
         self.jkt_key.setPlaceholderText(tr('API key from Jackett dashboard'))
-        fl.addRow("API Key:", self.jkt_key)
+        fl.addRow(tr('API Key:'), self.jkt_key)
         self.jkt_test_btn = QPushButton(tr('Test Connection'))
         self.jkt_test_btn.clicked.connect(self._test_jackett)
         fl.addRow("", self.jkt_test_btn)
@@ -756,11 +756,11 @@ class APIKeysDialog(QDialog):
         self.brave_key = QLineEdit()
         self.brave_key.setEchoMode(QLineEdit.Password)
         self.brave_key.setPlaceholderText(tr('BSA...'))
-        fl.addRow("Brave API Key:", self.brave_key)
+        fl.addRow(tr('Brave API Key:'), self.brave_key)
         self.pplx_key = QLineEdit()
         self.pplx_key.setEchoMode(QLineEdit.Password)
         self.pplx_key.setPlaceholderText(tr('pplx-...'))
-        fl.addRow("Perplexity API Key:", self.pplx_key)
+        fl.addRow(tr('Perplexity API Key:'), self.pplx_key)
         fl.addRow("", _api_hint(
             "DuckDuckGo always works without a key. Brave adds an independent "
             "index (free tier: 1 query/sec). Perplexity adds synthesized answers. "
@@ -773,7 +773,7 @@ class APIKeysDialog(QDialog):
         self.tmdb_key = QLineEdit()
         self.tmdb_key.setEchoMode(QLineEdit.Password)
         self.tmdb_key.setPlaceholderText(tr('TMDb API key (optional)'))
-        fl.addRow("API Key:", self.tmdb_key)
+        fl.addRow(tr('API Key:'), self.tmdb_key)
         fl.addRow("", _api_hint(
             "Optional — enter your own key from themoviedb.org/settings/api "
             "for TMDb posters/metadata. Left blank, TVmaze remains the keyless "
@@ -786,7 +786,7 @@ class APIKeysDialog(QDialog):
         self.omdb_key = QLineEdit()
         self.omdb_key.setEchoMode(QLineEdit.Password)
         self.omdb_key.setPlaceholderText(tr('Free key from omdbapi.com/apikey.aspx (optional)'))
-        fl.addRow("API Key:", self.omdb_key)
+        fl.addRow(tr('API Key:'), self.omdb_key)
         fl.addRow("", _api_hint(
             "Optional — free key from omdbapi.com. Fallback when TMDb "
             "misses or has no key; covers older/obscure titles."))
@@ -798,7 +798,7 @@ class APIKeysDialog(QDialog):
         self.fanarttv_key = QLineEdit()
         self.fanarttv_key.setEchoMode(QLineEdit.Password)
         self.fanarttv_key.setPlaceholderText(tr('Free key from fanart.tv (optional)'))
-        fl.addRow("API Key:", self.fanarttv_key)
+        fl.addRow(tr('API Key:'), self.fanarttv_key)
         fl.addRow("", _api_hint(
             "Optional — free personal key from fanart.tv/get-an-api-key. "
             "Enriches backdrops with community fan art after a poster is found."))
@@ -810,7 +810,7 @@ class APIKeysDialog(QDialog):
         self.tpdb_key = QLineEdit()
         self.tpdb_key.setEchoMode(QLineEdit.Password)
         self.tpdb_key.setPlaceholderText(tr('API token from theporndb.net (optional)'))
-        fl.addRow("API Token:", self.tpdb_key)
+        fl.addRow(tr('API Token:'), self.tpdb_key)
         fl.addRow("", _api_hint(
             "Optional — TMDb filters adult titles out of its search results, "
             "so adult VOD entries stay artwork-less without this. Only used "
@@ -823,7 +823,7 @@ class APIKeysDialog(QDialog):
         self.stashdb_key = QLineEdit()
         self.stashdb_key.setEchoMode(QLineEdit.Password)
         self.stashdb_key.setPlaceholderText(tr('API key from stashdb.org (optional)'))
-        fl.addRow("API Key:", self.stashdb_key)
+        fl.addRow(tr('API Key:'), self.stashdb_key)
         fl.addRow("", _api_hint(
             "Optional — community-driven adult metadata DB. Complements "
             "ThePornDB for western web scenes; tried when TPDB misses. "
@@ -836,12 +836,12 @@ class APIKeysDialog(QDialog):
         self.ost_key = QLineEdit()
         self.ost_key.setEchoMode(QLineEdit.Password)
         self.ost_key.setPlaceholderText(tr('API key from opensubtitles.com'))
-        fl.addRow("API Key:", self.ost_key)
+        fl.addRow(tr('API Key:'), self.ost_key)
         self.ost_user = QLineEdit()
-        fl.addRow("Username (optional):", self.ost_user)
+        fl.addRow(tr('Username (optional):'), self.ost_user)
         self.ost_pass = QLineEdit()
         self.ost_pass.setEchoMode(QLineEdit.Password)
-        fl.addRow("Password (optional):", self.ost_pass)
+        fl.addRow(tr('Password (optional):'), self.ost_pass)
         fl.addRow("", _api_hint(
             "Used by the player's CC menu → \"Find subtitles online…\". "
             "Account credentials are optional and raise the daily download quota."))
