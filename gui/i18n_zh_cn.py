@@ -625,7 +625,6 @@ ZH_CN: dict[str, str] = {
         "要搜索的视频站点 —— 自动填入浏览器当前打开的站点",
     "About DeepFlux": "关于 DeepFlux",
     "DeepFlux — User Guide": "DeepFlux —— 用户指南",
-    "5.2 — AI Deep Search": "5.2 —— AI 深度搜索",
 
     # --- form-layout labels (addRow/addButton pass) ---
     "API Token:": "API 令牌：",

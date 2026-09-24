@@ -37,7 +37,7 @@ HELP_HTML_ZH = r"""
 </head>
 <body>
 
-<h1>DeepFlux 5.2 —— 用户指南</h1>
+<h1>DeepFlux 5.3 —— 用户指南</h1>
 
 <p>DeepFlux 是一个 AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室
 和文件管理器。AI 智能体可以搜索并下载种子、查找直链下载、管理你的媒体库 ——
@@ -446,7 +446,7 @@ AES-128 加密的流。
 </table>
 
 <h2>版本</h2>
-<p>DeepFlux 5.2 —— AI 深度搜索</p>
+<p>DeepFlux 5.3 —— AI 深度搜索</p>
 <p>AI：DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
 
 </body>

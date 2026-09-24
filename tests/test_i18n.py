@@ -125,7 +125,7 @@ def test_help_dialog_shows_chinese_guide_under_zh():
         assert browser is not None, "guide text browser not found"
         html = browser.toHtml()
         assert "用户指南" in html
-        assert "DeepFlux 5.2" in html  # version string travels with the guide
+        assert "DeepFlux 5.3" in html  # version string travels with the guide
         assert "Quick Start" not in html
         dlg.deleteLater()
     finally:
