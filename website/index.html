@@ -2,6 +2,21 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<!-- Chinese-browser fast path: send zh* locales to the Chinese page before
+     the meta refresh fires; everyone else lands on the English page. The
+     language switcher in the nav reverses this choice in one click. -->
+<script>
+  (function () {
+    var langs = (navigator.languages && navigator.languages.length)
+      ? navigator.languages : [navigator.language || ''];
+    for (var i = 0; i < langs.length; i++) {
+      if (langs[i] && langs[i].toLowerCase().indexOf('zh') === 0) {
+        location.replace('/deepflux/zh/');
+        return;
+      }
+    }
+  })();
+</script>
 <meta http-equiv="refresh" content="0; url=/deepflux/">
 <title>Redirecting…</title>
 </head>

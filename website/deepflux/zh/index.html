@@ -1,32 +1,50 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DeepFlux — The AI-Native Media &amp; Download Suite</title>
-<meta name="description" content="DeepFlux — an AI-powered download manager with a built-in browser, media player, community chat room, and file manager. The agent drives the whole app.">
+<title>DeepFlux — AI 原生媒体与下载套件</title>
+<meta name="description" content="DeepFlux —— AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室和文件管理器。智能体驱动整个应用。">
 <meta name="theme-color" content="#050507">
-<link rel="icon" type="image/webp" href="DeepFlux.webp">
-<!-- Open Graph -->
-<meta property="og:title" content="DeepFlux — The AI-Native Media &amp; Download Suite">
-<meta property="og:description" content="An AI-powered download manager with a built-in browser, media player, community chat room, and file manager. The agent drives the whole app.">
-<meta property="og:image" content="https://deepflux.space/deepflux/DeepOG5.jpg">
-<meta property="og:url" content="https://deepflux.space/deepflux/">
-<meta property="og:type" content="website">
-<meta property="og:site_name" content="DeepFlux">
-<!-- Twitter Card -->
-<meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="DeepFlux — The AI-Native Media &amp; Download Suite">
-<meta name="twitter:description" content="An AI-powered download manager with a built-in browser, media player, community chat room, and file manager. The agent drives the whole app.">
-<meta name="twitter:image" content="https://deepflux.space/deepflux/DeepOG5.jpg">
-<link rel="canonical" href="https://deepflux.space/deepflux/">
+<link rel="icon" type="image/webp" href="../DeepFlux.webp">
+<!-- hreflang: EN 原页为默认版本 -->
+<link rel="canonical" href="https://deepflux.space/deepflux/zh/">
 <link rel="alternate" hreflang="en" href="https://deepflux.space/deepflux/">
 <link rel="alternate" hreflang="zh-CN" href="https://deepflux.space/deepflux/zh/">
 <link rel="alternate" hreflang="x-default" href="https://deepflux.space/deepflux/">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Open Graph -->
+<meta property="og:title" content="DeepFlux — AI 原生媒体与下载套件">
+<meta property="og:description" content="AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室和文件管理器。智能体驱动整个应用。">
+<meta property="og:image" content="https://deepflux.space/deepflux/DeepOG5.jpg">
+<meta property="og:url" content="https://deepflux.space/deepflux/zh/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="DeepFlux">
+<meta property="og:locale" content="zh_CN">
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="DeepFlux — AI 原生媒体与下载套件">
+<meta name="twitter:description" content="AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室和文件管理器。智能体驱动整个应用。">
+<meta name="twitter:image" content="https://deepflux.space/deepflux/DeepOG5.jpg">
+<!-- 字体：Google Fonts 在中国大陆无法访问，此处改为自托管的 latin 子集
+     （可变字重），中文字形由系统字体栈（苹方 / 微软雅黑）按字符回退渲染。 -->
 <style>
+  /* 自托管 latin 可变字体（woff2，同一文件覆盖全部字重） */
+  @font-face {
+    font-family: "Inter";
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("../fonts/Inter-var.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
+  @font-face {
+    font-family: "Space Grotesk";
+    font-style: normal;
+    font-weight: 100 900;
+    font-display: swap;
+    src: url("../fonts/SpaceGrotesk-var.woff2") format("woff2");
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+  }
   :root {
     --bg: #050507;
     --ink: #eef4ff;
@@ -41,8 +59,8 @@
     --magenta: #b44bf0;
     --green: #4ade80;
     --grad: linear-gradient(90deg, #5bc8f5 0%, #4f7df9 42%, #8b5cf6 72%, #b44bf0 100%);
-    --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
-    --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-display: "Space Grotesk", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    --font-body: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -54,7 +72,7 @@
     color: var(--ink);
     font-family: var(--font-body);
     font-size: 16px;
-    line-height: 1.6;
+    line-height: 1.7;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -99,9 +117,6 @@
   .page {
     width: 100%;
     max-width: 1080px;
-    /* margin auto: .page also lives inside the full-width .topbar, where it
-       is a plain block child — without this the nav column sits flush left
-       while main.page (a flex child of body) is centered. */
     margin: 0 auto;
     padding: 0 24px;
   }
@@ -123,9 +138,8 @@
     color: var(--ghost);
   }
   .kin-label {
-    font-size: 0.62rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
     color: var(--ghost);
   }
   .kin-sep { width: 3px; height: 3px; border-radius: 50%; background: rgba(238, 244, 255, 0.22); }
@@ -290,9 +304,8 @@
     justify-content: center;
     align-items: center;
     gap: 9px;
-    font-size: 0.78rem;
-    letter-spacing: 0.16em;
-    text-transform: uppercase;
+    font-size: 0.82rem;
+    letter-spacing: 0.12em;
     color: var(--faint);
     margin-bottom: 14px;
   }
@@ -304,17 +317,11 @@
   }
   @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
   header.hero h1 {
-    /* In the empty band between the eyebrow and the top of the sphere
-       (owner-marked spot): normal flow, vertically CENTERED in the band.
-       The visual gap to the sphere is the 34px margin-bottom plus the
-       webp's own transparent top padding (15.7% of the banner width),
-       so the top gap mirrors it — same min() as the banner keeps the
-       centering at every viewport width. */
     font-family: var(--font-display);
     font-weight: 700;
     font-size: clamp(2.4rem, 5.5vw, 4rem);
-    line-height: 1.08;
-    letter-spacing: -0.01em;
+    line-height: 1.15;
+    letter-spacing: 0;
     color: var(--ink);
     text-align: center;
     margin: calc(34px + 0.157 * min(768px, 100%)) 0 34px;
@@ -322,8 +329,6 @@
   header.hero .banner-glow {
     position: relative;
     display: block;
-    /* Square logo mark: large but not full-column — clamped to the
-       content width on narrow screens. */
     width: min(768px, 100%);
     margin: 0 auto;
   }
@@ -341,14 +346,11 @@
     height: auto;
     display: block;
     margin: 0 auto;
-    /* The original mark carries real alpha and a dark body — normal
-       compositing over the page, lit by the glow behind it. The retired
-       wordmark's mix-blend-mode: screen would blank a dark logo. */
   }
   .hero-copy { margin: 14px auto 0; max-width: 760px; }
   .hero-copy p {
     font-size: 1.05rem;
-    line-height: 1.65;
+    line-height: 1.75;
     color: var(--muted);
     letter-spacing: 0.01em;
   }
@@ -400,7 +402,7 @@
   .shot-titlebar .dot { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,0.14); }
   .shot-titlebar .title {
     flex: 1; text-align: center;
-    font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase;
+    font-size: 0.74rem; letter-spacing: 0.14em;
     color: var(--ghost);
   }
   .shot-body { display: flex; min-height: 250px; }
@@ -412,7 +414,7 @@
   }
   .rail-item {
     padding: 7px 11px; border-radius: 9px;
-    font-size: 0.78rem; color: var(--faint); letter-spacing: 0.02em;
+    font-size: 0.8rem; color: var(--faint); letter-spacing: 0.02em;
   }
   .rail-item.active {
     background: rgba(79, 125, 249, 0.16);
@@ -420,7 +422,7 @@
     box-shadow: 0 0 0 1px rgba(79, 125, 249, 0.25) inset;
   }
   .shot-main { flex: 1; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-  .shot-toolbar { display: flex; align-items: center; gap: 8px; font-size: 0.72rem; color: var(--ghost); }
+  .shot-toolbar { display: flex; align-items: center; gap: 8px; font-size: 0.74rem; color: var(--ghost); }
   .shot-toolbar .tbtn {
     padding: 4px 11px; border: 1px solid var(--line); border-radius: 999px;
     background: rgba(255,255,255,0.02); color: var(--faint);
@@ -443,9 +445,8 @@
   section.block { padding: 78px 0 0; scroll-margin-top: 84px; }
   .section-head { text-align: center; margin-bottom: 40px; }
   .section-head .kicker {
-    font-size: 0.72rem;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
+    font-size: 0.74rem;
+    letter-spacing: 0.14em;
     color: var(--ghost);
     margin-bottom: 12px;
   }
@@ -474,7 +475,7 @@
     position: relative;
     padding-left: 26px;
     font-size: 0.92rem;
-    line-height: 1.55;
+    line-height: 1.65;
     color: var(--faint);
   }
   ul.agent-points li::before {
@@ -508,8 +509,8 @@
   .chat-head .chat-tag {
     margin-left: auto;
     font-family: var(--font-body);
-    font-size: 0.68rem; font-weight: 500;
-    letter-spacing: 0.08em; text-transform: uppercase;
+    font-size: 0.7rem; font-weight: 500;
+    letter-spacing: 0.06em;
     color: var(--ghost);
     border: 1px solid var(--line);
     border-radius: 999px;
@@ -521,13 +522,12 @@
     padding: 9px 14px;
     border-radius: 14px;
     font-size: 0.85rem;
-    line-height: 1.5;
+    line-height: 1.6;
   }
   .msg .who {
     display: block;
-    font-size: 0.64rem;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
+    font-size: 0.66rem;
+    letter-spacing: 0.12em;
     color: var(--ghost);
     margin-bottom: 2px;
   }
@@ -549,7 +549,7 @@
   .chat-foot {
     padding: 10px 18px;
     border-top: 1px solid var(--line);
-    font-size: 0.72rem;
+    font-size: 0.74rem;
     letter-spacing: 0.05em;
     color: var(--ghost);
     text-align: center;
@@ -601,7 +601,7 @@
     letter-spacing: 0.01em;
     margin-bottom: 6px;
   }
-  .tile p { font-size: 0.82rem; line-height: 1.55; color: var(--faint); }
+  .tile p { font-size: 0.82rem; line-height: 1.65; color: var(--faint); }
   .tile.big h3 { font-size: 1.08rem; }
   .tile.big p { font-size: 0.88rem; }
   .streamline {
@@ -654,7 +654,7 @@
     background: var(--grad);
     border-radius: 2px;
   }
-  .tab small { display: block; font-family: var(--font-body); font-weight: 500; font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ghost); margin-top: 2px; }
+  .tab small { display: block; font-family: var(--font-body); font-weight: 500; font-size: 0.68rem; letter-spacing: 0.06em; color: var(--ghost); margin-top: 2px; }
   .tabpanel { padding: 28px 30px 26px; }
   .tabpanel[hidden] { display: none; }
   .panel-head {
@@ -670,7 +670,7 @@
     position: relative;
     padding-left: 44px;
     font-size: 0.88rem;
-    line-height: 1.6;
+    line-height: 1.7;
     color: var(--faint);
   }
   ol.steps li::before {
@@ -692,12 +692,12 @@
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 12px;
     background: rgba(255, 255, 255, 0.02);
-    font-size: 0.8rem; line-height: 1.55; color: var(--faint);
+    font-size: 0.8rem; line-height: 1.65; color: var(--faint);
     margin-bottom: 16px;
   }
   .note svg { flex-shrink: 0; margin-top: 2px; }
   .checksum { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .checksum .lbl { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ghost); }
+  .checksum .lbl { font-size: 0.7rem; letter-spacing: 0.1em; color: var(--ghost); }
   .checksum code {
     font-family: var(--font-mono);
     font-size: 0.72rem;
@@ -750,7 +750,7 @@
     font-weight: 600;
     margin-bottom: 5px;
   }
-  .pillar p { font-size: 0.82rem; line-height: 1.55; color: var(--faint); }
+  .pillar p { font-size: 0.82rem; line-height: 1.65; color: var(--faint); }
 
   /* ---- Final CTA ---- */
   .final {
@@ -818,7 +818,8 @@
     .kin-sub { display: none; }
     .kin-row { gap: 5px 8px; }
     nav.top ul li.hide-mobile { display: none; }
-    /* "Download for Windows" is too wide next to the brand at 390px —
+    nav.top ul { gap: 12px; }
+    /* "下载 Windows 版" is too wide next to the brand at 390px —
        collapse to an icon-only pill (aria-label keeps it accessible). */
     .btn-nav .os-label { display: none; }
     .btn-nav { padding: 9px 13px; }
@@ -837,49 +838,49 @@
 </style>
 </head>
 <body>
-  <a class="skip" href="#main">Skip to content</a>
+  <a class="skip" href="#main">跳到主要内容</a>
   <div class="ambient" aria-hidden="true"></div>
   <div class="grid-overlay" aria-hidden="true"></div>
 
   <!-- Sibling projects: discreet cross-links to the maker's other work -->
   <div class="kin">
     <div class="page kin-row">
-      <span class="kin-label">From the same maker</span>
-      <a class="kin-link" href="https://onlyhumans.deepflux.space/" target="_blank" rel="noopener"><b>OnlyHumans</b><span class="kin-sub"> &mdash; every word is a room</span></a>
+      <span class="kin-label">出自同一作者</span>
+      <a class="kin-link" href="https://onlyhumans.deepflux.space/" target="_blank" rel="noopener"><b>OnlyHumans</b><span class="kin-sub"> —— 每个词都是一个房间</span></a>
       <span class="kin-sep" aria-hidden="true"></span>
-      <a class="kin-link" href="https://n38worth.com/" target="_blank" rel="noopener"><b>n38worth</b><span class="kin-sub"> &mdash; the human trading simulation</span></a>
+      <a class="kin-link" href="https://n38worth.com/" target="_blank" rel="noopener"><b>n38worth</b><span class="kin-sub"> —— 人类交易模拟</span></a>
     </div>
   </div>
 
   <div class="topbar">
     <div class="page">
-      <nav class="top" aria-label="Main">
-        <a class="brand" href="/">
-          <img src="DeepFlux.webp" alt="DeepFlux logo">
+      <nav class="top" aria-label="主导航">
+        <a class="brand" href="/deepflux/">
+          <img src="../DeepFlux.webp" alt="DeepFlux 徽标">
           <span>DeepFlux</span>
         </a>
         <ul>
-          <li class="hide-mobile"><a class="navlink" href="#capabilities">Capabilities</a></li>
-          <li class="hide-mobile"><a class="navlink" href="#install">Install</a></li>
-          <li class="hide-mobile"><a class="navlink" href="#trust">Privacy</a></li>
+          <li class="hide-mobile"><a class="navlink" href="#capabilities">功能</a></li>
+          <li class="hide-mobile"><a class="navlink" href="#install">安装</a></li>
+          <li class="hide-mobile"><a class="navlink" href="#trust">隐私</a></li>
           <li class="hide-mobile"><a class="navlink" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">GitHub</a></li>
           <li class="hide-mobile"><span class="pill">v5.2</span></li>
           <li>
             <details class="lang">
-              <summary class="pill" aria-haspopup="menu" aria-label="Change language">
+              <summary class="pill" aria-haspopup="menu" aria-label="切换语言">
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                EN
+                中文
               </summary>
               <div class="lang-menu">
-                <a href="." aria-current="true" lang="en">English <span class="check" aria-hidden="true">✓</span></a>
-                <a href="zh/" lang="zh-CN">简体中文</a>
+                <a href="../" lang="en">English</a>
+                <a href="." aria-current="true" lang="zh-CN">简体中文 <span class="check" aria-hidden="true">✓</span></a>
               </div>
             </details>
           </li>
           <li>
-            <a class="btn btn-primary btn-nav" data-os-primary aria-label="Download DeepFlux" href="/api/download?f=DeepFlux5.2Setup.exe" download>
+            <a class="btn btn-primary btn-nav" data-os-primary aria-label="下载 DeepFlux" href="/api/download?f=DeepFlux5.2Setup.exe" download>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              <span class="os-label">Download</span>
+              <span class="os-label">下载</span>
             </a>
           </li>
         </ul>
@@ -889,75 +890,75 @@
 
   <main id="main" class="page" tabindex="-1">
     <header class="hero">
-      <div class="eyebrow"><span class="spark" aria-hidden="true"></span> AI agent &middot; built in</div>
-      <h1>Power Download Tools</h1>
+      <div class="eyebrow"><span class="spark" aria-hidden="true"></span> 内置 AI 智能体</div>
+      <h1>强大的下载工具</h1>
       <div class="banner-glow">
-        <img class="banner" src="DeepFlux.webp" alt="DeepFlux logo">
+        <img class="banner" src="../DeepFlux.webp" alt="DeepFlux 徽标">
       </div>
       <div class="hero-copy">
-        <p>An AI-powered download manager with a built-in browser, media player
-        and file manager &mdash; and an agent that runs all of it for you.</p>
+        <p>AI 驱动的下载管理器，内置浏览器、媒体播放器和文件管理器
+        —— 智能体替你打理这一切。</p>
       </div>
     </header>
 
-    <section class="cta" aria-label="Get DeepFlux">
+    <section class="cta" aria-label="获取 DeepFlux">
       <div class="cta-row">
         <!-- /api/download counts the click (Upstash counter) then 302s to the
              static file; it redirects uncounted when the counter isn't set up. -->
         <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.2Setup.exe" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span class="os-label">Download for Windows</span>
+          <span class="os-label">下载 Windows 版</span>
         </a>
       </div>
       <p class="also">
-        Also for
+        其他版本：
         <a data-os-link="windows" href="/api/download?f=DeepFlux5.2Setup.exe" download>Windows</a><span class="sep">&middot;</span><a data-os-link="mac" href="/api/download?f=DeepFlux-4.7-macOS-arm64.dmg" download>macOS</a><span class="sep">&middot;</span><a data-os-link="linux" href="/api/download?f=DeepFlux-4.7-Linux-x86_64.AppImage" download>Linux</a>
-        &nbsp;&mdash;&nbsp;<a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">source code</a>
+        &mdash;&nbsp;<a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">源代码</a>
       </p>
-      <p class="meta-row">Free &middot; no account &middot; your files stay on your machine<span class="live" id="live" hidden
-         title="The user count is anonymous — a random id per install, nothing else. Opt out in the app's Download settings."></span></p>
+      <p class="meta-row">免费 &middot; 无需账号 &middot; 文件只保存在你的电脑上<span class="live" id="live" hidden
+         title="在线人数为匿名统计 —— 每个安装对应一个随机 id，仅此而已。可在应用的下载设置中关闭。"></span></p>
     </section>
 
-    <div class="shot" role="img" aria-label="The DeepFlux app: a downloads list with active torrents, streaming progress and transfer speeds.">
+    <div class="shot" role="img" aria-label="DeepFlux 应用界面：下载列表里有正在下载的种子、流媒体进度和传输速度。">
       <div class="shot-titlebar" aria-hidden="true">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
         <span class="title">DeepFlux</span>
       </div>
       <div class="shot-body" aria-hidden="true">
         <div class="shot-rail">
-          <div class="rail-item">Agent</div>
-          <div class="rail-item">Browser</div>
-          <div class="rail-item">Torrents</div>
-          <div class="rail-item active">Downloads</div>
-          <div class="rail-item">Room</div>
-          <div class="rail-item">Command</div>
+          <div class="rail-item">智能体</div>
+          <div class="rail-item">浏览器</div>
+          <div class="rail-item">种子</div>
+          <div class="rail-item active">下载</div>
+          <div class="rail-item">聊天室</div>
+          <div class="rail-item">文件管理</div>
         </div>
         <div class="shot-main">
           <div class="shot-toolbar">
-            <span class="tbtn">＋ Add</span>
-            <span class="tbtn">⏸ Pause</span>
-            <span class="tbtn">⟳ Retry</span>
+            <span class="tbtn">＋ 添加</span>
+            <span class="tbtn">⏸ 暂停</span>
+            <span class="tbtn">⟳ 重试</span>
             <span class="grow"></span>
-            <span>3 active &middot; 46 MB/s</span>
+            <span>3 个任务 &middot; 46 MB/s</span>
           </div>
           <div class="dl-row">
             <div class="top-line">
               <span class="name">ubuntu-26.04.1-desktop-amd64.iso</span>
-              <span class="sub">68% &middot; 24.0 MB/s &middot; 3 min left</span>
+              <span class="sub">68% &middot; 24.0 MB/s &middot; 剩余 3 分钟</span>
             </div>
             <div class="bar"><i style="width:68%"></i></div>
           </div>
           <div class="dl-row">
             <div class="top-line">
               <span class="name">debian-13.2.0-amd64-netinst.iso</span>
-              <span class="sub">31% &middot; 18.2 MB/s &middot; 9 min left</span>
+              <span class="sub">31% &middot; 18.2 MB/s &middot; 剩余 9 分钟</span>
             </div>
             <div class="bar"><i style="width:31%"></i></div>
           </div>
           <div class="dl-row">
             <div class="top-line">
               <span class="name">blender-5.0-linux-x64.tar.xz</span>
-              <span class="sub">done &middot; seeding</span>
+              <span class="sub">完成 &middot; 做种中</span>
             </div>
             <div class="bar done"><i style="width:100%"></i></div>
           </div>
@@ -965,94 +966,93 @@
       </div>
     </div>
 
-    <section class="block" id="agent" aria-label="Meet the agent">
+    <section class="block" id="agent" aria-label="认识智能体">
       <div class="section-head">
-        <div class="kicker">The differentiator</div>
-        <h2>An agent that actually does things</h2>
+        <div class="kicker">与众不同之处</div>
+        <h2>真正能干活的智能体</h2>
       </div>
       <div class="agent-grid">
         <div>
-          <p class="lead">Chat with your downloads like a colleague. The agent
-          searches, fetches and organizes &mdash; and drives the app itself.</p>
+          <p class="lead">像和同事对话一样指挥你的下载。智能体会搜索、
+          获取和整理 —— 还能直接操控整个应用。</p>
           <ul class="agent-points">
-            <li><b>Searches and fetches.</b> Torrent indexers and the web, then
-            downloads &mdash; or streams while it downloads.</li>
-            <li><b>Runs the app for you.</b> Browser tabs, the download queue,
-            playback, file organization &mdash; by chat.</li>
-            <li><b>Sets itself up.</b> FFmpeg, Jackett search, sources and API
-            keys &mdash; asking you first, every time.</li>
-            <li><b>Stays on your machine.</b> Local-first; nothing leaves
-            without your say-so.</li>
+            <li><b>搜索并获取。</b>种子索引站和全网都能搜，找到即下载
+            —— 也可以边下边播。</li>
+            <li><b>替你操作应用。</b>浏览器标签、下载队列、播放、文件
+            整理 —— 聊一句就办妥。</li>
+            <li><b>自动完成配置。</b>FFmpeg、Jackett 搜索、源和 API
+            密钥 —— 每一步都先征求你的同意。</li>
+            <li><b>数据留在本机。</b>本地优先；未经你允许，任何数据
+            不出门。</li>
           </ul>
         </div>
-        <div class="chat" role="img" aria-label="Example conversation: the user asks the agent to download the latest Ubuntu and Debian installer ISOs; the agent finds sources, asks for confirmation, then reports the download is running.">
+        <div class="chat" role="img" aria-label="对话示例：用户让智能体下载最新版 Ubuntu 和 Debian 安装镜像；智能体找到来源、请求确认，然后报告下载已开始。">
           <div class="chat-head" aria-hidden="true">
-            <span class="chat-dot"></span> DeepFlux Agent
-            <span class="chat-tag">you approve every action</span>
+            <span class="chat-dot"></span> DeepFlux 智能体
+            <span class="chat-tag">每个操作都经你确认</span>
           </div>
           <div class="chat-body" aria-hidden="true">
-            <div class="msg user"><span class="who">You</span>Download the latest Ubuntu and Debian installer ISOs</div>
-            <div class="msg bot"><span class="who">Agent</span>Searching 12 indexers &mdash; 3 sources found:</div>
+            <div class="msg user"><span class="who">你</span>下载最新版的 Ubuntu 和 Debian 安装镜像</div>
+            <div class="msg bot"><span class="who">智能体</span>正在搜索 12 个索引站 —— 找到 3 个来源：</div>
             <div class="msg bot">
-              <span class="who">Agent</span>
-              <span class="li">Ubuntu 26.04.1 desktop &middot; 6.2 GB</span>
-              <span class="li">Debian 13.2.0 netinst &middot; 0.8 GB</span>
-              <b>Download both?</b>
+              <span class="who">智能体</span>
+              <span class="li">Ubuntu 26.04.1 桌面版 &middot; 6.2 GB</span>
+              <span class="li">Debian 13.2.0 网络安装版 &middot; 0.8 GB</span>
+              <b>两个都下载？</b>
             </div>
-            <div class="msg user"><span class="who">You</span>Yes &mdash; put them in Downloads/ISOs</div>
-            <div class="msg bot"><span class="who">Agent</span>Confirmed &mdash; both queued. Ubuntu is coming down at
-            24&nbsp;MB/s; I&rsquo;ll let you know when it&rsquo;s done.</div>
+            <div class="msg user"><span class="who">你</span>好 —— 放到 Downloads/ISOs</div>
+            <div class="msg bot"><span class="who">智能体</span>已确认 —— 两个都已加入队列。Ubuntu 正以
+            24&nbsp;MB/s 下载，完成后我会告诉你。</div>
           </div>
-          <div class="chat-foot" aria-hidden="true">Ask in plain language &middot; it confirms before it acts</div>
+          <div class="chat-foot" aria-hidden="true">用日常语言提问 &middot; 操作前先确认</div>
         </div>
       </div>
     </section>
 
-    <section class="block" id="capabilities" aria-label="What DeepFlux can do">
+    <section class="block" id="capabilities" aria-label="DeepFlux 能做什么">
       <div class="section-head">
-        <div class="kicker">Capabilities</div>
-        <h2>One app, the whole pipeline</h2>
+        <div class="kicker">功能全景</div>
+        <h2>一个应用，覆盖全流程</h2>
       </div>
       <div class="bento">
         <article class="tile big span2">
           <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 20l-4-4 4.5-4.5a2.12 2.12 0 0 0-3-3z"/><path d="M5.5 11.5l7 7"/></svg></div>
-          <h3>Torrent engine</h3>
-          <p>A full BitTorrent engine with stream-while-downloading &mdash; start
-          watching from the first megabytes while the rest arrives. Rate limits,
-          sequential mode and rechecks are one chat message away.</p>
+          <h3>种子引擎</h3>
+          <p>完整的 BitTorrent 引擎，支持边下边播 —— 下载刚开始几分钟
+          就能开看。限速、顺序下载、重新校验，一句话就能搞定。</p>
           <div class="streamline" aria-hidden="true">
             <div class="row1">
               <span class="play">&#9654;</span>
-              Streaming at 00:42 &mdash; buffer ahead of playback
-              <span class="sub">8.1 MB/s &middot; 96 peers</span>
+              已播放至 00:42 —— 缓冲始终领先于播放
+              <span class="sub">8.1 MB/s &middot; 96 个节点</span>
             </div>
             <div class="bar"><i style="width:54%"></i></div>
           </div>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-          <h3>Embedded browser</h3>
-          <p>Chromium inside the app &mdash; private tabs, bookmarks, and the agent can drive pages for you.</p>
+          <h3>内置浏览器</h3>
+          <p>应用内嵌 Chromium —— 隐私标签页、书签，智能体还能替你操作网页。</p>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><polygon points="9 8 16 11 9 14 9 8"/></svg></div>
-          <h3>Player</h3>
-          <p>Dolby Vision, SVP motion smoothing and online subtitles. Music gets a MilkDrop visualizer.</p>
+          <h3>播放器</h3>
+          <p>支持杜比视界、SVP 动态补帧和在线字幕。听音乐还有 MilkDrop 可视化特效。</p>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="13" rx="2"/><polyline points="17 2 12 7 7 2"/></svg></div>
-          <h3>IPTV &amp; EPG</h3>
-          <p>Live TV, movies and series with a full programme guide.</p>
+          <h3>IPTV 与节目单</h3>
+          <p>直播电视、电影和剧集，附带完整节目单。</p>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M4 19h16"/></svg></div>
-          <h3>Downloads</h3>
-          <p>HTTP, HLS/DASH streams and YouTube &mdash; resumable and rate-limited.</p>
+          <h3>直接下载</h3>
+          <p>HTTP、HLS/DASH 流媒体和 YouTube —— 支持断点续传和限速。</p>
         </article>
         <article class="tile span2">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg></div>
-          <h3>&hellip;and the rest</h3>
-          <p>Community chat room, RSS auto-downloads, voice input and a dual-pane file manager &mdash; all agent-reachable.</p>
+          <h3>&hellip;还有更多</h3>
+          <p>社区聊天室、RSS 自动下载、语音输入和双栏文件管理器 —— 智能体全都能用。</p>
         </article>
       </div>
       <svg width="0" height="0" aria-hidden="true"><defs>
@@ -1062,82 +1062,81 @@
       </defs></svg>
     </section>
 
-    <section class="block" id="install" aria-label="Install DeepFlux">
+    <section class="block" id="install" aria-label="安装 DeepFlux">
       <div class="section-head">
-        <div class="kicker">Install &amp; trust</div>
-        <h2>Know exactly what you&rsquo;re running</h2>
+        <div class="kicker">安装与信任</div>
+        <h2>清楚知道自己装的是什么</h2>
       </div>
       <div class="tabs">
-        <div class="tablist" role="tablist" aria-label="Choose your platform">
+        <div class="tablist" role="tablist" aria-label="选择你的平台">
           <button class="tab" type="button" role="tab" id="tab-win" data-os="win" aria-controls="panel-win" aria-selected="true">Windows<small>v5.2</small></button>
-          <button class="tab" type="button" role="tab" id="tab-mac" data-os="mac" aria-controls="panel-mac" aria-selected="false" tabindex="-1">macOS<small>v4.7 &middot; beta</small></button>
-          <button class="tab" type="button" role="tab" id="tab-linux" data-os="linux" aria-controls="panel-linux" aria-selected="false" tabindex="-1">Linux<small>v4.7 &middot; beta</small></button>
+          <button class="tab" type="button" role="tab" id="tab-mac" data-os="mac" aria-controls="panel-mac" aria-selected="false" tabindex="-1">macOS<small>v4.7 &middot; 测试版</small></button>
+          <button class="tab" type="button" role="tab" id="tab-linux" data-os="linux" aria-controls="panel-linux" aria-selected="false" tabindex="-1">Linux<small>v4.7 &middot; 测试版</small></button>
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-win" aria-labelledby="tab-win">
           <div class="panel-head">
             <div>
-              <div class="panel-title">Windows 10 / 11 &middot; 64-bit</div>
-              <div class="panel-sub">v5.2 &middot; 370.6 MB &middot; per-user install, no admin &middot; updates itself in-app</div>
+              <div class="panel-title">Windows 10 / 11 &middot; 64 位</div>
+              <div class="panel-sub">v5.2 &middot; 370.6 MB &middot; 按用户安装、无需管理员 &middot; 应用内自动更新</div>
             </div>
             <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux5.2Setup.exe" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Download setup
+              下载安装程序
             </a>
           </div>
           <ol class="steps">
-            <li><b>Download</b> the setup file above and run it &mdash; it installs
-            per-user, no UAC prompt, and keeps your settings on upgrades.</li>
-            <li>Optionally let the installer <b>set up Jackett torrent search</b>
-            for you (one checkbox, one click).</li>
-            <li>If Windows shows <b>&ldquo;protected your PC&rdquo;</b>: <b>More info
-            &rarr; Run anyway</b>. The build is unsigned &mdash; an independent
-            developer certificate is the one thing still on the shopping list.
-            The checksum below is your integrity check.</li>
+            <li><b>下载</b>上方安装包并运行 —— 按用户安装、没有 UAC
+            弹窗，升级时会保留你的设置。</li>
+            <li>可以让安装程序顺便帮你<b>配好 Jackett 种子搜索</b>
+            （一个勾选，一次点击）。</li>
+            <li>如果 Windows 提示<b>&ldquo;已保护你的电脑&rdquo;</b>：点<b>&ldquo;更多信息&rdquo;
+            &rarr; &ldquo;仍要运行&rdquo;</b>。构建未签名 —— 独立开发者证书还在计划中。
+            下方校验和可用于完整性验证。</li>
           </ol>
           <div class="note">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
-            <p>A <b>shared AI key is built in</b>, so the agent works out of the box.
-            It is replaced with every release &mdash; keep DeepFlux updated, or set
-            your own key under <b>File&nbsp;&rarr;&nbsp;API Keys</b> to be fully independent.</p>
+            <p><b>内置共享 AI 密钥</b>，智能体开箱即用。密钥随每次发布
+            更换 —— 请保持 DeepFlux 更新，或在<b>&ldquo;文件&nbsp;&rarr;&nbsp;API 密钥&rdquo;</b>里
+            填入自己的密钥以完全独立。</p>
           </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
             <code>ebac3f4a425a6a32c24cfcd2804d3ac607f8d4091474d7ac93a8fb273c4a5dcb</code>
-            <button class="copy" type="button" data-copy="ebac3f4a425a6a32c24cfcd2804d3ac607f8d4091474d7ac93a8fb273c4a5dcb">Copy</button>
+            <button class="copy" type="button" data-copy="ebac3f4a425a6a32c24cfcd2804d3ac607f8d4091474d7ac93a8fb273c4a5dcb">复制</button>
           </div>
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-mac" aria-labelledby="tab-mac" hidden>
           <div class="panel-head">
             <div>
-              <div class="panel-title">macOS 14+ &middot; Apple Silicon (M1&ndash;M4)</div>
-              <div class="panel-sub">v4.7 &middot; 336.6 MB &middot; beta &mdash; Intel Macs not supported yet</div>
+              <div class="panel-title">macOS 14+ &middot; Apple Silicon（M1&ndash;M4）</div>
+              <div class="panel-sub">v4.7 &middot; 336.6 MB &middot; 测试版 —— 暂不支持 Intel Mac</div>
             </div>
             <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-4.7-macOS-arm64.dmg" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Download .dmg
+              下载 .dmg
             </a>
           </div>
           <ol class="steps">
-            <li><b>Download</b> the .dmg, open it and drag DeepFlux to
-            <b>Applications</b>.</li>
-            <li>First launch: <b>right-click DeepFlux.app &rarr; Open &rarr;
-            Open</b>. The build is unsigned, so Gatekeeper needs that explicit
-            first OK (once only).</li>
-            <li>Add your AI key under <b>File&nbsp;&rarr;&nbsp;API Keys</b> &mdash;
-            DeepSeek, OpenRouter or any OpenAI-compatible endpoint.</li>
+            <li><b>下载</b> .dmg，打开后把 DeepFlux 拖进
+            <b>&ldquo;应用程序&rdquo;</b>。</li>
+            <li>首次启动：<b>右键 DeepFlux.app &rarr; 打开 &rarr;
+            打开</b>。构建未签名，Gatekeeper 需要你第一次明确点一次
+            &ldquo;打开&rdquo;（仅此一次）。</li>
+            <li>在<b>&ldquo;文件&nbsp;&rarr;&nbsp;API 密钥&rdquo;</b>里添加你的 AI 密钥 ——
+            DeepSeek、OpenRouter 或任何 OpenAI 兼容接口。</li>
           </ol>
           <div class="note">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <p>No built-in AI key on macOS &mdash; <b>bring your own</b>. The beta
-            carries everything except the media-player tab: agent, browser,
-            torrents &amp; downloads, room and file manager.</p>
+            <p>macOS 版不内置 AI 密钥 —— <b>请自备</b>。测试版除媒体
+            播放器标签外的功能都在：智能体、浏览器、种子与下载、
+            聊天室和文件管理器。</p>
           </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
             <code>feda9211d166c6d7c2b45481a0ae41e81d8f0e5879cfdf6f8c3b2d21765ba916</code>
-            <button class="copy" type="button" data-copy="feda9211d166c6d7c2b45481a0ae41e81d8f0e5879cfdf6f8c3b2d21765ba916">Copy</button>
+            <button class="copy" type="button" data-copy="feda9211d166c6d7c2b45481a0ae41e81d8f0e5879cfdf6f8c3b2d21765ba916">复制</button>
           </div>
         </div>
 
@@ -1145,77 +1144,76 @@
           <div class="panel-head">
             <div>
               <div class="panel-title">Linux x86-64 &middot; glibc 2.39+</div>
-              <div class="panel-sub">v4.7 &middot; 419.5 MB &middot; AppImage &mdash; Ubuntu 24.04+, Debian 13, Fedora 40+, Arch</div>
+              <div class="panel-sub">v4.7 &middot; 419.5 MB &middot; AppImage —— Ubuntu 24.04+、Debian 13、Fedora 40+、Arch</div>
             </div>
             <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-4.7-Linux-x86_64.AppImage" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Download AppImage
+              下载 AppImage
             </a>
           </div>
           <ol class="steps">
-            <li><b>Download</b> the AppImage &mdash; one file, no installer.</li>
-            <li>Make it executable once: <b>chmod +x DeepFlux-*.AppImage</b> in a
-            terminal, or file <b>Properties&nbsp;&rarr;&nbsp;Permissions</b> in your
-            file manager. No security warnings on Linux.</li>
-            <li>Add your AI key under <b>File&nbsp;&rarr;&nbsp;API Keys</b>. If a
-            stream needs FFmpeg, your package manager has it &mdash; or just ask
-            the agent to install it.</li>
+            <li><b>下载</b> AppImage —— 单文件，无需安装。</li>
+            <li>赋予一次可执行权限：在终端执行 <b>chmod +x DeepFlux-*.AppImage</b>，
+            或在文件管理器的<b>&ldquo;属性&nbsp;&rarr;&nbsp;权限&rdquo;</b>里勾选。Linux 上
+            没有安全警告。</li>
+            <li>在<b>&ldquo;文件&nbsp;&rarr;&nbsp;API 密钥&rdquo;</b>里添加你的 AI 密钥。如果
+            播放流媒体需要 FFmpeg，包管理器就能装 —— 或者直接让
+            智能体帮你装。</li>
           </ol>
           <div class="note">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <p>No built-in AI key on Linux &mdash; <b>bring your own</b>. The beta
-            carries everything except the media-player tab: agent, browser,
-            torrents &amp; downloads, room and file manager.</p>
+            <p>Linux 版不内置 AI 密钥 —— <b>请自备</b>。测试版除媒体
+            播放器标签外的功能都在：智能体、浏览器、种子与下载、
+            聊天室和文件管理器。</p>
           </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
             <code>7080485e63a51af508c504667df67acdf6a8ec392674a24b3157e402e7ccc7c2</code>
-            <button class="copy" type="button" data-copy="7080485e63a51af508c504667df67acdf6a8ec392674a24b3157e402e7ccc7c2">Copy</button>
+            <button class="copy" type="button" data-copy="7080485e63a51af508c504667df67acdf6a8ec392674a24b3157e402e7ccc7c2">复制</button>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="block" id="trust" aria-label="How DeepFlux treats you">
+    <section class="block" id="trust" aria-label="DeepFlux 如何对待你">
       <div class="section-head">
-        <div class="kicker">By design</div>
-        <h2>Power with a hand on the wheel</h2>
+        <div class="kicker">设计如此</div>
+        <h2>强大，但方向盘在你手里</h2>
       </div>
       <div class="pillars">
         <div class="pillar">
           <div class="mark"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5bc8f5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg></div>
           <div>
-            <h3>You approve every action</h3>
-            <p>The agent asks before anything sensitive &mdash; installs, deletions,
-            downloads and page interactions all pass through you first.</p>
+            <h3>每个操作都经你批准</h3>
+            <p>任何敏感操作之前智能体都会先问你 —— 安装、删除、下载
+            和网页交互都要先过你这一关。</p>
           </div>
         </div>
         <div class="pillar">
           <div class="mark"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5bc8f5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
           <div>
-            <h3>Runs on your machine</h3>
-            <p>Everything lives locally &mdash; your files, your history and your
-            keys stay on your PC. The optional usage ping is anonymous and
-            one click to disable.</p>
+            <h3>一切都在你的电脑上运行</h3>
+            <p>一切都存在本地 —— 你的文件、历史记录和密钥都留在你的
+            电脑上。可选的使用统计完全匿名，一键即可关闭。</p>
           </div>
         </div>
         <div class="pillar">
           <div class="mark"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5bc8f5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>
           <div>
-            <h3>No account, no lock-in</h3>
-            <p>Free download, bring your own API key if you want a different
-            AI provider &mdash; your setup exports and moves with you.</p>
+            <h3>无需账号，没有锁定</h3>
+            <p>免费下载；想换 AI 服务商就带上自己的 API 密钥 —— 你的
+            配置可以导出，随时带走。</p>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="final" aria-label="Download DeepFlux">
-      <h2>Ready when you are.</h2>
-      <p>Free download &middot; no account &middot; your machine, your files.</p>
+    <section class="final" aria-label="下载 DeepFlux">
+      <h2>准备好了就开始吧。</h2>
+      <p>免费下载 &middot; 无需账号 &middot; 你的电脑，你的文件。</p>
       <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.2Setup.exe" download>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        <span class="os-label">Download for Windows</span>
+        <span class="os-label">下载 Windows 版</span>
       </a>
     </section>
   </main>
@@ -1223,16 +1221,16 @@
   <footer class="social">
     <div class="icons">
       <a class="icon" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener" aria-label="GitHub">
-        <img src="GitHub.png" alt="GitHub">
+        <img src="../GitHub.png" alt="GitHub">
       </a>
       <a class="icon" href="https://www.linkedin.com/in/igorcarlier/" target="_blank" rel="noopener" aria-label="LinkedIn">
-        <img src="Linked.png" alt="LinkedIn">
+        <img src="../Linked.png" alt="LinkedIn">
       </a>
       <a class="icon" href="https://x.com/igorcarlier" target="_blank" rel="noopener" aria-label="X">
-        <img src="X.png" alt="X">
+        <img src="../X.png" alt="X">
       </a>
-      <a class="icon" href="https://buymeacoffee.com/ex4n1m0" target="_blank" rel="noopener" aria-label="Buy me a coffee">
-        <img src="BuyMeCoffee.png" alt="Buy me a coffee">
+      <a class="icon" href="https://buymeacoffee.com/ex4n1m0" target="_blank" rel="noopener" aria-label="请我喝杯咖啡">
+        <img src="../BuyMeCoffee.png" alt="请我喝杯咖啡">
       </a>
     </div>
     <p class="fineprint">&copy; 2026 DeepFlux &middot; deepflux.space</p>
@@ -1243,8 +1241,8 @@
   </script>
   <script defer src="/_vercel/insights/script.js"></script>
   <script>
-    // Live "users online" + download counter, fed by /api/stats (Upstash
-    // presence set behind it). Hidden entirely while stats are unavailable.
+    // 实时在线人数 + 下载计数（数据来自 /api/stats，背后的 Upstash
+    // 计数器）。统计不可用时整体隐藏。
     (function () {
       var el = document.getElementById('live');
       function refresh() {
@@ -1253,11 +1251,10 @@
           .then(function (s) {
             var bits = [];
             if (typeof s.online === 'number' && s.online > 0) {
-              bits.push('<span class="dot"></span>' + s.online +
-                        (s.online === 1 ? ' user online' : ' users online'));
+              bits.push('<span class="dot"></span>' + s.online + ' 人在线');
             }
             if (typeof s.downloads === 'number' && s.downloads > 0) {
-              bits.push(s.downloads.toLocaleString('en-US') + ' downloads');
+              bits.push(s.downloads.toLocaleString('zh-CN') + ' 次下载');
             }
             if (bits.length) { el.innerHTML = bits.join(' &nbsp;·&nbsp; '); el.hidden = false; }
             else { el.hidden = true; }
@@ -1268,8 +1265,17 @@
       setInterval(refresh, 60000);
     })();
 
-    // OS detection: one primary download button for the visitor's platform,
-    // Windows as the default when unknown (no iOS/Android build exists).
+    // 语言下拉：点击组件外部时收起。
+    (function () {
+      document.querySelectorAll('details.lang').forEach(function (d) {
+        document.addEventListener('click', function (e) {
+          if (d.open && !d.contains(e.target)) d.removeAttribute('open');
+        });
+      });
+    })();
+
+    // 操作系统检测：为访客平台显示一个主下载按钮，
+    // 无法识别时默认 Windows（没有 iOS/Android 版本）。
     (function () {
       var p = ((navigator.userAgentData && navigator.userAgentData.platform) ||
                navigator.platform || navigator.userAgent || '').toLowerCase();
@@ -1279,9 +1285,9 @@
       else if (p.indexOf('linux') >= 0 || p.indexOf('x11') >= 0) os = 'linux';
 
       var FILES = {
-        windows: { label: 'Download for Windows', file: 'DeepFlux5.2Setup.exe' },
-        mac:     { label: 'Download for macOS',   file: 'DeepFlux-4.7-macOS-arm64.dmg' },
-        linux:   { label: 'Download for Linux',   file: 'DeepFlux-4.7-Linux-x86_64.AppImage' }
+        windows: { label: '下载 Windows 版', file: 'DeepFlux5.2Setup.exe' },
+        mac:     { label: '下载 macOS 版',   file: 'DeepFlux-4.7-macOS-arm64.dmg' },
+        linux:   { label: '下载 Linux 版',   file: 'DeepFlux-4.7-Linux-x86_64.AppImage' }
       };
       var m = FILES[os];
       document.querySelectorAll('[data-os-primary]').forEach(function (a) {
@@ -1294,7 +1300,7 @@
         a.hidden = true;
       });
 
-      // Install tabs: ARIA pattern with roving tabindex + arrow keys.
+      // 安装标签页：ARIA 模式，roving tabindex + 方向键。
       var TABS = ['win', 'mac', 'linux'];
       var initial = (os === 'mac') ? 'mac' : (os === 'linux') ? 'linux' : 'win';
       if (location.hash.indexOf('#install-') === 0) {
@@ -1325,12 +1331,12 @@
       });
       selectTab(initial);
 
-      // Checksum copy buttons.
+      // 校验和复制按钮。
       document.querySelectorAll('[data-copy]').forEach(function (btn) {
         btn.addEventListener('click', function () {
           var done = function () {
-            btn.textContent = 'Copied \u2713';
-            setTimeout(function () { btn.textContent = 'Copy'; }, 1600);
+            btn.textContent = '已复制 \u2713';
+            setTimeout(function () { btn.textContent = '复制'; }, 1600);
           };
           if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(btn.dataset.copy).then(done, done);
@@ -1343,15 +1349,6 @@
             document.body.removeChild(ta);
             done();
           }
-        });
-      });
-    })();
-
-    // Language dropdown: close when clicking elsewhere on the page.
-    (function () {
-      document.querySelectorAll('details.lang').forEach(function (d) {
-        document.addEventListener('click', function (e) {
-          if (d.open && !d.contains(e.target)) d.removeAttribute('open');
         });
       });
     })();
