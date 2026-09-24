@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.window_sizing import roomy
+from gui.i18n import tr
 
 
 class SettingsHub(QDialog):
@@ -26,7 +27,7 @@ class SettingsHub(QDialog):
     def __init__(self, entries: List[Dict[str, object]], parent=None) -> None:
         # entries: [{"category", "title", "description", "open": callable}]
         super().__init__(parent)
-        self.setWindowTitle("Settings — DeepFlux")
+        self.setWindowTitle(tr('Settings — DeepFlux'))
         self.setModal(True)
         self.setMinimumSize(640, 480)
         roomy(self)
@@ -39,7 +40,7 @@ class SettingsHub(QDialog):
 
         self._search = QLineEdit()
         self._search.setObjectName("big_input")
-        self._search.setPlaceholderText("Search settings — try “jackett”, “api key”, “subtitles”…")
+        self._search.setPlaceholderText(tr('Search settings — try “jackett”, “api key”, “subtitles”…'))
         self._search.textChanged.connect(self._refilter)
         vbox.addWidget(self._search)
 
@@ -53,11 +54,11 @@ class SettingsHub(QDialog):
         self._desc.setWordWrap(True)
         self._desc.setStyleSheet("color: #8a9ab0; font-size: 15px;")
         bottom.addWidget(self._desc, 1)
-        open_btn = QPushButton("Open…")
+        open_btn = QPushButton(tr('Open…'))
         open_btn.setObjectName("btn_accent")
         open_btn.clicked.connect(self._open_selected)
         bottom.addWidget(open_btn)
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr('Close'))
         close_btn.clicked.connect(self.accept)
         bottom.addWidget(close_btn)
         vbox.addLayout(bottom)

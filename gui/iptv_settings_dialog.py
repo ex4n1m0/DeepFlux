@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 from config import DeeptorrentConfig, IPTVSourceConfig
 from gui.milkdrop import list_presets, preset_name
 from gui.window_sizing import roomy
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def _lang_combo() -> QComboBox:
     """Editable combo: popular languages in the dropdown, type your own."""
     combo = QComboBox()
     combo.setEditable(True)
-    combo.addItem("— Player default —", "")
+    combo.addItem(tr('— Player default —'), "")
     for code, name in _PREF_LANGS:
         combo.addItem(f"{name} ({code})", code)
     return combo
@@ -192,7 +193,7 @@ class _SourceEditDialog(QDialog):
         self.url.setPlaceholderText("http://provider/playlist.m3u8")
         form.addRow("URL / file path:", self.url)
 
-        self.browse_btn = QPushButton("Browse…")
+        self.browse_btn = QPushButton(tr('Browse…'))
         self.browse_btn.clicked.connect(self._browse_file)
         form.addRow("", self.browse_btn)
 
@@ -218,7 +219,7 @@ class _SourceEditDialog(QDialog):
         self.auto_refresh.setSuffix(" min")
         form.addRow("Auto-refresh:", self.auto_refresh)
 
-        self.enabled = QCheckBox("Enabled")
+        self.enabled = QCheckBox(tr('Enabled'))
         self.enabled.setChecked(True)
         form.addRow("", self.enabled)
 
@@ -279,7 +280,7 @@ class _SourceEditDialog(QDialog):
         if self.kind.currentData() != "local_folder":
             error = _epg_url_error(self.epg_url.text())
             if error:
-                QMessageBox.warning(self, "Invalid EPG URL", error)
+                QMessageBox.warning(self, tr('Invalid EPG URL'), error)
                 self.epg_url.setFocus()
                 return
         super().accept()
@@ -309,25 +310,25 @@ class IPTVSourcesDialog(_SettingsPage):
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(config, "IPTV — Playlist Sources", parent)
 
-        src_group = QGroupBox("Playlist Sources")
+        src_group = QGroupBox(tr('Playlist Sources'))
         sl = QVBoxLayout(src_group)
 
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Name", "Type", "URL / Server", "Auto-refresh", "Enabled"])
+        self.table.setHorizontalHeaderLabels([tr('Name'), tr('Type'), tr('URL / Server'), tr('Auto-refresh'), tr('Enabled')])
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         sl.addWidget(self.table)
 
         btns = QHBoxLayout()
-        add_btn = QPushButton("+ Add")
+        add_btn = QPushButton(tr('+ Add'))
         add_btn.setObjectName("btn_accent")
         add_btn.clicked.connect(self._add_source)
         btns.addWidget(add_btn)
-        edit_btn = QPushButton("Edit")
+        edit_btn = QPushButton(tr('Edit'))
         edit_btn.clicked.connect(self._edit_source)
         btns.addWidget(edit_btn)
-        del_btn = QPushButton("Remove")
+        del_btn = QPushButton(tr('Remove'))
         del_btn.clicked.connect(self._remove_source)
         btns.addWidget(del_btn)
         btns.addStretch()
@@ -372,7 +373,7 @@ class IPTVSourcesDialog(_SettingsPage):
         s = self._selected_source()
         if s is None:
             return
-        if QMessageBox.question(self, "Remove source", f"Remove '{s.name}'?") == QMessageBox.Yes:
+        if QMessageBox.question(self, tr('Remove source'), f"Remove '{s.name}'?") == QMessageBox.Yes:
             del self.config.iptv.sources[self.table.currentRow()]
             self._load_sources()
 
@@ -394,12 +395,12 @@ class IPTVMetadataDialog(_SettingsPage):
         super().__init__(config, "IPTV — Metadata & Cache", parent)
         self._manager = manager
 
-        cache_group = QGroupBox("Cache")
+        cache_group = QGroupBox(tr('Cache'))
         cl = QFormLayout(cache_group)
         self.cache_dir = QLineEdit()
-        self.cache_dir.setPlaceholderText("Default: ~/.deeptorrent/iptv")
+        self.cache_dir.setPlaceholderText(tr('Default: ~/.deeptorrent/iptv'))
         cl.addRow("Cache location:", self.cache_dir)
-        browse = QPushButton("Browse…")
+        browse = QPushButton(tr('Browse…'))
         browse.clicked.connect(self._browse_cache_dir)
         cl.addRow("", browse)
         self.cache_limit = QSpinBox()
@@ -409,7 +410,7 @@ class IPTVMetadataDialog(_SettingsPage):
             "Disk cap for cached covers/artwork. When the cache grows past\n"
             "this, the least-recently-viewed images are evicted first.")
         cl.addRow("Cache size limit:", self.cache_limit)
-        self.framegrab = QCheckBox("Frame-grab poster fallback")
+        self.framegrab = QCheckBox(tr('Frame-grab poster fallback'))
         self.framegrab.setToolTip(
             "When no metadata provider finds a poster for a movie/series,\n"
             "grab a frame from the stream itself with FFmpeg (100% coverage).\n"
@@ -417,7 +418,7 @@ class IPTVMetadataDialog(_SettingsPage):
             "a video connection to your provider, so off-screen entries are\n"
             "never grabbed.")
         cl.addRow("", self.framegrab)
-        self.enable_epg = QCheckBox("Enable EPG (XMLTV) when available")
+        self.enable_epg = QCheckBox(tr('Enable EPG (XMLTV) when available'))
         cl.addRow("", self.enable_epg)
         self.epg_url = QLineEdit()
         self.epg_url.setPlaceholderText("https://provider/epg.xml")
@@ -437,11 +438,11 @@ class IPTVMetadataDialog(_SettingsPage):
         self.body.addWidget(cache_group)
 
         if manager is not None:
-            usage_group = QGroupBox("Disk Usage")
+            usage_group = QGroupBox(tr('Disk Usage'))
             ul = QVBoxLayout(usage_group)
             self.usage_label = _make_hint("Calculating…")
             ul.addWidget(self.usage_label)
-            self.clear_btn = QPushButton("Delete All Cached Artwork && Metadata…")
+            self.clear_btn = QPushButton(tr('Delete All Cached Artwork && Metadata…'))
             self.clear_btn.setToolTip(
                 "Deletes every cached cover, logo and metadata lookup.\n"
                 "Playlists, favorites and watch history are kept; artwork\n"
@@ -487,22 +488,22 @@ class IPTVMetadataDialog(_SettingsPage):
         s = getattr(self, "_last_stats", None) or {}
         total = self._fmt_mb(s.get("total_bytes", 0)) if s else "the cached data"
         if QMessageBox.question(
-                self, "Delete caches",
+                self, tr('Delete caches'),
                 f"Delete all cached artwork and metadata ({total})?\n\n"
                 "Covers, logos and metadata re-download as you browse.\n"
                 "Playlists, EPG, favorites and watch history are kept.",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         self.clear_btn.setEnabled(False)
-        self.clear_btn.setText("Deleting…")
+        self.clear_btn.setText(tr('Deleting…'))
         self._manager.clear_caches_async(lambda summary: self._clear_done.emit(summary))
 
     def _on_clear_done(self, summary: dict) -> None:
         self.clear_btn.setEnabled(True)
-        self.clear_btn.setText("Delete All Cached Artwork && Metadata…")
+        self.clear_btn.setText(tr('Delete All Cached Artwork && Metadata…'))
         freed = summary.get("artwork_bytes", 0)
         QMessageBox.information(
-            self, "Caches deleted",
+            self, tr('Caches deleted'),
             f"Freed {self._fmt_mb(freed)} of artwork "
             f"({summary.get('artwork_files', 0):,} files) and "
             f"{summary.get('metadata_rows', 0):,} metadata lookups.")
@@ -517,7 +518,7 @@ class IPTVMetadataDialog(_SettingsPage):
     def accept(self) -> None:
         epg_error = _epg_url_error(self.epg_url.text())
         if epg_error:
-            QMessageBox.warning(self, "Invalid EPG URL", epg_error)
+            QMessageBox.warning(self, tr('Invalid EPG URL'), epg_error)
             self.epg_url.setFocus()
             return
         # Validate the cache directory before saving: it must be creatable
@@ -531,7 +532,7 @@ class IPTVMetadataDialog(_SettingsPage):
                     f.write("ok")
                 os.unlink(probe)
             except OSError as exc:
-                QMessageBox.warning(self, "Invalid cache location",
+                QMessageBox.warning(self, tr('Invalid cache location'),
                                     f"Cannot use this cache directory:\n{exc}")
                 return
         self.config.iptv.cache_dir = cache_dir
@@ -559,7 +560,7 @@ class IPTVSubtitlesDialog(_SettingsPage):
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(config, "IPTV — Subtitles & Languages", parent)
 
-        lang_group = QGroupBox("Preferred Languages")
+        lang_group = QGroupBox(tr('Preferred Languages'))
         ll = QFormLayout(lang_group)
         self.pref_audio_lang = _lang_combo()
         ll.addRow("Audio language:", self.pref_audio_lang)
@@ -586,7 +587,7 @@ class IPTVPlaybackDialog(_SettingsPage):
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(config, "IPTV — Playback", parent)
 
-        play_group = QGroupBox("Playback")
+        play_group = QGroupBox(tr('Playback'))
         pl = QFormLayout(play_group)
         self.player = QComboBox()
         self.player.addItems(["mpv (libmpv)", "libVLC"])
@@ -619,13 +620,13 @@ class IPTVPlaybackDialog(_SettingsPage):
         pl.addRow("Live bounded pause buffer:", self.live_pause_buffer)
 
         self.recording_dir = QLineEdit()
-        self.recording_dir.setPlaceholderText("Default: ~/Videos/DeepFlux Recordings")
+        self.recording_dir.setPlaceholderText(tr('Default: ~/Videos/DeepFlux Recordings'))
         self.recording_dir.setToolTip(
             "Folder for explicit live/network stream recordings. Recordings\n"
             "use FFmpeg stream copy and unique, sanitized .mkv filenames."
         )
         pl.addRow("Recording folder:", self.recording_dir)
-        recording_browse = QPushButton("Browse…")
+        recording_browse = QPushButton(tr('Browse…'))
         recording_browse.clicked.connect(self._browse_recording_dir)
         pl.addRow("", recording_browse)
 
@@ -655,7 +656,7 @@ class IPTVPlaybackDialog(_SettingsPage):
         )
         pl.addRow("Audio sync offset:", self.audio_delay)
 
-        self.interpolation = QCheckBox("Smooth motion (frame interpolation)")
+        self.interpolation = QCheckBox(tr('Smooth motion (frame interpolation)'))
         self.interpolation.setToolTip(
             "Blends frames to smooth out fps/refresh-rate mismatch judder.\n"
             "Small GPU cost; mpv backend only.\n"
@@ -666,7 +667,7 @@ class IPTVPlaybackDialog(_SettingsPage):
         )
         pl.addRow("", self.interpolation)
 
-        self.svp = QCheckBox("SVP motion interpolation (soap-opera effect)")
+        self.svp = QCheckBox(tr('SVP motion interpolation (soap-opera effect)'))
         self.svp.setToolTip(
             "True motion interpolation — synthesizes intermediate frames, so\n"
             "24 fps movies move like high-frame-rate video (verified here:\n"
@@ -683,7 +684,7 @@ class IPTVPlaybackDialog(_SettingsPage):
         if _inst is None or not _inst.mpv_exe:
             self.svp.setEnabled(False)
             if _inst is None:
-                self.svp.setText("SVP motion interpolation (SVP 4 not installed)")
+                self.svp.setText(tr('SVP motion interpolation (SVP 4 not installed)'))
                 self.svp.setToolTip(
                     "No SVP 4 installation was found on this machine.\n"
                     "Install SVP 4 (30-day trial at svp-team.com) to enable\n"
@@ -692,7 +693,7 @@ class IPTVPlaybackDialog(_SettingsPage):
             else:
                 # SVP is there but the user skipped the mpv component, which
                 # is the player we embed.
-                self.svp.setText("SVP motion interpolation (SVP mpv component missing)")
+                self.svp.setText(tr('SVP motion interpolation (SVP mpv component missing)'))
                 self.svp.setToolTip(
                     "SVP 4 is installed but its mpv player component is not.\n"
                     "Re-run the SVP installer and include the mpv package\n"
@@ -700,7 +701,7 @@ class IPTVPlaybackDialog(_SettingsPage):
                 )
         pl.addRow("", self.svp)
 
-        self.milkdrop = QCheckBox("MilkDrop visualizer for audio files")
+        self.milkdrop = QCheckBox(tr('MilkDrop visualizer for audio files'))
         self.milkdrop.setToolTip(
             "Plays audio files with a MilkDrop (Butterchurn) visualization\n"
             "instead of a black screen. Presets are .milk files — drop more\n"
@@ -712,18 +713,18 @@ class IPTVPlaybackDialog(_SettingsPage):
         for path in list_presets():
             self.preset.addItem(preset_name(path), os.path.basename(path))
         if self.preset.count() == 0:
-            self.preset.addItem("(no .milk presets found)", "")
-        self.preset.setToolTip("Which MilkDrop preset to start with.")
+            self.preset.addItem(tr('(no .milk presets found)'), "")
+        self.preset.setToolTip(tr('Which MilkDrop preset to start with.'))
         pl.addRow("MilkDrop preset:", self.preset)
 
-        self.auto_next = QCheckBox("Auto-try next source on dead stream")
+        self.auto_next = QCheckBox(tr('Auto-try next source on dead stream'))
         pl.addRow("", self.auto_next)
         self.body.addWidget(play_group)
 
-        throttle_group = QGroupBox("Torrent Throttling While Playing")
+        throttle_group = QGroupBox(tr('Torrent Throttling While Playing'))
         tl = QFormLayout(throttle_group)
-        self.throttle = QCheckBox("Limit torrent speed while playing")
-        self.throttle.setToolTip("Caps torrent download/upload while a stream plays so the video doesn't starve.")
+        self.throttle = QCheckBox(tr('Limit torrent speed while playing'))
+        self.throttle.setToolTip(tr("Caps torrent download/upload while a stream plays so the video doesn't starve."))
         tl.addRow("", self.throttle)
         self.throttle_dl = QSpinBox()
         self.throttle_dl.setRange(0, 1000000)
@@ -766,7 +767,7 @@ class IPTVPlaybackDialog(_SettingsPage):
                 os.makedirs(recording_dir, exist_ok=True)
             except OSError as exc:
                 QMessageBox.warning(
-                    self, "Invalid recording folder",
+                    self, tr('Invalid recording folder'),
                     f"Cannot use this recording folder:\n{exc}")
                 return
         self.config.iptv.preferred_player = self.player.currentData()

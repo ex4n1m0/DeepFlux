@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
 
 from dlmgr.site_grabber import GrabberError, GrabberVideo, SiteGrabber
 from gui.window_sizing import roomy
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ class SiteGrabberDialog(QDialog):
         self._query = ""
         self._page = 1
         self._busy = False
-        self.setWindowTitle("Site Grabber")
+        self.setWindowTitle(tr('Site Grabber'))
         roomy(self)
         self.setStyleSheet(_STYLE)
         self._build_ui()
@@ -93,28 +94,28 @@ class SiteGrabberDialog(QDialog):
         layout = QVBoxLayout(self)
 
         site_row = QHBoxLayout()
-        site_row.addWidget(QLabel("Site"))
+        site_row.addWidget(QLabel(tr('Site')))
         self.site_input = QLineEdit()
         self.site_input.setPlaceholderText("Site address, e.g. https://example.com (any page on the site works)")
-        self.site_input.setToolTip("The video site to search — prefilled with the site open in the browser")
+        self.site_input.setToolTip(tr('The video site to search — prefilled with the site open in the browser'))
         site_row.addWidget(self.site_input, 1)
         layout.addLayout(site_row)
 
         search_row = QHBoxLayout()
-        search_row.addWidget(QLabel("Keywords"))
+        search_row.addWidget(QLabel(tr('Keywords')))
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search keywords…")
+        self.search_input.setPlaceholderText(tr('Search keywords…'))
         self.search_input.returnPressed.connect(self._search)
         search_row.addWidget(self.search_input, 1)
 
-        self.search_btn = QPushButton("Search")
+        self.search_btn = QPushButton(tr('Search'))
         self.search_btn.setObjectName("btn_accent")
         self.search_btn.clicked.connect(self._search)
         search_row.addWidget(self.search_btn)
 
         # Auto-queue option: search results are resolved and queued without
         # a Download click (keywords in → downloads out). Opt-in, persisted.
-        self.auto_queue_cb = QCheckBox("Auto-queue")
+        self.auto_queue_cb = QCheckBox(tr('Auto-queue'))
         self.auto_queue_cb.setToolTip(
             "Queue results automatically after every search — no Download "
             "click needed (capped by the limit on the right)")
@@ -124,13 +125,13 @@ class SiteGrabberDialog(QDialog):
         self.auto_limit_spin = QSpinBox()
         self.auto_limit_spin.setRange(1, 50)
         self.auto_limit_spin.setSuffix(" max")
-        self.auto_limit_spin.setToolTip("Max videos auto-queued per search/page")
+        self.auto_limit_spin.setToolTip(tr('Max videos auto-queued per search/page'))
         self.auto_limit_spin.valueChanged.connect(self._on_limit_changed)
         search_row.addWidget(self.auto_limit_spin)
         layout.addLayout(search_row)
 
         pattern_row = QHBoxLayout()
-        pattern_row.addWidget(QLabel("Search pattern"))
+        pattern_row.addWidget(QLabel(tr('Search pattern')))
         self.pattern_input = QLineEdit()
         self.pattern_input.setPlaceholderText(
             "auto-detected — or enter the site's search URL with {query}, e.g. https://example.com/search?q={query}")
@@ -155,7 +156,7 @@ class SiteGrabberDialog(QDialog):
             widget.blockSignals(False)
         self.site_input.setText(self._initial_site())
 
-        self.status_label = QLabel("Enter keywords and press Search.")
+        self.status_label = QLabel(tr('Enter keywords and press Search.'))
         self.status_label.setObjectName("status")
         layout.addWidget(self.status_label)
 
@@ -168,39 +169,39 @@ class SiteGrabberDialog(QDialog):
         layout.addWidget(self.results_list, 1)
 
         list_row = QHBoxLayout()
-        self.select_all_btn = QPushButton("Select all")
+        self.select_all_btn = QPushButton(tr('Select all'))
         self.select_all_btn.clicked.connect(lambda: self._set_all_checked(True))
         list_row.addWidget(self.select_all_btn)
-        self.clear_sel_btn = QPushButton("Clear")
+        self.clear_sel_btn = QPushButton(tr('Clear'))
         self.clear_sel_btn.clicked.connect(lambda: self._set_all_checked(False))
         list_row.addWidget(self.clear_sel_btn)
         list_row.addStretch()
-        self.prev_btn = QPushButton("← Prev page")
+        self.prev_btn = QPushButton(tr('← Prev page'))
         self.prev_btn.clicked.connect(lambda: self._page_step(-1))
         self.prev_btn.setEnabled(False)
         list_row.addWidget(self.prev_btn)
-        self.page_label = QLabel("page 1")
+        self.page_label = QLabel(tr('page 1'))
         list_row.addWidget(self.page_label)
-        self.next_btn = QPushButton("Next page →")
+        self.next_btn = QPushButton(tr('Next page →'))
         self.next_btn.clicked.connect(lambda: self._page_step(1))
         self.next_btn.setEnabled(False)
         list_row.addWidget(self.next_btn)
         layout.addLayout(list_row)
 
         bottom_row = QHBoxLayout()
-        self.download_btn = QPushButton("Download selected")
+        self.download_btn = QPushButton(tr('Download selected'))
         self.download_btn.setObjectName("btn_accent")
-        self.download_btn.setToolTip("Queue only the ticked results")
+        self.download_btn.setToolTip(tr('Queue only the ticked results'))
         self.download_btn.clicked.connect(
             lambda: self._download(self._selected_videos()))
         bottom_row.addWidget(self.download_btn)
-        self.download_all_btn = QPushButton("Download this page")
-        self.download_all_btn.setToolTip("Queue every result listed on this page")
+        self.download_all_btn = QPushButton(tr('Download this page'))
+        self.download_all_btn.setToolTip(tr('Queue every result listed on this page'))
         self.download_all_btn.clicked.connect(
             lambda: self._download(list(self._videos)))
         bottom_row.addWidget(self.download_all_btn)
         bottom_row.addStretch()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr('Close'))
         close_btn.clicked.connect(self.close)
         bottom_row.addWidget(close_btn)
         layout.addLayout(bottom_row)

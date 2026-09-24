@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 
 from config import BROWSER_SEARCH_ENGINES, DeeptorrentConfig, DownloadCategory, IndexerConfig, LLM_PROVIDER_PRESETS
 from gui.window_sizing import roomy
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class IndexerSettingsDialog(QDialog):
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.config = config
-        self.setWindowTitle("Jackett Settings")
+        self.setWindowTitle(tr('Jackett Settings'))
         self.setMinimumWidth(500)
         self.setStyleSheet(_SHARED_STYLE)
         self._build_ui()
@@ -81,22 +82,22 @@ class IndexerSettingsDialog(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        idx_group = QGroupBox("Jackett")
+        idx_group = QGroupBox(tr('Jackett'))
         idx_layout = QFormLayout(idx_group)
 
         self.idx_url = QLineEdit()
         self.idx_url.setPlaceholderText("http://localhost:9117")
         idx_layout.addRow("URL:", self.idx_url)
 
-        key_note = QLabel("API key is managed in File → API Keys.")
+        key_note = QLabel(tr('API key is managed in File → API Keys.'))
         key_note.setObjectName("hint")
         idx_layout.addRow("", key_note)
 
         self.idx_torznab_path = QLineEdit()
-        self.idx_torznab_path.setPlaceholderText("/api/v2.0/indexers/all/results/torznab")
+        self.idx_torznab_path.setPlaceholderText(tr('/api/v2.0/indexers/all/results/torznab'))
         idx_layout.addRow("Torznab Path:", self.idx_torznab_path)
 
-        self.idx_auto_start = QCheckBox("Start Jackett automatically when it's not running")
+        self.idx_auto_start = QCheckBox(tr("Start Jackett automatically when it's not running"))
         self.idx_auto_start.setToolTip(
             "On startup (and hourly while running), DeepFlux starts Jackett if it's\n"
             "configured but unreachable — Windows service first, then the executable.\n"
@@ -105,7 +106,7 @@ class IndexerSettingsDialog(QDialog):
         idx_layout.addRow("", self.idx_auto_start)
 
         self.idx_jackett_path = QLineEdit()
-        self.idx_jackett_path.setPlaceholderText("Optional — path to JackettTray.exe (auto-detect when blank)")
+        self.idx_jackett_path.setPlaceholderText(tr('Optional — path to JackettTray.exe (auto-detect when blank)'))
         idx_layout.addRow("Executable:", self.idx_jackett_path)
 
         idx_hint = QLabel(
@@ -181,14 +182,14 @@ class DownloadsSettingsDialog(QDialog):
         layout = QVBoxLayout(body)
 
         # Torrent save path
-        dl_group = QGroupBox("Torrent Downloads")
+        dl_group = QGroupBox(tr('Torrent Downloads'))
         dl_layout = QFormLayout(dl_group)
 
         self.save_path = QLineEdit()
-        self.save_path.setPlaceholderText("C:\\Users\\...\\Downloads\\DeepFlux")
+        self.save_path.setPlaceholderText(tr('C:\\Users\\...\\Downloads\\DeepFlux'))
         dl_layout.addRow("Default Save Path:", self.save_path)
 
-        browse_btn = QPushButton("Browse...")
+        browse_btn = QPushButton(tr('Browse...'))
         browse_btn.clicked.connect(self._browse_save_path)
         dl_layout.addRow("", browse_btn)
 
@@ -214,11 +215,11 @@ class DownloadsSettingsDialog(QDialog):
         self.tor_max_connections.setSpecialValueText("Default")
         dl_layout.addRow("Max Connections (requires restart):", self.tor_max_connections)
 
-        self.tor_restore_completed = QCheckBox("Keep completed torrents in the list across restarts")
+        self.tor_restore_completed = QCheckBox(tr('Keep completed torrents in the list across restarts'))
         dl_layout.addRow("", self.tor_restore_completed)
 
         # --- Queue / concurrency ---
-        queue_group = QGroupBox("Torrent Queue")
+        queue_group = QGroupBox(tr('Torrent Queue'))
         queue_layout = QFormLayout(queue_group)
 
         self.tor_max_downloading = QSpinBox()
@@ -277,7 +278,7 @@ class DownloadsSettingsDialog(QDialog):
         queue_group.setVisible(self._page in ("all", "queue"))
 
         # Download Manager (IDM-style)
-        dm_group = QGroupBox("Download Manager")
+        dm_group = QGroupBox(tr('Download Manager'))
         dm_layout = QFormLayout(dm_group)
 
         self.dm_max_concurrent = QSpinBox()
@@ -291,10 +292,10 @@ class DownloadsSettingsDialog(QDialog):
         dm_layout.addRow("Max Connections per Download:", self.dm_max_connections)
 
         self.dm_default_folder = QLineEdit()
-        self.dm_default_folder.setPlaceholderText("C:\\Users\\...\\Downloads\\DeepFlux")
+        self.dm_default_folder.setPlaceholderText(tr('C:\\Users\\...\\Downloads\\DeepFlux'))
         dm_layout.addRow("Default Download Folder:", self.dm_default_folder)
 
-        dm_browse_btn = QPushButton("Browse...")
+        dm_browse_btn = QPushButton(tr('Browse...'))
         dm_browse_btn.clicked.connect(self._browse_dm_folder)
         dm_layout.addRow("", dm_browse_btn)
 
@@ -305,7 +306,7 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_bandwidth.setValue(0)
         dm_layout.addRow("Bandwidth Limit:", self.dm_bandwidth)
 
-        self.dm_auto_start = QCheckBox("Automatically start downloads when added")
+        self.dm_auto_start = QCheckBox(tr('Automatically start downloads when added'))
         dm_layout.addRow("", self.dm_auto_start)
 
         self.dm_segment_threshold = QSpinBox()
@@ -325,17 +326,17 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_youtube_height.setSuffix("p")
         dm_layout.addRow("YouTube Maximum Height:", self.dm_youtube_height)
 
-        self.dm_youtube_subtitles = QCheckBox("Download and embed available subtitles")
+        self.dm_youtube_subtitles = QCheckBox(tr('Download and embed available subtitles'))
         dm_layout.addRow("", self.dm_youtube_subtitles)
 
-        self.dm_youtube_playlists = QCheckBox("Allow complete YouTube playlists")
+        self.dm_youtube_playlists = QCheckBox(tr('Allow complete YouTube playlists'))
         dm_layout.addRow("", self.dm_youtube_playlists)
 
-        self.dm_youtube_update_check = QCheckBox("Warn when the YouTube downloader (yt-dlp) is outdated")
+        self.dm_youtube_update_check = QCheckBox(tr('Warn when the YouTube downloader (yt-dlp) is outdated'))
         dm_layout.addRow("", self.dm_youtube_update_check)
 
         self.dm_update_check = QCheckBox(
-            "Check for DeepFlux updates automatically (Windows installs)")
+            tr('Check for DeepFlux updates automatically (Windows installs)'))
         dm_layout.addRow("", self.dm_update_check)
 
         self.dm_update_hint = QLabel(
@@ -347,7 +348,7 @@ class DownloadsSettingsDialog(QDialog):
         dm_layout.addRow("", self.dm_update_hint)
 
         self.dm_usage_ping = QCheckBox(
-            "Send an anonymous usage ping (powers the live user count on deepflux.space)")
+            tr('Send an anonymous usage ping (powers the live user count on deepflux.space)'))
         dm_layout.addRow("", self.dm_usage_ping)
 
         dm_ping_hint = QLabel(
@@ -359,7 +360,7 @@ class DownloadsSettingsDialog(QDialog):
 
         self.dm_categories = QPlainTextEdit()
         self.dm_categories.setMaximumHeight(90)
-        self.dm_categories.setPlaceholderText("Videos|D:\\Media\\Videos|mp4,mkv,webm")
+        self.dm_categories.setPlaceholderText(tr('Videos|D:\\Media\\Videos|mp4,mkv,webm'))
         dm_layout.addRow("Categories (Name|Folder|extensions):", self.dm_categories)
 
         dm_hint = QLabel("The download manager uses segmented downloading with dynamic rebalancing\n"
@@ -430,7 +431,7 @@ class DownloadsSettingsDialog(QDialog):
                     continue
                 parts = [part.strip() for part in line.split("|", 2)]
                 if len(parts) != 3 or not parts[0] or not parts[1]:
-                    QMessageBox.warning(self, "Download Categories", f"Invalid category line: {line}")
+                    QMessageBox.warning(self, tr('Download Categories'), f"Invalid category line: {line}")
                     return
                 extensions = [value.strip().lower().lstrip(".") for value in parts[2].split(",") if value.strip()]
                 categories.append(DownloadCategory(name=parts[0], folder=parts[1], extensions=extensions))
@@ -510,7 +511,7 @@ class BrowserSettingsDialog(QDialog):
         body.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(body)
 
-        general_group = QGroupBox("General")
+        general_group = QGroupBox(tr('General'))
         general_layout = QFormLayout(general_group)
 
         self.browser_homepage = QLineEdit()
@@ -527,48 +528,48 @@ class BrowserSettingsDialog(QDialog):
         hint.setWordWrap(True)
         general_layout.addRow("", hint)
 
-        self.browser_adblock_check = QCheckBox("Enable ad blocking (blocks ads, trackers, and analytics)")
+        self.browser_adblock_check = QCheckBox(tr('Enable ad blocking (blocks ads, trackers, and analytics)'))
         general_layout.addRow("", self.browser_adblock_check)
 
-        adblock_hint = QLabel("Requests to known ad/tracker domains are blocked before they load. Enabled by default; right-click the toolbar button to disable it for the current site.")
+        adblock_hint = QLabel(tr('Requests to known ad/tracker domains are blocked before they load. Enabled by default; right-click the toolbar button to disable it for the current site.'))
         adblock_hint.setObjectName("hint")
         adblock_hint.setWordWrap(True)
         general_layout.addRow("", adblock_hint)
 
-        self.browser_extension_check = QCheckBox("Enable video grabber (detects downloadable videos on web pages)")
+        self.browser_extension_check = QCheckBox(tr('Enable video grabber (detects downloadable videos on web pages)'))
         general_layout.addRow("", self.browser_extension_check)
 
-        extension_hint = QLabel("When enabled, a script scans every page for downloadable videos (<video>, HLS, DASH, YouTube, etc.) and shows a status badge. Its monitoring can cause flashing during video playback — turn off if you experience that. Off by default. You can also toggle this from the toolbar button next to AdBlock.")
+        extension_hint = QLabel(tr('When enabled, a script scans every page for downloadable videos (<video>, HLS, DASH, YouTube, etc.) and shows a status badge. Its monitoring can cause flashing during video playback — turn off if you experience that. Off by default. You can also toggle this from the toolbar button next to AdBlock.'))
         extension_hint.setObjectName("hint")
         extension_hint.setWordWrap(True)
         general_layout.addRow("", extension_hint)
 
-        self.browser_restore_tabs = QCheckBox("Restore open tabs on startup")
+        self.browser_restore_tabs = QCheckBox(tr('Restore open tabs on startup'))
         general_layout.addRow("", self.browser_restore_tabs)
 
-        self.import_bookmarks_btn = QPushButton("Import Bookmarks from Other Browsers...")
+        self.import_bookmarks_btn = QPushButton(tr('Import Bookmarks from Other Browsers...'))
         self.import_bookmarks_btn.setObjectName("btn_secondary")
         self.import_bookmarks_btn.clicked.connect(self._on_import_bookmarks)
         general_layout.addRow("", self.import_bookmarks_btn)
 
-        privacy_group = QGroupBox("Privacy & Data")
+        privacy_group = QGroupBox(tr('Privacy & Data'))
         privacy_layout = QFormLayout(privacy_group)
-        self.browser_history_enabled = QCheckBox("Keep local browsing history for address suggestions")
+        self.browser_history_enabled = QCheckBox(tr('Keep local browsing history for address suggestions'))
         privacy_layout.addRow("", self.browser_history_enabled)
         self.browser_history_days = QSpinBox()
         self.browser_history_days.setRange(1, 3650)
         self.browser_history_days.setSuffix(" days")
         privacy_layout.addRow("History retention:", self.browser_history_days)
 
-        self.clear_history_btn = QPushButton("Clear Browsing History")
+        self.clear_history_btn = QPushButton(tr('Clear Browsing History'))
         self.clear_history_btn.setObjectName("btn_secondary")
         self.clear_history_btn.clicked.connect(self._clear_history)
         privacy_layout.addRow("", self.clear_history_btn)
-        self.clear_browser_data_btn = QPushButton("Clear Cookies and Cache")
+        self.clear_browser_data_btn = QPushButton(tr('Clear Cookies and Cache'))
         self.clear_browser_data_btn.setObjectName("btn_secondary")
         self.clear_browser_data_btn.clicked.connect(self._clear_browser_data)
         privacy_layout.addRow("", self.clear_browser_data_btn)
-        self.clear_agent_permissions_btn = QPushButton("Clear Agent Page Permissions")
+        self.clear_agent_permissions_btn = QPushButton(tr('Clear Agent Page Permissions'))
         self.clear_agent_permissions_btn.setObjectName("btn_secondary")
         self.clear_agent_permissions_btn.clicked.connect(self._clear_agent_permissions)
         privacy_layout.addRow("", self.clear_agent_permissions_btn)
@@ -607,7 +608,7 @@ class BrowserSettingsDialog(QDialog):
                 except ValueError:
                     valid_homepage = False
                 if not valid_homepage:
-                    QMessageBox.warning(self, "Browser Settings", "Homepage must be an http:// or https:// URL.")
+                    QMessageBox.warning(self, tr('Browser Settings'), "Homepage must be an http:// or https:// URL.")
                     return
             self.config.browser.homepage = homepage
             self.config.browser.search_engine = self.browser_search_engine.currentData() or "google"
@@ -705,7 +706,7 @@ class APIKeysDialog(QDialog):
         layout.setSpacing(8)
 
         # --- AI Agent (LLM) ---
-        llm_group = QGroupBox("AI Agent (LLM)")
+        llm_group = QGroupBox(tr('AI Agent (LLM)'))
         fl = QFormLayout(llm_group)
         self.llm_endpoint = QComboBox()
         for pid, preset in LLM_PROVIDER_PRESETS.items():
@@ -716,11 +717,11 @@ class APIKeysDialog(QDialog):
         fl.addRow("Base URL:", self.llm_base_url)
         self.llm_model = QLineEdit()
         fl.addRow("Model:", self.llm_model)
-        self.llm_reasoning_effort = QCheckBox("Send reasoning_effort to custom endpoint")
+        self.llm_reasoning_effort = QCheckBox(tr('Send reasoning_effort to custom endpoint'))
         fl.addRow("", self.llm_reasoning_effort)
         self.llm_key = QLineEdit()
         self.llm_key.setEchoMode(QLineEdit.Password)
-        self.llm_key.setPlaceholderText("sk-...")
+        self.llm_key.setPlaceholderText(tr('sk-...'))
         fl.addRow("API Key:", self.llm_key)
         fl.addRow("", _api_hint(
             "DeepSeek or OpenRouter key — powers the conversational agent. "
@@ -730,13 +731,13 @@ class APIKeysDialog(QDialog):
         layout.addWidget(llm_group)
 
         # --- Jackett ---
-        jkt_group = QGroupBox("Jackett (Torrent Search)")
+        jkt_group = QGroupBox(tr('Jackett (Torrent Search)'))
         fl = QFormLayout(jkt_group)
         self.jkt_key = QLineEdit()
         self.jkt_key.setEchoMode(QLineEdit.Password)
-        self.jkt_key.setPlaceholderText("API key from Jackett dashboard")
+        self.jkt_key.setPlaceholderText(tr('API key from Jackett dashboard'))
         fl.addRow("API Key:", self.jkt_key)
-        self.jkt_test_btn = QPushButton("Test Connection")
+        self.jkt_test_btn = QPushButton(tr('Test Connection'))
         self.jkt_test_btn.clicked.connect(self._test_jackett)
         fl.addRow("", self.jkt_test_btn)
         self.jkt_test_result = QLabel("")
@@ -750,15 +751,15 @@ class APIKeysDialog(QDialog):
         layout.addWidget(jkt_group)
 
         # --- Web Search ---
-        ws_group = QGroupBox("Web Search")
+        ws_group = QGroupBox(tr('Web Search'))
         fl = QFormLayout(ws_group)
         self.brave_key = QLineEdit()
         self.brave_key.setEchoMode(QLineEdit.Password)
-        self.brave_key.setPlaceholderText("BSA...")
+        self.brave_key.setPlaceholderText(tr('BSA...'))
         fl.addRow("Brave API Key:", self.brave_key)
         self.pplx_key = QLineEdit()
         self.pplx_key.setEchoMode(QLineEdit.Password)
-        self.pplx_key.setPlaceholderText("pplx-...")
+        self.pplx_key.setPlaceholderText(tr('pplx-...'))
         fl.addRow("Perplexity API Key:", self.pplx_key)
         fl.addRow("", _api_hint(
             "DuckDuckGo always works without a key. Brave adds an independent "
@@ -767,11 +768,11 @@ class APIKeysDialog(QDialog):
         layout.addWidget(ws_group)
 
         # --- TMDb ---
-        tmdb_group = QGroupBox("TMDb (Metadata & Artwork)")
+        tmdb_group = QGroupBox(tr('TMDb (Metadata & Artwork)'))
         fl = QFormLayout(tmdb_group)
         self.tmdb_key = QLineEdit()
         self.tmdb_key.setEchoMode(QLineEdit.Password)
-        self.tmdb_key.setPlaceholderText("TMDb API key (optional)")
+        self.tmdb_key.setPlaceholderText(tr('TMDb API key (optional)'))
         fl.addRow("API Key:", self.tmdb_key)
         fl.addRow("", _api_hint(
             "Optional — enter your own key from themoviedb.org/settings/api "
@@ -780,11 +781,11 @@ class APIKeysDialog(QDialog):
         layout.addWidget(tmdb_group)
 
         # --- OMDb ---
-        omdb_group = QGroupBox("OMDb (Movie/Series Fallback)")
+        omdb_group = QGroupBox(tr('OMDb (Movie/Series Fallback)'))
         fl = QFormLayout(omdb_group)
         self.omdb_key = QLineEdit()
         self.omdb_key.setEchoMode(QLineEdit.Password)
-        self.omdb_key.setPlaceholderText("Free key from omdbapi.com/apikey.aspx (optional)")
+        self.omdb_key.setPlaceholderText(tr('Free key from omdbapi.com/apikey.aspx (optional)'))
         fl.addRow("API Key:", self.omdb_key)
         fl.addRow("", _api_hint(
             "Optional — free key from omdbapi.com. Fallback when TMDb "
@@ -792,11 +793,11 @@ class APIKeysDialog(QDialog):
         layout.addWidget(omdb_group)
 
         # --- Fanart.tv ---
-        fanart_group = QGroupBox("Fanart.tv (Backdrop Supplement)")
+        fanart_group = QGroupBox(tr('Fanart.tv (Backdrop Supplement)'))
         fl = QFormLayout(fanart_group)
         self.fanarttv_key = QLineEdit()
         self.fanarttv_key.setEchoMode(QLineEdit.Password)
-        self.fanarttv_key.setPlaceholderText("Free key from fanart.tv (optional)")
+        self.fanarttv_key.setPlaceholderText(tr('Free key from fanart.tv (optional)'))
         fl.addRow("API Key:", self.fanarttv_key)
         fl.addRow("", _api_hint(
             "Optional — free personal key from fanart.tv/get-an-api-key. "
@@ -804,11 +805,11 @@ class APIKeysDialog(QDialog):
         layout.addWidget(fanart_group)
 
         # --- ThePornDB ---
-        tpdb_group = QGroupBox("ThePornDB (Adult VOD Metadata & Artwork)")
+        tpdb_group = QGroupBox(tr('ThePornDB (Adult VOD Metadata & Artwork)'))
         fl = QFormLayout(tpdb_group)
         self.tpdb_key = QLineEdit()
         self.tpdb_key.setEchoMode(QLineEdit.Password)
-        self.tpdb_key.setPlaceholderText("API token from theporndb.net (optional)")
+        self.tpdb_key.setPlaceholderText(tr('API token from theporndb.net (optional)'))
         fl.addRow("API Token:", self.tpdb_key)
         fl.addRow("", _api_hint(
             "Optional — TMDb filters adult titles out of its search results, "
@@ -817,11 +818,11 @@ class APIKeysDialog(QDialog):
         layout.addWidget(tpdb_group)
 
         # --- StashDB ---
-        stash_group = QGroupBox("StashDB (Adult VOD — Second Source)")
+        stash_group = QGroupBox(tr('StashDB (Adult VOD — Second Source)'))
         fl = QFormLayout(stash_group)
         self.stashdb_key = QLineEdit()
         self.stashdb_key.setEchoMode(QLineEdit.Password)
-        self.stashdb_key.setPlaceholderText("API key from stashdb.org (optional)")
+        self.stashdb_key.setPlaceholderText(tr('API key from stashdb.org (optional)'))
         fl.addRow("API Key:", self.stashdb_key)
         fl.addRow("", _api_hint(
             "Optional — community-driven adult metadata DB. Complements "
@@ -830,11 +831,11 @@ class APIKeysDialog(QDialog):
         layout.addWidget(stash_group)
 
         # --- OpenSubtitles ---
-        ost_group = QGroupBox("OpenSubtitles (Subtitle Downloads)")
+        ost_group = QGroupBox(tr('OpenSubtitles (Subtitle Downloads)'))
         fl = QFormLayout(ost_group)
         self.ost_key = QLineEdit()
         self.ost_key.setEchoMode(QLineEdit.Password)
-        self.ost_key.setPlaceholderText("API key from opensubtitles.com")
+        self.ost_key.setPlaceholderText(tr('API key from opensubtitles.com'))
         fl.addRow("API Key:", self.ost_key)
         self.ost_user = QLineEdit()
         fl.addRow("Username (optional):", self.ost_user)
@@ -900,11 +901,11 @@ class APIKeysDialog(QDialog):
 
         if not url or not api_key:
             self.jkt_test_result.setText(
-                "Enter the Jackett API key above first (the URL is set in Download → Jackett Settings).")
+                tr('Enter the Jackett API key above first (the URL is set in Download → Jackett Settings).'))
             self.jkt_test_result.setStyleSheet("color: #ffcc00;")
             return
 
-        self.jkt_test_result.setText("Testing connection...")
+        self.jkt_test_result.setText(tr('Testing connection...'))
         self.jkt_test_result.setStyleSheet("color: #2a7abf;")
 
         try:
@@ -933,7 +934,7 @@ class APIKeysDialog(QDialog):
             self.jkt_test_result.setText(f"Jackett rejected the request: {desc}")
             self.jkt_test_result.setStyleSheet("color: #ff3366;")
         elif root.tag == "caps":
-            self.jkt_test_result.setText("Connection successful! Fetching indexer list…")
+            self.jkt_test_result.setText(tr('Connection successful! Fetching indexer list…'))
             self.jkt_test_result.setStyleSheet("color: #a8edff;")
             # Fetch with the TYPED (not yet saved) key via a probe config, so
             # cancelling the dialog leaves the saved key untouched. The fetched
@@ -948,7 +949,7 @@ class APIKeysDialog(QDialog):
             )
             threading.Thread(target=self._jkt_fetch_worker, args=(probe,), daemon=True).start()
         else:
-            self.jkt_test_result.setText("Got a response but it doesn't look like Torznab XML. Check the URL/path.")
+            self.jkt_test_result.setText(tr("Got a response but it doesn't look like Torznab XML. Check the URL/path."))
             self.jkt_test_result.setStyleSheet("color: #ffcc00;")
 
     def _jkt_fetch_worker(self, probe: DeeptorrentConfig) -> None:
@@ -969,7 +970,7 @@ class APIKeysDialog(QDialog):
             self.jkt_test_result.setStyleSheet("color: #ffcc00;")
             return
         if not outcome:
-            self.jkt_test_result.setText("Connection OK, but Jackett has no configured indexers to import.")
+            self.jkt_test_result.setText(tr('Connection OK, but Jackett has no configured indexers to import.'))
             self.jkt_test_result.setStyleSheet("color: #ffcc00;")
             return
         self.config.sources.sources = jackett.merge_sources(self.config.sources.sources, outcome)
@@ -1009,7 +1010,7 @@ class APIKeysDialog(QDialog):
             base_url = self.llm_base_url.text().strip()
             model = self.llm_model.text().strip()
             if provider == "custom" and (not base_url or not model):
-                QMessageBox.warning(self, "Custom LLM", "Enter both a base URL and model name for the custom endpoint.")
+                QMessageBox.warning(self, tr('Custom LLM'), tr('Enter both a base URL and model name for the custom endpoint.'))
                 return
             self.config.llm.api_key = self.llm_key.text().strip()
             self.config.llm.provider = provider if self.config.llm.api_key or provider == "custom" else "dummy"
@@ -1054,7 +1055,7 @@ class BookmarkImportDialog(QDialog):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Import Bookmarks")
+        self.setWindowTitle(tr('Import Bookmarks'))
         self.setMinimumWidth(420)
         self.setStyleSheet(_SHARED_STYLE)
         self.imported: List[Tuple[str, str, str]] = []  # (title, url, folder)
@@ -1064,7 +1065,7 @@ class BookmarkImportDialog(QDialog):
         from dlmgr.bookmarks_import import detect_browser_sources
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Import bookmarks from:"))
+        layout.addWidget(QLabel(tr('Import bookmarks from:')))
 
         self.list = QListWidget()
         self._sources = detect_browser_sources()
@@ -1075,12 +1076,12 @@ class BookmarkImportDialog(QDialog):
         layout.addWidget(self.list)
 
         if not self._sources:
-            note = QLabel("No Chrome/Edge/Brave/Firefox bookmarks found automatically.")
+            note = QLabel(tr('No Chrome/Edge/Brave/Firefox bookmarks found automatically.'))
             note.setObjectName("hint")
             note.setWordWrap(True)
             layout.addWidget(note)
 
-        browse_btn = QPushButton("Choose Bookmarks file manually...")
+        browse_btn = QPushButton(tr('Choose Bookmarks file manually...'))
         browse_btn.setObjectName("btn_secondary")
         browse_btn.clicked.connect(self._import_from_file)
         layout.addWidget(browse_btn)
@@ -1095,15 +1096,15 @@ class BookmarkImportDialog(QDialog):
 
         row = self.list.currentRow()
         if row < 0 or row >= len(self._sources):
-            QMessageBox.information(self, "Import Bookmarks", "Select a browser first.")
+            QMessageBox.information(self, tr('Import Bookmarks'), tr('Select a browser first.'))
             return
         try:
             pairs = read_bookmarks(self._sources[row])
         except Exception as exc:
-            QMessageBox.warning(self, "Import Bookmarks", f"Failed to read bookmarks: {exc}")
+            QMessageBox.warning(self, tr('Import Bookmarks'), f"Failed to read bookmarks: {exc}")
             return
         if not pairs:
-            QMessageBox.information(self, "Import Bookmarks", "No bookmarks found in that browser.")
+            QMessageBox.information(self, tr('Import Bookmarks'), tr('No bookmarks found in that browser.'))
             return
         self.imported = pairs
         self.accept()
@@ -1119,10 +1120,10 @@ class BookmarkImportDialog(QDialog):
         try:
             pairs = read_chromium_bookmarks(path)
         except Exception as exc:
-            QMessageBox.warning(self, "Import Bookmarks", f"Failed to read bookmarks: {exc}")
+            QMessageBox.warning(self, tr('Import Bookmarks'), f"Failed to read bookmarks: {exc}")
             return
         if not pairs:
-            QMessageBox.information(self, "Import Bookmarks", "No bookmarks found in that file.")
+            QMessageBox.information(self, tr('Import Bookmarks'), tr('No bookmarks found in that file.'))
             return
         self.imported = pairs
         self.accept()

@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from config import DeeptorrentConfig, RSSFeed
 from gui.window_sizing import roomy
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class RSSDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self._check_requested = False
-        self.setWindowTitle("RSS Feeds")
+        self.setWindowTitle(tr('RSS Feeds'))
         self.setMinimumSize(520, 340)
         roomy(self)
         self.setStyleSheet("""
@@ -54,12 +55,12 @@ class RSSDialog(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("RSS Feed Subscriptions"))
+        layout.addWidget(QLabel(tr('RSS Feed Subscriptions')))
 
         # Feed table
         self.table = QTableWidget()
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Name", "URL", "Mode", "Category"])
+        self.table.setHorizontalHeaderLabels([tr('Name'), tr('URL'), tr('Mode'), tr('Category')])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -67,21 +68,21 @@ class RSSDialog(QDialog):
 
         # Buttons
         btn_layout = QHBoxLayout()
-        add_btn = QPushButton("+ Add Feed")
+        add_btn = QPushButton(tr('+ Add Feed'))
         add_btn.clicked.connect(self._add_feed)
         btn_layout.addWidget(add_btn)
 
-        edit_btn = QPushButton("Edit")
+        edit_btn = QPushButton(tr('Edit'))
         edit_btn.clicked.connect(self._edit_feed)
         btn_layout.addWidget(edit_btn)
 
-        remove_btn = QPushButton("Remove")
+        remove_btn = QPushButton(tr('Remove'))
         remove_btn.clicked.connect(self._remove_feed)
         btn_layout.addWidget(remove_btn)
 
         btn_layout.addStretch()
 
-        check_now_btn = QPushButton("Check Now")
+        check_now_btn = QPushButton(tr('Check Now'))
         check_now_btn.clicked.connect(self._check_now)
         btn_layout.addWidget(check_now_btn)
 
@@ -133,7 +134,7 @@ class RSSDialog(QDialog):
             return
         name = self.config.rss.feeds[row].name or self.config.rss.feeds[row].url
         reply = QMessageBox.question(
-            self, "Remove Feed",
+            self, tr('Remove Feed'),
             f"Remove feed '{name}'?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
@@ -163,26 +164,26 @@ class _FeedEditDialog(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        layout.addWidget(QLabel("Name (optional):"))
+        layout.addWidget(QLabel(tr('Name (optional):')))
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("e.g. My favorite show RSS")
+        self.name_input.setPlaceholderText(tr('e.g. My favorite show RSS'))
         layout.addWidget(self.name_input)
 
-        layout.addWidget(QLabel("Feed URL:"))
+        layout.addWidget(QLabel(tr('Feed URL:')))
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("https://example.com/feed.rss")
         layout.addWidget(self.url_input)
 
-        layout.addWidget(QLabel("Mode:"))
+        layout.addWidget(QLabel(tr('Mode:')))
         self.mode_combo = QComboBox()
-        self.mode_combo.addItem("Monitor only (load feed, don't auto-download)", "monitor")
-        self.mode_combo.addItem("Auto-download (download all new items)", "auto_download")
+        self.mode_combo.addItem(tr("Monitor only (load feed, don't auto-download)"), "monitor")
+        self.mode_combo.addItem(tr('Auto-download (download all new items)'), "auto_download")
         layout.addWidget(self.mode_combo)
 
-        layout.addWidget(QLabel("Category:"))
+        layout.addWidget(QLabel(tr('Category:')))
         self.category_input = QLineEdit()
-        self.category_input.setPlaceholderText("Other")
-        self.category_input.setText("Other")
+        self.category_input.setPlaceholderText(tr('Other'))
+        self.category_input.setText(tr('Other'))
         layout.addWidget(self.category_input)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -200,10 +201,10 @@ class _FeedEditDialog(QDialog):
     def _validate_and_accept(self) -> None:
         url = self.url_input.text().strip()
         if not url:
-            QMessageBox.warning(self, "Validation", "Feed URL is required.")
+            QMessageBox.warning(self, tr('Validation'), tr('Feed URL is required.'))
             return
         if not (url.startswith("http://") or url.startswith("https://")):
-            QMessageBox.warning(self, "Validation", "Feed URL must start with http:// or https://")
+            QMessageBox.warning(self, tr('Validation'), "Feed URL must start with http:// or https://")
             return
         self.accept()
 

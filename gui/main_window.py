@@ -707,7 +707,7 @@ class _BrowserPage(QWebEnginePage):
         name = self._permission_name(feature)
         parent = self.view() if self.view() else None
         r = QMessageBox.question(
-            parent, "Permission Request",
+            parent, tr('Permission Request'),
             f"Origin:\n{origin or self.url().toString() or '(unknown)'}\n\n"
             f"This page wants to use: {name}.\nAllow?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1457,41 +1457,41 @@ class MainWindow(QMainWindow):
         agent_input_layout = QHBoxLayout()
         self.chat_input = QLineEdit()
         self.chat_input.setObjectName("big_input")
-        self.chat_input.setPlaceholderText(self._INPUT_PLACEHOLDER)
+        self.chat_input.setPlaceholderText(tr(self._INPUT_PLACEHOLDER))
         self.chat_input.returnPressed.connect(self._on_send)
         agent_input_layout.addWidget(self.chat_input)
 
-        voice_btn = QPushButton("🎤")
+        voice_btn = QPushButton(tr('🎤'))
         voice_btn.setObjectName("btn_secondary")
-        voice_btn.setToolTip("Dictate to the agent (local whisper, offline) — click to start, click again to stop & send")
+        voice_btn.setToolTip(tr('Dictate to the agent (local whisper, offline) — click to start, click again to stop & send'))
         voice_btn.setFixedWidth(44)
         voice_btn.clicked.connect(self._on_voice_toggle)
         self.voice_btn = voice_btn
         agent_input_layout.addWidget(voice_btn)
 
-        clear_btn = QPushButton("Clear")
+        clear_btn = QPushButton(tr('Clear'))
         clear_btn.setObjectName("btn_secondary")
-        clear_btn.setToolTip("Clear the history (also resets the agent's memory of this conversation)")
+        clear_btn.setToolTip(tr("Clear the history (also resets the agent's memory of this conversation)"))
         clear_btn.clicked.connect(self._clear_chat)
         self.clear_btn = clear_btn
         agent_input_layout.addWidget(clear_btn)
 
-        status_btn = QPushButton("Status")
+        status_btn = QPushButton(tr('Status'))
         status_btn.setObjectName("btn_secondary")
-        status_btn.setToolTip("Show Agent capabilities, integrations, and execution limits")
+        status_btn.setToolTip(tr('Show Agent capabilities, integrations, and execution limits'))
         status_btn.clicked.connect(self._show_agent_diagnostics)
         agent_input_layout.addWidget(status_btn)
 
-        search_btn = QPushButton("Search")
+        search_btn = QPushButton(tr('Search'))
         search_btn.setObjectName("btn_accent")
-        search_btn.setToolTip("Instant web sweep — no agent involved (Ctrl+Enter)")
+        search_btn.setToolTip(tr('Instant web sweep — no agent involved (Ctrl+Enter)'))
         search_btn.clicked.connect(self._on_search_send)
         self.search_btn = search_btn
         agent_input_layout.addWidget(search_btn)
 
-        send_btn = QPushButton("Ask Agent")
+        send_btn = QPushButton(tr('Ask Agent'))
         send_btn.setObjectName("btn_accent")
-        send_btn.setToolTip("Send the message to the AI agent (Enter)")
+        send_btn.setToolTip(tr('Send the message to the AI agent (Enter)'))
         send_btn.clicked.connect(self._on_agent_button)
         self.send_btn = send_btn
         agent_input_layout.addWidget(send_btn)
@@ -1507,27 +1507,27 @@ class MainWindow(QMainWindow):
         # windows instead of locking the window wide.
         torrents_btn_row = ResponsiveRow()
         btn_layout = QHBoxLayout(torrents_btn_row)
-        add_magnet_btn = QPushButton("+ Magnet")
+        add_magnet_btn = QPushButton(tr('+ Magnet'))
         add_magnet_btn.setObjectName("btn_accent")
-        add_magnet_btn.setToolTip("Add a torrent from a magnet link")
+        add_magnet_btn.setToolTip(tr('Add a torrent from a magnet link'))
         add_magnet_btn.clicked.connect(self._add_magnet_dialog)
         btn_layout.addWidget(add_magnet_btn)
-        add_file_btn = QPushButton("+ Torrent File")
+        add_file_btn = QPushButton(tr('+ Torrent File'))
         add_file_btn.setObjectName("btn_accent")
-        add_file_btn.setToolTip("Add a torrent from a .torrent file")
+        add_file_btn.setToolTip(tr('Add a torrent from a .torrent file'))
         add_file_btn.clicked.connect(self._add_torrent_file_dialog)
         btn_layout.addWidget(add_file_btn)
-        rss_btn = QPushButton("RSS")
-        rss_btn.setToolTip("Manage RSS feeds and their downloads")
+        rss_btn = QPushButton(tr('RSS'))
+        rss_btn.setToolTip(tr('Manage RSS feeds and their downloads'))
         rss_btn.clicked.connect(self._open_rss_dialog)
         btn_layout.addWidget(rss_btn)
         btn_layout.addStretch()
-        remove_btn = QPushButton("Remove")
-        remove_btn.setToolTip("Remove the selected torrent from the list (keep files)")
+        remove_btn = QPushButton(tr('Remove'))
+        remove_btn.setToolTip(tr('Remove the selected torrent from the list (keep files)'))
         remove_btn.clicked.connect(self._remove_selected_torrent)
         btn_layout.addWidget(remove_btn)
-        clear_completed_btn = QPushButton("Clear Completed")
-        clear_completed_btn.setToolTip("Drop finished torrents from the list (files stay)")
+        clear_completed_btn = QPushButton(tr('Clear Completed'))
+        clear_completed_btn.setToolTip(tr('Drop finished torrents from the list (files stay)'))
         clear_completed_btn.clicked.connect(self._clear_completed_torrents)
         btn_layout.addWidget(clear_completed_btn)
         torrents_tab_layout.addWidget(torrents_btn_row)
@@ -1535,13 +1535,13 @@ class MainWindow(QMainWindow):
             clear_completed_btn, remove_btn, rss_btn, add_file_btn,
         ))
 
-        torrents_label = QLabel("◈ Torrents")
+        torrents_label = QLabel(tr('◈ Torrents'))
         torrents_label.setObjectName("section_label")
         torrents_tab_layout.addWidget(torrents_label)
         self.torrent_table = QTableWidget()
         self.torrent_table.setColumnCount(10)
         self.torrent_table.setHorizontalHeaderLabels(
-            ["Name", "State", "Progress", "Down", "Up", "ETA", "Seeds", "Peers", "Size", "Health"]
+            [tr('Name'), tr('State'), tr('Progress'), tr('Down'), tr('Up'), tr('ETA'), tr('Seeds'), tr('Peers'), tr('Size'), tr('Health')]
         )
         self.torrent_table.setAlternatingRowColors(True)
         self.torrent_table.setSortingEnabled(True)
@@ -1560,7 +1560,7 @@ class MainWindow(QMainWindow):
         downloads_panel_layout = QVBoxLayout(downloads_panel)
         downloads_panel_layout.setContentsMargins(0, 0, 0, 0)
         downloads_panel_layout.setSpacing(2)
-        downloads_label = QLabel("◈ Downloads")
+        downloads_label = QLabel(tr('◈ Downloads'))
         downloads_label.setObjectName("section_label")
         downloads_panel_layout.addWidget(downloads_label)
         self.downloads_tab = DownloadsTab(self._dl_engine, self.config, self)
@@ -1743,7 +1743,7 @@ class MainWindow(QMainWindow):
         self.browser_back_btn.setObjectName("btn_secondary")
         self.browser_back_btn.setFixedWidth(34)
         self.browser_back_btn.setIcon(self._load_browser_icon("back"))
-        self.browser_back_btn.setToolTip("Back")
+        self.browser_back_btn.setToolTip(tr('Back'))
         self.browser_back_btn.clicked.connect(lambda: self._current_browser_view().back())
         nav_layout.addWidget(self.browser_back_btn)
 
@@ -1751,7 +1751,7 @@ class MainWindow(QMainWindow):
         self.browser_fwd_btn.setObjectName("btn_secondary")
         self.browser_fwd_btn.setFixedWidth(34)
         self.browser_fwd_btn.setIcon(self._load_browser_icon("forward"))
-        self.browser_fwd_btn.setToolTip("Forward")
+        self.browser_fwd_btn.setToolTip(tr('Forward'))
         self.browser_fwd_btn.clicked.connect(lambda: self._current_browser_view().forward())
         nav_layout.addWidget(self.browser_fwd_btn)
 
@@ -1759,7 +1759,7 @@ class MainWindow(QMainWindow):
         self.browser_reload_btn.setObjectName("btn_secondary")
         self.browser_reload_btn.setFixedWidth(34)
         self.browser_reload_btn.setIcon(self._load_browser_icon("reload"))
-        self.browser_reload_btn.setToolTip("Reload")
+        self.browser_reload_btn.setToolTip(tr('Reload'))
         self.browser_reload_btn.clicked.connect(lambda: self._current_browser_view().reload())
         nav_layout.addWidget(self.browser_reload_btn)
 
@@ -1767,7 +1767,7 @@ class MainWindow(QMainWindow):
         self.browser_home_btn.setObjectName("btn_secondary")
         self.browser_home_btn.setFixedWidth(34)
         self.browser_home_btn.setIcon(self._load_browser_icon("home"))
-        self.browser_home_btn.setToolTip("Home")
+        self.browser_home_btn.setToolTip(tr('Home'))
         self.browser_home_btn.clicked.connect(self._browser_go_home)
         nav_layout.addWidget(self.browser_home_btn)
 
@@ -1776,33 +1776,33 @@ class MainWindow(QMainWindow):
         self.browser_new_tab_btn.setObjectName("btn_secondary")
         self.browser_new_tab_btn.setFixedWidth(34)
         self.browser_new_tab_btn.setIcon(self._load_browser_icon("newtab"))
-        self.browser_new_tab_btn.setToolTip("New Tab")
+        self.browser_new_tab_btn.setToolTip(tr('New Tab'))
         self.browser_new_tab_btn.clicked.connect(lambda: self._browser_new_tab())
         nav_layout.addWidget(self.browser_new_tab_btn)
 
         # Bookmarks button — pops the bookmark folder tree (the same menu
         # that lives under File → Bookmarks).
-        self.browser_bookmarks_btn = QPushButton("Bookmarks")
+        self.browser_bookmarks_btn = QPushButton(tr('Bookmarks'))
         self.browser_bookmarks_btn.setObjectName("btn_secondary")
-        self.browser_bookmarks_btn.setToolTip("Open your bookmarks")
+        self.browser_bookmarks_btn.setToolTip(tr('Open your bookmarks'))
         self.browser_bookmarks_btn.clicked.connect(self._browser_show_bookmarks)
         nav_layout.addWidget(self.browser_bookmarks_btn)
 
-        self.browser_private_btn = QPushButton("Private")
+        self.browser_private_btn = QPushButton(tr('Private'))
         self.browser_private_btn.setObjectName("btn_secondary")
-        self.browser_private_btn.setToolTip("Open an off-the-record tab")
+        self.browser_private_btn.setToolTip(tr('Open an off-the-record tab'))
         self.browser_private_btn.clicked.connect(lambda: self._browser_new_tab(private=True))
         nav_layout.addWidget(self.browser_private_btn)
 
-        self.browser_devtools_btn = QPushButton("DevTools")
+        self.browser_devtools_btn = QPushButton(tr('DevTools'))
         self.browser_devtools_btn.setObjectName("btn_secondary")
-        self.browser_devtools_btn.setToolTip("Open Chromium developer tools for the current tab (F12)")
+        self.browser_devtools_btn.setToolTip(tr('Open Chromium developer tools for the current tab (F12)'))
         self.browser_devtools_btn.clicked.connect(self._browser_open_devtools)
         nav_layout.addWidget(self.browser_devtools_btn)
         self._browser_devtools_windows: List[QWebEngineView] = []
 
         self.browser_url_bar = QLineEdit()
-        self.browser_url_bar.setPlaceholderText("Enter URL or search...")
+        self.browser_url_bar.setPlaceholderText(tr('Enter URL or search...'))
         self.browser_url_bar.returnPressed.connect(self._browser_navigate)
         self._browser_history_model = QStringListModel(self)
         self._browser_history_completer = QCompleter(self._browser_history_model, self)
@@ -1817,20 +1817,20 @@ class MainWindow(QMainWindow):
             lambda _text: self.browser_url_bar.setModified(True))
         nav_layout.addWidget(self.browser_url_bar)
 
-        self.browser_go_btn = QPushButton("Go")
+        self.browser_go_btn = QPushButton(tr('Go'))
         self.browser_go_btn.setObjectName("btn_accent")
-        self.browser_go_btn.setToolTip("Open the address or run the search (Enter)")
+        self.browser_go_btn.setToolTip(tr('Open the address or run the search (Enter)'))
         self.browser_go_btn.clicked.connect(self._browser_navigate)
         nav_layout.addWidget(self.browser_go_btn)
 
-        self.browser_zoom_label = QLabel("100%")
+        self.browser_zoom_label = QLabel(tr('100%'))
         self.browser_zoom_label.setMinimumWidth(42)
         self.browser_zoom_label.setAlignment(Qt.AlignCenter)
         # The percentage badge is a control, not just a readout — the cursor
         # + tooltip make that discoverable, click opens the zoom menu.
         self.browser_zoom_label.setCursor(Qt.PointingHandCursor)
         self.browser_zoom_label.setToolTip(
-            "Page zoom — click for controls (Ctrl+scroll wheel, Ctrl+= / Ctrl+-, Ctrl+0 reset)")
+            tr('Page zoom — click for controls (Ctrl+scroll wheel, Ctrl+= / Ctrl+-, Ctrl+0 reset)'))
         self.browser_zoom_label.mousePressEvent = lambda _e: self._browser_zoom_menu()
         nav_layout.addWidget(self.browser_zoom_label)
 
@@ -1838,7 +1838,7 @@ class MainWindow(QMainWindow):
         self.browser_bookmark_btn.setObjectName("btn_secondary")
         self.browser_bookmark_btn.setFixedWidth(34)
         self.browser_bookmark_btn.setIcon(self._load_browser_icon("bookmark"))
-        self.browser_bookmark_btn.setToolTip("Bookmark this page")
+        self.browser_bookmark_btn.setToolTip(tr('Bookmark this page'))
         self.browser_bookmark_btn.clicked.connect(self._browser_add_bookmark)
         nav_layout.addWidget(self.browser_bookmark_btn)
 
@@ -1848,7 +1848,7 @@ class MainWindow(QMainWindow):
         self.browser_adblock_btn.setCheckable(True)
         self.browser_adblock_btn.setChecked(self.config.browser.adblock_enabled)
         self.browser_adblock_btn.setIcon(self._load_browser_icon("adblock"))
-        self.browser_adblock_btn.setToolTip("Toggle ad blocking; right-click for site exceptions")
+        self.browser_adblock_btn.setToolTip(tr('Toggle ad blocking; right-click for site exceptions'))
         self.browser_adblock_btn.setFixedWidth(34)
         self._update_adblock_button_style()
         self.browser_adblock_btn.clicked.connect(self._toggle_adblock)
@@ -1919,19 +1919,19 @@ class MainWindow(QMainWindow):
         find_layout = QHBoxLayout(self.browser_find_bar)
         find_layout.setContentsMargins(4, 0, 4, 0)
         self.browser_find_input = QLineEdit()
-        self.browser_find_input.setPlaceholderText("Find in page")
+        self.browser_find_input.setPlaceholderText(tr('Find in page'))
         self.browser_find_input.setAccessibleName("Find text in current page")
         self.browser_find_input.textChanged.connect(lambda: self._browser_find(False))
         find_layout.addWidget(self.browser_find_input)
         self.browser_find_result = QLabel("")
         find_layout.addWidget(self.browser_find_result)
-        find_prev = QPushButton("Previous")
+        find_prev = QPushButton(tr('Previous'))
         find_prev.clicked.connect(lambda: self._browser_find(True))
         find_layout.addWidget(find_prev)
-        find_next = QPushButton("Next")
+        find_next = QPushButton(tr('Next'))
         find_next.clicked.connect(lambda: self._browser_find(False))
         find_layout.addWidget(find_next)
-        find_close = QPushButton("Close")
+        find_close = QPushButton(tr('Close'))
         find_close.clicked.connect(self._browser_hide_find)
         find_layout.addWidget(find_close)
         self.browser_find_bar.hide()
@@ -2265,7 +2265,7 @@ class MainWindow(QMainWindow):
         self._agent_chip.clicked.connect(lambda: self._focus_agent_ask())
         self.statusBar().addPermanentWidget(self._agent_chip)
 
-        self._bell_btn = QPushButton("🔔")
+        self._bell_btn = QPushButton(tr('🔔'))
         self._bell_btn.setObjectName("status_chip")
         self._bell_btn.setToolTip(tr("Recent events — completions, syncs, updates"))
         self._bell_btn.clicked.connect(self._show_event_log)
@@ -2295,14 +2295,14 @@ class MainWindow(QMainWindow):
     def _show_event_log(self) -> None:
         menu = QMenu(self)
         if not self._events:
-            act = menu.addAction("(nothing yet)")
+            act = menu.addAction(tr('(nothing yet)'))
             act.setEnabled(False)
         else:
             for icon, stamp, text, n in list(self._events)[:30]:
                 suffix = f"  ×{n}" if n > 1 else ""
                 menu.addAction(f"{icon} {stamp}  {text}{suffix}").setEnabled(False)
         self._new_events = 0
-        self._bell_btn.setText("🔔")
+        self._bell_btn.setText(tr('🔔'))
         menu.exec(QCursor.pos())
 
     def _update_status_bar(self, torrents: List[Dict[str, Any]]) -> None:
@@ -2322,31 +2322,33 @@ class MainWindow(QMainWindow):
 
         parts = []
         if torrents:
-            parts.append(f"Torrents: {len(torrents)} total  ↓ {format_rate(t_down)}  ↑ {format_rate(t_up)}")
+            parts.append(f"{tr('Torrents')}: {len(torrents)}  ↓ {format_rate(t_down)}  ↑ {format_rate(t_up)}")
             sub = []
             if t_downloading:
-                sub.append(f"{t_downloading} downloading")
+                sub.append(f"{t_downloading} {tr('downloading')}")
             if t_seeding:
-                sub.append(f"{t_seeding} seeding")
+                sub.append(f"{t_seeding} {tr('seeding')}")
             if t_queued:
-                sub.append(f"{t_queued} queued")
+                sub.append(f"{t_queued} {tr('queued')}")
             if t_paused:
-                sub.append(f"{t_paused} paused")
+                sub.append(f"{t_paused} {tr('paused')}")
             if sub:
                 parts[-1] += " (" + ", ".join(sub) + ")"
         if d_active:
-            parts.append(f"Downloads: {d_active} active  ↓ {format_rate(d_speed)}")
-        self._status_label.setText("   •   ".join(parts) if parts else "Ready")
+            parts.append(f"{tr('Downloads')}: {d_active} {tr('active')}  ↓ {format_rate(d_speed)}")
+        self._status_label.setText("   •   ".join(parts) if parts else tr("Ready"))
 
         # v5: rail badge + download chip + taskbar progress.
         active = t_downloading + d_active
-        self._dl_chip.setText(f"⬇ {active} · {format_rate(t_down + d_speed)}" if active else "⬇ idle")
+        self._dl_chip.setText(f"⬇ {active} · {format_rate(t_down + d_speed)}" if active else tr("⬇ idle"))
         try:
-            self.activity_rail.set_badge("Download", str(active) if active else "")
+            # badge lookup keys on the TAB TITLE — keep it in tr() so the
+            # translated rail still finds the (translated) Download button
+            self.activity_rail.set_badge(tr("Download"), str(active) if active else "")
         except Exception:
             pass  # rail not built yet during early refreshes
         busy = bool(self._agent_thread and self._agent_thread.is_alive())
-        self._agent_chip.setText("🧠 busy…" if busy else "🧠 agent")
+        self._agent_chip.setText(tr("🧠 busy…") if busy else tr("🧠 agent"))
         self._update_taskbar_progress(torrents, jobs, active)
 
     def _update_taskbar_progress(self, torrents: List[Dict[str, Any]], jobs: List[Any], active: int) -> None:
@@ -2592,9 +2594,9 @@ class MainWindow(QMainWindow):
     def _browser_zoom_menu(self) -> None:
         """Zoom controls opened by clicking the nav-bar percentage badge."""
         menu = QMenu(self.browser_zoom_label)
-        menu.addAction("Zoom in  (Ctrl+=  or Ctrl+scroll up)", lambda: self._browser_zoom(0.1))
-        menu.addAction("Zoom out  (Ctrl+-  or Ctrl+scroll down)", lambda: self._browser_zoom(-0.1))
-        menu.addAction("Reset to 100%  (Ctrl+0)", lambda: self._browser_set_zoom(1.0))
+        menu.addAction(tr('Zoom in  (Ctrl+=  or Ctrl+scroll up)'), lambda: self._browser_zoom(0.1))
+        menu.addAction(tr('Zoom out  (Ctrl+-  or Ctrl+scroll down)'), lambda: self._browser_zoom(-0.1))
+        menu.addAction(tr('Reset to 100%  (Ctrl+0)'), lambda: self._browser_set_zoom(1.0))
         menu.exec(self.browser_zoom_label.mapToGlobal(
             self.browser_zoom_label.rect().bottomLeft()))
 
@@ -2826,7 +2828,7 @@ class MainWindow(QMainWindow):
         if self._agent_thread and self._agent_thread.is_alive():
             self.agent.cancel()
             self.send_btn.setEnabled(False)
-            self.send_btn.setText("Stopping…")
+            self.send_btn.setText(tr('Stopping…'))
             return
         self._on_send()
 
@@ -2870,7 +2872,7 @@ class MainWindow(QMainWindow):
             return
         if self.chat_input.text().strip():
             return
-        self.chat_input.setText("Hello")
+        self.chat_input.setText(tr('Hello'))
         self._onboarding_greeting = True
         try:
             self._on_send()
@@ -2896,13 +2898,13 @@ class MainWindow(QMainWindow):
                 self._append_event("🎤 Too short — hold a thought, then click again.")
                 return
             self.voice_btn.setEnabled(False)
-            self.voice_btn.setText("…")
+            self.voice_btn.setText(tr('…'))
             self._voice_transcriber().transcribe_async(audio)
             return
         if recorder.start():
-            self.voice_btn.setText("⏺")
+            self.voice_btn.setText(tr('⏺'))
             self.voice_btn.setStyleSheet("color: #ff5555;")
-            self.voice_btn.setToolTip("Recording — click again to stop & transcribe")
+            self.voice_btn.setToolTip(tr('Recording — click again to stop & transcribe'))
 
     def _voice_recorder(self) -> VoiceRecorder:
         if getattr(self, "_voice_rec", None) is None:
@@ -2921,9 +2923,9 @@ class MainWindow(QMainWindow):
 
     def _reset_voice_button(self) -> None:
         self.voice_btn.setEnabled(True)
-        self.voice_btn.setText("🎤")
+        self.voice_btn.setText(tr('🎤'))
         self.voice_btn.setStyleSheet("")
-        self.voice_btn.setToolTip("Dictate to the agent (local whisper, offline) — click to start, click again to stop & send")
+        self.voice_btn.setToolTip(tr('Dictate to the agent (local whisper, offline) — click to start, click again to stop & send'))
 
     def _on_voice_done(self, text: str) -> None:
         self._reset_voice_button()
@@ -3047,9 +3049,9 @@ class MainWindow(QMainWindow):
             elapsed = int(time.time() - self._busy_started)
             self.chat_input.setPlaceholderText(f"Agent is working... ({elapsed}s)")
         elif self._search_busy:
-            self.chat_input.setPlaceholderText("Searching...")
+            self.chat_input.setPlaceholderText(tr('Searching...'))
         else:
-            self.chat_input.setPlaceholderText(self._INPUT_PLACEHOLDER)
+            self.chat_input.setPlaceholderText(tr(self._INPUT_PLACEHOLDER))
             # Don't yank focus while the user is on another tab.
             if self.main_tabs.currentWidget() is self._agents_tab:
                 self.chat_input.setFocus()
@@ -3232,7 +3234,7 @@ class MainWindow(QMainWindow):
             return False
         box = QMessageBox(self)
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setWindowTitle("Share Page with Agent")
+        box.setWindowTitle(tr('Share Page with Agent'))
         box.setText(
             "Allow the Agent to read the rendered text and links from this page?\n\n"
             f"Origin: {origin}\n\n"
@@ -3240,7 +3242,7 @@ class MainWindow(QMainWindow):
         )
         box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         box.setDefaultButton(QMessageBox.StandardButton.No)
-        remember = QCheckBox("Remember this choice for this origin")
+        remember = QCheckBox(tr('Remember this choice for this origin'))
         box.setCheckBox(remember)
         allowed = box.exec() == QMessageBox.StandardButton.Yes
         if remember.isChecked():
@@ -3267,7 +3269,7 @@ class MainWindow(QMainWindow):
             detail += f"\n\nName:\n{title}"
         answer = QMessageBox.warning(
             self,
-            "Browser Action",
+            tr('Browser Action'),
             f"Allow this page to {labels.get(action, action)}?\n\n{detail}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -3311,7 +3313,7 @@ class MainWindow(QMainWindow):
         origin = permission.origin().toString()
         answer = QMessageBox.question(
             self,
-            "Browser Permission",
+            tr('Browser Permission'),
             f"Origin:\n{origin or '(unknown)'}\n\n"
             f"Allow access to {kind.name}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -3328,7 +3330,7 @@ class MainWindow(QMainWindow):
             host = error.url().host() or error.url().toString()
             desc = error.description() or "The site's certificate is invalid."
             r = QMessageBox.warning(
-                self, "Certificate Error",
+                self, tr('Certificate Error'),
                 f"Secure connection to {host} failed:\n\n{desc}\n\n"
                 "Proceed anyway? (not recommended)",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -3380,7 +3382,7 @@ class MainWindow(QMainWindow):
             lbl.mousePressEvent = lambda _e, idx=i: self.browser_tabs.setCurrentIndex(idx)
             cl.addWidget(lbl)
             if self.browser_tabs.count() > 1:
-                x = QPushButton("×")
+                x = QPushButton(tr('×'))
                 x.setFixedSize(14, 14)
                 x.setAttribute(Qt.WA_StyledBackground)
                 x.setStyleSheet(
@@ -3470,7 +3472,7 @@ class MainWindow(QMainWindow):
             return
         answer = QMessageBox.warning(
             self,
-            "Browser Renderer Stopped",
+            tr('Browser Renderer Stopped'),
             f"The page renderer stopped ({status}, code {code}). Reload this tab?",
             QMessageBox.StandardButton.Retry | QMessageBox.StandardButton.Close,
             QMessageBox.StandardButton.Retry,
@@ -3494,7 +3496,7 @@ class MainWindow(QMainWindow):
         if idx < 0:
             return
         if loading:
-            self.browser_tabs.setTabText(idx, "Loading…")
+            self.browser_tabs.setTabText(idx, tr('Loading…'))
         elif self.browser_tabs.tabText(idx) == "Loading…":
             title = view.title() or "New Tab"
             self.browser_tabs.setTabText(idx, title[:25])
@@ -3640,7 +3642,7 @@ class MainWindow(QMainWindow):
         # Check if already bookmarked.
         for b in self.config.browser.bookmarks:
             if b.url == url:
-                QMessageBox.information(self, "Bookmark", "This page is already bookmarked.")
+                QMessageBox.information(self, tr('Bookmark'), tr('This page is already bookmarked.'))
                 return
         from config import Bookmark
         self.config.browser.bookmarks.append(Bookmark(title=title, url=url))
@@ -3778,11 +3780,11 @@ class MainWindow(QMainWindow):
             with open(path, "w", encoding="utf-8") as file:
                 file.write(document)
         except OSError as exc:
-            QMessageBox.warning(self, "Export Bookmarks", f"Could not export bookmarks:\n{exc}")
+            QMessageBox.warning(self, tr('Export Bookmarks'), f"Could not export bookmarks:\n{exc}")
 
     def _show_browser_history(self) -> None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("Browser History")
+        dialog.setWindowTitle(tr('Browser History'))
         roomy(dialog)
         layout = QVBoxLayout(dialog)
         items = QListWidget()
@@ -3793,7 +3795,7 @@ class MainWindow(QMainWindow):
         items.itemDoubleClicked.connect(
             lambda item: (self._browser_open_internal(item.data(Qt.UserRole)), dialog.accept()))
         layout.addWidget(items)
-        clear = QPushButton("Clear History")
+        clear = QPushButton(tr('Clear History'))
         clear.clicked.connect(lambda: (self._clear_browser_history(), dialog.accept()))
         layout.addWidget(clear)
         dialog.exec()
@@ -3820,7 +3822,7 @@ class MainWindow(QMainWindow):
             self._rebuild_bookmarks_bar()
             QMessageBox.information(
                 self,
-                "Import Bookmarks",
+                tr('Import Bookmarks'),
                 f"Imported {added} new bookmark(s); organized {updated} existing one(s) into folders.",
             )
 
@@ -3836,15 +3838,15 @@ class MainWindow(QMainWindow):
         menu = self._bookmarks_menu
         menu.clear()
 
-        import_action = QAction("Import Bookmarks...", self)
+        import_action = QAction(tr('Import Bookmarks...'), self)
         import_action.triggered.connect(self._import_bookmarks)
         menu.addAction(import_action)
-        export_action = QAction("Export Bookmarks...", self)
+        export_action = QAction(tr('Export Bookmarks...'), self)
         export_action.triggered.connect(self._export_bookmarks)
         menu.addAction(export_action)
 
         if not self.config.browser.bookmarks:
-            empty = QAction("(no bookmarks yet — import some)", self)
+            empty = QAction(tr('(no bookmarks yet — import some)'), self)
             empty.setEnabled(False)
             menu.addAction(empty)
             return
@@ -3912,8 +3914,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(open_btn, 1)
 
         remove_btn = QToolButton()
-        remove_btn.setText("✕")
-        remove_btn.setToolTip("Remove bookmark")
+        remove_btn.setText(tr('✕'))
+        remove_btn.setToolTip(tr('Remove bookmark'))
         remove_btn.setFixedSize(20, 20)
         remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         remove_btn.clicked.connect(
@@ -3942,7 +3944,7 @@ class MainWindow(QMainWindow):
     def _bookmark_context_menu(self, url: str, btn) -> None:
         """Show a context menu to remove a bookmark."""
         menu = QMenu(self)
-        remove_action = menu.addAction("Remove bookmark")
+        remove_action = menu.addAction(tr('Remove bookmark'))
         action = menu.exec(btn.mapToGlobal(btn.rect().center()))
         if action == remove_action:
             self._browser_remove_bookmark(url)
@@ -4042,7 +4044,7 @@ class MainWindow(QMainWindow):
 
     def _on_update_check_status(self, message: str) -> None:
         from PySide6.QtWidgets import QMessageBox
-        QMessageBox.information(self, "DeepFlux updates", message)
+        QMessageBox.information(self, tr('DeepFlux updates'), message)
 
     def _on_update_found(self, info) -> None:
         from config import APP_VERSION
@@ -4079,7 +4081,7 @@ class MainWindow(QMainWindow):
             return  # the user pressed Cancel — not an error to report
         from PySide6.QtWidgets import QMessageBox
         QMessageBox.warning(
-            self, "Update download failed",
+            self, tr('Update download failed'),
             f"The update could not be downloaded:\n{message}\n\n"
             "A partially downloaded file is kept and resumed if you try "
             "again. You can also download the setup file from "
@@ -4091,14 +4093,14 @@ class MainWindow(QMainWindow):
         from PySide6.QtWidgets import QMessageBox
         from infra import updater
         if path is None or not updater.verify_file(path, info):
-            QMessageBox.warning(self, "Update",
+            QMessageBox.warning(self, tr('Update'),
                                 "The downloaded file did not pass the "
                                 "integrity check. Please try again.")
             return
         others = updater.other_instances_running()
         if others:
             QMessageBox.warning(
-                self, "Update",
+                self, tr('Update'),
                 f"{others} other DeepFlux window(s) are open. Close them "
                 f"first — the update replaces the program files while it "
                 f"runs.")
@@ -4107,7 +4109,7 @@ class MainWindow(QMainWindow):
             # Machine-wide install (the installer's elevation dialog was
             # used) or an unwritable dir: degrade to a manual run.
             QMessageBox.information(
-                self, "Update downloaded",
+                self, tr('Update downloaded'),
                 f"The new version was downloaded to:\n{path}\n\n"
                 "This install needs the setup file to be run by hand — "
                 "close DeepFlux and double-click it when convenient.")
@@ -4137,7 +4139,7 @@ class MainWindow(QMainWindow):
             updater.apply_update(path)
         except Exception as exc:
             QMessageBox.critical(
-                self, "Update",
+                self, tr('Update'),
                 f"The update could not be started: {exc}\n"
                 f"The setup file is at:\n{path}")
             return
@@ -4778,7 +4780,7 @@ class MainWindow(QMainWindow):
             logger.exception("association registration failed: %s", exc)
         if ok:
             QMessageBox.information(
-                self, "Default App",
+                self, tr('Default App'),
                 "DeepFlux registered for:\n\n"
                 "  •  .torrent files and magnet: links (set as default)\n"
                 "  •  Video & audio files (available in 'Open with' / Default Apps)\n"
@@ -4787,7 +4789,7 @@ class MainWindow(QMainWindow):
                 "Settings → Apps → Default apps → DeepFlux.",
             )
         else:
-            QMessageBox.warning(self, "Default App", "Registration failed — see the log for details.")
+            QMessageBox.warning(self, tr('Default App'), tr('Registration failed — see the log for details.'))
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
@@ -5253,7 +5255,7 @@ class MainWindow(QMainWindow):
                              path=self._torrent_primary_file(h) or "")
 
     def _add_magnet_dialog(self) -> None:
-        uri, ok = QInputDialog.getText(self, "Add Magnet", "Paste a magnet link:")
+        uri, ok = QInputDialog.getText(self, tr('Add Magnet'), tr('Paste a magnet link:'))
         if ok and uri:
             try:
                 result = self.tools.call("add_magnet", {"uri": uri, "save_path": self.config.default_save_path, "category": "Other"})
@@ -5335,7 +5337,7 @@ class MainWindow(QMainWindow):
             name = info_hash[:12]
 
         reply = QMessageBox.question(
-            self, "Remove Torrent",
+            self, tr('Remove Torrent'),
             f"Remove '{name}' from the torrent list?\n\n"
             f"This removes it from the engine. The downloaded files stay on disk.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
@@ -5366,7 +5368,7 @@ class MainWindow(QMainWindow):
 
         names = [t.get("name", t.get("info_hash", "")[:12]) for t in completed]
         reply = QMessageBox.question(
-            self, "Clear Completed",
+            self, tr('Clear Completed'),
             f"Remove {len(completed)} completed torrent(s) from the list?\n\n"
             f"Files: " + ", ".join(names[:3]) + ("..." if len(names) > 3 else "") + "\n\n"
             f"Downloaded files will be kept on disk.",
@@ -5395,16 +5397,16 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
 
-        act_remove = menu.addAction("Remove from list (keep files)")
-        act_delete = menu.addAction("Remove and delete files")
+        act_remove = menu.addAction(tr('Remove from list (keep files)'))
+        act_delete = menu.addAction(tr('Remove and delete files'))
         menu.addSeparator()
-        act_pause = menu.addAction("Pause")
-        act_resume = menu.addAction("Resume")
+        act_pause = menu.addAction(tr('Pause'))
+        act_resume = menu.addAction(tr('Resume'))
         menu.addSeparator()
-        act_open_folder = menu.addAction("Open Folder")
-        act_open_file = menu.addAction("Open File")
-        act_play = menu.addAction("Play in Player")
-        act_stream = menu.addAction("Stream while downloading")
+        act_open_folder = menu.addAction(tr('Open Folder'))
+        act_open_file = menu.addAction(tr('Open File'))
+        act_play = menu.addAction(tr('Play in Player'))
+        act_stream = menu.addAction(tr('Stream while downloading'))
 
         action = menu.exec(self.torrent_table.mapToGlobal(position))
         selected_hashes = self._get_selected_info_hashes() or [info_hash]
@@ -5443,7 +5445,7 @@ class MainWindow(QMainWindow):
             if target:
                 self.play_file_in_player(target)
             else:
-                QMessageBox.warning(self, "Play", "File not found on disk. The torrent may not be fully downloaded.")
+                QMessageBox.warning(self, tr('Play'), tr('File not found on disk. The torrent may not be fully downloaded.'))
         elif action == act_stream:
             self._stream_torrent(info_hash)
 
@@ -5460,7 +5462,7 @@ class MainWindow(QMainWindow):
             name = info_hash[:12]
 
         reply = QMessageBox.question(
-            self, "Delete Torrent + Files",
+            self, tr('Delete Torrent + Files'),
             f"Permanently delete '{name}' and all downloaded files?\n\n"
             f"⚠ This cannot be undone. The files will be deleted from disk.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
@@ -5491,7 +5493,7 @@ class MainWindow(QMainWindow):
         if not os.path.isdir(folder):
             folder = save_path
         if not os.path.isdir(folder):
-            QMessageBox.warning(self, "Open Folder", f"Folder not found:\n{folder}")
+            QMessageBox.warning(self, tr('Open Folder'), f"Folder not found:\n{folder}")
             return
         self._reveal_path(folder)
 
@@ -5521,7 +5523,7 @@ class MainWindow(QMainWindow):
         """Open the torrent's primary file directly with its default app."""
         target = self._torrent_primary_file(info_hash)
         if not target:
-            QMessageBox.warning(self, "Open File", "File not found on disk. The torrent may not be fully downloaded.")
+            QMessageBox.warning(self, tr('Open File'), tr('File not found on disk. The torrent may not be fully downloaded.'))
             return
         self._reveal_path(target)
 
@@ -5542,7 +5544,7 @@ class MainWindow(QMainWindow):
         video is buffered (mpv reads the growing file from disk)."""
         if getattr(self, "iptv_tab", None) is None:
             QMessageBox.information(
-                self, "Stream",
+                self, tr('Stream'),
                 "Stream-while-downloading needs the built-in player, which is "
                 "not available in this build. Let the download finish, then "
                 "open the file from the Downloads page.")
@@ -5564,7 +5566,7 @@ class MainWindow(QMainWindow):
                            "downloaded": status.get("total_done", 0)}]
             else:
                 QMessageBox.information(
-                    self, "Stream",
+                    self, tr('Stream'),
                     "No video file found in this torrent.\n"
                     "(Metadata may still be downloading.)")
                 return
@@ -5799,11 +5801,11 @@ class MainWindow(QMainWindow):
         icon_path = self._resolve_icon_path()
         icon = QIcon(icon_path) if icon_path else self.windowIcon()
         self._tray = QSystemTrayIcon(icon, self)
-        self._tray.setToolTip("DeepFlux")
+        self._tray.setToolTip(tr('DeepFlux'))
         menu = QMenu()
         menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
-        menu.addAction("Show DeepFlux", self._tray_restore)
-        menu.addAction("Quit", self._tray_quit)
+        menu.addAction(tr('Show DeepFlux'), self._tray_restore)
+        menu.addAction(tr('Quit'), self._tray_quit)
         self._tray.setContextMenu(menu)
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.messageClicked.connect(self._on_tray_message_clicked)
@@ -5896,16 +5898,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _ask_passphrase(self, title: str, confirm: bool) -> Optional[str]:
-        pw, ok = QInputDialog.getText(self, title, "Passphrase:", QLineEdit.Password)
+        pw, ok = QInputDialog.getText(self, title, tr('Passphrase:'), QLineEdit.Password)
         if not ok or not pw:
             return None
         if confirm:
             pw2, ok = QInputDialog.getText(
-                self, title, "Confirm passphrase:", QLineEdit.Password)
+                self, title, tr('Confirm passphrase:'), QLineEdit.Password)
             if not ok:
                 return None
             if pw != pw2:
-                QMessageBox.warning(self, title, "Passphrases do not match.")
+                QMessageBox.warning(self, title, tr('Passphrases do not match.'))
                 return None
         return pw
 
@@ -5928,7 +5930,7 @@ class MainWindow(QMainWindow):
                 self.config.sanitized_dict(), ensure_ascii=False).encode("utf-8")
             Path(path).write_bytes(encrypt_settings(payload, pw))
         except OSError as exc:
-            QMessageBox.warning(self, "Export Settings",
+            QMessageBox.warning(self, tr('Export Settings'),
                                 f"Could not write the file:\n{exc}")
             return
         self._append_agent(
@@ -5945,7 +5947,7 @@ class MainWindow(QMainWindow):
         try:
             blob = Path(path).read_bytes()
         except OSError as exc:
-            QMessageBox.warning(self, "Import Settings",
+            QMessageBox.warning(self, tr('Import Settings'),
                                 f"Could not read the file:\n{exc}")
             return
         pw = self._ask_passphrase("Import Settings", confirm=False)
@@ -5955,7 +5957,7 @@ class MainWindow(QMainWindow):
             payload = decrypt_settings(blob, pw)
             validate_settings(payload)
         except SettingsBackupError as exc:
-            QMessageBox.warning(self, "Import Settings", str(exc))
+            QMessageBox.warning(self, tr('Import Settings'), str(exc))
             return
         # The running app keeps its in-memory config; the imported file takes
         # effect on the next launch. Back up the current one first.
@@ -5965,11 +5967,11 @@ class MainWindow(QMainWindow):
                 shutil.copy2(self.config_path, self.config_path + ".bak")
             Path(self.config_path).write_bytes(payload)
         except OSError as exc:
-            QMessageBox.warning(self, "Import Settings",
+            QMessageBox.warning(self, tr('Import Settings'),
                                 f"Could not replace the current settings:\n{exc}")
             return
         box = QMessageBox(self)
-        box.setWindowTitle("Import Settings")
+        box.setWindowTitle(tr('Import Settings'))
         box.setText(
             "Settings imported successfully.\n\n"
             "They take effect after a restart. Your previous settings were "
@@ -6053,8 +6055,8 @@ class MainWindow(QMainWindow):
     def _clear_browser_history(self) -> None:
         answer = QMessageBox.question(
             self,
-            "Clear Browsing History",
-            "Delete all locally stored browser history and address suggestions?",
+            tr('Clear Browsing History'),
+            tr('Delete all locally stored browser history and address suggestions?'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -6067,8 +6069,8 @@ class MainWindow(QMainWindow):
     def _clear_browser_data(self) -> None:
         answer = QMessageBox.question(
             self,
-            "Clear Browser Data",
-            "Delete persistent browser cookies and HTTP cache? You will be signed out of websites.",
+            tr('Clear Browser Data'),
+            tr('Delete persistent browser cookies and HTTP cache? You will be signed out of websites.'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -6344,7 +6346,7 @@ class MainWindow(QMainWindow):
         msg += "\n\nWould you like to restore them?"
 
         reply = QMessageBox.question(
-            self, "Resume Downloads", msg,
+            self, tr('Resume Downloads'), msg,
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
         )
 
@@ -6454,7 +6456,7 @@ class MainWindow(QMainWindow):
             active_t = active_d = 0
         if (active_t or active_d) and not self._update_in_progress:
             reply = QMessageBox.question(
-                self, "Quit DeepFlux",
+                self, tr('Quit DeepFlux'),
                 f"{active_t + active_d} transfer(s) still in progress "
                 f"({active_t} torrents, {active_d} downloads).\n\n"
                 "They will resume next time you launch the app. Quit anyway?",

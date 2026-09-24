@@ -54,6 +54,7 @@ from PySide6.QtWidgets import (
 
 from gui.column_sizing import AutoColumnSizer
 from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,7 @@ class FilePane(QWidget):
         if sys.platform == "win32":
             self._drives = QComboBox()
             self._drives.setAccessibleName(f"{pane_name} drive")
-            self._drives.setToolTip("Choose a drive")
+            self._drives.setToolTip(tr('Choose a drive'))
             for fi in QDir.drives():
                 self._drives.addItem(fi.absoluteFilePath())
             self._drives.setFixedWidth(70)
@@ -174,7 +175,7 @@ class FilePane(QWidget):
         bar.addWidget(self._up_btn)
         self._path_edit = QLineEdit()
         self._path_edit.setAccessibleName(f"{pane_name} path")
-        self._path_edit.setToolTip("Current folder path; press Enter to navigate")
+        self._path_edit.setToolTip(tr('Current folder path; press Enter to navigate'))
         completer = QCompleter(self)
         comp_model = QFileSystemModel(completer)
         comp_model.setRootPath("")
@@ -191,27 +192,27 @@ class FilePane(QWidget):
 
         tools = QHBoxLayout()
         tools.setSpacing(4)
-        filter_label = QLabel("Filter:")
+        filter_label = QLabel(tr('Filter:'))
         filter_label.setAccessibleName(f"{pane_name} filter label")
         tools.addWidget(filter_label)
         self._filter_edit = QLineEdit()
-        self._filter_edit.setPlaceholderText("filename contains…")
+        self._filter_edit.setPlaceholderText(tr('filename contains…'))
         self._filter_edit.setClearButtonEnabled(True)
         self._filter_edit.setAccessibleName(f"{pane_name} filename filter")
-        self._filter_edit.setToolTip("Quickly show names containing this text")
+        self._filter_edit.setToolTip(tr('Quickly show names containing this text'))
         self._filter_edit.textChanged.connect(self.set_filename_filter)
         tools.addWidget(self._filter_edit, 1)
-        self._hidden_btn = QPushButton("Hidden/System")
+        self._hidden_btn = QPushButton(tr('Hidden/System'))
         self._hidden_btn.setCheckable(True)
         self._hidden_btn.setAccessibleName(f"{pane_name} hidden and system files toggle")
-        self._hidden_btn.setToolTip("Show or hide hidden and system items")
+        self._hidden_btn.setToolTip(tr('Show or hide hidden and system items'))
         self._hidden_btn.toggled.connect(self.set_show_hidden_system)
         tools.addWidget(self._hidden_btn)
         layout.addLayout(tools)
 
         self._view = QTreeView(self)
         self._view.setAccessibleName(f"{pane_name} files")
-        self._view.setToolTip("Files and folders; native drag and drop is disabled for safety")
+        self._view.setToolTip(tr('Files and folders; native drag and drop is disabled for safety'))
         self._view.setModel(self._model)
         self._view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self._view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -246,7 +247,7 @@ class FilePane(QWidget):
 
         self._pane_status = QLabel("")
         self._pane_status.setAccessibleName(f"{pane_name} free space and selection status")
-        self._pane_status.setToolTip("Selection count and free disk space")
+        self._pane_status.setToolTip(tr('Selection count and free disk space'))
         self._pane_status.setStyleSheet("color: #8a9ab0; font-size: 17px;")
         # Live selection/free-space text: word-wrap or a long status sets the
         # whole window's minimum width (measured 612px from one pane).
@@ -354,12 +355,12 @@ class FilePane(QWidget):
             self._view.edit(rows[0])
 
     def new_folder(self) -> None:
-        name, ok = QInputDialog.getText(self, "New Folder", "Folder name:")
+        name, ok = QInputDialog.getText(self, tr('New Folder'), tr('Folder name:'))
         name = name.strip()
         if not ok or not name:
             return
         if not QDir(self.current_path()).mkdir(name):
-            QMessageBox.warning(self, "New Folder", f"Could not create '{name}'.")
+            QMessageBox.warning(self, tr('New Folder'), f"Could not create '{name}'.")
 
     # -- active-pane visuals ---------------------------------------------------
     def set_active(self, on: bool) -> None:
@@ -440,30 +441,30 @@ class FilePane(QWidget):
         menu.setStyleSheet(_MENU_STYLE)
         paths = self.selected_paths()
         if paths:
-            menu.addAction("Open", lambda: self._on_activated(
+            menu.addAction(tr('Open'), lambda: self._on_activated(
                 self._view.selectionModel().selectedRows(0)[0]))
             folder = paths[0] if os.path.isdir(paths[0]) else os.path.dirname(paths[0])
             label = "Show in Explorer" if sys.platform == "win32" else "Show in File Manager"
             menu.addAction(label, lambda: _open_native(folder))
             menu.addSeparator()
-            menu.addAction("Copy to other pane\tF5", lambda: self.op_requested.emit("copy"))
-            menu.addAction("Move to other pane\tF6", lambda: self.op_requested.emit("move"))
+            menu.addAction(tr('Copy to other pane\tF5'), lambda: self.op_requested.emit("copy"))
+            menu.addAction(tr('Move to other pane\tF6'), lambda: self.op_requested.emit("move"))
             menu.addSeparator()
             if len(paths) == 1 and os.path.isfile(paths[0]):
-                menu.addAction("Preview", lambda: self.op_requested.emit("preview"))
-                menu.addAction("Calculate SHA-256", lambda: self.op_requested.emit("checksum"))
-                menu.addAction("Verify SHA-256…", lambda: self.op_requested.emit("verify_checksum"))
+                menu.addAction(tr('Preview'), lambda: self.op_requested.emit("preview"))
+                menu.addAction(tr('Calculate SHA-256'), lambda: self.op_requested.emit("checksum"))
+                menu.addAction(tr('Verify SHA-256…'), lambda: self.op_requested.emit("verify_checksum"))
                 if paths[0].lower().endswith(_ARCHIVE_EXTENSIONS):
-                    menu.addAction("Extract safely to other pane", lambda: self.op_requested.emit("extract"))
-            menu.addAction("Create archive…", lambda: self.op_requested.emit("archive"))
+                    menu.addAction(tr('Extract safely to other pane'), lambda: self.op_requested.emit("extract"))
+            menu.addAction(tr('Create archive…'), lambda: self.op_requested.emit("archive"))
             menu.addSeparator()
-            menu.addAction("Rename…\tF2", lambda: self.op_requested.emit("rename"))
-            menu.addAction("Move to Recycle Bin\tF8", lambda: self.op_requested.emit("recycle"))
-            menu.addAction("Permanently Delete…\tShift+Delete",
+            menu.addAction(tr('Rename…\tF2'), lambda: self.op_requested.emit("rename"))
+            menu.addAction(tr('Move to Recycle Bin\tF8'), lambda: self.op_requested.emit("recycle"))
+            menu.addAction(tr('Permanently Delete…\tShift+Delete'),
                            lambda: self.op_requested.emit("permanent_delete"))
             menu.addSeparator()
-        menu.addAction("New Folder…\tF7", lambda: self.op_requested.emit("mkdir"))
-        menu.addAction("Refresh", lambda: self.navigate(
+        menu.addAction(tr('New Folder…\tF7'), lambda: self.op_requested.emit("mkdir"))
+        menu.addAction(tr('Refresh'), lambda: self.navigate(
             self.current_path(), record_history=False))
         menu.exec(self._view.viewport().mapToGlobal(pos))
 
@@ -511,32 +512,32 @@ class CommanderTab(QWidget):
 
         self._preview_stack = QStackedWidget(self)
         self._preview_stack.setAccessibleName("Selected file preview")
-        self._preview_stack.setToolTip("Bounded preview of the selected file; media is never played automatically")
+        self._preview_stack.setToolTip(tr('Bounded preview of the selected file; media is never played automatically'))
         self._preview_stack.setMaximumHeight(220)
         self._preview_text = QPlainTextEdit(self)
         self._preview_text.setReadOnly(True)
         self._preview_text.setAccessibleName("Selected file text and metadata preview")
-        self._preview_text.setPlaceholderText("Select one file to preview")
+        self._preview_text.setPlaceholderText(tr('Select one file to preview'))
         self._preview_image = QLabel(self)
         self._preview_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_image.setAccessibleName("Selected image preview")
-        self._preview_image.setToolTip("Image preview constrained by byte and pixel limits")
+        self._preview_image.setToolTip(tr('Image preview constrained by byte and pixel limits'))
         self._preview_stack.addWidget(self._preview_text)
         self._preview_stack.addWidget(self._preview_image)
         layout.addWidget(self._preview_stack)
 
         checksum_bar = QHBoxLayout()
-        checksum_label = QLabel("SHA-256:")
+        checksum_label = QLabel(tr('SHA-256:'))
         checksum_label.setAccessibleName("SHA-256 result label")
         checksum_bar.addWidget(checksum_label)
         self._checksum_result = QLineEdit()
         self._checksum_result.setReadOnly(True)
         self._checksum_result.setAccessibleName("SHA-256 checksum result")
-        self._checksum_result.setToolTip("Calculated SHA-256 checksum")
+        self._checksum_result.setToolTip(tr('Calculated SHA-256 checksum'))
         checksum_bar.addWidget(self._checksum_result, 1)
-        self._checksum_copy_btn = QPushButton("Copy")
+        self._checksum_copy_btn = QPushButton(tr('Copy'))
         self._checksum_copy_btn.setAccessibleName("Copy SHA-256 checksum")
-        self._checksum_copy_btn.setToolTip("Copy the checksum to the clipboard")
+        self._checksum_copy_btn.setToolTip(tr('Copy the checksum to the clipboard'))
         self._checksum_copy_btn.clicked.connect(
             lambda: QApplication.clipboard().setText(self._checksum_result.text()))
         checksum_bar.addWidget(self._checksum_copy_btn)
@@ -569,7 +570,7 @@ class CommanderTab(QWidget):
         keys.addStretch()
         self._status = QLabel("")
         self._status.setAccessibleName("Commander status")
-        self._status.setToolTip("Current Commander status")
+        self._status.setToolTip(tr('Current Commander status'))
         self._status.setStyleSheet("color: #8a9ab0; font-size: 17px;")
         shrink_label(self._status)  # live text must not grow the window min
         keys.addWidget(self._status)
@@ -577,9 +578,9 @@ class CommanderTab(QWidget):
         # Hide-first order: Compare/Rename/Recycle go first, Copy/Move last.
         self._fn_overflow = OverflowRow(keys_row, tuple(reversed(fn_btns)))
 
-        self._outcome_status = QLabel("No file operations yet")
+        self._outcome_status = QLabel(tr('No file operations yet'))
         self._outcome_status.setAccessibleName("File operation history summary")
-        self._outcome_status.setToolTip("Recent file operation outcomes")
+        self._outcome_status.setToolTip(tr('Recent file operation outcomes'))
         self._outcome_status.setStyleSheet("color: #8a9ab0; font-size: 17px;")
         shrink_label(self._outcome_status)  # live text must not grow the window min
         layout.addWidget(self._outcome_status)
@@ -809,13 +810,13 @@ class CommanderTab(QWidget):
 
     def _new_folder(self) -> None:
         if self._operation_running():
-            self._status.setText("Another file operation is already running")
+            self._status.setText(tr('Another file operation is already running'))
             return
         self._active.new_folder()
 
     def _rename(self) -> None:
         if self._operation_running():
-            self._status.setText("Another file operation is already running")
+            self._status.setText(tr('Another file operation is already running'))
             return
         self._active.rename_selected()
 
@@ -826,15 +827,15 @@ class CommanderTab(QWidget):
 
     def _start_transfer(self, mode: str) -> None:
         if self._operation_running():
-            self._status.setText("Another file operation is already running")
+            self._status.setText(tr('Another file operation is already running'))
             return
         paths = self._active.selected_paths()
         if not paths:
-            self._status.setText("Nothing selected")
+            self._status.setText(tr('Nothing selected'))
             return
         dst_dir = self._other(self._active).current_path()
         if mode == "move" and self._same_path(dst_dir, self._active.current_path()):
-            self._status.setText("Source and destination are the same")
+            self._status.setText(tr('Source and destination are the same'))
             return
 
         target_plan: Dict[str, Tuple[str, bool]] = {}
@@ -857,14 +858,14 @@ class CommanderTab(QWidget):
             work_paths.append(src)
             reserved.add(os.path.normcase(os.path.abspath(dst)))
         if not work_paths:
-            self._status.setText("All conflicting items were skipped")
+            self._status.setText(tr('All conflicting items were skipped'))
             return
         self._launch_worker(mode, work_paths, dst_dir, False, target_plan)
 
     def _prompt_conflict(self, src: str, dst: str) -> str:
         """Ask for a safe decision for one conflict, never a whole batch."""
         box = QMessageBox(self)
-        box.setWindowTitle("Destination item exists")
+        box.setWindowTitle(tr('Destination item exists'))
         box.setAccessibleName("File conflict options")
         box.setIcon(QMessageBox.Icon.Question)
         box.setText(
@@ -874,10 +875,10 @@ class CommanderTab(QWidget):
         keep_btn = box.addButton("Keep Both", QMessageBox.ButtonRole.AcceptRole)
         skip_btn = box.addButton("Skip", QMessageBox.ButtonRole.NoRole)
         cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
-        overwrite_btn.setToolTip("Replace this destination item transactionally")
-        keep_btn.setToolTip("Copy or move this item under a unique name")
-        skip_btn.setToolTip("Leave both source and destination unchanged")
-        cancel_btn.setToolTip("Cancel the entire operation")
+        overwrite_btn.setToolTip(tr('Replace this destination item transactionally'))
+        keep_btn.setToolTip(tr('Copy or move this item under a unique name'))
+        skip_btn.setToolTip(tr('Leave both source and destination unchanged'))
+        cancel_btn.setToolTip(tr('Cancel the entire operation'))
         box.exec()
         clicked = box.clickedButton()
         if clicked is overwrite_btn:
@@ -909,11 +910,11 @@ class CommanderTab(QWidget):
 
     def _selected_for_delete(self) -> Optional[List[str]]:
         if self._operation_running():
-            self._status.setText("Another file operation is already running")
+            self._status.setText(tr('Another file operation is already running'))
             return None
         paths = self._active.selected_paths()
         if not paths:
-            self._status.setText("Nothing selected")
+            self._status.setText(tr('Nothing selected'))
             return None
         return paths
 
@@ -929,7 +930,7 @@ class CommanderTab(QWidget):
             return
         display_paths = self._display_paths(paths)
         r = QMessageBox.question(
-            self, "Move to Recycle Bin",
+            self, tr('Move to Recycle Bin'),
             "Move these paths to the Recycle Bin (Trash on this platform)?\n\n"
             f"{display_paths}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
@@ -944,46 +945,46 @@ class CommanderTab(QWidget):
             return
         display_paths = self._display_paths(paths)
         typed, ok = QInputDialog.getMultiLineText(
-            self, "Permanently Delete",
+            self, tr('Permanently Delete'),
             "This cannot be undone. Type every exact path below, one per line, "
             f"to permanently delete:\n\n{display_paths}\n\nExact paths:", "")
         if not ok:
             return
         if typed.strip() != display_paths:
             QMessageBox.warning(
-                self, "Permanent Delete Not Confirmed",
-                "The entered paths did not exactly match. Nothing was deleted.")
+                self, tr('Permanent Delete Not Confirmed'),
+                tr('The entered paths did not exactly match. Nothing was deleted.'))
             return
         self._launch_worker("delete", paths, "", False)
 
     def _start_checksum(self, verify: bool = False) -> None:
         if self._operation_running():
-            self._status.setText("Another file operation is already running")
+            self._status.setText(tr('Another file operation is already running'))
             return
         paths = self._active.selected_paths()
         if len(paths) != 1 or not os.path.isfile(paths[0]):
-            self._status.setText("Select exactly one regular file")
+            self._status.setText(tr('Select exactly one regular file'))
             return
         expected = ""
         if verify:
             expected, ok = QInputDialog.getText(
-                self, "Verify SHA-256", "Expected 64-character SHA-256 checksum:")
+                self, tr('Verify SHA-256'), tr('Expected 64-character SHA-256 checksum:'))
             expected = expected.strip().lower()
             if not ok:
                 return
             if len(expected) != 64 or any(ch not in "0123456789abcdef" for ch in expected):
-                QMessageBox.warning(self, "Verify SHA-256", "Enter exactly 64 hexadecimal characters.")
+                QMessageBox.warning(self, tr('Verify SHA-256'), tr('Enter exactly 64 hexadecimal characters.'))
                 return
         self._launch_worker("verify_checksum" if verify else "checksum", paths, "", False,
                             options={"expected": expected})
 
     def _start_archive_create(self) -> None:
         if self._operation_running():
-            self._status.setText("Another file operation is already running")
+            self._status.setText(tr('Another file operation is already running'))
             return
         paths = self._active.selected_paths()
         if not paths:
-            self._status.setText("Nothing selected")
+            self._status.setText(tr('Nothing selected'))
             return
         suggested = os.path.join(self._other(self._active).current_path(),
                                  os.path.basename(paths[0]) + ".zip")
@@ -993,37 +994,37 @@ class CommanderTab(QWidget):
         if not target:
             return
         if os.path.lexists(target):
-            QMessageBox.warning(self, "Create Archive", "For safety, existing archives are never overwritten.")
+            QMessageBox.warning(self, tr('Create Archive'), tr('For safety, existing archives are never overwritten.'))
             return
         if not self._archive_format(target):
-            QMessageBox.warning(self, "Create Archive", "Use .zip, .tar, .tar.gz, .tar.bz2, or .tar.xz.")
+            QMessageBox.warning(self, tr('Create Archive'), tr('Use .zip, .tar, .tar.gz, .tar.bz2, or .tar.xz.'))
             return
         self._launch_worker("archive_create", paths, target, False)
 
     def _start_archive_extract(self) -> None:
         if self._operation_running():
-            self._status.setText("Another file operation is already running")
+            self._status.setText(tr('Another file operation is already running'))
             return
         paths = self._active.selected_paths()
         if len(paths) != 1 or not os.path.isfile(paths[0]):
-            self._status.setText("Select exactly one archive")
+            self._status.setText(tr('Select exactly one archive'))
             return
         archive = paths[0]
         if not self._archive_format(archive):
-            self._status.setText("Unsupported archive format")
+            self._status.setText(tr('Unsupported archive format'))
             return
         destination = os.path.join(
             self._other(self._active).current_path(), self._archive_stem(archive))
         if os.path.lexists(destination):
             QMessageBox.warning(
-                self, "Extract Archive",
+                self, tr('Extract Archive'),
                 f"Destination already exists and will not be overwritten:\n{destination}")
             return
         self._launch_worker("archive_extract", [archive], destination, False)
 
     def _start_compare(self) -> None:
         if self._operation_running():
-            self._status.setText("Another file operation is already running")
+            self._status.setText(tr('Another file operation is already running'))
             return
         self._launch_worker("compare", list(self.pane_paths()), "", False)
 
@@ -1034,7 +1035,7 @@ class CommanderTab(QWidget):
         operation = _OperationState(mode, item_count=len(paths), options=dict(options or {}))
         with self._operation_guard:
             if self._active_operation is not None:
-                self._status.setText("Another file operation is already running")
+                self._status.setText(tr('Another file operation is already running'))
                 return False
             self._active_operation = operation
         self._progress_dlg = QProgressDialog("Preparing…", "Cancel", 0, 100, self)
@@ -1768,7 +1769,7 @@ class CommanderTab(QWidget):
                 if values:
                     details.append(f"{title}:\n" + "\n".join(str(item) for item in values[:20]))
             QMessageBox.information(
-                self, "Folder Comparison",
+                self, tr('Folder Comparison'),
                 str(operation.result.get("summary", message)) +
                 (("\n\n" + "\n\n".join(details)) if details else ""))
         if ok and operation.mode in ("archive_create", "archive_extract"):
@@ -1798,4 +1799,4 @@ class CommanderTab(QWidget):
             recent.append(f"{item_label}: {item_state} — {item['message']}")
         self._outcome_status.setToolTip("Recent operations:\n" + "\n".join(recent))
         if not ok and message != "Cancelled":
-            QMessageBox.warning(self, "File Operation", message)
+            QMessageBox.warning(self, tr('File Operation'), message)

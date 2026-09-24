@@ -40,6 +40,7 @@ from iptv.local_folder import VIDEO_EXTS
 from iptv.models import Channel, SECTION_LIVE, SECTION_MOVIES
 from iptv.player import create_backend
 from gui.window_sizing import roomy
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class GridTile(QWidget):
         self.surface.setMinimumHeight(60)
         layout.addWidget(self.surface, 1)
 
-        self._empty_lbl = QLabel("＋")
+        self._empty_lbl = QLabel(tr('＋'))
         self._empty_lbl.setAlignment(Qt.AlignCenter)
         self._empty_lbl.setStyleSheet(
             "color: #3a465a; font-size: 42px; background-color: #0b0e14;")
@@ -139,7 +140,7 @@ class GridTile(QWidget):
         row = QHBoxLayout(strip)
         row.setContentsMargins(4, 1, 4, 1)
         row.setSpacing(4)
-        self.name_lbl = QLabel("—")
+        self.name_lbl = QLabel(tr('—'))
         self.name_lbl.setStyleSheet("color: #ffffff; font-size: 17px;")
         # A QLabel's minimumSizeHint is its full text width, so a long scene
         # filename here would inflate the tile's (and thus the whole 4-column
@@ -149,14 +150,14 @@ class GridTile(QWidget):
         self.name_lbl.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.name_lbl.setMinimumWidth(0)
         row.addWidget(self.name_lbl, 1)
-        self.mute_btn = QPushButton("🔇")
+        self.mute_btn = QPushButton(tr('🔇'))
         self.mute_btn.setFixedWidth(26)
-        self.mute_btn.setToolTip("Unmute/mute this tile")
+        self.mute_btn.setToolTip(tr('Unmute/mute this tile'))
         self.mute_btn.clicked.connect(self._toggle_mute)
         row.addWidget(self.mute_btn)
-        self.play_btn = QPushButton("⏸")
+        self.play_btn = QPushButton(tr('⏸'))
         self.play_btn.setFixedWidth(26)
-        self.play_btn.setToolTip("Play/pause this tile")
+        self.play_btn.setToolTip(tr('Play/pause this tile'))
         self.play_btn.setEnabled(False)
         self.play_btn.clicked.connect(self._toggle_pause)
         row.addWidget(self.play_btn)
@@ -164,17 +165,17 @@ class GridTile(QWidget):
         self.vol.setMaximum(100)
         self.vol.setValue(100)
         self.vol.setMaximumWidth(70)
-        self.vol.setToolTip("Tile volume")
+        self.vol.setToolTip(tr('Tile volume'))
         self.vol.valueChanged.connect(self._on_volume)
         row.addWidget(self.vol)
-        self.promote_btn = QPushButton("⛶")
+        self.promote_btn = QPushButton(tr('⛶'))
         self.promote_btn.setFixedWidth(26)
-        self.promote_btn.setToolTip("Move to the main player (full controls)")
+        self.promote_btn.setToolTip(tr('Move to the main player (full controls)'))
         self.promote_btn.clicked.connect(lambda: self.sig_promote.emit(self))
         row.addWidget(self.promote_btn)
-        self.close_btn = QPushButton("✕")
+        self.close_btn = QPushButton(tr('✕'))
         self.close_btn.setFixedWidth(26)
-        self.close_btn.setToolTip("Stop and clear this tile")
+        self.close_btn.setToolTip(tr('Stop and clear this tile'))
         self.close_btn.clicked.connect(self.clear)
         row.addWidget(self.close_btn)
         layout.addWidget(strip)
@@ -250,7 +251,7 @@ class GridTile(QWidget):
         self._channel = channel
         self._is_stream = bool(is_stream)
         self._muted = True
-        self.mute_btn.setText("🔇")
+        self.mute_btn.setText(tr('🔇'))
         self._set_tile_name(channel.name or channel.url)
         self._empty_lbl.hide()
         self.play_btn.setEnabled(True)
@@ -330,22 +331,22 @@ class GridTile(QWidget):
         # Assign actions live on the grid — it owns the single-stream rule.
         menu = QMenu(self)
         if self._channel is None:
-            act_file = menu.addAction("Assign local file…")
+            act_file = menu.addAction(tr('Assign local file…'))
             act_file.triggered.connect(
                 lambda: self._pick_file_cb and self._pick_file_cb(self))
-            act_bulk = menu.addAction("Fill empty tiles with files…")
+            act_bulk = menu.addAction(tr('Fill empty tiles with files…'))
             act_bulk.triggered.connect(
                 lambda: self._pick_files_cb and self._pick_files_cb())
-            act_folder = menu.addAction("Play folder (auto-rotate)…")
+            act_folder = menu.addAction(tr('Play folder (auto-rotate)…'))
             act_folder.triggered.connect(
                 lambda: self._pick_folder_cb and self._pick_folder_cb())
-            act_stream = menu.addAction("Assign IPTV channel…")
+            act_stream = menu.addAction(tr('Assign IPTV channel…'))
             act_stream.triggered.connect(
                 lambda: self._request_stream_cb and self._request_stream_cb(self))
         else:
-            menu.addAction("Clear tile").triggered.connect(self.clear)
+            menu.addAction(tr('Clear tile')).triggered.connect(self.clear)
             menu.addSeparator()
-            menu.addAction("Play folder (auto-rotate)…").triggered.connect(
+            menu.addAction(tr('Play folder (auto-rotate)…')).triggered.connect(
                 lambda: self._pick_folder_cb and self._pick_folder_cb())
         menu.exec(self.mapToGlobal(self.rect().center()))
 
@@ -355,21 +356,21 @@ class ChannelPickDialog(QDialog):
 
     def __init__(self, manager: Any, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Pick a channel for the tile")
+        self.setWindowTitle(tr('Pick a channel for the tile'))
         roomy(self)
         self._manager = manager
         layout = QVBoxLayout(self)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search channels, movies…")
+        self.search.setPlaceholderText(tr('Search channels, movies…'))
         self.search.textChanged.connect(self._run)
         layout.addWidget(self.search)
         self.results = QListWidget()
         self.results.itemDoubleClicked.connect(lambda _i: self.accept())
         layout.addWidget(self.results)
         btns = QHBoxLayout()
-        ok = QPushButton("Assign")
+        ok = QPushButton(tr('Assign'))
         ok.clicked.connect(self.accept)
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(tr('Cancel'))
         cancel.clicked.connect(self.reject)
         btns.addStretch(1)
         btns.addWidget(ok)
@@ -383,7 +384,7 @@ class ChannelPickDialog(QDialog):
         self.results.clear()
         self._items = []
         if not text:
-            self.results.addItem("Type to search…")
+            self.results.addItem(tr('Type to search…'))
             return
         found = self._manager.search(text)
         for section in (SECTION_LIVE, SECTION_MOVIES):
@@ -505,7 +506,7 @@ class MultiViewGrid(QWidget):
     def _pick_stream_for(self, tile: GridTile) -> None:
         if self.stream_tile not in (None, tile):
             QMessageBox.information(
-                self, "One stream per grid",
+                self, tr('One stream per grid'),
                 "Another tile is already playing an IPTV stream.\n"
                 "Providers reject multiple simultaneous connections — "
                 "clear that tile first.")

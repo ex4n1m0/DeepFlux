@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.window_sizing import roomy
+from gui.i18n import tr
 
 
 HELP_HTML = r"""
@@ -544,7 +545,7 @@ class HelpDialog(QDialog):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("DeepFlux — User Guide")
+        self.setWindowTitle(tr('DeepFlux — User Guide'))
         self.setMinimumSize(520, 360)
         roomy(self)
         self.setStyleSheet("QDialog { background-color: #0a0a0f; }")
@@ -563,7 +564,7 @@ class HelpDialog(QDialog):
         """)
         layout.addWidget(browser)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr('Close'))
         close_btn.clicked.connect(self.accept)
         close_btn.setStyleSheet("""
             QPushButton {
@@ -588,18 +589,18 @@ class AboutDialog(QDialog):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("About DeepFlux")
+        self.setWindowTitle(tr('About DeepFlux'))
         self.setMinimumWidth(400)
         self.setStyleSheet("QDialog { background-color: #0a0a0f; color: #ffffff; }")
 
         layout = QVBoxLayout(self)
 
         from PySide6.QtWidgets import QLabel
-        title = QLabel("DeepFlux")
+        title = QLabel(tr('DeepFlux'))
         title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
         layout.addWidget(title)
 
-        version = QLabel("5.2 — AI Deep Search")
+        version = QLabel(tr('5.2 — AI Deep Search'))
         version.setStyleSheet("color: #ffffff; font-size: 21px;")
         layout.addWidget(version)
 
@@ -611,7 +612,7 @@ class AboutDialog(QDialog):
         desc.setStyleSheet("color: #8a9ab0; font-size: 18px;")
         layout.addWidget(desc)
 
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr('Close'))
         close_btn.clicked.connect(self.accept)
         close_btn.setStyleSheet("""
             QPushButton {

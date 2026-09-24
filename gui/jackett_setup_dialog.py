@@ -6,6 +6,7 @@ something happening between the UAC prompt and the final summary. It is a
 self-contained QApplication entry point — the main window is never built.
 """
 from __future__ import annotations
+from gui.i18n import tr
 
 import sys
 from typing import Optional
@@ -74,7 +75,7 @@ class _SetupWorker(QThread):
 class JackettSetupDialog(QDialog):
     def __init__(self, config_path: Optional[str] = None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("DeepFlux — torrent search setup")
+        self.setWindowTitle(tr('DeepFlux — torrent search setup'))
         self.setModal(False)
         self._result: dict = {}
 
@@ -83,7 +84,7 @@ class JackettSetupDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 14)
         layout.setSpacing(8)
 
-        heading = QLabel("Setting up torrent search", objectName="heading")
+        heading = QLabel(tr('Setting up torrent search'), objectName="heading")
         subline = QLabel(
             "Installing and linking the Jackett service, then adding its public "
             "indexers. You may see one Windows permission prompt.",
@@ -95,7 +96,7 @@ class JackettSetupDialog(QDialog):
         self.log.setFont(QFont("Consolas", 9))
         self.log.setMaximumBlockCount(2000)
 
-        self.close_btn = QPushButton("Close")
+        self.close_btn = QPushButton(tr('Close'))
         self.close_btn.setEnabled(False)
         self.close_btn.clicked.connect(self.accept)
 

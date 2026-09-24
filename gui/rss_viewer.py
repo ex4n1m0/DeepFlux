@@ -24,6 +24,7 @@ import requests
 
 from agent.rss import RSSMonitor
 from config import DeeptorrentConfig
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class RSSViewer(QDialog):
         self._signals = _ViewerSignals()
         self._signals.loaded.connect(self._on_feeds_loaded)
 
-        self.setWindowTitle("RSS Feed Viewer")
+        self.setWindowTitle(tr('RSS Feed Viewer'))
         self.setMinimumSize(1000, 600)
         self.setStyleSheet("""
             QDialog { background-color: #0a0a0f; color: #ffffff; }
@@ -88,22 +89,22 @@ class RSSViewer(QDialog):
 
         # Header
         header = QHBoxLayout()
-        header.addWidget(QLabel("RSS Feed Items"))
+        header.addWidget(QLabel(tr('RSS Feed Items')))
         header.addStretch()
-        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn = QPushButton(tr('Refresh'))
         self.refresh_btn.clicked.connect(self.load_feeds)
         header.addWidget(self.refresh_btn)
         layout.addLayout(header)
 
         # Search/filter bar
         filter_layout = QHBoxLayout()
-        filter_layout.addWidget(QLabel("Filter:"))
+        filter_layout.addWidget(QLabel(tr('Filter:')))
         self.filter_input = QLineEdit()
-        self.filter_input.setPlaceholderText("Type to filter by title...")
+        self.filter_input.setPlaceholderText(tr('Type to filter by title...'))
         self.filter_input.textChanged.connect(self._apply_filter)
         filter_layout.addWidget(self.filter_input)
 
-        self.auto_dl_check = QCheckBox("Show auto-download items only")
+        self.auto_dl_check = QCheckBox(tr('Show auto-download items only'))
         self.auto_dl_check.toggled.connect(self._apply_filter)
         filter_layout.addWidget(self.auto_dl_check)
 
@@ -112,7 +113,7 @@ class RSSViewer(QDialog):
         # Main table
         self.table = QTableWidget()
         self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels(["#", "Feed", "Title", "Type", "Published"])
+        self.table.setHorizontalHeaderLabels(["#", tr('Feed'), tr('Title'), tr('Type'), tr('Published')])
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -121,27 +122,27 @@ class RSSViewer(QDialog):
         layout.addWidget(self.table)
 
         # Status label
-        self.status_label = QLabel("Loading feeds...")
+        self.status_label = QLabel(tr('Loading feeds...'))
         self.status_label.setObjectName("status")
         layout.addWidget(self.status_label)
 
         # Bottom buttons
         btn_layout = QHBoxLayout()
-        self.select_all_btn = QPushButton("Select All")
+        self.select_all_btn = QPushButton(tr('Select All'))
         self.select_all_btn.clicked.connect(self._select_all)
         btn_layout.addWidget(self.select_all_btn)
 
-        self.deselect_all_btn = QPushButton("Deselect All")
+        self.deselect_all_btn = QPushButton(tr('Deselect All'))
         self.deselect_all_btn.clicked.connect(self._deselect_all)
         btn_layout.addWidget(self.deselect_all_btn)
 
         btn_layout.addStretch()
 
-        self.download_btn = QPushButton("Download Selected")
+        self.download_btn = QPushButton(tr('Download Selected'))
         self.download_btn.clicked.connect(self._download_selected)
         btn_layout.addWidget(self.download_btn)
 
-        self.close_btn = QPushButton("Close")
+        self.close_btn = QPushButton(tr('Close'))
         self.close_btn.clicked.connect(self.reject)
         btn_layout.addWidget(self.close_btn)
 
@@ -150,10 +151,10 @@ class RSSViewer(QDialog):
     def load_feeds(self) -> None:
         """Fetch all feeds in a background thread and populate the table."""
         if not self.config.rss.feeds:
-            self.status_label.setText("No RSS feeds configured. Add feeds via File → RSS Feeds...")
+            self.status_label.setText(tr('No RSS feeds configured. Add feeds via File → RSS Feeds...'))
             return
 
-        self.status_label.setText("Loading feeds...")
+        self.status_label.setText(tr('Loading feeds...'))
         self.refresh_btn.setEnabled(False)
         self.download_btn.setEnabled(False)
         self.table.setRowCount(0)
@@ -251,7 +252,7 @@ class RSSViewer(QDialog):
                 row += 1
 
         if row == 0:
-            self.status_label.setText("No items match your filter.")
+            self.status_label.setText(tr('No items match your filter.'))
         else:
             self.status_label.setText(f"Showing {row} item(s).")
 

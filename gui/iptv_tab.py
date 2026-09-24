@@ -88,6 +88,7 @@ from gui.multiview import MultiViewGrid, build_playback_headers
 from dlmgr.ffmpeg import StreamRecorder, find_ffmpeg, is_network_stream_url
 from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 from gui.window_sizing import roomy
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -293,39 +294,39 @@ class PlayerWidget(QWidget):
 
         # Rewind/forward start disabled: meaningless for live streams and
         # before anything is loaded — _on_position enables them for VOD.
-        self.rw_btn = QPushButton("⏪")
+        self.rw_btn = QPushButton(tr('⏪'))
         self.rw_btn.setToolTip(f"Back {self.SKIP_SECONDS}s (←)")
         self.rw_btn.setEnabled(False)
         self.rw_btn.clicked.connect(lambda: self._skip(-self.SKIP_SECONDS))
         ctrl.addWidget(self.rw_btn)
 
-        self.play_btn = QPushButton("⏸")
-        self.play_btn.setToolTip("Play/Pause (Space)")
+        self.play_btn = QPushButton(tr('⏸'))
+        self.play_btn.setToolTip(tr('Play/Pause (Space)'))
         self.play_btn.clicked.connect(self._toggle_pause)
         ctrl.addWidget(self.play_btn)
 
-        self.stop_btn = QPushButton("⏹")
-        self.stop_btn.setToolTip("Stop")
+        self.stop_btn = QPushButton(tr('⏹'))
+        self.stop_btn.setToolTip(tr('Stop'))
         self.stop_btn.clicked.connect(self.stop)
         ctrl.addWidget(self.stop_btn)
 
-        self.ff_btn = QPushButton("⏩")
+        self.ff_btn = QPushButton(tr('⏩'))
         self.ff_btn.setToolTip(f"Forward {self.SKIP_SECONDS}s (→)")
         self.ff_btn.setEnabled(False)
         self.ff_btn.clicked.connect(lambda: self._skip(self.SKIP_SECONDS))
         ctrl.addWidget(self.ff_btn)
 
         self.seek = QSlider(Qt.Horizontal)
-        self.seek.setToolTip("Seek")
+        self.seek.setToolTip(tr('Seek'))
         self.seek.sliderReleased.connect(self._on_seek)
         ctrl.addWidget(self.seek, 1)
 
-        self.time_lbl = QLabel("00:00 / 00:00")
+        self.time_lbl = QLabel(tr('00:00 / 00:00'))
         self.time_lbl.setStyleSheet("color: #ffffff;")
         ctrl.addWidget(self.time_lbl)
 
         self.mute_btn = QPushButton("🔇" if self._config.iptv.muted else "🔊")
-        self.mute_btn.setToolTip("Mute (M)")
+        self.mute_btn.setToolTip(tr('Mute (M)'))
         self.mute_btn.clicked.connect(self._toggle_mute)
         ctrl.addWidget(self.mute_btn)
 
@@ -338,31 +339,31 @@ class PlayerWidget(QWidget):
 
         # Label shows the CURRENT aspect mode — an icon-only "⛶" here was
         # indistinguishable from the "⛶ Full" fullscreen button next row.
-        self.aspect_btn = QPushButton("Auto")
-        self.aspect_btn.setToolTip("Aspect ratio — click to cycle (A)")
+        self.aspect_btn = QPushButton(tr('Auto'))
+        self.aspect_btn.setToolTip(tr('Aspect ratio — click to cycle (A)'))
         self.aspect_btn.clicked.connect(self._cycle_aspect)
         ctrl.addWidget(self.aspect_btn)
 
-        self.audio_btn = QPushButton("🎧")
-        self.audio_btn.setToolTip("Audio track (# cycles)")
+        self.audio_btn = QPushButton(tr('🎧'))
+        self.audio_btn.setToolTip(tr('Audio track (# cycles)'))
         self.audio_btn.clicked.connect(lambda: self._show_track_menu("audio"))
         ctrl.addWidget(self.audio_btn)
 
-        self.subs_btn = QPushButton("CC")
-        self.subs_btn.setToolTip("Subtitles (J cycles)")
+        self.subs_btn = QPushButton(tr('CC'))
+        self.subs_btn.setToolTip(tr('Subtitles (J cycles)'))
         self.subs_btn.clicked.connect(lambda: self._show_track_menu("sub"))
         ctrl.addWidget(self.subs_btn)
 
         # Only meaningful while the MilkDrop visualizer is on screen.
-        self.preset_btn = QPushButton("✨ Visual")
-        self.preset_btn.setToolTip("MilkDrop visualizer preset (music playback)")
+        self.preset_btn = QPushButton(tr('✨ Visual'))
+        self.preset_btn.setToolTip(tr('MilkDrop visualizer preset (music playback)'))
         self.preset_btn.clicked.connect(self._show_preset_menu)
         self.preset_btn.hide()
         ctrl.addWidget(self.preset_btn)
 
-        self.record_btn = QPushButton("Start Recording")
+        self.record_btn = QPushButton(tr('Start Recording'))
         self.record_btn.setToolTip(
-            "Record the currently playing network stream with FFmpeg")
+            tr('Record the currently playing network stream with FFmpeg'))
         self.record_btn.clicked.connect(self._toggle_recording)
         tools.addWidget(self.record_btn)
 
@@ -373,18 +374,18 @@ class PlayerWidget(QWidget):
         self.record_status_lbl.hide()
         tools.addWidget(self.record_status_lbl, 1)
 
-        self.sleep_btn = QPushButton("Sleep: Off")
-        self.sleep_btn.setToolTip("Stop playback after a chosen time")
+        self.sleep_btn = QPushButton(tr('Sleep: Off'))
+        self.sleep_btn.setToolTip(tr('Stop playback after a chosen time'))
         self.sleep_btn.clicked.connect(self._show_sleep_menu)
         tools.addWidget(self.sleep_btn)
 
-        self.compact_btn = QPushButton("Compact")
+        self.compact_btn = QPushButton(tr('Compact'))
         self.compact_btn.setToolTip(
-            "Compact always-on-top host mode (keeps the native player surface in place)")
+            tr('Compact always-on-top host mode (keeps the native player surface in place)'))
         self.compact_btn.clicked.connect(self._toggle_compact)
         tools.addWidget(self.compact_btn)
 
-        self.mv_btn = QPushButton("▦ 4×4")
+        self.mv_btn = QPushButton(tr('▦ 4×4'))
         self.mv_btn.setToolTip(
             "Multiview grid: up to 16 tiles (local files + one IPTV stream), "
             "each with its own audio")
@@ -392,8 +393,8 @@ class PlayerWidget(QWidget):
         self.mv_btn.toggled.connect(self._on_multiview_toggled)
         tools.addWidget(self.mv_btn)
 
-        self.fs_btn = QPushButton("⛶ Full")
-        self.fs_btn.setToolTip("Fullscreen (F or double-click)")
+        self.fs_btn = QPushButton(tr('⛶ Full'))
+        self.fs_btn.setToolTip(tr('Fullscreen (F or double-click)'))
         self.fs_btn.clicked.connect(self._toggle_fullscreen)
         ctrl.addWidget(self.fs_btn)
         controls_layout.addLayout(tools)
@@ -426,11 +427,11 @@ class PlayerWidget(QWidget):
         self.error_overlay.setStyleSheet("background-color: rgba(10,10,15,0.95);")
         el = QVBoxLayout(self.error_overlay)
         el.setSpacing(12)
-        self.error_icon = QLabel("⚠")
+        self.error_icon = QLabel(tr('⚠'))
         self.error_icon.setStyleSheet("color: #e67e22; font-size: 72px; font-weight: bold;")
         self.error_icon.setAlignment(Qt.AlignCenter)
         el.addWidget(self.error_icon)
-        self.error_title = QLabel("Stream Unavailable")
+        self.error_title = QLabel(tr('Stream Unavailable'))
         self.error_title.setStyleSheet("color: #ff6b6b; font-size: 27px; font-weight: bold;")
         self.error_title.setAlignment(Qt.AlignCenter)
         el.addWidget(self.error_title)
@@ -444,8 +445,8 @@ class PlayerWidget(QWidget):
         self.error_hint.setAlignment(Qt.AlignCenter)
         self.error_hint.setWordWrap(True)
         el.addWidget(self.error_hint)
-        self.retry_btn = QPushButton("↻ Retry")
-        self.retry_btn.setToolTip("Try opening this stream again")
+        self.retry_btn = QPushButton(tr('↻ Retry'))
+        self.retry_btn.setToolTip(tr('Try opening this stream again'))
         self.retry_btn.setStyleSheet(
             "QPushButton { background-color: #2a7abf; color: white; "
             "border: none; border-radius: 6px; padding: 8px 24px; "
@@ -461,7 +462,7 @@ class PlayerWidget(QWidget):
         self.loading_overlay = QWidget(self.surface)
         self.loading_overlay.setStyleSheet("background-color: rgba(10,10,15,0.94);")
         ll = QVBoxLayout(self.loading_overlay)
-        self.loading_lbl = QLabel("Opening stream…")
+        self.loading_lbl = QLabel(tr('Opening stream…'))
         self.loading_lbl.setStyleSheet(
             "color: #2a7abf; font-size: 30px; font-weight: bold;")
         self.loading_lbl.setAlignment(Qt.AlignCenter)
@@ -492,7 +493,7 @@ class PlayerWidget(QWidget):
         # Mid-playback stall badge: once the startup overlay is gone, a
         # cache starvation pause still needs a visible cue (and feeds the
         # adaptive cache ramp below).
-        self.buffer_badge = QLabel("⏳ Buffering…", self.surface)
+        self.buffer_badge = QLabel(tr('⏳ Buffering…'), self.surface)
         self.buffer_badge.setAlignment(Qt.AlignCenter)
         self.buffer_badge.setStyleSheet(
             "background-color: rgba(10,10,15,0.82); color: #e67e22; "
@@ -691,7 +692,7 @@ class PlayerWidget(QWidget):
         backend.set_preset(self._selected_preset(), blend=0.0)
         backend.play(url)
         self._manager.record_recent(item)
-        self.play_btn.setText("⏸")
+        self.play_btn.setText(tr('⏸'))
         self._hide_loading()
         return True
 
@@ -709,9 +710,9 @@ class PlayerWidget(QWidget):
             act.setChecked(path == current)
             act.triggered.connect(lambda _c=False, p=path: self._pick_preset(p))
         if not presets:
-            menu.addAction("No .milk presets found").setEnabled(False)
+            menu.addAction(tr('No .milk presets found')).setEnabled(False)
         menu.addSeparator()
-        menu.addAction("Open presets folder…").triggered.connect(self._open_preset_folder)
+        menu.addAction(tr('Open presets folder…')).triggered.connect(self._open_preset_folder)
         menu.exec(self.preset_btn.mapToGlobal(self.preset_btn.rect().bottomLeft()))
 
     def _pick_preset(self, path: str) -> None:
@@ -876,7 +877,7 @@ class PlayerWidget(QWidget):
             self._config.iptv.live_pause_buffer_seconds if is_live else 0)
         self._start_playback()
         self._manager.record_recent(item)
-        self.play_btn.setText("⏸")
+        self.play_btn.setText(tr('⏸'))
         # VLC has no track-list observer — poll once shortly after load.
         QTimer.singleShot(2500, self._apply_preferred_languages)
 
@@ -906,10 +907,10 @@ class PlayerWidget(QWidget):
             return
         if self._backend.is_playing:
             self._backend.pause()
-            self.play_btn.setText("▶")
+            self.play_btn.setText(tr('▶'))
         else:
             self._backend.resume()
-            self.play_btn.setText("⏸")
+            self.play_btn.setText(tr('⏸'))
 
     def stop(self) -> None:
         self._checkpoint_current()
@@ -924,11 +925,11 @@ class PlayerWidget(QWidget):
             self._backend.stop()
         self._hide_loading()
         self._restore_torrent_rates()
-        self.play_btn.setText("▶")
+        self.play_btn.setText(tr('▶'))
         self.seek.setValue(0)
         self.rw_btn.setEnabled(False)
         self.ff_btn.setEnabled(False)
-        self.time_lbl.setText("00:00 / 00:00")
+        self.time_lbl.setText(tr('00:00 / 00:00'))
 
     def _checkpoint_current(self) -> None:
         item = self._current_item
@@ -963,20 +964,20 @@ class PlayerWidget(QWidget):
     def _stop_recording(self) -> None:
         if self._recorder is not None and self._recorder.stop():
             self.record_btn.setEnabled(False)
-            self.record_status_lbl.setText("Stopping recording…")
+            self.record_status_lbl.setText(tr('Stopping recording…'))
             self.record_status_lbl.show()
 
     def _on_recording_status(self, state: str, message: str) -> None:
         if state == "recording":
-            self.record_btn.setText("Stop Recording")
+            self.record_btn.setText(tr('Stop Recording'))
             self.record_btn.setEnabled(True)
             colour = "#ff6b6b"
         elif state == "error":
-            self.record_btn.setText("Start Recording")
+            self.record_btn.setText(tr('Start Recording'))
             self.record_btn.setEnabled(True)
             colour = "#ff6b6b"
         else:
-            self.record_btn.setText("Start Recording")
+            self.record_btn.setText(tr('Start Recording'))
             self.record_btn.setEnabled(True)
             colour = "#7fd1b9"
         self.record_status_lbl.setStyleSheet(f"color: {colour}; font-size: 17px;")
@@ -991,7 +992,7 @@ class PlayerWidget(QWidget):
             menu.addAction(f"Stop in {minutes} minutes").triggered.connect(
                 lambda _checked=False, m=minutes: self._set_sleep_minutes(m))
         menu.addSeparator()
-        cancel = menu.addAction("Cancel sleep timer")
+        cancel = menu.addAction(tr('Cancel sleep timer'))
         cancel.setEnabled(self._sleep_timer.isActive())
         cancel.triggered.connect(self._cancel_sleep_timer)
         menu.exec(self.sleep_btn.mapToGlobal(self.sleep_btn.rect().bottomLeft()))
@@ -1014,14 +1015,14 @@ class PlayerWidget(QWidget):
         self._sleep_timer.stop()
         self._sleep_tick.stop()
         self._sleep_deadline = 0.0
-        self.sleep_btn.setText("Sleep: Off")
+        self.sleep_btn.setText(tr('Sleep: Off'))
 
     def _on_sleep_timeout(self) -> None:
         self._sleep_tick.stop()
         self._sleep_deadline = 0.0
         self.stop()
-        self.sleep_btn.setText("Sleep: Stopped")
-        self.sleep_btn.setToolTip("Sleep timer expired and stopped playback")
+        self.sleep_btn.setText(tr('Sleep: Stopped'))
+        self.sleep_btn.setToolTip(tr('Sleep timer expired and stopped playback'))
 
     # -- safe compact host (PiP alternative) --------------------------------
     @staticmethod
@@ -1131,7 +1132,7 @@ class PlayerWidget(QWidget):
             self.sig_compact.emit(True)
             win.setMinimumSize(480, 320)
             win.resize(640, 420)
-            self.compact_btn.setText("Exit Compact")
+            self.compact_btn.setText(tr('Exit Compact'))
         else:
             self._set_native_topmost(win, False)
             self._compact = False
@@ -1141,7 +1142,7 @@ class PlayerWidget(QWidget):
                 win.setMinimumSize(self._compact_minimum_size)
             if self._compact_geometry is not None:
                 win.restoreGeometry(self._compact_geometry)
-            self.compact_btn.setText("Compact")
+            self.compact_btn.setText(tr('Compact'))
 
     def _on_seek(self) -> None:
         if self._backend is not None:
@@ -1193,7 +1194,7 @@ class PlayerWidget(QWidget):
             entries = [("Off", "no")] + [(self._track_label(t), t["id"]) for t in tracks]
         menu = QMenu(self)
         if not tracks:
-            menu.addAction("No tracks available").setEnabled(False)
+            menu.addAction(tr('No tracks available')).setEnabled(False)
         for label, tid in entries:
             act = menu.addAction(label)
             act.setCheckable(True)
@@ -1204,7 +1205,7 @@ class PlayerWidget(QWidget):
             self._add_audio_sync_submenu(menu)
         if kind == "sub":
             menu.addSeparator()
-            find_act = menu.addAction("Find subtitles online…")
+            find_act = menu.addAction(tr('Find subtitles online…'))
             find_act.setEnabled(self._current_item is not None)
             find_act.triggered.connect(self._find_subtitles_online)
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
@@ -1233,7 +1234,7 @@ class PlayerWidget(QWidget):
         return float(self._config.iptv.audio_delay)
 
     def _add_audio_sync_submenu(self, parent_menu: QMenu) -> None:
-        sub = QMenu("Audio sync", parent_menu)
+        sub = QMenu(tr('Audio sync'), parent_menu)
         sub.setToolTip(
             "Shift audio timing to compensate for video-path latency (e.g.\n"
             "SVP 4 motion interpolation, which renders frames behind the\n"
@@ -1246,12 +1247,12 @@ class PlayerWidget(QWidget):
             act.setChecked(abs(cur - secs) < 0.005)
             act.triggered.connect(lambda _c=False, s=secs: self._apply_audio_delay(s))
         sub.addSeparator()
-        back_act = sub.addAction("− 0.05s")
+        back_act = sub.addAction(tr('− 0.05s'))
         back_act.triggered.connect(lambda: self._nudge_audio_delay(-self._AUDIO_DELAY_STEP))
-        fwd_act = sub.addAction("+ 0.05s")
+        fwd_act = sub.addAction(tr('+ 0.05s'))
         fwd_act.triggered.connect(lambda: self._nudge_audio_delay(self._AUDIO_DELAY_STEP))
         sub.addSeparator()
-        reset_act = sub.addAction("Reset (0.00s)")
+        reset_act = sub.addAction(tr('Reset (0.00s)'))
         reset_act.triggered.connect(lambda: self._apply_audio_delay(0.0))
         parent_menu.addMenu(sub)
 
@@ -1409,7 +1410,7 @@ class PlayerWidget(QWidget):
                 self._stop_recording()
                 self._hide_loading()
                 self.buffer_badge.hide()
-                self.play_btn.setText("▶")
+                self.play_btn.setText(tr('▶'))
                 self._restore_torrent_rates()
         elif state == "playing":
             # NOTE: mpv emits "playing" on loadfile, before the stream is
@@ -1417,11 +1418,11 @@ class PlayerWidget(QWidget):
             # the auto-retry loop. The counter is reset in _update_loading
             # when real playback (time-pos advancing) is confirmed.
             self._playback_active = True
-            self.play_btn.setText("⏸")
+            self.play_btn.setText(tr('⏸'))
         elif state == "buffering":
             # The overlay is already shown by play(); keep the pause icon so
             # the user can hit space to pause once playback starts.
-            self.play_btn.setText("⏸")
+            self.play_btn.setText(tr('⏸'))
             # A stall after the startup overlay is gone is a mid-playback
             # rebuffer — surface it with the badge (never a full overlay,
             # which would blank the frozen last frame).
@@ -1581,7 +1582,7 @@ class PlayerWidget(QWidget):
     # -- loading / buffering overlay ----------------------------------------
     def _show_loading(self) -> None:
         """Show the loading overlay and start polling the backend for status."""
-        self.loading_lbl.setText("Opening stream…")
+        self.loading_lbl.setText(tr('Opening stream…'))
         self.loading_detail.setText("")
         self.loading_progress.setRange(0, 0)
         self.loading_progress.setTextVisible(False)
@@ -1869,7 +1870,7 @@ class _SubtitleSearchDialog(QDialog):
         self._file_path = file_path
         self._on_loaded = on_loaded
         self._results: List[dict] = []
-        self.setWindowTitle("Find Subtitles — OpenSubtitles")
+        self.setWindowTitle(tr('Find Subtitles — OpenSubtitles'))
         self.setMinimumSize(520, 340)
         roomy(self)
         self.setStyleSheet(
@@ -1898,20 +1899,20 @@ class _SubtitleSearchDialog(QDialog):
         idx = self._LANGS.index(pref) if pref in self._LANGS else 0
         self.lang.setCurrentIndex(idx)
         top.addWidget(self.lang)
-        self.search_btn = QPushButton("Search")
+        self.search_btn = QPushButton(tr('Search'))
         self.search_btn.clicked.connect(self._search)
         top.addWidget(self.search_btn)
         layout.addLayout(top)
 
         if self._file_path:
-            hint = QLabel("Local file — matched by hash first, title query as fallback.")
+            hint = QLabel(tr('Local file — matched by hash first, title query as fallback.'))
         else:
-            hint = QLabel("Network stream — title search only.")
+            hint = QLabel(tr('Network stream — title search only.'))
         hint.setObjectName("hint")
         layout.addWidget(hint)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Release", "Lang", "Downloads", "Rating"])
+        self.table.setHorizontalHeaderLabels([tr('Release'), tr('Lang'), tr('Downloads'), tr('Rating')])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -1923,11 +1924,11 @@ class _SubtitleSearchDialog(QDialog):
         layout.addWidget(self.status)
 
         bottom = QHBoxLayout()
-        self.dl_btn = QPushButton("Download && Load")
+        self.dl_btn = QPushButton(tr('Download && Load'))
         self.dl_btn.clicked.connect(self._download_selected)
         bottom.addWidget(self.dl_btn)
         bottom.addStretch()
-        close_btn = QPushButton("Close")
+        close_btn = QPushButton(tr('Close'))
         close_btn.clicked.connect(self.reject)
         bottom.addWidget(close_btn)
         layout.addLayout(bottom)
@@ -1949,7 +1950,7 @@ class _SubtitleSearchDialog(QDialog):
         query = self.query.text().strip()
         languages = self.lang.currentText()
         file_path = self._file_path
-        self.status.setText("Searching…")
+        self.status.setText(tr('Searching…'))
         self.search_btn.setEnabled(False)
 
         def _work() -> None:
@@ -1980,7 +1981,7 @@ class _SubtitleSearchDialog(QDialog):
     def _download_selected(self) -> None:
         row = self.table.currentRow()
         if row < 0 or row >= len(self._results):
-            self.status.setText("Select a subtitle first.")
+            self.status.setText(tr('Select a subtitle first.'))
             return
         entry = self._results[row]
         file_id = entry.get("file_id")
@@ -1992,7 +1993,7 @@ class _SubtitleSearchDialog(QDialog):
         client = OpenSubtitlesClient(cfg.opensubtitles_api_key,
                                      cfg.opensubtitles_username,
                                      cfg.opensubtitles_password)
-        self.status.setText("Downloading…")
+        self.status.setText(tr('Downloading…'))
         self.dl_btn.setEnabled(False)
 
         def _work() -> None:
@@ -2954,7 +2955,7 @@ class ContentGrid(QListWidget):
             return
         it = li.data(Qt.UserRole)
         menu = QMenu(self)
-        act_play = menu.addAction("Play")
+        act_play = menu.addAction(tr('Play'))
         act_fav = menu.addAction("Remove from Favorites" if getattr(it, "favorite", False) else "Add to Favorites")
         act_dl = None
         if getattr(it, "section", "") in (SECTION_MOVIES, SECTION_SERIES):
@@ -3002,7 +3003,7 @@ class ContentList(QTableWidget):
         super().__init__(parent)
         self._manager = manager
         self.setColumnCount(3)
-        self.setHorizontalHeaderLabels(["Name", "Category", "Now Playing"])
+        self.setHorizontalHeaderLabels([tr('Name'), tr('Category'), tr('Now Playing')])
         self.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
@@ -3066,7 +3067,7 @@ class ContentList(QTableWidget):
         if it is None:
             return
         menu = QMenu(self)
-        act_play = menu.addAction("Play")
+        act_play = menu.addAction(tr('Play'))
         act_fav = menu.addAction("Remove from Favorites" if getattr(it, "favorite", False) else "Add to Favorites")
         act_dl = None
         if getattr(it, "section", "") in (SECTION_MOVIES, SECTION_SERIES):
@@ -3123,8 +3124,8 @@ class DetailPanel(QScrollArea):
         self.title.setStyleSheet("color: #2a7abf; font-size: 27px; font-weight: 700;")
         self.title.setWordWrap(True)
         header.addWidget(self.title, 1)
-        self.close_btn = QPushButton("✕")
-        self.close_btn.setToolTip("Hide details")
+        self.close_btn = QPushButton(tr('✕'))
+        self.close_btn.setToolTip(tr('Hide details'))
         self.close_btn.setFixedSize(28, 28)
         self.close_btn.setCursor(Qt.PointingHandCursor)
         self.close_btn.setStyleSheet(
@@ -3138,9 +3139,9 @@ class DetailPanel(QScrollArea):
         header.addWidget(self.close_btn, 0, Qt.AlignTop)
         # VOD download — movies download directly, series queue every
         # episode (after a confirmation in the tab). Hidden for channels.
-        self.download_btn = QPushButton("⬇ Download")
+        self.download_btn = QPushButton(tr('⬇ Download'))
         self.download_btn.setToolTip(
-            "Download to the Download Manager's default folder")
+            tr("Download to the Download Manager's default folder"))
         self.download_btn.setCursor(Qt.PointingHandCursor)
         self.download_btn.setStyleSheet(
             "QPushButton { background-color: rgba(42,122,191,0.25); "
@@ -3174,7 +3175,7 @@ class DetailPanel(QScrollArea):
         self.synopsis.setWordWrap(True)
         self._layout.addWidget(self.synopsis)
 
-        self.episodes_label = QLabel("Episodes")
+        self.episodes_label = QLabel(tr('Episodes'))
         self.episodes_label.setObjectName("section_label")
         self._layout.addWidget(self.episodes_label)
         self.episodes_label.hide()
@@ -3219,16 +3220,16 @@ class DetailPanel(QScrollArea):
         # Backdrop/poster artwork.
         bd = getattr(item, "backdrop", "") or getattr(item, "poster", "") or getattr(item, "logo", "")
         self._expected_artwork_url = bd
-        self.backdrop.setText("Loading artwork…")
+        self.backdrop.setText(tr('Loading artwork…'))
         self.backdrop.setPixmap(QPixmap())
         if bd:
             self._manager.fetch_artwork(bd, self._on_artwork)
 
         # Episodes for series.
         if isinstance(item, Series):
-            self.download_btn.setText("⬇ Download Series")
+            self.download_btn.setText(tr('⬇ Download Series'))
             self.download_btn.setToolTip(
-                "Download every episode (asks for confirmation first)")
+                tr('Download every episode (asks for confirmation first)'))
             self.download_btn.show()
             self.episodes_label.show()
             self.episodes.show()
@@ -3247,9 +3248,9 @@ class DetailPanel(QScrollArea):
                     self._episodes.append(ep)
         else:
             if getattr(item, "section", "") in (SECTION_MOVIES, SECTION_SERIES):
-                self.download_btn.setText("⬇ Download")
+                self.download_btn.setText(tr('⬇ Download'))
                 self.download_btn.setToolTip(
-                    "Download to the Download Manager's default folder")
+                    tr("Download to the Download Manager's default folder"))
                 self.download_btn.setVisible(bool(getattr(item, "url", "")))
             else:
                 self.download_btn.hide()
@@ -3292,9 +3293,9 @@ class DetailPanel(QScrollArea):
         if getattr(ch, "section", "") in (SECTION_MOVIES, SECTION_SERIES) and ch.url:
             # Recent-list VOD rows are transient Channel objects — they're
             # still downloadable even though they render via this path.
-            self.download_btn.setText("⬇ Download")
+            self.download_btn.setText(tr('⬇ Download'))
             self.download_btn.setToolTip(
-                "Download to the Download Manager's default folder")
+                tr("Download to the Download Manager's default folder"))
             self.download_btn.show()
         else:
             self.download_btn.hide()  # live channels are endless streams
@@ -3303,7 +3304,7 @@ class DetailPanel(QScrollArea):
         self.episodes.clear()
         self._episodes = []
         if rows:
-            self.episodes_label.setText("Upcoming — next 24 h")
+            self.episodes_label.setText(tr('Upcoming — next 24 h'))
             for r in rows:
                 li = QListWidgetItem(
                     f"{time.strftime('%H:%M', time.localtime(r['start']))}  {r['title']}")
@@ -3319,7 +3320,7 @@ class DetailPanel(QScrollArea):
         self._expected_meta_key = ""  # drop any in-flight movie/series metadata
         self._expected_artwork_url = ch.logo
         if ch.logo:
-            self.backdrop.setText("Loading logo…")
+            self.backdrop.setText(tr('Loading logo…'))
             self.backdrop.setPixmap(QPixmap())
             self._manager.fetch_artwork(ch.logo, self._on_artwork)
         else:
@@ -3341,7 +3342,7 @@ class DetailPanel(QScrollArea):
             self.backdrop.setText("")
             self.backdrop.setPixmap(_placeholder_pixmap(name))
         else:
-            self.backdrop.setText("No artwork available")
+            self.backdrop.setText(tr('No artwork available'))
 
     def _apply_artwork(self, url: str, path: str) -> None:
         # Drop artwork that belongs to a previously shown item.
@@ -3442,7 +3443,7 @@ class DetailPanel(QScrollArea):
         if ep is None:
             return  # season header / guide row — nothing to download
         menu = QMenu(self.episodes)
-        act_ep = menu.addAction("⬇ Download episode")
+        act_ep = menu.addAction(tr('⬇ Download episode'))
         act_season = menu.addAction(f"⬇ Download Season {season:02d}")
         chosen = menu.exec(self.episodes.viewport().mapToGlobal(pos))
         if chosen == act_ep:
@@ -3543,16 +3544,16 @@ class IPTVTab(QWidget):
         self._source_combo = QComboBox()
         self._source_combo.setMinimumWidth(180)
         self._source_combo.currentTextChanged.connect(self._on_source_changed)
-        toolbar.addWidget(QLabel("Source:"))
+        toolbar.addWidget(QLabel(tr('Source:')))
         toolbar.addWidget(self._source_combo)
 
-        self._refresh_btn = QPushButton("⟳")
-        self._refresh_btn.setToolTip("Refresh playlist")
+        self._refresh_btn = QPushButton(tr('⟳'))
+        self._refresh_btn.setToolTip(tr('Refresh playlist'))
         self._refresh_btn.clicked.connect(self._refresh)
         toolbar.addWidget(self._refresh_btn)
 
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Search channels, movies, series…")
+        self._search.setPlaceholderText(tr('Search channels, movies, series…'))
         # Debounce: searching 50k entries on every keystroke stutters the UI.
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -3564,7 +3565,7 @@ class IPTVTab(QWidget):
         # search buries the handful of hits inside the folder the user is
         # browsing — toggled on, the query runs only within the tree node
         # clicked last (source, section, category, year or bulk slice).
-        self._scope_btn = QPushButton("📍 Folder")
+        self._scope_btn = QPushButton(tr('📍 Folder'))
         self._scope_btn.setCheckable(True)
         self._scope_btn.setToolTip(
             "Search only inside the folder selected in the tree (subfolders "
@@ -3573,24 +3574,24 @@ class IPTVTab(QWidget):
         toolbar.addWidget(self._scope_btn)
         toolbar.addWidget(self._search, 1)
 
-        self._view_grid_btn = QPushButton("▦ Grid")
+        self._view_grid_btn = QPushButton(tr('▦ Grid'))
         self._view_grid_btn.setObjectName("btn_accent")
-        self._view_grid_btn.setToolTip("Show content as poster tiles")
+        self._view_grid_btn.setToolTip(tr('Show content as poster tiles'))
         self._view_grid_btn.clicked.connect(lambda: self._set_view("grid"))
         toolbar.addWidget(self._view_grid_btn)
 
-        self._view_list_btn = QPushButton("≡ List")
-        self._view_list_btn.setToolTip("Show content as a details list")
+        self._view_list_btn = QPushButton(tr('≡ List'))
+        self._view_list_btn.setToolTip(tr('Show content as a details list'))
         self._view_list_btn.clicked.connect(lambda: self._set_view("list"))
         toolbar.addWidget(self._view_list_btn)
 
-        self._open_file_btn = QPushButton("▶ Open File")
-        self._open_file_btn.setToolTip("Play a local video file")
+        self._open_file_btn = QPushButton(tr('▶ Open File'))
+        self._open_file_btn.setToolTip(tr('Play a local video file'))
         self._open_file_btn.clicked.connect(self._open_local_file)
         toolbar.addWidget(self._open_file_btn)
 
-        self._settings_btn = QPushButton("⚙")
-        self._settings_btn.setToolTip("IPTV Settings")
+        self._settings_btn = QPushButton(tr('⚙'))
+        self._settings_btn.setToolTip(tr('IPTV Settings'))
         toolbar.addWidget(self._settings_btn)
         layout.addWidget(self._toolbar_w)
 
@@ -3613,12 +3614,12 @@ class IPTVTab(QWidget):
         sb_layout.setContentsMargins(0, 0, 0, 0)
         group_row = QHBoxLayout()
         group_row.setContentsMargins(4, 2, 4, 2)
-        group_row.addWidget(QLabel("Group:"))
+        group_row.addWidget(QLabel(tr('Group:')))
         self._group_combo = QComboBox()
-        self._group_combo.addItem("Categories", "category")
-        self._group_combo.addItem("Years", "year")
+        self._group_combo.addItem(tr('Categories'), "category")
+        self._group_combo.addItem(tr('Years'), "year")
         self._group_combo.setToolTip(
-            "Group Movies/Series by provider category or by release year")
+            tr('Group Movies/Series by provider category or by release year'))
         gidx = self._group_combo.findData(self._group_mode())
         self._group_combo.setCurrentIndex(gidx if gidx >= 0 else 0)
         # Connect after setCurrentIndex so restoring the saved mode doesn't
@@ -3695,12 +3696,12 @@ class IPTVTab(QWidget):
         # all the way left used to be the only way to close them. Wired after
         # the panes exist, so the initial setChecked(True) emits nothing.
         self._pane_widths: Dict[QWidget, int] = {}
-        self._sidebar_btn = QPushButton("🗂 Tree")
+        self._sidebar_btn = QPushButton(tr('🗂 Tree'))
         self._sidebar_btn.setCheckable(True)  # unchecked = hidden (default below)
-        self._sidebar_btn.setToolTip("Show/hide the category tree (left pane)")
-        self._content_btn = QPushButton("🖼 Content")
+        self._sidebar_btn.setToolTip(tr('Show/hide the category tree (left pane)'))
+        self._content_btn = QPushButton(tr('🖼 Content'))
         self._content_btn.setCheckable(True)
-        self._content_btn.setToolTip("Show/hide the channels/posters area")
+        self._content_btn.setToolTip(tr('Show/hide the channels/posters area'))
         idx = toolbar.indexOf(self._view_grid_btn)
         toolbar.insertWidget(idx, self._sidebar_btn)
         toolbar.insertWidget(idx + 1, self._content_btn)
@@ -3720,7 +3721,7 @@ class IPTVTab(QWidget):
         self._status_w = QWidget()
         status = QHBoxLayout(self._status_w)
         status.setContentsMargins(0, 0, 0, 0)
-        self._status_lbl = QLabel("Ready")
+        self._status_lbl = QLabel(tr('Ready'))
         self._status_lbl.setStyleSheet("color: #8a9ab0; font-size: 17px;")
         status.addWidget(self._status_lbl)
         status.addStretch()
@@ -4401,7 +4402,7 @@ class IPTVTab(QWidget):
         if self._scope_btn.isChecked() and self._scope_label:
             self._search.setPlaceholderText(f"Search in {self._scope_label}…")
         else:
-            self._search.setPlaceholderText("Search channels, movies, series…")
+            self._search.setPlaceholderText(tr('Search channels, movies, series…'))
 
     def _scope_label_for(self, source_id: str, section: str) -> str:
         """Human label for a scope set programmatically (source jump / group
@@ -4570,7 +4571,7 @@ class IPTVTab(QWidget):
             folder = os.path.join(self._download_root(),
                                   _safe_folder_name(item.name))
             ans = QMessageBox.question(
-                self, "Download Series",
+                self, tr('Download Series'),
                 f"Download all {len(episodes)} episodes of\n\"{item.name}\"?\n\n"
                 f"Files go to:\n{folder}",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
@@ -4591,7 +4592,7 @@ class IPTVTab(QWidget):
         folder = os.path.join(self._download_root(),
                               _safe_folder_name(series.name))
         ans = QMessageBox.question(
-            self, "Download Season",
+            self, tr('Download Season'),
             f"Download all {len(episodes)} episodes of "
             f"{series.name} Season {season:02d}?\n\nFiles go to:\n{folder}",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)

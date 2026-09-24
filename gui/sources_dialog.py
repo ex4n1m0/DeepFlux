@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from config import DeeptorrentConfig, SourceConfig
 from gui.window_sizing import roomy
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class SourcesDialog(QDialog):
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.config = config
-        self.setWindowTitle("Sources")
+        self.setWindowTitle(tr('Sources'))
         self.setMinimumSize(560, 360)
         roomy(self)
         self.setStyleSheet("""
@@ -69,7 +70,7 @@ class SourcesDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # Header
-        header = QLabel("Search Sources")
+        header = QLabel(tr('Search Sources'))
         header.setStyleSheet("color: #2a7abf; font-size: 24px; font-weight: 600;")
         layout.addWidget(header)
 
@@ -84,11 +85,11 @@ class SourcesDialog(QDialog):
 
         # Jackett integration row
         jackett_row = QHBoxLayout()
-        self.jackett_check = QCheckBox("Use Jackett for searches (instead of web search fallback)")
+        self.jackett_check = QCheckBox(tr('Use Jackett for searches (instead of web search fallback)'))
         self.jackett_check.setChecked(self.config.sources.use_jackett)
         jackett_row.addWidget(self.jackett_check)
 
-        fetch_btn = QPushButton("Fetch from Jackett")
+        fetch_btn = QPushButton(tr('Fetch from Jackett'))
         fetch_btn.clicked.connect(self._fetch_from_jackett)
         jackett_row.addWidget(fetch_btn)
 
@@ -97,7 +98,7 @@ class SourcesDialog(QDialog):
 
         # Sources table
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Enabled", "Name", "ID", "Type", "URL"])
+        self.table.setHorizontalHeaderLabels([tr('Enabled'), tr('Name'), tr('ID'), tr('Type'), tr('URL')])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
         self.table.horizontalHeader().resizeSection(0, 70)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -112,20 +113,20 @@ class SourcesDialog(QDialog):
         # Add/remove buttons
         btn_row = QHBoxLayout()
 
-        add_btn = QPushButton("+ Add Source")
+        add_btn = QPushButton(tr('+ Add Source'))
         add_btn.clicked.connect(self._add_source)
         btn_row.addWidget(add_btn)
 
-        remove_btn = QPushButton("Remove Selected")
+        remove_btn = QPushButton(tr('Remove Selected'))
         remove_btn.clicked.connect(self._remove_selected)
         btn_row.addWidget(remove_btn)
 
-        toggle_btn = QPushButton("Toggle Selected")
+        toggle_btn = QPushButton(tr('Toggle Selected'))
         toggle_btn.clicked.connect(self._toggle_selected)
         btn_row.addWidget(toggle_btn)
 
-        reset_btn = QPushButton("Reset to Defaults")
-        reset_btn.setToolTip("Replace the list with the built-in default sources")
+        reset_btn = QPushButton(tr('Reset to Defaults'))
+        reset_btn.setToolTip(tr('Replace the list with the built-in default sources'))
         reset_btn.clicked.connect(self._reset_to_defaults)
         btn_row.addWidget(reset_btn)
 
@@ -183,7 +184,7 @@ class SourcesDialog(QDialog):
         """Remove the selected source rows."""
         rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()), reverse=True)
         if not rows:
-            QMessageBox.information(self, "Remove", "Select a source to remove first.")
+            QMessageBox.information(self, tr('Remove'), tr('Select a source to remove first.'))
             return
         for row in rows:
             self.table.removeRow(row)
@@ -193,7 +194,7 @@ class SourcesDialog(QDialog):
         """Toggle the enabled state of selected sources."""
         rows = set(idx.row() for idx in self.table.selectedIndexes())
         if not rows:
-            QMessageBox.information(self, "Toggle", "Select a source to toggle first.")
+            QMessageBox.information(self, tr('Toggle'), tr('Select a source to toggle first.'))
             return
         for row in rows:
             item = self.table.item(row, 0)
@@ -205,20 +206,20 @@ class SourcesDialog(QDialog):
         from infra import jackett
 
         if not self.config.indexer.api_key:
-            QMessageBox.warning(self, "Jackett", "No Jackett API key configured. Set it in Settings first.")
+            QMessageBox.warning(self, tr('Jackett'), tr('No Jackett API key configured. Set it in Settings first.'))
             return
 
-        self.status_label.setText("Fetching from Jackett...")
+        self.status_label.setText(tr('Fetching from Jackett...'))
 
         try:
             fetched = jackett.fetch_indexers(self.config)
         except Exception as exc:
             self.status_label.setText(f"Fetch failed: {exc}")
-            QMessageBox.warning(self, "Jackett", f"Failed to fetch from Jackett:\n{exc}")
+            QMessageBox.warning(self, tr('Jackett'), f"Failed to fetch from Jackett:\n{exc}")
             return
 
         if not fetched:
-            self.status_label.setText("No configured indexers found in Jackett.")
+            self.status_label.setText(tr('No configured indexers found in Jackett.'))
             return
 
         # Build the new source list: existing entries keep their enabled
@@ -243,7 +244,7 @@ class SourcesDialog(QDialog):
         else:
             msg = "No built-in sources ship with DeepFlux — clear the current list?"
         reply = QMessageBox.question(
-            self, "Reset Sources", msg,
+            self, tr('Reset Sources'), msg,
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:

@@ -20,6 +20,7 @@ from typing import Dict, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QSizePolicy
+from gui.i18n import tr
 
 # Page title (QTabWidget text) -> (icon, rail key). Unknown titles get a
 # generic diamond so a future tab still shows up on the rail.

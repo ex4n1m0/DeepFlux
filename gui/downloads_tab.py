@@ -49,6 +49,7 @@ from dlmgr.engine import DownloadEngine
 from dlmgr.job import JobStatus, SegmentStatus
 from gui.column_sizing import AutoColumnSizer
 from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
+from gui.i18n import tr
 
 logger = logging.getLogger(__name__)
 
@@ -412,54 +413,54 @@ class DownloadsTab(QWidget):
         toolbar = QHBoxLayout(toolbar_row)
         toolbar.setSpacing(4)
 
-        self.add_url_btn = QPushButton("+ Add URL")
+        self.add_url_btn = QPushButton(tr('+ Add URL'))
         self.add_url_btn.setObjectName("btn_accent")
-        self.add_url_btn.setToolTip("Add a direct file, HLS/DASH stream or YouTube link")
+        self.add_url_btn.setToolTip(tr('Add a direct file, HLS/DASH stream or YouTube link'))
         self.add_url_btn.clicked.connect(self._add_url_dialog)
         toolbar.addWidget(self.add_url_btn)
 
-        self.pause_btn = QPushButton("Pause")
-        self.pause_btn.setToolTip("Pause the selected download(s)")
+        self.pause_btn = QPushButton(tr('Pause'))
+        self.pause_btn.setToolTip(tr('Pause the selected download(s)'))
         self.pause_btn.clicked.connect(self._pause_selected)
         toolbar.addWidget(self.pause_btn)
 
-        self.resume_btn = QPushButton("Resume")
-        self.resume_btn.setToolTip("Resume the selected paused download(s)")
+        self.resume_btn = QPushButton(tr('Resume'))
+        self.resume_btn.setToolTip(tr('Resume the selected paused download(s)'))
         self.resume_btn.clicked.connect(self._resume_selected)
         toolbar.addWidget(self.resume_btn)
 
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = QPushButton(tr('Cancel'))
         self.cancel_btn.setToolTip(
-            "Stop the selected download(s) and delete the partial files")
+            tr('Stop the selected download(s) and delete the partial files'))
         self.cancel_btn.clicked.connect(self._cancel_selected)
         toolbar.addWidget(self.cancel_btn)
 
-        self.retry_btn = QPushButton("Retry")
-        self.retry_btn.setToolTip("Restart the selected failed download(s)")
+        self.retry_btn = QPushButton(tr('Retry'))
+        self.retry_btn.setToolTip(tr('Restart the selected failed download(s)'))
         self.retry_btn.clicked.connect(self._retry_selected)
         toolbar.addWidget(self.retry_btn)
 
-        self.remove_btn = QPushButton("Remove")
+        self.remove_btn = QPushButton(tr('Remove'))
         self.remove_btn.setToolTip(
-            "Drop the selected finished/cancelled download(s) from the list")
+            tr('Drop the selected finished/cancelled download(s) from the list'))
         self.remove_btn.clicked.connect(self._remove_selected)
         toolbar.addWidget(self.remove_btn)
 
         toolbar.addStretch()
 
-        self.open_file_btn = QPushButton("Open File")
-        self.open_file_btn.setToolTip("Open the selected completed file")
+        self.open_file_btn = QPushButton(tr('Open File'))
+        self.open_file_btn.setToolTip(tr('Open the selected completed file'))
         self.open_file_btn.clicked.connect(self._open_selected_file)
         toolbar.addWidget(self.open_file_btn)
 
-        self.open_folder_btn = QPushButton("Open Folder")
-        self.open_folder_btn.setToolTip("Open the folder of the selected download")
+        self.open_folder_btn = QPushButton(tr('Open Folder'))
+        self.open_folder_btn.setToolTip(tr('Open the folder of the selected download'))
         self.open_folder_btn.clicked.connect(self._open_selected_folder)
         toolbar.addWidget(self.open_folder_btn)
 
-        self.clear_completed_btn = QPushButton("Clear Completed")
+        self.clear_completed_btn = QPushButton(tr('Clear Completed'))
         self.clear_completed_btn.setToolTip(
-            "Drop finished downloads from the list (files stay on disk)")
+            tr('Drop finished downloads from the list (files stay on disk)'))
         self.clear_completed_btn.clicked.connect(self._clear_completed)
         toolbar.addWidget(self.clear_completed_btn)
 
@@ -476,12 +477,12 @@ class DownloadsTab(QWidget):
         filters.setSpacing(6)
         self.search_edit = QLineEdit()
         self.search_edit.setObjectName("downloads_search")
-        self.search_edit.setPlaceholderText("Search filename or source URL…")
+        self.search_edit.setPlaceholderText(tr('Search filename or source URL…'))
         self.search_edit.setClearButtonEnabled(True)
         filters.addWidget(self.search_edit, 1)
         self.status_filter = QComboBox()
         self.status_filter.setObjectName("downloads_status_filter")
-        self.status_filter.addItem("All statuses", "")
+        self.status_filter.addItem(tr('All statuses'), "")
         for status in JobStatus:
             self.status_filter.addItem(status.value.capitalize(), status.value)
         filters.addWidget(self.status_filter)
@@ -499,7 +500,7 @@ class DownloadsTab(QWidget):
             return lbl
 
         def _dot() -> QLabel:
-            lbl = QLabel("·")
+            lbl = QLabel(tr('·'))
             lbl.setStyleSheet("color: #8a9ab0; border: none;")
             return lbl
 
@@ -557,23 +558,23 @@ class DownloadsTab(QWidget):
         empty_layout.setContentsMargins(40, 40, 40, 40)
         empty_layout.setSpacing(10)
         empty_layout.addStretch(1)
-        empty_glyph = QLabel("⬇")
+        empty_glyph = QLabel(tr('⬇'))
         empty_glyph.setAlignment(Qt.AlignCenter)
         empty_glyph.setStyleSheet("color: #3d5a80; font-size: 44px; border: none; background: transparent;")
         empty_layout.addWidget(empty_glyph)
-        empty_title = QLabel("No downloads yet")
+        empty_title = QLabel(tr('No downloads yet'))
         empty_title.setAlignment(Qt.AlignCenter)
         empty_title.setStyleSheet("color: #ffffff; font-size: 21px; font-weight: 600; border: none; background: transparent;")
         shrink_label(empty_title)  # QLabel minimums are full text width
         empty_layout.addWidget(empty_title)
-        empty_text = QLabel("Add a file, stream or YouTube link to start downloading.")
+        empty_text = QLabel(tr('Add a file, stream or YouTube link to start downloading.'))
         empty_text.setAlignment(Qt.AlignCenter)
         empty_text.setStyleSheet("color: #8a9ab0; font-size: 17px; border: none; background: transparent;")
         shrink_label(empty_text)
         empty_layout.addWidget(empty_text)
-        self._empty_add_btn = QPushButton("+ Add URL")
+        self._empty_add_btn = QPushButton(tr('+ Add URL'))
         self._empty_add_btn.setObjectName("btn_accent")
-        self._empty_add_btn.setToolTip("Add a direct file, HLS/DASH stream or YouTube link")
+        self._empty_add_btn.setToolTip(tr('Add a direct file, HLS/DASH stream or YouTube link'))
         self._empty_add_btn.clicked.connect(self._add_url_dialog)
         empty_button_row = QHBoxLayout()
         empty_button_row.addStretch(1)
@@ -589,17 +590,17 @@ class DownloadsTab(QWidget):
         layout.addWidget(self._table_stack)
 
         # --- Details panel (segmented file downloads only; hidden for streams) ---
-        self.details_group = QGroupBox("Details")
+        self.details_group = QGroupBox(tr('Details'))
         details_layout = QVBoxLayout(self.details_group)
         details_layout.setContentsMargins(6, 2, 6, 4)
         details_layout.setSpacing(2)
-        self.details_label = QLabel("Select a download to see segment details.")
+        self.details_label = QLabel(tr('Select a download to see segment details.'))
         self.details_label.setStyleSheet("color: #8a9ab0; font-size: 17px;")
         details_layout.addWidget(self.details_label)
 
         self.segment_table = QTableWidget()
         self.segment_table.setColumnCount(5)
-        self.segment_table.setHorizontalHeaderLabels(["#", "Range", "Downloaded", "Progress", "Status"])
+        self.segment_table.setHorizontalHeaderLabels(["#", tr('Range'), tr('Downloaded'), tr('Progress'), tr('Status')])
         self.segment_table.setMaximumHeight(110)
         self.segment_table.setAlternatingRowColors(True)
         self.segment_table.verticalHeader().setDefaultSectionSize(18)
@@ -822,7 +823,7 @@ class DownloadsTab(QWidget):
         Auto-detects HLS (.m3u8) and DASH (.mpd) URLs and routes them
         to the stream capture pipeline."""
         dialog = QInputDialog(self)
-        dialog.setWindowTitle("Add Download URL")
+        dialog.setWindowTitle(tr('Add Download URL'))
         dialog.setLabelText("Enter the download URL (file, .m3u8, or .mpd):")
         dialog.setTextValue("")
         if dialog.exec() == QInputDialog.Accepted:
@@ -837,7 +838,7 @@ class DownloadsTab(QWidget):
                     else:
                         self._engine.add_job(url=url)
                 except Exception as exc:
-                    QMessageBox.warning(self, "Error", f"Failed to add download: {exc}")
+                    QMessageBox.warning(self, tr('Error'), f"Failed to add download: {exc}")
 
     def _run_bulk_action(self, method_name: str, allowed_statuses) -> None:
         for job in self._selected_jobs():
@@ -941,28 +942,28 @@ class DownloadsTab(QWidget):
         statuses = {job.status for job in jobs}
         menu = QMenu(self)
         if statuses.intersection(self.PAUSABLE):
-            menu.addAction("Pause", self._pause_selected)
+            menu.addAction(tr('Pause'), self._pause_selected)
         if statuses.intersection(self.RESUMABLE):
-            menu.addAction("Resume", self._resume_selected)
+            menu.addAction(tr('Resume'), self._resume_selected)
         if JobStatus.ERROR in statuses:
-            menu.addAction("Retry", self._retry_selected)
+            menu.addAction(tr('Retry'), self._retry_selected)
         if statuses.intersection(self.CANCELLABLE):
-            menu.addAction("Cancel", self._cancel_selected)
+            menu.addAction(tr('Cancel'), self._cancel_selected)
         if statuses.intersection(self.REMOVABLE):
-            menu.addAction("Remove from List", self._remove_selected)
-        priority_menu = menu.addMenu("Priority")
+            menu.addAction(tr('Remove from List'), self._remove_selected)
+        priority_menu = menu.addMenu(tr('Priority'))
         for label, value in (("Highest", 10), ("High", 5), ("Normal", 0), ("Low", -5), ("Lowest", -10)):
             priority_menu.addAction(label, lambda checked=False, priority=value: self._set_selected_priority(priority))
         menu.addSeparator()
         if len(jobs) == 1 and self._play_callback is not None and self._is_playable(clicked_job):
-            menu.addAction("Play in Player", self._play_selected)
+            menu.addAction(tr('Play in Player'), self._play_selected)
         if (len(jobs) == 1 and clicked_job.status == JobStatus.COMPLETED
                 and os.path.isfile(clicked_job.save_path)):
-            menu.addAction("Open File", self._open_selected_file)
+            menu.addAction(tr('Open File'), self._open_selected_file)
         if len(jobs) == 1 and os.path.isdir(os.path.dirname(clicked_job.save_path)):
-            menu.addAction("Open Folder", self._open_selected_folder)
+            menu.addAction(tr('Open Folder'), self._open_selected_folder)
         menu.addSeparator()
-        copy_url_action = menu.addAction("Copy URL")
+        copy_url_action = menu.addAction(tr('Copy URL'))
         copy_url_action.triggered.connect(lambda: QApplication.clipboard().setText(clicked_job.url))
         menu.exec(self.table.viewport().mapToGlobal(pos))
 

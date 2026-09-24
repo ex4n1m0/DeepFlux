@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from infra.updater import UpdateInfo
+from gui.i18n import tr
 
 # Dialog result codes for the prompt (exec() return values are ints).
 RESULT_UPDATE_NOW = 1
@@ -71,13 +72,13 @@ class UpdateDialog(QDialog):
         layout.addWidget(size_lbl)
 
         buttons = QHBoxLayout()
-        update_btn = QPushButton("Update now")
+        update_btn = QPushButton(tr('Update now'))
         update_btn.setObjectName("btn_accent")
         update_btn.setDefault(True)
         update_btn.clicked.connect(lambda: self.done(RESULT_UPDATE_NOW))
-        later_btn = QPushButton("Remind me later")
+        later_btn = QPushButton(tr('Remind me later'))
         later_btn.clicked.connect(lambda: self.done(RESULT_LATER))
-        skip_btn = QPushButton("Skip this version")
+        skip_btn = QPushButton(tr('Skip this version'))
         skip_btn.clicked.connect(lambda: self.done(RESULT_SKIP))
         buttons.addWidget(update_btn)
         buttons.addWidget(later_btn)
@@ -106,7 +107,7 @@ class UpdateProgressDialog(QDialog):
         self._bar = QProgressBar()
         self._bar.setRange(0, 100)
         layout.addWidget(self._bar)
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(tr('Cancel'))
         cancel_btn.clicked.connect(self._on_cancel)
         layout.addWidget(cancel_btn, alignment=Qt.AlignRight)
 
@@ -145,7 +146,7 @@ class UpdateProgressDialog(QDialog):
 
     def _on_cancel(self) -> None:
         self._cancel.set()
-        self._label.setText("Cancelling…")
+        self._label.setText(tr('Cancelling…'))
 
     def error_message(self) -> str:
         return getattr(self, "_error", "")

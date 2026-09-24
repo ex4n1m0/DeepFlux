@@ -53,12 +53,21 @@ def test_zh_missing_key_falls_back_to_source():
 
 def test_catalog_sanity():
     """Keys/values are non-empty, trimmed strings and every translation
-    actually contains a CJK glyph (catches accidentally-English entries)."""
+    actually contains CJK content (ideograph, or full-width punctuation for
+    label-ish values like "SHA-256：") — catches accidentally-English
+    entries."""
+    def has_cjk(text: str) -> bool:
+        return any(
+            "\u4e00" <= ch <= "\u9fff"          # CJK unified ideographs
+            or "\u3000" <= ch <= "\u303f"        # CJK punctuation （、。「」)
+            or "\uff00" <= ch <= "\uffef"        # full-width forms ：！？
+            for ch in text
+        )
     assert ZH_CN, "catalog is not empty"
     for key, value in ZH_CN.items():
         assert isinstance(key, str) and key and key.strip() == key
         assert isinstance(value, str) and value and value.strip() == value
-        assert any("\u4e00" <= ch <= "\u9fff" for ch in value), key
+        assert has_cjk(value), key
 
 
 def test_config_ui_language_roundtrip(tmp_path):

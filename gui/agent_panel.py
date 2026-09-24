@@ -9,6 +9,7 @@ Long transcripts, memory tools and diagnostics stay on the full page; this is
 the quick-ask surface.
 """
 from __future__ import annotations
+from gui.i18n import tr
 
 import html
 
@@ -51,22 +52,22 @@ class AgentPanel(QFrame):
 
         head = QHBoxLayout()
         head.setSpacing(6)
-        title = QLabel("🧠 Agent")
+        title = QLabel(tr('🧠 Agent'))
         title.setObjectName("panel_title")
         head.addWidget(title)
         self._busy_lbl = QLabel("")
         self._busy_lbl.setProperty("railText", True)
         head.addWidget(self._busy_lbl)
         head.addStretch(1)
-        expand = QPushButton("Chat ↗")
+        expand = QPushButton(tr('Chat ↗'))
         expand.setObjectName("btn_secondary")
-        expand.setToolTip("Open the full Agent page (transcript, memory, diagnostics)")
+        expand.setToolTip(tr('Open the full Agent page (transcript, memory, diagnostics)'))
         expand.clicked.connect(self.open_chat_requested.emit)
         head.addWidget(expand)
-        hide = QPushButton("×")
+        hide = QPushButton(tr('×'))
         hide.setObjectName("btn_secondary")
         hide.setFixedWidth(34)
-        hide.setToolTip("Hide the panel (Ctrl+K brings it back)")
+        hide.setToolTip(tr('Hide the panel (Ctrl+K brings it back)'))
         hide.clicked.connect(self.close_requested.emit)
         head.addWidget(hide)
         vbox.addLayout(head)
@@ -84,10 +85,10 @@ class AgentPanel(QFrame):
         row = QHBoxLayout()
         row.setSpacing(6)
         self.input = QLineEdit()
-        self.input.setPlaceholderText("Ask anything — Enter to send")
+        self.input.setPlaceholderText(tr('Ask anything — Enter to send'))
         self.input.returnPressed.connect(self._submit)
         row.addWidget(self.input, 1)
-        send = QPushButton("Send")
+        send = QPushButton(tr('Send'))
         send.setObjectName("btn_accent")
         send.clicked.connect(self._submit)
         row.addWidget(send)
@@ -113,7 +114,7 @@ class AgentPanel(QFrame):
         bar.setValue(bar.maximum())
 
     def set_busy(self, busy: bool) -> None:
-        self._busy_lbl.setText("· thinking" if busy else "")
+        self._busy_lbl.setText(tr("· thinking") if busy else "")
         self.input.setEnabled(True)  # typing ahead is fine; send is guarded upstream
 
     def focus_input(self) -> None:
