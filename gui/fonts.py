@@ -28,8 +28,18 @@ MONO_FONT = "JetBrains Mono"
 
 # CSS stacks to reference from stylesheets (bundled name first, then the
 # previous platform fallbacks so a missing font file degrades gracefully).
-UI_STACK = f"'{UI_FONT}', 'Segoe UI', 'Helvetica Neue', sans-serif"
+# The CJK families cover ui_language="zh": Inter/JetBrains Mono carry no
+# Chinese glyphs, and naming the fallbacks keeps per-glyph substitution
+# deliberate (Microsoft YaHei on Windows, PingFang on macOS) instead of
+# relying on whatever Qt's font merge picks.
+UI_STACK = (
+    f"'{UI_FONT}', 'Segoe UI', 'Helvetica Neue', "
+    "'Microsoft YaHei', 'PingFang SC', 'Noto Sans SC', sans-serif"
+)
 MONO_STACK = f"'{MONO_FONT}', 'Cascadia Code', 'Cascadia Mono', Consolas, monospace"
+
+# Preferred per-glyph fallback order for the application font (see UI_STACK).
+UI_FALLBACK_FAMILIES = (UI_FONT, "Microsoft YaHei", "PingFang SC", "Noto Sans SC")
 
 _FONT_FILES = ("Inter.ttf", "JetBrainsMono.ttf")
 
@@ -70,6 +80,8 @@ def load_app_fonts(app) -> bool:
         logger.warning("Bundled UI font %r unavailable — keeping system default font", UI_FONT)
         return False
 
-    app.setFont(QFont(UI_FONT, _UI_POINT_SIZE))
+    app_font = QFont(UI_FONT, _UI_POINT_SIZE)
+    app_font.setFamilies(list(UI_FALLBACK_FAMILIES))
+    app.setFont(app_font)
     logger.info("UI font: %s %dpt (registered families: %s)", UI_FONT, _UI_POINT_SIZE, ", ".join(loaded))
     return True

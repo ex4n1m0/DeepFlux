@@ -790,7 +790,9 @@ class IPTVPlaybackDialog(_SettingsPage):
 
 
 # (menu label, dialog class) — Config → IPTV submenu and the Play tab's gear
-# picker are both built from this list.
+# picker are both built from this list. Labels stay ENGLISH here on purpose:
+# this module is imported during `gui/__init__` (via main_window), long before
+# the UI language is set — consumers translate with gui.i18n.tr at render time.
 IPTV_SETTINGS_PAGES = [
     ("IPTV Playlist Sources…", IPTVSourcesDialog),
     ("Artwork, Metadata && Cache…", IPTVMetadataDialog),

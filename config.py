@@ -600,6 +600,12 @@ class DeeptorrentConfig:
     ui_agent_debug: bool = True
     # v5: the agent quick-ask side panel is open (restored on launch).
     ui_agent_panel: bool = False
+    # UI language ("en" English default, "zh" Simplified Chinese) — applied
+    # once at startup by gui/i18n.set_language; takes effect next launch.
+    # Top-level (not inside a section) on purpose: the agent's settings
+    # whitelist only iterates section dataclasses, so the UI language stays
+    # user-controlled like the rest of the ui_* state fields.
+    ui_language: str = "en"
 
     @classmethod
     def from_file(cls, path: str) -> "DeeptorrentConfig":
@@ -946,6 +952,9 @@ class DeeptorrentConfig:
                 if key in ("left", "right") and isinstance(value, str)
             } if isinstance(data.get("ui_commander_paths"), dict) else {},
             ui_agent_debug=True,  # assumed always-on (no UI toggle anymore)
+            ui_language=(data.get("ui_language") or "en")
+            if (data.get("ui_language") or "en") in ("en", "zh")
+            else "en",
         )
 
     def sanitized_dict(self) -> Dict[str, Any]:

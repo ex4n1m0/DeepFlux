@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from PySide6.QtCore import QTimer, Qt, QRectF, Signal, QObject, QEvent, QLocale, QProcess, QStringListModel
-from PySide6.QtGui import QAction, QColor, QCursor, QFont, QIcon, QKeySequence, QLinearGradient, QPainter, QPen, QPixmap, QShortcut, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QFont, QIcon, QKeySequence, QLinearGradient, QPainter, QPen, QPixmap, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -57,7 +57,7 @@ from agent.loop import AgentLoop
 from agent.llm import create_llm_client
 from agent.tools import ToolRegistry
 from agent.rss import RSSMonitor
-from config import DeeptorrentConfig
+from config import APP_VERSION, DeeptorrentConfig
 from engine import TorrentEngine
 from infra.config_backup import (
     SettingsBackupError,
@@ -68,6 +68,7 @@ from infra.config_backup import (
 from engine.state import TorrentStateManager
 from gui.rss_dialog import RSSDialog
 from gui.rss_viewer import RSSViewer
+from gui.i18n import tr
 from gui.update_dialog import (
     RESULT_LATER,
     RESULT_SKIP,
@@ -897,7 +898,7 @@ class MainWindow(QMainWindow):
             logger.debug("telemetry heartbeat failed to start", exc_info=True)
 
         # --- Branding ---
-        self.setWindowTitle("DeepFlux 5.2 - AI Deep Search")
+        self.setWindowTitle(f"DeepFlux {APP_VERSION} - {tr('AI Deep Search')}")
         self.setGeometry(100, 100, 1200, 800)
 
         # Set window icon (shows in taskbar, title bar, alt-tab).
@@ -1611,7 +1612,7 @@ class MainWindow(QMainWindow):
         # setSizes() before the window is shown gets overridden by widget size
         # hints; enforce the 50/50 split once the real height is known.
         self._agent_ratio_applied = False
-        self.main_tabs.addTab(page, "Download")
+        self.main_tabs.addTab(page, tr("Download"))
         # Drag & drop and other flows surface this tab to show the torrent list.
         self._torrents_tab = page
         # Enforce 50/50 when the Download tab becomes visible (it's not the
@@ -2038,8 +2039,8 @@ class MainWindow(QMainWindow):
         # Agents tab (leftmost): the merged deep-search window.
         # v5: Agent is the landing page, so Browse inserts first and Agent
         # lands at index 0 — Ctrl+1 finally matches the page the app opens on.
-        self.main_tabs.insertTab(0, browser_tab, "Browse")
-        self.main_tabs.insertTab(0, agents_tab, "Agent")
+        self.main_tabs.insertTab(0, browser_tab, tr("Browse"))
+        self.main_tabs.insertTab(0, agents_tab, tr("Agent"))
         self._browser_tab = browser_tab
         self._agents_tab = agents_tab
 
@@ -2050,7 +2051,7 @@ class MainWindow(QMainWindow):
             self.iptv_tab.set_engine(self.engine)
             # VOD downloads (movies/series from the Play tab) queue into dlmgr.
             self.iptv_tab.set_download_engine(self._dl_engine)
-            self.main_tabs.addTab(self.iptv_tab, "Play")
+            self.main_tabs.addTab(self.iptv_tab, tr("Play"))
             # Let the agent's iptv_* tools drive playback (queued onto the GUI
             # thread) and read the playlist/player state.
             self._iptv_bridge = AgentIPTVBridge(self.iptv_tab)
@@ -2060,7 +2061,7 @@ class MainWindow(QMainWindow):
 
         # --- Commander tab (dual-pane file manager) ---
         self.commander_tab = CommanderTab(self.config, self)
-        self.main_tabs.addTab(self.commander_tab, "Command")
+        self.main_tabs.addTab(self.commander_tab, tr("Command"))
 
         # --- Room tab (DeepFlux Room — the embedded OnlyHumans portal) ---
         self.room_tab = RoomTab(self.config, self)
@@ -2068,7 +2069,7 @@ class MainWindow(QMainWindow):
         # the browser save flow (without a downloadRequested consumer,
         # QtWebEngine silently drops the download).
         self.room_tab.attach_download_handler(self._on_browser_download_requested)
-        self.main_tabs.addTab(self.room_tab, "Room")
+        self.main_tabs.addTab(self.room_tab, tr("Room"))
 
         # Restore saved splitter positions (user-adjusted sizes persist).
         self._restore_splitters()
@@ -2084,85 +2085,98 @@ class MainWindow(QMainWindow):
             # the in-window bar so the layout stays intact there too.
             menubar.setNativeMenuBar(False)
         self.setMenuBar(menubar)
-        file_menu = menubar.addMenu("File")
+        file_menu = menubar.addMenu(tr("File"))
 
-        add_magnet_action = _file_item(file_menu, "Add Magnet Link...", indent=False)
+        add_magnet_action = _file_item(file_menu, tr("Add Magnet Link..."), indent=False)
         add_magnet_action.triggered.connect(self._add_magnet_dialog)
 
-        add_torrent_action = _file_item(file_menu, "Add .torrent File...")
+        add_torrent_action = _file_item(file_menu, tr("Add .torrent File..."))
         add_torrent_action.triggered.connect(self._add_torrent_file_dialog)
 
-        save_pdf_action = _file_item(file_menu, "Save Page as PDF...")
+        save_pdf_action = _file_item(file_menu, tr("Save Page as PDF..."))
         save_pdf_action.triggered.connect(self._browser_save_pdf)
 
         file_menu.addSeparator()
-        export_action = _file_item(file_menu, "Back Up All Settings...")
+        export_action = _file_item(file_menu, tr("Back Up All Settings..."))
         export_action.triggered.connect(self._export_settings)
 
-        import_action = _file_item(file_menu, "Restore Settings from Backup...")
+        import_action = _file_item(file_menu, tr("Restore Settings from Backup..."))
         import_action.triggered.connect(self._import_settings)
 
-        assoc_action = _file_item(file_menu, "Set as Default App for Magnets && Media...")
+        assoc_action = _file_item(file_menu, tr("Set as Default App for Magnets && Media..."))
         assoc_action.triggered.connect(self._register_file_associations)
 
         file_menu.addSeparator()
-        exit_action = _file_item(file_menu, "Exit", indent=False)
+        exit_action = _file_item(file_menu, tr("Exit"), indent=False)
         exit_action.triggered.connect(self._tray_quit)
 
         # --- Settings menu: every settings surface, one entry point (v5) ---
         # Same labeled-zone pattern the File menu used since 3.5.6 (zones are
         # separator + bold disabled header — QMenu.addSection() text does not
         # render under the app stylesheet). Ctrl+, opens this menu anywhere.
-        settings_menu = menubar.addMenu("Settings")
+        settings_menu = menubar.addMenu(tr("Settings"))
         self._settings_menu = settings_menu
 
-        hub_action = _file_item(settings_menu, "Settings Hub… (search)", indent=False)
+        hub_action = _file_item(settings_menu, tr("Settings Hub… (search)"), indent=False)
         hub_action.triggered.connect(self._open_settings_hub)
         settings_menu.addSeparator()
 
-        _file_zone(settings_menu, "AI & API Keys", first=True)
+        # Language: restart-to-apply (gui/i18n), one click either way. The
+        # native names stay untranslated in both languages by convention.
+        _file_zone(settings_menu, tr("Language"), first=True)
+        lang_group = QActionGroup(settings_menu)
+        for _code, _native in (("en", "English"), ("zh", "简体中文")):
+            _lang_act = settings_menu.addAction(_native)
+            _lang_act.setCheckable(True)
+            _lang_act.setChecked(getattr(self.config, "ui_language", "en") == _code)
+            lang_group.addAction(_lang_act)
+            _lang_act.triggered.connect(
+                lambda _checked=False, code=_code: self._set_ui_language(code))
+        settings_menu.addSeparator()
+
+        _file_zone(settings_menu, tr("AI & API Keys"))
         for label, page in API_KEY_PAGES:
-            action = _file_item(settings_menu, label)
+            action = _file_item(settings_menu, tr(label))
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_api_keys(selected))
 
-        _file_zone(settings_menu, "Downloads && Sources")
-        indexer_settings_action = _file_item(settings_menu, "Jackett Indexer Settings...")
+        _file_zone(settings_menu, tr("Downloads && Sources"))
+        indexer_settings_action = _file_item(settings_menu, tr("Jackett Indexer Settings..."))
         indexer_settings_action.triggered.connect(self._open_indexer_settings)
 
         for label, page in DOWNLOAD_SETTINGS_PAGES:
-            action = _file_item(settings_menu, label)
+            action = _file_item(settings_menu, tr(label))
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_downloads_settings(selected))
 
-        sources_action = _file_item(settings_menu, "Torrent Search Sources...")
+        sources_action = _file_item(settings_menu, tr("Torrent Search Sources..."))
         sources_action.triggered.connect(self._open_sources)
 
-        rss_action2 = _file_item(settings_menu, "RSS Feed Subscriptions...")
+        rss_action2 = _file_item(settings_menu, tr("RSS Feed Subscriptions..."))
         rss_action2.triggered.connect(self._open_rss_dialog)
 
-        _file_zone(settings_menu, "Browser")
+        _file_zone(settings_menu, tr("Browser"))
         for label, page in BROWSER_SETTINGS_PAGES:
-            action = _file_item(settings_menu, label)
+            action = _file_item(settings_menu, tr(label))
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_browser_settings(selected))
 
-        history_action = _file_item(settings_menu, "Browser History...")
+        history_action = _file_item(settings_menu, tr("Browser History..."))
         history_action.triggered.connect(self._show_browser_history)
 
-        devtools_action = _file_item(settings_menu, "Browser Developer Tools")
+        devtools_action = _file_item(settings_menu, tr("Browser Developer Tools"))
         devtools_action.triggered.connect(self._browser_open_devtools)
 
         if _PLAY_TAB_SUPPORTED:
-            _file_zone(settings_menu, "Play")
+            _file_zone(settings_menu, tr("Play"))
             for label, _cls in IPTV_SETTINGS_PAGES:
-                action = _file_item(settings_menu, label)
+                action = _file_item(settings_menu, tr(label))
                 action.triggered.connect(lambda _c=False, page_cls=_cls: self._open_iptv_page(page_cls))
 
         # Bookmarks live ONLY under the browser toolbar's Bookmarks button
         # (import/export + the folder tree) — nothing bookmark-related in the
         # menus (user request 3.5.6).
-        self._bookmarks_menu = QMenu("Bookmarks", self)
+        self._bookmarks_menu = QMenu(tr("Bookmarks"), self)
         self._rebuild_bookmarks_bar()
 
         # --- Activity rail (v5 navigation) + agent side panel ---------------
@@ -2183,17 +2197,17 @@ class MainWindow(QMainWindow):
             self.agent_panel.setVisible(True)
 
         # Help dropdown menu
-        help_menu = menubar.addMenu("Help")
+        help_menu = menubar.addMenu(tr("Help"))
 
-        guide_action = QAction("User Guide", self)
+        guide_action = QAction(tr("User Guide"), self)
         guide_action.triggered.connect(self._open_help)
         help_menu.addAction(guide_action)
 
-        check_update_action = QAction("Check for Updates…", self)
+        check_update_action = QAction(tr("Check for Updates…"), self)
         check_update_action.triggered.connect(self._check_for_updates_manually)
         help_menu.addAction(check_update_action)
 
-        about_action = QAction("About", self)
+        about_action = QAction(tr("About"), self)
         about_action.triggered.connect(self._open_about)
         help_menu.addAction(about_action)
 
@@ -2237,27 +2251,28 @@ class MainWindow(QMainWindow):
         self.statusBar().addWidget(self._hover_label, 1)
 
         # Center-right chips: downloads + agent. Flat buttons styled by QSS.
-        self._dl_chip = QPushButton("⬇ idle")
+        # (initial text only — the per-second refresh text is phase-2 i18n)
+        self._dl_chip = QPushButton(tr("⬇ idle"))
         self._dl_chip.setObjectName("status_chip")
-        self._dl_chip.setToolTip("Active downloads — click to open the Download page")
+        self._dl_chip.setToolTip(tr("Active downloads — click to open the Download page"))
         self._dl_chip.clicked.connect(
             lambda: self.main_tabs.setCurrentWidget(self._torrents_tab))
         self.statusBar().addPermanentWidget(self._dl_chip)
 
-        self._agent_chip = QPushButton("🧠 agent")
+        self._agent_chip = QPushButton(tr("🧠 agent"))
         self._agent_chip.setObjectName("status_chip")
-        self._agent_chip.setToolTip("Agent state — click to open the quick-ask panel (Ctrl+K)")
+        self._agent_chip.setToolTip(tr("Agent state — click to open the quick-ask panel (Ctrl+K)"))
         self._agent_chip.clicked.connect(lambda: self._focus_agent_ask())
         self.statusBar().addPermanentWidget(self._agent_chip)
 
         self._bell_btn = QPushButton("🔔")
         self._bell_btn.setObjectName("status_chip")
-        self._bell_btn.setToolTip("Recent events — completions, syncs, updates")
+        self._bell_btn.setToolTip(tr("Recent events — completions, syncs, updates"))
         self._bell_btn.clicked.connect(self._show_event_log)
         self.statusBar().addPermanentWidget(self._bell_btn)
 
         # Right: permanent transfer summary.
-        self._status_label = QLabel("Ready")
+        self._status_label = QLabel(tr("Ready"))
         self._status_label.setStyleSheet("color: #8a9ab0; font-size: 17px; padding: 2px 8px;")
         self._status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.statusBar().addPermanentWidget(self._status_label)
@@ -2426,16 +2441,16 @@ class MainWindow(QMainWindow):
     def _onboarding_cards(self):
         """(icon, title, tooltip, handler) rows for the first-run cards."""
         cards = [
-            ("⬇", "Add a download", "Paste a magnet link or add a .torrent file",
+            ("⬇", tr("Add a download"), tr("Paste a magnet link or add a .torrent file"),
              self._add_magnet_dialog),
-            ("🔑", "Add an AI key", "The built-in shared key works out of the "
-             "box; add your own to be independent", lambda: self._open_api_keys("ai")),
-            ("🔎", "Connect Jackett", "Link Jackett to search dozens of torrent "
-             "indexers from the agent", self._open_indexer_settings),
+            ("🔑", tr("Add an AI key"), tr("The built-in shared key works out of the "
+             "box; add your own to be independent"), lambda: self._open_api_keys("ai")),
+            ("🔎", tr("Connect Jackett"), tr("Link Jackett to search dozens of torrent "
+             "indexers from the agent"), self._open_indexer_settings),
         ]
         if _PLAY_TAB_SUPPORTED:
-            cards.append(("▶", "Add a playlist", "Add an IPTV playlist (M3U or "
-                          "Xtream) for live TV, movies and series",
+            cards.append(("▶", tr("Add a playlist"), tr("Add an IPTV playlist (M3U or "
+                          "Xtream) for live TV, movies and series"),
                           lambda: self._open_iptv_page(IPTV_SETTINGS_PAGES[0][1])))
         return cards
 
@@ -2443,46 +2458,59 @@ class MainWindow(QMainWindow):
         """Ctrl+, / rail pin: searchable launcher for every settings surface."""
         entries = []
         for label, page in API_KEY_PAGES:
-            entries.append({"category": "AI & API Keys", "title": label.rstrip("…"),
-                            "description": "Open the key manager",
+            entries.append({"category": tr("AI & API Keys"), "title": tr(label).rstrip("…"),
+                            "description": tr("Open the key manager"),
                             "open": lambda p=page: self._open_api_keys(p)})
-        zone = [("Jackett Indexer Settings", "Service URL, key, auto-start, sync",
+        zone = [(tr("Jackett Indexer Settings"), tr("Service URL, key, auto-start, sync"),
                  self._open_indexer_settings)]
         for label, page in DOWNLOAD_SETTINGS_PAGES:
-            zone.append((label.rstrip("…"), "Torrent / queue / manager preferences",
+            zone.append((tr(label).rstrip("…"), tr("Torrent / queue / manager preferences"),
                          lambda p=page: self._open_downloads_settings(p)))
         zone += [
-            ("Torrent Search Sources", "Which indexers the agent searches",
+            (tr("Torrent Search Sources"), tr("Which indexers the agent searches"),
              self._open_sources),
-            ("RSS Feed Subscriptions", "Feeds and auto-download rules",
+            (tr("RSS Feed Subscriptions"), tr("Feeds and auto-download rules"),
              self._open_rss_dialog),
         ]
         for title, desc, cb in zone:
-            entries.append({"category": "Downloads & Sources", "title": title,
+            entries.append({"category": tr("Downloads & Sources"), "title": title,
                             "description": desc, "open": cb})
         for label, page in BROWSER_SETTINGS_PAGES:
-            entries.append({"category": "Browser", "title": label.rstrip("…"),
-                            "description": "Browser preferences",
+            entries.append({"category": tr("Browser"), "title": tr(label).rstrip("…"),
+                            "description": tr("Browser preferences"),
                             "open": lambda p=page: self._open_browser_settings(p)})
         zone = [
-            ("Browser History", "Recently visited pages", self._show_browser_history),
-            ("Back Up All Settings", "Export everything as an encrypted .dfc",
+            (tr("Browser History"), tr("Recently visited pages"), self._show_browser_history),
+            (tr("Back Up All Settings"), tr("Export everything as an encrypted .dfc"),
              self._export_settings),
         ]
         for title, desc, cb in zone:
-            entries.append({"category": "Browser", "title": title,
+            entries.append({"category": tr("Browser"), "title": title,
                             "description": desc, "open": cb})
         if _PLAY_TAB_SUPPORTED:
             for label, _cls in IPTV_SETTINGS_PAGES:
-                entries.append({"category": "Play", "title": label.rstrip("…"),
-                                "description": "IPTV / player preferences",
+                entries.append({"category": tr("Play"), "title": tr(label).rstrip("…"),
+                                "description": tr("IPTV / player preferences"),
                                 "open": lambda c=_cls: self._open_iptv_page(c)})
         SettingsHub(entries, self).exec()
 
+    def _set_ui_language(self, code: str) -> None:
+        """Settings-menu language picker (gui/i18n): persist + inform. The
+        language itself applies on the next launch — same convention as the
+        other restart-to-apply settings."""
+        if getattr(self.config, "ui_language", "en") == code:
+            return
+        self.config.ui_language = code
+        self.config.to_file(self.config_path)
+        QMessageBox.information(
+            self, tr("Language"),
+            tr("The new language applies after DeepFlux restarts."))
+
     def _popup_settings_menu(self) -> None:
-        """Ctrl+,: open the Settings menu pinned under its menu-bar title."""
+        """Ctrl+,,: open the Settings menu pinned under its menu-bar title."""
         bar = self.menuBar()
-        act = next((a for a in bar.actions() if a.text().replace("&", "") == "Settings"), None)
+        act = next((a for a in bar.actions()
+                    if a.text().replace("&", "") == tr("Settings")), None)
         if act is None or self._settings_menu is None:
             return
         rect = bar.actionGeometry(act)
@@ -6079,7 +6107,7 @@ class MainWindow(QMainWindow):
         menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
         chosen: Dict[str, Any] = {}
         for label, cls in IPTV_SETTINGS_PAGES:
-            menu.addAction(label, lambda _c=False, page_cls=cls: chosen.update(cls=page_cls))
+            menu.addAction(tr(label), lambda _c=False, page_cls=cls: chosen.update(cls=page_cls))
         from PySide6.QtGui import QCursor
         menu.exec(QCursor.pos())
         cls = chosen.get("cls")
@@ -6518,6 +6546,12 @@ def run_gui(config_path: Optional[str] = None, open_targets: Optional[List[str]]
     app.setApplicationName("Deeptorrent")
     from gui.fonts import load_app_fonts
     load_app_fonts(app)  # bundled fonts → identical text metrics on every machine
+    # UI language is fixed for the whole process BEFORE any widget builds its
+    # labels (restart-to-apply; gui/i18n contract).
+    from gui.i18n import set_language
+    from config import DeeptorrentConfig as _Cfg
+    set_language(
+        _Cfg.from_file(config_path or _Cfg.default_config_path()).ui_language)
     window = MainWindow(config_path=config_path)
     window.show()
     # Targets passed on the command line (file associations / "Open with").
