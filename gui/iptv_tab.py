@@ -195,8 +195,12 @@ class PlayerWidget(QWidget):
     SKIP_SECONDS = 10
     # True on entering fullscreen — the host tab hides its chrome so only the
     # player is visible. (The video widget can't be reparented to its own
-    # window: that would recreate the native winId mpv/VLC embed into.)
+    # window: that would recreate the native winId mpv/VLC embeds into.)
     sig_fullscreen = Signal(bool)
+    # True while the PURE fullscreen layer is on — the main window hides the
+    # chrome regular fullscreen keeps (activity rail, agent panel) so pure is
+    # video-ONLY. Emitted on every actual layer change.
+    sig_pure = Signal(bool)
 
     def __init__(self, manager: IPTVManager, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -1406,11 +1410,13 @@ class PlayerWidget(QWidget):
             self._controls_hidden = True
             self.controls.hide()
             self.window().setCursor(Qt.BlankCursor)
+            self.sig_pure.emit(True)
             self._flash_pure_hint()
         else:
             self._pure_fullscreen = False
             self._show_controls()
             self._set_controls_autohide(self.window().isFullScreen())
+            self.sig_pure.emit(False)
 
     def _flash_pure_hint(self) -> None:
         """Brief cue on entering pure fullscreen — the only visible UI left."""
@@ -1435,8 +1441,12 @@ class PlayerWidget(QWidget):
             self._hide_timer.start()  # hide after the initial idle grace
         else:
             # Leaving fullscreen (any path, incl. MainWindow.changeEvent's
-            # sync_fullscreen_chrome safety net) sheds the pure layer too.
-            self._pure_fullscreen = False
+            # sync_fullscreen_chrome safety net) sheds the pure layer too —
+            # and must tell the host to bring the activity rail back, for
+            # the paths where the changeEvent round-trip never happens.
+            if self._pure_fullscreen:
+                self._pure_fullscreen = False
+                self.sig_pure.emit(False)
             self._cursor_poll.stop()
             self._hide_timer.stop()
             self._show_controls()
@@ -3741,6 +3751,7 @@ class IPTVTab(QWidget):
         pl_layout.setContentsMargins(0, 0, 0, 0)
         self._player = PlayerWidget(self._manager, self._config)
         self._player.sig_fullscreen.connect(self._on_player_fullscreen)
+        self._player.sig_pure.connect(self._on_player_pure)
         self._player.sig_compact.connect(self._on_player_compact)
         self._player.sig_retry.connect(self._grid.set_retry_count)
         # Player state → IPTVTab so it can stop the loading pulse / set the
@@ -4024,7 +4035,22 @@ class IPTVTab(QWidget):
         / open-target / agent-playback paths), and the menu bar would stay
         hidden forever."""
         self._on_player_fullscreen(on)
+        if not on:
+            # A stale pure layer must not keep the activity rail hidden —
+            # _set_controls_autohide(False) clears the flag directly,
+            # without the sig_pure round-trip.
+            self._on_player_pure(False)
         self._player._set_controls_autohide(on)
+
+    def _on_player_pure(self, on: bool) -> None:
+        """Collapse/restore the chrome REGULAR fullscreen keeps (the main
+        window's activity rail + agent side panel) for the pure layer."""
+        chrome = getattr(self.window(), "set_video_pure_chrome", None)
+        if chrome is not None:
+            try:
+                chrome(on)
+            except Exception:
+                pass
 
     def _on_player_compact(self, on: bool) -> None:
         """Collapse chrome around the existing surface for compact host mode.

@@ -1,8 +1,8 @@
 {
-  "version": "5.4",
-  "file": "DeepFlux5.4Setup.exe",
-  "size": 370687444,
-  "sha256": "e3e1840f6b027340a8741f5d43ab57795b3f7cf518800d9184224a7c19e3f84a",
+  "version": "5.4.1",
+  "file": "DeepFlux5.4.1Setup.exe",
+  "size": 370635029,
+  "sha256": "1a6d9e8dc415573e25a18385f35ee0ed850e0139fdbf7276608965efd472f588",
   "released": "2026-09-26",
-  "notes": "DeepFlux 5.4 — Pure fullscreen: press Shift+F in the Play tab (or the new 🖥 Pure button) for a deeper fullscreen where every control stays hidden and you see only the video. Keyboard shortcuts still work; Esc brings the familiar auto-hiding control bar back. Regular fullscreen (F or double-click) is unchanged."
+  "notes": "DeepFlux 5.4.1 — fixes pure fullscreen (Shift+F / the 🖥 Pure button): it now truly hides everything, including the left navigation rail that stayed visible in 5.4 — video only, nothing else. Esc brings the familiar fullscreen with its control bar back."
 }

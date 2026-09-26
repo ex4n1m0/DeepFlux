@@ -5150,6 +5150,8 @@ def test_pure_fullscreen_layer(tmp_path):
     player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
                           DeeptorrentConfig(), host)
     host.show()
+    pure_states = []
+    player.sig_pure.connect(pure_states.append)
 
     def key(k, modifiers=Qt.NoModifier):
         player.keyPressEvent(
@@ -5162,6 +5164,7 @@ def test_pure_fullscreen_layer(tmp_path):
     assert player.controls.isHidden()
     assert not player._cursor_poll.isActive()
     assert not player._hide_timer.isActive()
+    assert pure_states == [True]  # host must hide the rail/agent panel
 
     # Neither cursor movement nor a key press may reveal the bar in pure mode.
     player._last_cursor = None
@@ -5174,6 +5177,7 @@ def test_pure_fullscreen_layer(tmp_path):
     assert host.isFullScreen() and not player._pure_fullscreen
     assert not player.controls.isHidden()
     assert player._cursor_poll.isActive()
+    assert pure_states == [True, False]
 
     # A second Esc leaves fullscreen (pre-existing behaviour).
     key(Qt.Key_Escape)
@@ -5185,6 +5189,7 @@ def test_pure_fullscreen_layer(tmp_path):
     assert player._pure_fullscreen and player.controls.isHidden()
     player._set_controls_autohide(False)
     assert not player._pure_fullscreen and not player.controls.isHidden()
+    assert pure_states == [True, False, True, False]  # rail restored too
     host.showNormal()
 
     # Compact mini-host and pure fullscreen don't compose.
@@ -5228,4 +5233,45 @@ def test_pure_fullscreen_shift_f_shortcut(tmp_path):
     assert not host.isFullScreen() and not player._pure_fullscreen
     assert not player.controls.isHidden()
     player.shutdown()
+
+
+def test_pure_chrome_hides_rail_and_agent_panel(tmp_path):
+    """set_video_pure_chrome: pure fullscreen hides the chrome regular
+    fullscreen KEEPS (activity rail, agent panel) and restores the exact
+    visibility each had before."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QWidget
+    from gui.main_window import MainWindow
+
+    QApplication.instance() or QApplication([])
+    # A real QWidget host (isVisibleTo needs a QWidget ancestor); the rail /
+    # panel attrs stand in for the MainWindow members.
+    class _FakeWin(QWidget):
+        pass
+
+    win = _FakeWin()
+    rail = QWidget(win)  # child widgets are born visible — rail shows with win
+    panel = QWidget(win)
+    panel.hide()  # the real AgentPanel is setVisible(False) at construction
+    win.activity_rail = rail
+    win.agent_panel = panel
+
+    MainWindow.set_video_pure_chrome(win, True)
+    assert rail.isHidden() and panel.isHidden()
+    # Idempotent re-entry must not overwrite the snapshot with "hidden".
+    MainWindow.set_video_pure_chrome(win, True)
+    assert rail.isHidden() and panel.isHidden()
+
+    MainWindow.set_video_pure_chrome(win, False)
+    assert not rail.isHidden() and panel.isHidden()
+
+    # An OPEN agent panel comes back after the pure round-trip.
+    panel.show()
+    MainWindow.set_video_pure_chrome(win, True)
+    assert rail.isHidden() and panel.isHidden()
+    MainWindow.set_video_pure_chrome(win, False)
+    assert not rail.isHidden() and not panel.isHidden()
+    # Restore without a prior enter is a no-op, never crashes.
+    MainWindow.set_video_pure_chrome(win, False)
+    assert not rail.isHidden() and not panel.isHidden()
 

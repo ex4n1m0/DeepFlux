@@ -1285,6 +1285,29 @@ class MainWindow(QMainWindow):
         m = 0 if on else 4
         self._tabs_layout.setContentsMargins(m, m, m, m)
 
+    def set_video_pure_chrome(self, on: bool) -> None:
+        """Hide the app chrome regular fullscreen KEEPS (activity rail, agent
+        side panel) for pure fullscreen, and restore it afterwards.
+
+        Regular fullscreen deliberately leaves the rail visible (the look
+        the owner likes); pure fullscreen is video-ONLY, so everything else
+        goes. Visibility is snapshotted on entry so an open agent panel
+        comes back exactly as it was."""
+        if on:
+            if getattr(self, "_pure_chrome_saved", None) is None:
+                self._pure_chrome_saved = (
+                    self.activity_rail.isVisibleTo(self),
+                    self.agent_panel.isVisibleTo(self),
+                )
+            self.activity_rail.hide()
+            self.agent_panel.hide()
+        else:
+            saved = getattr(self, "_pure_chrome_saved", None)
+            if saved is not None:
+                self.activity_rail.setVisible(saved[0])
+                self.agent_panel.setVisible(saved[1])
+                self._pure_chrome_saved = None
+
     def _restore_splitters(self) -> None:
         """Restore user-adjusted splitter sizes from the previous session."""
         # NOTE: versioned keys ("agent_v5", "browser_v4") — when a layout's
