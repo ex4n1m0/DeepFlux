@@ -150,6 +150,26 @@
   element), delete the old setup exe,
   then `vercel --prod --yes` from `website/`. Only files in the dir are
   deployed — removing the old exe from the dir removes it from production.
+  Landing-page IMAGES are REAL app captures (since 2026-09-25, owner call:
+  the old CSS mockups didn't match the software): `shot-download-en/zh.webp`
+  + `shot-agent-en/zh.webp` in website/deepflux/, framed by the decorative
+  `.shot-titlebar` chrome. DOWNLOAD EXAMPLES in the shots must be official,
+  unambiguous artifacts ONLY (Ubuntu/Debian ISOs, blender tarball as
+  torrents; ffmpeg/godot/inkscape packages as direct downloads) — owner
+  rule 2026-09-25: no movie-release-style names (BigBuckBunny/Sintel/
+  Tears-of-Steel scene naming looked like warez even though the films are
+  CC-licensed). Regenerate with the scratch tool
+  `python _site_shots.py <en|zh> _site_shots_out` (real engines, loopback
+  seeder + throttled HTTP server, staged chat through _append_user/event/
+  agent, per-language process) → webp q85 → copy into the deploy dir. Key
+  gotchas baked into that script: native windows QPA (offscreen = tofu
+  emoji), NO QT_SCALE_FACTOR (it shrinks the logical desktop and Qt clamps
+  the window to it), WA_ShowWithoutActivating + lower() (a fully
+  off-desktop move gets clamped+resized by Windows), libtorrent
+  `ignore_limits_on_local_network: False` or the loopback seeder saturates,
+  patch `dlmgr.http_client.validate_public_url` for 127.0.0.1 targets, and
+  NO graceful close after the grabs (engine teardown hung for minutes).
+  Retake both languages after any major UI change so the site stays honest.
   macOS (since 4.7, 2026-09-17, RETIRED from the site 2026-09-24): the page also carried
   `DeepFlux-<X>-macOS-arm64.dmg` — fetch it from the CI artifact
   (`gh run download <run-id> -n "DeepFlux-<X>-macOS-arm64" -D <tmp>`), move

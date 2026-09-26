@@ -536,6 +536,22 @@ ZH_CN: dict[str, str] = {
     "AI Deep Search ... (Enter = agent, Ctrl+Enter = web)":
         "AI 深度搜索 ……（回车 = 智能体，Ctrl+回车 = 网页搜索）",
 
+    # --- Download-tab strings the 2026-09-25 capture found untranslated
+    # (chips, downloads table headers/values, summary captions, chat
+    # speaker prefixes, rail pin) ---
+    "Both": "全部",
+    "Filename": "文件名",
+    "Speed": "速度",
+    "Source URL": "源链接",
+    "Downloading": "下载中",
+    "Completed": "已完成",
+    "Processing": "处理中",
+    "Active": "活动",
+    "Queued": "排队",
+    "Showing": "显示",
+    "You:": "你：",
+    "Agent:": "智能体：",
+
     # --- single-word labels (second codemod pass) ---
     # Data VALUES (category names like "Other", backend names like "mpv")
     # deliberately have no entries — tr() returns them unchanged so saved

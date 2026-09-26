@@ -117,7 +117,12 @@ class ActivityRail(QFrame):
 
         for i in range(tabs.count()):
             title = tabs.tabText(i)
-            icon = _PAGE_ICONS.get(title, "◈")
+            # Tab titles are tr()-translated but _PAGE_ICONS keys are the
+            # English sources — match through tr(), or every zh tab falls
+            # back to the diamond glyph (found by the 2026-09-25 site-shot
+            # capture: the whole zh rail rendered as identical diamonds).
+            icon = next((v for k, v in _PAGE_ICONS.items() if tr(k) == title),
+                        "◈")
             btn = _RailButton(icon, title, f"Ctrl+{i + 1}", self)
             btn.clicked.connect(
                 lambda _=False, idx=i: self.page_requested.emit(idx)
@@ -126,7 +131,7 @@ class ActivityRail(QFrame):
             self._buttons[title] = btn
         vbox.addStretch(1)
 
-        settings = _RailButton("⚙", "Settings", "Ctrl+,", self)
+        settings = _RailButton("⚙", tr("Settings"), "Ctrl+,", self)
         settings.clicked.connect(lambda _=False: self.settings_requested.emit())
         vbox.addWidget(settings)
         self._settings_btn = settings

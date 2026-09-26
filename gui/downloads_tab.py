@@ -17,11 +17,12 @@ from PySide6.QtCore import (
     QAbstractTableModel,
     QItemSelectionModel,
     QModelIndex,
+    QRectF,
     QSortFilterProxyModel,
     Qt,
     QTimer,
 )
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPainter, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -34,9 +35,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
-    QStyle,
     QStyledItemDelegate,
-    QStyleOptionProgressBar,
     QStackedWidget,
     QTableView,
     QTableWidget,
@@ -136,7 +135,7 @@ class DownloadsTableModel(QAbstractTableModel):
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if orientation == Qt.Horizontal and role == Qt.DisplayRole and 0 <= section < len(self.COLUMNS):
-            return self.COLUMNS[section]
+            return tr(self.COLUMNS[section])
         return super().headerData(section, orientation, role)
 
     def flags(self, index: QModelIndex):
@@ -218,8 +217,8 @@ class DownloadsTableModel(QAbstractTableModel):
             return _format_eta(job.eta_seconds)
         if column == 4:
             if job.status == JobStatus.ERROR and job.error_message:
-                return f"Error: {job.error_message}"
-            return job.status.value.capitalize()
+                return f"{tr('Error')}: {job.error_message}"
+            return tr(job.status.value.capitalize())
         if column == 5:
             if job.job_type in ("hls", "dash"):
                 return f"{job.file_size} segs" if job.file_size > 0 else "—"
@@ -280,25 +279,35 @@ class DownloadsFilterProxyModel(QSortFilterProxyModel):
 
 
 class ProgressDelegate(QStyledItemDelegate):
-    """Paint progress without allocating a widget for every queue row."""
+    """Paint progress without allocating a widget for every queue row.
+
+    The bar is painted by hand (groove + chunk + centered text): calling
+    ``QApplication.style().drawControl(CE_ProgressBar, …)`` from a delegate
+    paints a ~4px chunk under the native windows11 style (PySide6 6.11 —
+    every queue row showed a broken tick instead of a bar; Fusion/offscreen
+    rendered fine, which is why tests never caught it)."""
 
     def paint(self, painter, option, index) -> None:
-        progress = QStyleOptionProgressBar()
-        progress.rect = option.rect.adjusted(4, 3, -4, -3)
-        progress.state = option.state
-        progress.direction = option.direction
-        progress.fontMetrics = option.fontMetrics
-        progress.textAlignment = Qt.AlignCenter
-        progress.textVisible = True
-        progress.text = str(index.data(Qt.DisplayRole) or "")
-        if index.data(DownloadsTableModel.UNKNOWN_PROGRESS_ROLE):
-            progress.minimum = 0
-            progress.maximum = 0
-        else:
-            progress.minimum = 0
-            progress.maximum = 1000
-            progress.progress = int(float(index.data(DownloadsTableModel.SORT_ROLE) or 0) * 1000)
-        QApplication.style().drawControl(QStyle.CE_ProgressBar, progress, painter)
+        text = str(index.data(Qt.DisplayRole) or "")
+        unknown = bool(index.data(DownloadsTableModel.UNKNOWN_PROGRESS_ROLE))
+        fraction = 0.0 if unknown else min(
+            1.0, max(0.0, float(index.data(DownloadsTableModel.SORT_ROLE) or 0)))
+        rect = option.rect.adjusted(6, 3, -6, -3)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        bar = QRectF(rect.x(), rect.y() + (rect.height() - 8) / 2.0,
+                     float(rect.width()), 8.0)
+        painter.setBrush(QColor(255, 255, 255, 40))
+        painter.drawRoundedRect(bar, 4.0, 4.0)
+        if not unknown and fraction > 0.0:
+            chunk = QRectF(bar)
+            chunk.setWidth(max(8.0, bar.width() * fraction))
+            painter.setBrush(option.palette.brush(QPalette.Highlight))
+            painter.drawRoundedRect(chunk, 4.0, 4.0)
+        painter.setPen(QColor(238, 244, 255))
+        painter.drawText(option.rect, Qt.AlignCenter, text)
+        painter.restore()
 
 
 _VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm",
@@ -666,17 +675,18 @@ class DownloadsTab(QWidget):
         speed = sum(max(0, job.speed_bps) for job in jobs
                     if job.status in (JobStatus.DOWNLOADING, JobStatus.PROCESSING))
         showing = self._proxy.rowCount()
-        self._stat_active.setText(self._stat_html("Active", str(active)))
-        self._stat_queued.setText(self._stat_html("Queued", str(queued)))
+        self._stat_active.setText(self._stat_html(tr("Active"), str(active)))
+        self._stat_queued.setText(self._stat_html(tr("Queued"), str(queued)))
         self._stat_speed.setText(
-            self._stat_html("Speed", _format_speed(speed), accent=speed > 0))
+            self._stat_html(tr("Speed"), _format_speed(speed), accent=speed > 0))
         self._stat_showing.setText(
-            f'<span style="color:#8a9ab0;">Showing: {showing}/{len(jobs)}</span>'
+            f'<span style="color:#8a9ab0;">{tr("Showing")}: {showing}/{len(jobs)}</span>'
             if showing != len(jobs) else "")
         self._summary_plain = (
-            f"Active: {active} | Queued: {queued} | Speed: {_format_speed(speed)}")
+            f"{tr('Active')}: {active} | {tr('Queued')}: {queued} | "
+            f"{tr('Speed')}: {_format_speed(speed)}")
         if showing != len(jobs):
-            self._summary_plain += f" | Showing: {showing}/{len(jobs)}"
+            self._summary_plain += f" | {tr('Showing')}: {showing}/{len(jobs)}"
 
     def _set_search_filter(self, text: str) -> None:
         self._apply_filter(lambda: self._proxy.set_search(text))

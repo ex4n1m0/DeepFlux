@@ -1586,9 +1586,10 @@ class MainWindow(QMainWindow):
         self._dl_view_group.setExclusive(True)
         self._dl_panes = {"torrents": torrents_tab, "downloads": downloads_panel}
         for mode, label, tip in (
-            ("both", "Both", "Torrents and direct downloads, stacked"),
-            ("torrents", "Torrents", "Focus the torrent list (full height)"),
-            ("downloads", "Downloads", "Focus the direct-download queue (full height)"),
+            ("both", tr("Both"), tr("Torrents and direct downloads, stacked")),
+            ("torrents", tr("Torrents"), tr("Focus the torrent list (full height)")),
+            ("downloads", tr("Downloads"),
+             tr("Focus the direct-download queue (full height)")),
         ):
             chip = QPushButton(label)
             chip.setObjectName("status_chip")
@@ -5034,7 +5035,7 @@ class MainWindow(QMainWindow):
         # First user message: hide the logo so the chat turns plain black.
         self.chat_history.set_logo_visible(False)
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        self._insert_html(f'<div class="msg-user"><b>You:</b> {safe}</div>')
+        self._insert_html(f'<div class="msg-user"><b>{tr("You:")}</b> {safe}</div>')
         self.agent_panel.append_exchange("user", text)
         if not getattr(self, "_onboarding_greeting", False):
             self._onboarding.hide()
@@ -5053,7 +5054,7 @@ class MainWindow(QMainWindow):
     def _append_agent(self, text: str) -> None:
         """Render an agent message as a styled bubble with markdown rendering."""
         body = _markdown_to_html(text)
-        self._insert_html(f'<div class="msg-agent"><b>Agent:</b><br>{body}</div>')
+        self._insert_html(f'<div class="msg-agent"><b>{tr("Agent:")}</b><br>{body}</div>')
         self.agent_panel.append_exchange("agent", text)
 
     def _append_event(self, text: str) -> None:
@@ -5208,7 +5209,7 @@ class MainWindow(QMainWindow):
             play_mark = "▶ " if playable else ""
             items = [
                 play_mark + t.get("name", "") + paused,
-                _human_state(t.get("state", "")),
+                tr(_human_state(t.get("state", ""))),
                 f"{t.get('progress', 0) * 100:.1f}%",
                 format_rate(t.get("download_rate", 0)),
                 format_rate(t.get("upload_rate", 0)),

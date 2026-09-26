@@ -384,7 +384,7 @@
     vertical-align: 1px;
   }
 
-  /* ---- Hero app-window mock (CSS-only stand-in until a real capture lands) ---- */
+  /* ---- Hero app window (real capture; the titlebar is decorative chrome) ---- */
   .shot {
     margin: 52px auto 0;
     border: 1px solid rgba(255, 255, 255, 0.10);
@@ -405,41 +405,7 @@
     font-size: 0.74rem; letter-spacing: 0.14em;
     color: var(--ghost);
   }
-  .shot-body { display: flex; min-height: 250px; }
-  .shot-rail {
-    width: 148px; flex-shrink: 0;
-    border-right: 1px solid var(--line);
-    padding: 12px 10px;
-    display: flex; flex-direction: column; gap: 4px;
-  }
-  .rail-item {
-    padding: 7px 11px; border-radius: 9px;
-    font-size: 0.8rem; color: var(--faint); letter-spacing: 0.02em;
-  }
-  .rail-item.active {
-    background: rgba(79, 125, 249, 0.16);
-    color: var(--ink);
-    box-shadow: 0 0 0 1px rgba(79, 125, 249, 0.25) inset;
-  }
-  .shot-main { flex: 1; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-  .shot-toolbar { display: flex; align-items: center; gap: 8px; font-size: 0.74rem; color: var(--ghost); }
-  .shot-toolbar .tbtn {
-    padding: 4px 11px; border: 1px solid var(--line); border-radius: 999px;
-    background: rgba(255,255,255,0.02); color: var(--faint);
-  }
-  .shot-toolbar .grow { flex: 1; }
-  .dl-row {
-    padding: 10px 13px;
-    border: 1px solid var(--line);
-    border-radius: 11px;
-    background: rgba(255, 255, 255, 0.02);
-  }
-  .dl-row .top-line { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
-  .dl-row .name { font-size: 0.8rem; color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .dl-row .sub { font-size: 0.7rem; color: var(--faint); white-space: nowrap; font-family: var(--font-mono); }
-  .bar { height: 4px; border-radius: 2px; background: rgba(255,255,255,0.07); margin-top: 9px; overflow: hidden; }
-  .bar i { display: block; height: 100%; background: var(--grad); border-radius: 2px; }
-  .bar.done i { background: rgba(74, 222, 128, 0.55); }
+  .shot-capture { display: block; width: 100%; height: auto; }
 
   /* ---- Sections ---- */
   section.block { padding: 78px 0 0; scroll-margin-top: 84px; }
@@ -486,74 +452,6 @@
     text-shadow: 0 0 10px rgba(91, 200, 245, 0.6);
   }
   ul.agent-points li b { color: var(--muted); font-weight: 600; }
-
-  .chat {
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    border-radius: 18px;
-    background: var(--card);
-    overflow: hidden;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-  }
-  .chat-head {
-    display: flex; align-items: center; gap: 10px;
-    padding: 13px 18px;
-    border-bottom: 1px solid var(--line);
-    font-family: var(--font-display);
-    font-size: 0.85rem; font-weight: 600;
-  }
-  .chat-head .chat-dot {
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--green);
-    box-shadow: 0 0 10px 1px rgba(74, 222, 128, 0.55);
-  }
-  .chat-head .chat-tag {
-    margin-left: auto;
-    font-family: var(--font-body);
-    font-size: 0.7rem; font-weight: 500;
-    letter-spacing: 0.06em;
-    color: var(--ghost);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 3px 10px;
-  }
-  .chat-body { padding: 18px; display: flex; flex-direction: column; gap: 10px; }
-  .msg {
-    max-width: 86%;
-    padding: 9px 14px;
-    border-radius: 14px;
-    font-size: 0.85rem;
-    line-height: 1.6;
-  }
-  .msg .who {
-    display: block;
-    font-size: 0.66rem;
-    letter-spacing: 0.12em;
-    color: var(--ghost);
-    margin-bottom: 2px;
-  }
-  .msg.user {
-    align-self: flex-end;
-    background: linear-gradient(90deg, rgba(91, 200, 245, 0.13), rgba(139, 92, 246, 0.18));
-    border: 1px solid rgba(139, 92, 246, 0.35);
-    border-bottom-right-radius: 4px;
-  }
-  .msg.bot {
-    align-self: flex-start;
-    border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.03);
-    border-bottom-left-radius: 4px;
-    color: var(--muted);
-  }
-  .msg.bot .li { display: block; font-family: var(--font-mono); font-size: 0.76rem; padding: 1px 0; }
-  .msg.bot b { color: var(--ink); }
-  .chat-foot {
-    padding: 10px 18px;
-    border-top: 1px solid var(--line);
-    font-size: 0.74rem;
-    letter-spacing: 0.05em;
-    color: var(--ghost);
-    text-align: center;
-  }
 
   /* ---- Capabilities bento ---- */
   .bento {
@@ -604,23 +502,6 @@
   .tile p { font-size: 0.82rem; line-height: 1.65; color: var(--faint); }
   .tile.big h3 { font-size: 1.08rem; }
   .tile.big p { font-size: 0.88rem; }
-  .streamline {
-    margin-top: 20px;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 12px 14px;
-    background: rgba(0, 0, 0, 0.25);
-  }
-  .streamline .row1 { display: flex; align-items: center; gap: 9px; font-size: 0.74rem; color: var(--muted); }
-  .streamline .play {
-    width: 22px; height: 22px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    border: 1px solid rgba(91, 200, 245, 0.5);
-    color: var(--cyan);
-    font-size: 0.6rem;
-  }
-  .streamline .sub { margin-left: auto; font-family: var(--font-mono); font-size: 0.68rem; color: var(--ghost); }
-  .streamline .bar { margin-top: 10px; }
 
   /* ---- Install tabs ---- */
   .tabs {
@@ -849,6 +730,8 @@
       <a class="kin-link" href="https://onlyhumans.deepflux.space/" target="_blank" rel="noopener"><b>OnlyHumans</b><span class="kin-sub"> —— 每个词都是一个房间</span></a>
       <span class="kin-sep" aria-hidden="true"></span>
       <a class="kin-link" href="https://n38worth.com/" target="_blank" rel="noopener"><b>n38worth</b><span class="kin-sub"> —— 人类交易模拟</span></a>
+      <span class="kin-sep" aria-hidden="true"></span>
+      <a class="kin-link" href="https://remote.deepflux.space/" target="_blank" rel="noopener"><b>Remote</b><span class="kin-sub"> —— Windows 点对点远程桌面</span></a>
     </div>
   </div>
 
@@ -918,51 +801,14 @@
          title="在线人数为匿名统计 —— 每个安装对应一个随机 id，仅此而已。可在应用的下载设置中关闭。"></span></p>
     </section>
 
-    <div class="shot" role="img" aria-label="DeepFlux 应用界面：下载列表里有正在下载的种子、流媒体进度和传输速度。">
+    <div class="shot">
       <div class="shot-titlebar" aria-hidden="true">
         <span class="dot"></span><span class="dot"></span><span class="dot"></span>
         <span class="title">DeepFlux</span>
       </div>
-      <div class="shot-body" aria-hidden="true">
-        <div class="shot-rail">
-          <div class="rail-item">智能体</div>
-          <div class="rail-item">浏览器</div>
-          <div class="rail-item">种子</div>
-          <div class="rail-item active">下载</div>
-          <div class="rail-item">聊天室</div>
-          <div class="rail-item">文件管理</div>
-        </div>
-        <div class="shot-main">
-          <div class="shot-toolbar">
-            <span class="tbtn">＋ 添加</span>
-            <span class="tbtn">⏸ 暂停</span>
-            <span class="tbtn">⟳ 重试</span>
-            <span class="grow"></span>
-            <span>3 个任务 &middot; 46 MB/s</span>
-          </div>
-          <div class="dl-row">
-            <div class="top-line">
-              <span class="name">ubuntu-26.04.1-desktop-amd64.iso</span>
-              <span class="sub">68% &middot; 24.0 MB/s &middot; 剩余 3 分钟</span>
-            </div>
-            <div class="bar"><i style="width:68%"></i></div>
-          </div>
-          <div class="dl-row">
-            <div class="top-line">
-              <span class="name">debian-13.2.0-amd64-netinst.iso</span>
-              <span class="sub">31% &middot; 18.2 MB/s &middot; 剩余 9 分钟</span>
-            </div>
-            <div class="bar"><i style="width:31%"></i></div>
-          </div>
-          <div class="dl-row">
-            <div class="top-line">
-              <span class="name">blender-5.0-linux-x64.tar.xz</span>
-              <span class="sub">完成 &middot; 做种中</span>
-            </div>
-            <div class="bar done"><i style="width:100%"></i></div>
-          </div>
-        </div>
-      </div>
+      <img class="shot-capture" src="../shot-download-zh.webp" width="2550" height="1500"
+           loading="lazy" decoding="async"
+           alt="Windows 上的 DeepFlux 中文界面，下载页：三个正在活动的种子（Ubuntu 和 Debian 安装镜像下载中、Blender 压缩包做种中），下方是带实时进度条和速度的直接下载列表。">
     </div>
 
     <section class="block" id="agent" aria-label="认识智能体">
@@ -985,25 +831,14 @@
             不出门。</li>
           </ul>
         </div>
-        <div class="chat" role="img" aria-label="对话示例：用户让智能体下载最新版 Ubuntu 和 Debian 安装镜像；智能体找到来源、请求确认，然后报告下载已开始。">
-          <div class="chat-head" aria-hidden="true">
-            <span class="chat-dot"></span> DeepFlux 智能体
-            <span class="chat-tag">每个操作都经你确认</span>
+        <div class="shot">
+          <div class="shot-titlebar" aria-hidden="true">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="title">DeepFlux</span>
           </div>
-          <div class="chat-body" aria-hidden="true">
-            <div class="msg user"><span class="who">你</span>下载最新版的 Ubuntu 和 Debian 安装镜像</div>
-            <div class="msg bot"><span class="who">智能体</span>正在搜索 12 个索引站 —— 找到 3 个来源：</div>
-            <div class="msg bot">
-              <span class="who">智能体</span>
-              <span class="li">Ubuntu 26.04.1 桌面版 &middot; 6.2 GB</span>
-              <span class="li">Debian 13.2.0 网络安装版 &middot; 0.8 GB</span>
-              <b>两个都下载？</b>
-            </div>
-            <div class="msg user"><span class="who">你</span>好 —— 放到 Downloads/ISOs</div>
-            <div class="msg bot"><span class="who">智能体</span>已确认 —— 两个都已加入队列。Ubuntu 正以
-            24&nbsp;MB/s 下载，完成后我会告诉你。</div>
-          </div>
-          <div class="chat-foot" aria-hidden="true">用日常语言提问 &middot; 操作前先确认</div>
+          <img class="shot-capture" src="../shot-agent-zh.webp" width="2550" height="1500"
+               loading="lazy" decoding="async"
+               alt="DeepFlux 智能体对话：用户让它下载最新版 Ubuntu 和 Debian 安装镜像，智能体搜索索引站、列出两个健康来源、请求确认，然后报告两个下载都已入队并给出实时速度。">
         </div>
       </div>
     </section>
@@ -1019,14 +854,6 @@
           <h3>种子引擎</h3>
           <p>完整的 BitTorrent 引擎，支持边下边播 —— 下载刚开始几分钟
           就能开看。限速、顺序下载、重新校验，一句话就能搞定。</p>
-          <div class="streamline" aria-hidden="true">
-            <div class="row1">
-              <span class="play">&#9654;</span>
-              已播放至 00:42 —— 缓冲始终领先于播放
-              <span class="sub">8.1 MB/s &middot; 96 个节点</span>
-            </div>
-            <div class="bar"><i style="width:54%"></i></div>
-          </div>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
