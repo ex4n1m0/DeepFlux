@@ -37,7 +37,7 @@ HELP_HTML_ZH = r"""
 </head>
 <body>
 
-<h1>DeepFlux 5.3 —— 用户指南</h1>
+<h1>DeepFlux 5.4 —— 用户指南</h1>
 
 <p>DeepFlux 是一个 AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室
 和文件管理器。AI 智能体可以搜索并下载种子、查找直链下载、管理你的媒体库 ——
@@ -282,7 +282,11 @@ Brave 和 Perplexity 在配置密钥后加入）并合并结果 —— Perplexit
       播放 → 播放设置 取消“SVP 动态补帧”可关闭。适用于本地文件和点播，
       消耗 GPU；直播始终不用 SVP。找不到 SVP 时选项保持灰色，SVP 出故障时
       DeepFlux 自动回退到普通播放。</li>
-  <li><code>A</code> 循环画面比例；<code>F</code> 或双击全屏。</li>
+  <li><code>A</code> 循环画面比例；<code>F</code> 或双击全屏。<code>Shift+F</code>
+  （或 <b>🖥 纯净</b> 按钮）进入<b>纯净全屏</b> —— 更彻底的全屏：所有控制始终
+  隐藏，只看视频。键盘快捷键（空格、方向键、<code>M</code>……）仍然可用；按
+  <code>Esc</code> 或 <code>Shift+F</code> 恢复自动隐藏的控制栏，再按一次
+  <code>Esc</code> 退出全屏。</li>
 </ul>
 
 <h2>站点抓取</h2>
@@ -385,6 +389,7 @@ onlyhumans.deepflux.space/join 上同一个房间应用 —— 所以 DeepFlux �
   <tr><td><code>Ctrl+L</code></td><td>聚焦地址栏</td></tr>
   <tr><td><code>Enter</code> / <code>Ctrl+Enter</code></td><td>智能体搜索 / 快速网页搜索</td></tr>
   <tr><td><code>空格</code> / <code>M</code> / <code>F</code></td><td>播放器：暂停 / 静音 / 全屏</td></tr>
+  <tr><td><code>Shift+F</code></td><td>播放器：纯净全屏（隐藏所有控制，只看视频）</td></tr>
   <tr><td><code>A</code> / <code>J</code> / <code>#</code></td><td>播放器：画面比例 / 字幕 / 音轨</td></tr>
   <tr><td><code>F5</code> <code>F6</code> <code>F7</code> <code>F8</code> <code>F2</code></td><td>文件管理：复制、移动、新建文件夹、删除、重命名</td></tr>
   <tr><td><code>Ctrl+Q</code></td><td>退出</td></tr>
@@ -446,7 +451,7 @@ AES-128 加密的流。
 </table>
 
 <h2>版本</h2>
-<p>DeepFlux 5.3 —— AI 深度搜索</p>
+<p>DeepFlux 5.4 —— AI 深度搜索</p>
 <p>AI：DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
 
 </body>

@@ -262,6 +262,9 @@ class PlayerWidget(QWidget):
         self._hide_timer.timeout.connect(self._hide_controls)
         self._last_cursor = None
         self._controls_hidden = False
+        # Pure fullscreen layer (Shift+F): window fullscreen with the control
+        # bar gone for good — no cursor polling, no reveal on key press.
+        self._pure_fullscreen = False
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -393,6 +396,12 @@ class PlayerWidget(QWidget):
         self.mv_btn.toggled.connect(self._on_multiview_toggled)
         tools.addWidget(self.mv_btn)
 
+        self.pure_btn = QPushButton(tr('🖥 Pure'))
+        self.pure_btn.setToolTip(
+            tr('Pure fullscreen — hide all controls, video only (Shift+F)'))
+        self.pure_btn.clicked.connect(self._toggle_pure)
+        tools.addWidget(self.pure_btn)
+
         self.fs_btn = QPushButton(tr('⛶ Full'))
         self.fs_btn.setToolTip(tr('Fullscreen (F or double-click)'))
         self.fs_btn.clicked.connect(self._toggle_fullscreen)
@@ -417,7 +426,7 @@ class PlayerWidget(QWidget):
         # itself, and OverflowRow must be the only thing managing its
         # candidates' visibility.)
         self._tools_overflow = OverflowRow(
-            self.controls, (self.mv_btn, self.compact_btn), self,
+            self.controls, (self.pure_btn, self.mv_btn, self.compact_btn), self,
             layout=tools)
 
         layout.addWidget(self.controls)
@@ -502,6 +511,15 @@ class PlayerWidget(QWidget):
         self.buffer_badge.hide()
         self._stall_count = 0
         self._adaptive_cache_secs = 0
+
+        # Pure-fullscreen entry cue: with the control bar gone for good, a
+        # brief overlay is the only thing telling the user how to get back.
+        self.pure_hint = QLabel("", self.surface)
+        self.pure_hint.setAlignment(Qt.AlignCenter)
+        self.pure_hint.setStyleSheet(
+            "background-color: rgba(10,10,15,0.82); color: #ffffff; "
+            "border-radius: 12px; padding: 6px 18px; font-size: 20px;")
+        self.pure_hint.hide()
 
     # -- backend lifecycle ---------------------------------------------------
     def _svp_wanted_for(self, item: Any) -> bool:
@@ -1064,6 +1082,7 @@ class PlayerWidget(QWidget):
             self.rw_btn, self.ff_btn, self.vol, self.aspect_btn,
             self.audio_btn, self.subs_btn, self.preset_btn, self.record_btn,
             self.record_status_lbl, self.sleep_btn, self.fs_btn,
+            self.pure_btn,
         )
         if on:
             self._compact_control_visibility = {
@@ -1350,6 +1369,10 @@ class PlayerWidget(QWidget):
     def _set_fullscreen(self, on: bool) -> None:
         win = self.window()
         if on == win.isFullScreen():
+            # Already there — a redundant "enter" still sheds a stale pure
+            # layer so ⛶/F always land on the regular fullscreen look.
+            if on and self._pure_fullscreen:
+                self._set_pure_fullscreen(False)
             return
         if on:
             win.showFullScreen()
@@ -1358,18 +1381,69 @@ class PlayerWidget(QWidget):
         self.sig_fullscreen.emit(on)
         self._set_controls_autohide(on)
 
+    # -- pure fullscreen (Shift+F) --------------------------------------------
+    # A second, deeper fullscreen layered on top of the regular one: the
+    # window is fullscreen AND the control bar is gone for good — no cursor
+    # polling, no reveal on key press, just the video. Keyboard shortcuts
+    # still work; Esc or Shift+F drops the layer, returning to the regular
+    # fullscreen with its auto-hiding bar.
+    def _toggle_pure(self) -> None:
+        if self._compact:
+            return  # compact mini-host and pure fullscreen don't compose
+        self._set_pure_fullscreen(not self._pure_fullscreen)
+
+    def _set_pure_fullscreen(self, on: bool) -> None:
+        if on == self._pure_fullscreen:
+            return
+        if on:
+            # Set the flag first: it guards the autohide startup that
+            # _set_fullscreen would otherwise run.
+            self._pure_fullscreen = True
+            if not self.window().isFullScreen():
+                self._set_fullscreen(True)
+            self._cursor_poll.stop()
+            self._hide_timer.stop()
+            self._controls_hidden = True
+            self.controls.hide()
+            self.window().setCursor(Qt.BlankCursor)
+            self._flash_pure_hint()
+        else:
+            self._pure_fullscreen = False
+            self._show_controls()
+            self._set_controls_autohide(self.window().isFullScreen())
+
+    def _flash_pure_hint(self) -> None:
+        """Brief cue on entering pure fullscreen — the only visible UI left."""
+        self.pure_hint.setText(
+            tr('Pure fullscreen — press Esc or Shift+F for the controls'))
+        self.pure_hint.adjustSize()
+        self.pure_hint.move(
+            max(0, (self.surface.width() - self.pure_hint.width()) // 2),
+            max(0, self.surface.height() - self.pure_hint.height() - 24))
+        self.pure_hint.show()
+        self.pure_hint.raise_()
+        QTimer.singleShot(3000, self.pure_hint.hide)
+
     # -- fullscreen control auto-hide -----------------------------------------
     def _set_controls_autohide(self, on: bool) -> None:
+        if on and self._pure_fullscreen:
+            # Pure fullscreen keeps the bar hidden — no polling, no reveals.
+            return
         if on:
             self._last_cursor = QCursor.pos()
             self._cursor_poll.start()
             self._hide_timer.start()  # hide after the initial idle grace
         else:
+            # Leaving fullscreen (any path, incl. MainWindow.changeEvent's
+            # sync_fullscreen_chrome safety net) sheds the pure layer too.
+            self._pure_fullscreen = False
             self._cursor_poll.stop()
             self._hide_timer.stop()
             self._show_controls()
 
     def _poll_cursor(self) -> None:
+        if self._pure_fullscreen:
+            return
         pos = QCursor.pos()
         if pos != self._last_cursor:
             self._last_cursor = pos
@@ -1377,7 +1451,7 @@ class PlayerWidget(QWidget):
             self._hide_timer.start()  # restart the countdown after movement
 
     def _show_controls(self) -> None:
-        if self._controls_hidden:
+        if self._controls_hidden and not self._pure_fullscreen:
             self._controls_hidden = False
             self.controls.show()
             self.window().unsetCursor()
@@ -1385,7 +1459,8 @@ class PlayerWidget(QWidget):
     def _hide_controls(self) -> None:
         # Only in fullscreen; never mid-drag on the seek slider or while the
         # pointer sits on the bar itself.
-        if not self.window().isFullScreen() or self.seek.isSliderDown() or self.controls.underMouse():
+        if (not self.window().isFullScreen() or self._pure_fullscreen
+                or self.seek.isSliderDown() or self.controls.underMouse()):
             return
         self._controls_hidden = True
         self.controls.hide()
@@ -1795,8 +1870,9 @@ class PlayerWidget(QWidget):
             self.buffer_badge.raise_()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        # Any key press in fullscreen reveals the controls briefly.
-        if self.window().isFullScreen():
+        # Any key press in fullscreen reveals the controls briefly — except
+        # in pure fullscreen, where the bar stays gone by design.
+        if self.window().isFullScreen() and not self._pure_fullscreen:
             self._show_controls()
             self._hide_timer.start()
         k = event.key()
@@ -1806,6 +1882,8 @@ class PlayerWidget(QWidget):
             self._skip(-self.SKIP_SECONDS)
         elif k == Qt.Key_Right:
             self._skip(self.SKIP_SECONDS)
+        elif k == Qt.Key_F and event.modifiers() & Qt.ShiftModifier:
+            self._toggle_pure()
         elif k == Qt.Key_F:
             self._toggle_fullscreen()
         elif k == Qt.Key_M:
@@ -1825,7 +1903,10 @@ class PlayerWidget(QWidget):
         elif k == Qt.Key_Minus:
             self._nudge_audio_delay(-self._AUDIO_DELAY_STEP)
         elif k == Qt.Key_Escape and self.window().isFullScreen():
-            self._set_fullscreen(False)
+            if self._pure_fullscreen:
+                self._set_pure_fullscreen(False)  # step back one layer
+            else:
+                self._set_fullscreen(False)
         else:
             super().keyPressEvent(event)
 

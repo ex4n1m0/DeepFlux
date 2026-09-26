@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 5.3 — User Guide</h1>
+<h1>DeepFlux 5.4 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -342,7 +342,12 @@ the grid; unmute the ones you want with the 🔇 in the tile's strip.</p>
       local files and VOD, and costs GPU power; live TV always plays without
       SVP. If SVP isn't found the option stays greyed out, and if it ever
       fails DeepFlux falls back to normal playback.</li>
-  <li>Aspect ratio cycles with <code>A</code>; <code>F</code> or double-click for fullscreen.</li>
+  <li>Aspect ratio cycles with <code>A</code>; <code>F</code> or double-click for fullscreen.
+  <code>Shift+F</code> (or the <b>🖥 Pure</b> button) enters <b>pure fullscreen</b> — a
+  deeper fullscreen where every control stays hidden and you see only the video.
+  Keyboard shortcuts (space, arrows, <code>M</code>…) still work there; press
+  <code>Esc</code> or <code>Shift+F</code> to bring the auto-hiding control bar back,
+  and <code>Esc</code> again to leave fullscreen.</li>
 </ul>
 
 <h2>Site Grabber</h2>
@@ -462,6 +467,7 @@ the network when you ask it to.</p>
   <tr><td><code>Ctrl+L</code></td><td>Focus URL bar</td></tr>
   <tr><td><code>Enter</code> / <code>Ctrl+Enter</code></td><td>Agent search / quick web search</td></tr>
   <tr><td><code>Space</code> / <code>M</code> / <code>F</code></td><td>Player: pause / mute / fullscreen</td></tr>
+  <tr><td><code>Shift+F</code></td><td>Player: pure fullscreen (all controls hidden — video only)</td></tr>
   <tr><td><code>A</code> / <code>J</code> / <code>#</code></td><td>Player: aspect ratio / subtitles / audio track</td></tr>
   <tr><td><code>F5</code> <code>F6</code> <code>F7</code> <code>F8</code> <code>F2</code></td><td>Command: copy, move, new folder, delete, rename</td></tr>
   <tr><td><code>Ctrl+Q</code></td><td>Quit</td></tr>
@@ -533,7 +539,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 5.3 — AI Deep Search</p>
+<p>DeepFlux 5.4 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>

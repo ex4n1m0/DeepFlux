@@ -1,8 +1,8 @@
 {
-  "version": "5.3",
-  "file": "DeepFlux5.3Setup.exe",
-  "size": 370696020,
-  "sha256": "3905c68dda6a00a6314a98c195891919f880ae823b83f5b46b91be38133bf9da",
-  "released": "2026-09-24",
-  "notes": "DeepFlux 5.3 — full Simplified Chinese: the app UI (menus, tabs, dialogs, User Guide) and deepflux.space both speak Chinese now. Pick 简体中文 under Settings → Language in the app, or use the language menu on the website. The agent also replies in whichever language you write in."
+  "version": "5.4",
+  "file": "DeepFlux5.4Setup.exe",
+  "size": 370687444,
+  "sha256": "e3e1840f6b027340a8741f5d43ab57795b3f7cf518800d9184224a7c19e3f84a",
+  "released": "2026-09-26",
+  "notes": "DeepFlux 5.4 — Pure fullscreen: press Shift+F in the Play tab (or the new 🖥 Pure button) for a deeper fullscreen where every control stays hidden and you see only the video. Keyboard shortcuts still work; Esc brings the familiar auto-hiding control bar back. Regular fullscreen (F or double-click) is unchanged."
 }

@@ -451,6 +451,17 @@
   `gui/main_window.py`).
 - Splitter `setSizes()` before window show is overridden by size hints —
   enforce default ratios in `MainWindow.showEvent`.
+- Player fullscreen is TWO layers (5.4): regular fullscreen (F/⛶/double-click
+  = window fullscreen + chrome collapse + auto-hiding control bar) and PURE
+  fullscreen layered on top (Shift+F or the 🖥 Pure button = control bar gone
+  for good: no cursor polling, no reveal on key press, blank cursor, one
+  3s entry hint). Esc steps back ONE layer (pure → regular → windowed).
+  Invariants, all pinned by tests/test_iptv.py::test_pure_fullscreen_*:
+  `_set_controls_autohide(False)` must clear `_pure_fullscreen` (it is the
+  MainWindow.changeEvent safety-net path — a stale pure flag would make the
+  next fullscreen permanently dark); `_set_pure_fullscreen(True)` sets the
+  flag BEFORE calling `_set_fullscreen` (the guard keeps autohide from
+  starting the poll timers); compact mode and pure don't compose.
 - `main_tabs.tabBar()` is hidden for good (navigation lives in the menus) —
   never `setVisible(True)` it. Chrome-restoring code (e.g. IPTV's
   `_on_player_fullscreen`, run on every non-fullscreen window-state change

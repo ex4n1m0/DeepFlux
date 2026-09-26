@@ -5132,3 +5132,100 @@ def test_compact_host_never_reparents_player_surface(tmp_path):
     player.shutdown()
     mgr.shutdown()
 
+
+def test_pure_fullscreen_layer(tmp_path):
+    """Pure fullscreen: deeper than regular fullscreen — the control bar is
+    gone for good (no cursor/key reveals), Esc steps back one layer, and the
+    leaving-fullscreen safety net sheds the layer."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication, QWidget
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    QApplication.instance() or QApplication([])
+    host = QWidget()
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig(), host)
+    host.show()
+
+    def key(k, modifiers=Qt.NoModifier):
+        player.keyPressEvent(
+            QKeyEvent(QEvent.KeyPress, k, modifiers))
+
+    # Enter pure from a windowed state: window goes fullscreen AND the bar is
+    # hidden immediately, with no auto-hide polling behind it.
+    player._toggle_pure()
+    assert host.isFullScreen() and player._pure_fullscreen
+    assert player.controls.isHidden()
+    assert not player._cursor_poll.isActive()
+    assert not player._hide_timer.isActive()
+
+    # Neither cursor movement nor a key press may reveal the bar in pure mode.
+    player._last_cursor = None
+    player._poll_cursor()
+    key(Qt.Key_M)
+    assert player.controls.isHidden()
+
+    # Esc steps back ONE layer: regular fullscreen with the bar back.
+    key(Qt.Key_Escape)
+    assert host.isFullScreen() and not player._pure_fullscreen
+    assert not player.controls.isHidden()
+    assert player._cursor_poll.isActive()
+
+    # A second Esc leaves fullscreen (pre-existing behaviour).
+    key(Qt.Key_Escape)
+    assert not host.isFullScreen() and not player.controls.isHidden()
+
+    # The safety net (window left fullscreen behind the player's back) sheds
+    # a stale pure layer — otherwise the next fullscreen would be stuck dark.
+    player._toggle_pure()
+    assert player._pure_fullscreen and player.controls.isHidden()
+    player._set_controls_autohide(False)
+    assert not player._pure_fullscreen and not player.controls.isHidden()
+    host.showNormal()
+
+    # Compact mini-host and pure fullscreen don't compose.
+    player._compact = True
+    player._toggle_pure()
+    assert not player._pure_fullscreen
+    player._compact = False
+
+    # Regular fullscreen keeps its auto-hide behaviour (regression guard).
+    player._set_fullscreen(True)
+    assert host.isFullScreen() and not player._pure_fullscreen
+    assert player._cursor_poll.isActive()
+    host.showNormal()
+    player.shutdown()
+
+
+def test_pure_fullscreen_shift_f_shortcut(tmp_path):
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication, QWidget
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    QApplication.instance() or QApplication([])
+    host = QWidget()
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig(), host)
+    host.show()
+
+    player.keyPressEvent(
+        QKeyEvent(QEvent.KeyPress, Qt.Key_F, Qt.ShiftModifier))
+    assert host.isFullScreen() and player._pure_fullscreen
+    assert player.controls.isHidden()
+
+    # Plain F in pure mode still toggles the WINDOW fullscreen (and sheds the
+    # pure layer on the way out).
+    player.keyPressEvent(
+        QKeyEvent(QEvent.KeyPress, Qt.Key_F, Qt.NoModifier))
+    assert not host.isFullScreen() and not player._pure_fullscreen
+    assert not player.controls.isHidden()
+    player.shutdown()
+
