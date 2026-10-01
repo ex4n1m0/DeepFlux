@@ -465,6 +465,25 @@
   the rail hidden); `_set_pure_fullscreen(True)` sets the flag BEFORE
   calling `_set_fullscreen` (the guard keeps autohide from starting the
   poll timers); compact mode and pure don't compose.
+  5.4.2 lessons (both owner-reported in pure fullscreen):
+  * `_on_player_fullscreen` hides `_toolbar_w, _section_chips_w, _sidebar,
+    _content, _status_w` — the section quick-jump chips (Live TV/Movies/…)
+    landed in 5.1 AFTER that list and stayed visible over fullscreen video.
+    Any NEW always-visible row in the Play tab must join this tuple.
+  * Player keys (Esc/F/Space) live in `PlayerWidget.keyPressEvent`, which
+    only runs when the player HAS keyboard focus. The widget is
+    StrongFocus and re-seats focus (`self.setFocus()`) on every path that
+    hides the bar (`_set_fullscreen` entry, `_set_pure_fullscreen` entry as
+    the LAST op, `_hide_controls`) — without that, focus strands on a
+    hidden control-bar widget and Esc can never leave pure fullscreen
+    (offscreen tests can't catch it: the offscreen QPA grants no focus;
+    verified natively with QTest + a focus-widget assertion).
+  * The SVP out-of-process mpv creates its OWN child HWND under the
+    surface; a video click hands Windows focus to that foreign-process
+    window and Qt cannot SetFocus back cross-process.
+    `mpv_process._make_child_no_activate` patches it WS_EX_NOACTIVATE
+    (pointer-sized argtypes mandatory, best-effort, silently skipped on
+    failure/POSIX) so clicks never steal focus in the first place.
 - `main_tabs.tabBar()` is hidden for good (navigation lives in the menus) —
   never `setVisible(True)` it. Chrome-restoring code (e.g. IPTV's
   `_on_player_fullscreen`, run on every non-fullscreen window-state change
