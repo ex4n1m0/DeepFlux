@@ -72,6 +72,65 @@ def _bytes_available(pipe: Any) -> int:
     return int(avail.value) if ok else 0
 
 
+_WS_EX_NOACTIVATE = 0x08000000
+
+
+def _make_child_no_activate(host_wid: int, tries: int = 25,
+                            delay: float = 0.2) -> None:
+    """Best-effort: mark mpv's child HWND WS_EX_NOACTIVATE (Windows only).
+
+    mpv embeds by creating its OWN child window under our surface HWND. A
+    plain click on the video then hands Windows keyboard focus to that
+    foreign-process window — and Qt can never call SetFocus back across
+    processes, so every player shortcut (Esc out of fullscreen included)
+    goes dead until some Qt chrome is clicked. In pure fullscreen there is
+    no chrome left to click, so we prevent the steal instead. Best-effort:
+    silently skipped on failure/POSIX (mpv ignores clicks anyway —
+    --input-cursor=no --input-vo-keyboard=no).
+    """
+    if os.name != "nt":
+        return
+
+    def _apply() -> bool:
+        # Pointer-sized argtypes are mandatory on 64-bit Windows: untyped
+        # ctypes calls truncate HWNDs / LONG_PTRs to 32 bits (see the
+        # compact-mode SetWindowPos lesson).
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetWindow.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        user32.GetWindow.restype = ctypes.c_void_p
+        user32.GetWindowLongPtrW.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+        user32.SetWindowLongPtrW.argtypes = [
+            ctypes.c_void_p, ctypes.c_int, ctypes.c_ssize_t]
+        user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+        hwnd = user32.GetWindow(ctypes.c_void_p(host_wid), 5)  # GW_CHILD
+        if not hwnd:
+            return False  # video window not created yet
+        GWL_EXSTYLE = -20
+        style = user32.GetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
+        if not style:
+            return False
+        if style & _WS_EX_NOACTIVATE:
+            return True
+        user32.SetWindowLongPtrW(
+            ctypes.c_void_p(hwnd), GWL_EXSTYLE, style | _WS_EX_NOACTIVATE)
+        return True
+
+    def _worker() -> None:
+        for _ in range(tries):
+            try:
+                if _apply():
+                    return
+            except Exception:
+                logger.debug("no-activate patch on mpv window failed",
+                             exc_info=True)
+                return
+            time.sleep(delay)
+
+    threading.Thread(target=_worker, daemon=True,
+                     name="mpv-noactivate").start()
+
+
 class MpvProcessBackend(PlayerBackend):
     """mpv.exe in its own process, embedded via ``--wid`` and driven by IPC."""
 
@@ -143,6 +202,9 @@ class MpvProcessBackend(PlayerBackend):
         self._reader.start()
         for i, prop in enumerate(_OBSERVED, start=1):
             self._send({"command": ["observe_property", i, prop]})
+        # mpv's child window appears once it creates the video output; patch
+        # it in the background so create() never waits on it.
+        _make_child_no_activate(wid)
         return True
 
     def _connect(self, timeout: float = 15.0) -> bool:

@@ -5235,6 +5235,67 @@ def test_pure_fullscreen_shift_f_shortcut(tmp_path):
     player.shutdown()
 
 
+def test_pure_fullscreen_keyboard_focus(tmp_path):
+    """The real-world Esc repro: the bar hides while one of ITS buttons holds
+    keyboard focus — unless the player re-seats focus, the key press dies with
+    the bar and Esc/Shift+F can never leave pure fullscreen. (The offscreen
+    QPA grants no real focus, so this pins the StrongFocus policy + the
+    focus-grab calls on every path that hides the bar.)"""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QWidget
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    QApplication.instance() or QApplication([])
+    host = QWidget()
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig(), host)
+    host.show()
+    # NoFocus widgets never receive key events, whatever calls setFocus().
+    assert player.focusPolicy() == Qt.StrongFocus
+
+    # Entering pure fullscreen hides the bar and must re-seat focus on the
+    # player as the LAST step — clicking "🖥 Pure" leaves focus on that very
+    # (now hidden) button, stranding every later key press.
+    with mock.patch.object(player, "setFocus") as grab:
+        player._toggle_pure()
+    assert player._pure_fullscreen
+    # Two calls are fine (the window-fullscreen entry grabs too); what matters
+    # is that the player is the last focus op, after the bar hid.
+    assert grab.call_count >= 1
+
+    # The regular-fullscreen entry and the auto-hide of the bar under the seek
+    # slider strand focus the same way.
+    player._set_pure_fullscreen(False)
+    player._set_fullscreen(False)  # back to windowed for a fresh entry
+    with mock.patch.object(player, "setFocus") as grab:
+        player._set_fullscreen(True)
+    assert grab.call_count >= 1
+    with mock.patch.object(player, "setFocus") as grab:
+        player._hide_controls()
+    grab.assert_called_once_with()
+    host.showNormal()
+    player.shutdown()
+
+
+def test_fullscreen_hides_section_chips(tmp_path):
+    """Fullscreen (regular, pure and compact all share _on_player_fullscreen)
+    hides the section quick-jump chips row too — it landed after the original
+    hide list and stayed visible over fullscreen video (reported 2026-10-01)."""
+    tab = _iptv_tab_with_two_sources(tmp_path)
+    try:
+        assert not tab._section_chips_w.isHidden()
+        tab._on_player_fullscreen(True)
+        assert tab._section_chips_w.isHidden()
+        # The window round-trip restores them with the other browsing chrome.
+        tab._on_player_fullscreen(False)
+        assert not tab._section_chips_w.isHidden()
+    finally:
+        _close_tab(tab)
+
+
 def test_pure_chrome_hides_rail_and_agent_panel(tmp_path):
     """set_video_pure_chrome: pure fullscreen hides the chrome regular
     fullscreen KEEPS (activity rail, agent panel) and restores the exact

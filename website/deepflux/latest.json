@@ -1,8 +1,8 @@
 {
-  "version": "5.4.1",
-  "file": "DeepFlux5.4.1Setup.exe",
-  "size": 370635029,
-  "sha256": "1a6d9e8dc415573e25a18385f35ee0ed850e0139fdbf7276608965efd472f588",
-  "released": "2026-09-26",
-  "notes": "DeepFlux 5.4.1 — fixes pure fullscreen (Shift+F / the 🖥 Pure button): it now truly hides everything, including the left navigation rail that stayed visible in 5.4 — video only, nothing else. Esc brings the familiar fullscreen with its control bar back."
+  "version": "5.4.2",
+  "file": "DeepFlux5.4.2Setup.exe",
+  "size": 370642025,
+  "sha256": "cbe4ed4e2284d557bc1c5080a630306b2505d7ed14841953b305ad4b74cd82ae",
+  "released": "2026-10-01",
+  "notes": "DeepFlux 5.4.2 — fullscreen video fixes: the section quick-jump chips (Live TV, Movies…) no longer stay visible over fullscreen and pure fullscreen, and Esc now reliably leaves pure fullscreen — a keyboard-focus bug could swallow the key press. Bundles a refreshed Jackett bootstrap."
 }

@@ -244,6 +244,11 @@ class PlayerWidget(QWidget):
         self._compact_control_visibility: Dict[QWidget, bool] = {}
         self._multiview_grid: Optional[MultiViewGrid] = None
         self._build_ui()
+        # Fullscreen key handling (Esc/F/Space/…) lives in keyPressEvent, and
+        # in pure fullscreen every other focusable widget is hidden — without
+        # an explicit policy the window keeps focus and every key press dies
+        # before it reaches the player.
+        self.setFocusPolicy(Qt.StrongFocus)
         self._checkpoint_timer = QTimer(self)
         self._checkpoint_timer.setInterval(15_000)
         self._checkpoint_timer.timeout.connect(self._checkpoint_current)
@@ -1384,6 +1389,10 @@ class PlayerWidget(QWidget):
             win.showNormal()
         self.sig_fullscreen.emit(on)
         self._set_controls_autohide(on)
+        if on:
+            # Hiding the tab panes (sig_fullscreen above) can strand keyboard
+            # focus on a now-hidden widget — take it back so Esc/F keep working.
+            self.setFocus()
 
     # -- pure fullscreen (Shift+F) --------------------------------------------
     # A second, deeper fullscreen layered on top of the regular one: the
@@ -1412,6 +1421,10 @@ class PlayerWidget(QWidget):
             self.window().setCursor(Qt.BlankCursor)
             self.sig_pure.emit(True)
             self._flash_pure_hint()
+            # LAST focus op of the entry path: hiding the bar strands focus, and
+            # with the whole screen video-only the player is the only place a
+            # key press (Esc/Shift+F to leave) can still land.
+            self.setFocus()
         else:
             self._pure_fullscreen = False
             self._show_controls()
@@ -1475,6 +1488,9 @@ class PlayerWidget(QWidget):
         self._controls_hidden = True
         self.controls.hide()
         self.window().setCursor(Qt.BlankCursor)
+        # The bar can hide while the seek slider holds focus — re-seat keyboard
+        # focus on the player or the next Esc/F press is lost with the bar.
+        self.setFocus()
 
     # -- backend callbacks (delivered on the GUI thread via the signals) ----
     def _emit_backend_error(self, msg: str) -> None:
@@ -4067,7 +4083,8 @@ class IPTVTab(QWidget):
         The video widget itself can't be detached into its own window (the
         mpv/VLC embed is tied to its native winId), so instead the tab and
         main-window chrome collapse around it."""
-        for w in (self._toolbar_w, self._sidebar, self._content, self._status_w):
+        for w in (self._toolbar_w, self._section_chips_w, self._sidebar,
+                  self._content, self._status_w):
             w.setVisible(not on)
         # The metadata overlay is part of the player pane — collapse it too so
         # fullscreen is video-only, but remember whether it was open so it can
