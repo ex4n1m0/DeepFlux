@@ -356,7 +356,7 @@
   }
 
   section.cta { text-align: center; padding: 34px 0 0; }
-  .cta-row { display: flex; justify-content: center; }
+  .cta-row { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
   p.also {
     margin-top: 16px;
     font-size: 0.86rem;
@@ -793,9 +793,13 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">下载 Windows 版</span>
         </a>
+        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-5.5-Linux-x86_64.AppImage" download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="os-label">下载 Linux 版</span>
+        </a>
       </div>
       <p class="also">
-        Windows 10 / 11 &middot; 64 位 &middot; Linux x86-64（AppImage，见下方）
+        Windows 10 / 11 &middot; 64 位 &middot; Linux x86-64（AppImage）
         &mdash;&nbsp;<a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">源代码</a>
       </p>
       <p class="meta-row">免费 &middot; 无需账号 &middot; 文件只保存在你的电脑上<span class="live" id="live" hidden
@@ -1003,10 +1007,16 @@
     <section class="final" aria-label="下载 DeepFlux">
       <h2>准备好了就开始吧。</h2>
       <p>免费下载 &middot; 无需账号 &middot; 你的电脑，你的文件。</p>
-      <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.5Setup.exe" download>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        <span class="os-label">下载 Windows 版</span>
-      </a>
+      <div class="cta-row">
+        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.5Setup.exe" download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="os-label">下载 Windows 版</span>
+        </a>
+        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-5.5-Linux-x86_64.AppImage" download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="os-label">下载 Linux 版</span>
+        </a>
+      </div>
     </section>
   </main>
 

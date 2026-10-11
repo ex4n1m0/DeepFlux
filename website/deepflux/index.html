@@ -354,7 +354,7 @@
   }
 
   section.cta { text-align: center; padding: 34px 0 0; }
-  .cta-row { display: flex; justify-content: center; }
+  .cta-row { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
   p.also {
     margin-top: 16px;
     font-size: 0.86rem;
@@ -791,9 +791,13 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Download for Windows</span>
         </a>
+        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-5.5-Linux-x86_64.AppImage" download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="os-label">Download for Linux</span>
+        </a>
       </div>
       <p class="also">
-        Windows 10 / 11 &middot; 64-bit &middot; Linux x86-64 (AppImage, below)
+        Windows 10 / 11 &middot; 64-bit &middot; Linux x86-64 (AppImage)
         &nbsp;&mdash;&nbsp;<a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">source code</a>
       </p>
       <p class="meta-row">Free &middot; no account &middot; your files stay on your machine<span class="live" id="live" hidden
@@ -1006,10 +1010,16 @@
     <section class="final" aria-label="Download DeepFlux">
       <h2>Ready when you are.</h2>
       <p>Free download &middot; no account &middot; your machine, your files.</p>
-      <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.5Setup.exe" download>
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        <span class="os-label">Download for Windows</span>
-      </a>
+      <div class="cta-row">
+        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.5Setup.exe" download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="os-label">Download for Windows</span>
+        </a>
+        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-5.5-Linux-x86_64.AppImage" download>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          <span class="os-label">Download for Linux</span>
+        </a>
+      </div>
     </section>
   </main>
 
