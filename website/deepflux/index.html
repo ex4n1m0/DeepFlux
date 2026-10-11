@@ -317,14 +317,15 @@
     letter-spacing: -0.01em;
     color: var(--ink);
     text-align: center;
-    margin: calc(34px + 0.157 * min(768px, 100%)) 0 34px;
+    margin: 34px 0 26px;
   }
   header.hero .banner-glow {
     position: relative;
     display: block;
-    /* Square logo mark: large but not full-column — clamped to the
-       content width on narrow screens. */
-    width: min(768px, 100%);
+    /* Logo mark cropped tight to its artwork (DeepFlux-rot.webp —
+       rotated 90° CW in the file): sized to the mark's previous VISUAL
+       width now that the ~16% transparent padding is gone. */
+    width: min(520px, 100%);
     margin: 0 auto;
   }
   header.hero .banner-glow::before {
@@ -341,7 +342,6 @@
     height: auto;
     display: block;
     margin: 0 auto;
-    transform: rotate(90deg);
     /* The original mark carries real alpha and a dark body — normal
        compositing over the page, lit by the glow behind it. The retired
        wordmark's mix-blend-mode: screen would blank a dark logo. */
@@ -776,7 +776,7 @@
       <div class="eyebrow"><span class="spark" aria-hidden="true"></span> AI agent &middot; built in</div>
       <h1>Super Intelligent Download Tool</h1>
       <div class="banner-glow">
-        <img class="banner" src="DeepFlux.webp" alt="DeepFlux logo">
+        <img class="banner" src="DeepFlux-rot.webp" alt="DeepFlux logo">
       </div>
       <div class="hero-copy">
         <p>An AI-powered download manager with a built-in browser, media player
