@@ -324,12 +324,15 @@
     letter-spacing: 0;
     color: var(--ink);
     text-align: center;
-    margin: calc(34px + 0.157 * min(768px, 100%)) 0 34px;
+    margin: 34px 0 26px;
   }
   header.hero .banner-glow {
     position: relative;
     display: block;
-    width: min(768px, 100%);
+    /* Logo mark cropped tight to its artwork (DeepFlux-rot.webp —
+       rotated 90° CW in the file): sized to the mark's previous VISUAL
+       width now that the ~16% transparent padding is gone. */
+    width: min(520px, 100%);
     margin: 0 auto;
   }
   header.hero .banner-glow::before {
@@ -346,7 +349,6 @@
     height: auto;
     display: block;
     margin: 0 auto;
-    transform: rotate(90deg);
   }
   .hero-copy { margin: 14px auto 0; max-width: 760px; }
   .hero-copy p {
@@ -778,7 +780,7 @@
       <div class="eyebrow"><span class="spark" aria-hidden="true"></span> 内置 AI 智能体</div>
       <h1>超级智能下载工具</h1>
       <div class="banner-glow">
-        <img class="banner" src="../DeepFlux.webp" alt="DeepFlux 徽标">
+        <img class="banner" src="../DeepFlux-rot.webp" alt="DeepFlux 徽标">
       </div>
       <div class="hero-copy">
         <p>AI 驱动的下载管理器，内置浏览器、媒体播放器和文件管理器
