@@ -101,8 +101,8 @@ jobs:
           skip_re = re.compile(
               r"^(ld-linux|libc\.so|libm\.so|libpthread\.so|libdl\.so|librt\.so|"
               r"libresolv\.so|libutil\.so|libcrypt\.so|libanl\.so|"
-              r"libGL\.|libEGL\.|libGLES\.|libglapi\.|libgbm\.|libdrm\.|"
-              r"libwayland-|libvulkan\.|libGLX\.|libOpenGL\.)")
+              r"libGL\.|libGLdispatch\.|libEGL\.|libGLES\.|libglapi\.|"
+              r"libgbm\.|libdrm\.|libwayland-|libvulkan\.|libGLX\.|libOpenGL\.)")
 
           dest = "dist/DeepFlux/_internal/mpvlibs"
           os.makedirs(dest, exist_ok=True)
