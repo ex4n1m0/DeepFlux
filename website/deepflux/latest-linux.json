@@ -1,0 +1,8 @@
+{
+  "version": "5.5",
+  "file": "DeepFlux-5.5-Linux-x86_64.AppImage",
+  "size": 627415544,
+  "sha256": "c95b548b8376d8d31e2e6c47fd1646912f3d7547e7e63e09aaf2d335e87abc71",
+  "released": "2026-10-11",
+  "notes": "DeepFlux 5.5 for Linux — first full-feature Linux build (AppImage): Play tab with embedded mpv, SVP 4 for Linux support, in-app self-update, and the built-in AI key (rotated with this release)."
+}

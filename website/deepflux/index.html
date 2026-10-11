@@ -746,7 +746,7 @@
           <li class="hide-mobile"><a class="navlink" href="#install">Install</a></li>
           <li class="hide-mobile"><a class="navlink" href="#trust">Privacy</a></li>
           <li class="hide-mobile"><a class="navlink" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">GitHub</a></li>
-          <li class="hide-mobile"><span class="pill">v5.4.2</span></li>
+          <li class="hide-mobile"><span class="pill">v5.5</span></li>
           <li>
             <details class="lang">
               <summary class="pill" aria-haspopup="menu" aria-label="Change language">
@@ -760,7 +760,7 @@
             </details>
           </li>
           <li>
-            <a class="btn btn-primary btn-nav" data-os-primary aria-label="Download DeepFlux" href="/api/download?f=DeepFlux5.4.2Setup.exe" download>
+            <a class="btn btn-primary btn-nav" data-os-primary aria-label="Download DeepFlux" href="/api/download?f=DeepFlux5.5Setup.exe" download>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span class="os-label">Download</span>
             </a>
@@ -787,13 +787,13 @@
       <div class="cta-row">
         <!-- /api/download counts the click (Upstash counter) then 302s to the
              static file; it redirects uncounted when the counter isn't set up. -->
-        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.4.2Setup.exe" download>
+        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.5Setup.exe" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Download for Windows</span>
         </a>
       </div>
       <p class="also">
-        Windows 10 / 11 &middot; 64-bit
+        Windows 10 / 11 &middot; 64-bit &middot; Linux x86-64 (AppImage, below)
         &nbsp;&mdash;&nbsp;<a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">source code</a>
       </p>
       <p class="meta-row">Free &middot; no account &middot; your files stay on your machine<span class="live" id="live" hidden
@@ -894,13 +894,17 @@
         <h2>Know exactly what you&rsquo;re running</h2>
       </div>
       <div class="tabs">
-<div class="tabpanel">
+          <div class="tablist" role="tablist" aria-label="Choose your platform">
+          <button class="tab" type="button" role="tab" id="tab-win" aria-controls="panel-win" aria-selected="true">Windows<small>10 / 11 &middot; 64-bit</small></button>
+          <button class="tab" type="button" role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="false" tabindex="-1">Linux<small>x86-64 &middot; AppImage</small></button>
+        </div>
+        <div class="tabpanel" role="tabpanel" id="panel-win" aria-labelledby="tab-win">
           <div class="panel-head">
             <div>
               <div class="panel-title">Windows 10 / 11 &middot; 64-bit</div>
-              <div class="panel-sub">v5.4.2 &middot; 370.6 MB &middot; per-user install, no admin &middot; updates itself in-app</div>
+              <div class="panel-sub">v5.5 &middot; 370.7 MB &middot; per-user install, no admin &middot; updates itself in-app</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux5.4.2Setup.exe" download>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux5.5Setup.exe" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Download setup
             </a>
@@ -923,8 +927,42 @@
           </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
-            <code>cbe4ed4e2284d557bc1c5080a630306b2505d7ed14841953b305ad4b74cd82ae</code>
-            <button class="copy" type="button" data-copy="cbe4ed4e2284d557bc1c5080a630306b2505d7ed14841953b305ad4b74cd82ae">Copy</button>
+            <code>b49da817d9d325217775aa7b1b154971912e03c069294f623c94000bdc263400</code>
+            <button class="copy" type="button" data-copy="b49da817d9d325217775aa7b1b154971912e03c069294f623c94000bdc263400">Copy</button>
+          </div>
+        </div>
+
+        <div class="tabpanel" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux" hidden>
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Linux x86-64 &middot; glibc 2.39+</div>
+              <div class="panel-sub">v5.5 &middot; 627.4 MB &middot; AppImage &mdash; Ubuntu 24.04+, Debian 13, Fedora 40+, Arch &middot; full feature build</div>
+            </div>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-5.5-Linux-x86_64.AppImage" download>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              Download AppImage
+            </a>
+          </div>
+          <ol class="steps">
+            <li><b>Download</b> the AppImage &mdash; one file, no installer, no
+            security warnings. Keep it in a folder you can write to (your home
+            directory is ideal): it updates itself in place.</li>
+            <li>Make it executable once: <b>chmod +x DeepFlux-*.AppImage</b> in a
+            terminal, or file <b>Properties&nbsp;&rarr;&nbsp;Permissions</b> in your
+            file manager.</li>
+            <li>The built-in player runs under XWayland automatically. If a
+            stream needs FFmpeg, your package manager has it &mdash; or just ask
+            the agent to install it.</li>
+          </ol>
+          <div class="note">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <p>The <b>same shared AI key as Windows is built in</b> &mdash; the
+            agent works out of the box and the key rotates with every release.</p>
+          </div>
+          <div class="checksum">
+            <span class="lbl">sha256</span>
+            <code>c95b548b8376d8d31e2e6c47fd1646912f3d7547e7e63e09aaf2d335e87abc71</code>
+            <button class="copy" type="button" data-copy="c95b548b8376d8d31e2e6c47fd1646912f3d7547e7e63e09aaf2d335e87abc71">Copy</button>
           </div>
         </div>
 
@@ -968,7 +1006,7 @@
     <section class="final" aria-label="Download DeepFlux">
       <h2>Ready when you are.</h2>
       <p>Free download &middot; no account &middot; your machine, your files.</p>
-      <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.4.2Setup.exe" download>
+      <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.5Setup.exe" download>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         <span class="os-label">Download for Windows</span>
       </a>
@@ -1012,6 +1050,37 @@
       }
       refresh();
       setInterval(refresh, 60000);
+    })();
+
+    (function () {
+      // Install tabs: ARIA pattern with roving tabindex + arrow keys.
+      var TABS = ['win', 'linux'];
+      var initial = 'win';
+      if (location.hash.indexOf('#install-') === 0) {
+        var h = location.hash.slice(9);
+        if (TABS.indexOf(h) >= 0) initial = h;
+      }
+      function selectTab(id, focus) {
+        TABS.forEach(function (t) {
+          var btn = document.getElementById('tab-' + t);
+          var panel = document.getElementById('panel-' + t);
+          var on = (t === id);
+          btn.setAttribute('aria-selected', on ? 'true' : 'false');
+          btn.tabIndex = on ? 0 : -1;
+          panel.hidden = !on;
+          if (on && focus) btn.focus();
+        });
+      }
+      document.querySelectorAll('.tab').forEach(function (btn) {
+        btn.addEventListener('click', function () { selectTab(btn.id.slice(4)); });
+        btn.addEventListener('keydown', function (e) {
+          var i = TABS.indexOf(btn.id.slice(4)), n = null;
+          if (e.key === 'ArrowRight') n = (i + 1) % TABS.length;
+          else if (e.key === 'ArrowLeft') n = (i + TABS.length - 1) % TABS.length;
+          if (n !== null) { e.preventDefault(); selectTab(TABS[n], true); }
+        });
+      });
+      selectTab(initial);
     })();
 
     (function () {

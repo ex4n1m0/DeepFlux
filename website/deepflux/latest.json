@@ -1,8 +1,8 @@
 {
-  "version": "5.4.2",
-  "file": "DeepFlux5.4.2Setup.exe",
-  "size": 370642025,
-  "sha256": "cbe4ed4e2284d557bc1c5080a630306b2505d7ed14841953b305ad4b74cd82ae",
-  "released": "2026-10-01",
-  "notes": "DeepFlux 5.4.2 — fullscreen video fixes: the section quick-jump chips (Live TV, Movies…) no longer stay visible over fullscreen and pure fullscreen, and Esc now reliably leaves pure fullscreen — a keyboard-focus bug could swallow the key press. Bundles a refreshed Jackett bootstrap."
+  "version": "5.5",
+  "file": "DeepFlux5.5Setup.exe",
+  "size": 370709955,
+  "sha256": "b49da817d9d325217775aa7b1b154971912e03c069294f623c94000bdc263400",
+  "released": "2026-10-11",
+  "notes": "DeepFlux 5.5 — the built-in AI key was rotated (keep updating, or set your own under File → API Keys). A full Linux build (AppImage) now ships alongside Windows with the same features, including the media player."
 }
