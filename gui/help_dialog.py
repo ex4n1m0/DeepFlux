@@ -84,6 +84,24 @@ Play tab, the Command tab's function-key bar, and the download lists) and
 the player's transport row switches to compact buttons — everything stays
 reachable, nothing disappears.</p>
 
+<h2>Linux (AppImage)</h2>
+
+<p>The Linux build ships as an AppImage: download it, run
+<code>chmod +x DeepFlux-*.AppImage</code> once, then launch it — no installer and
+no security warnings. Keep it in a folder you can write to (your home
+directory is ideal): Help → <i>Check for Updates</i> updates the AppImage in
+place, no terminal needed. The first launch seeds the same sample playlist
+the Windows installer adds.</p>
+
+<p>Two Linux specifics: the Play tab plays video through X11 — on Wayland
+desktops the app starts under XWayland automatically, but if you override
+<code>QT_QPA_PLATFORM=wayland</code> yourself, in-window video will not work. And
+FFmpeg (used for posters, subtitles and recordings) is not bundled — install
+it with your package manager (<code>sudo apt install ffmpeg</code> or the
+equivalent) and DeepFlux finds it on PATH. To make DeepFlux the default for
+.torrent files and magnet links, run the AppImage once from a terminal with
+<code>--register-associations</code>.</p>
+
 <h2>Tabs</h2>
 
 <table>

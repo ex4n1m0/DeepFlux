@@ -44,7 +44,9 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import subprocess
 import sys
+import tarfile
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -68,7 +70,26 @@ FANOUT_BUDGET_SECONDS = 480.0         # hard wall-clock cap on the add sweep
 UAC_CANCELLED = 1223                  # ERROR_CANCELLED from ShellExecuteEx
 
 # Per AGENTS.md: Windows subprocess spawns must not flash a console window.
-_CREATE_NO_WINDOW = 0x08000000
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+# --- Linux (user-mode install, verified against the real tarball 2026-10-11):
+# the official glibc x64 asset extracts to one Jackett/ dir with the
+# `jackett` console binary; it needs NO root when installed under
+# ~/.local/share, writes its ServerConfig.json to ~/.config/Jackett on first
+# run (random 32-char APIKey + Port), and `--Install/--Start` are
+# Windows-service-only flags that ERROR out on Unix — so we spawn the
+# console binary directly, detached, like the tray-less systemd launcher
+# does (jackett_launcher.sh runs `jackett --NoRestart`).
+LINUX_TARBALL_ASSET = "Jackett.Binaries.LinuxAMDx64.tar.gz"
+LINUX_RELEASE_API = "https://api.github.com/repos/Jackett/Jackett/releases/latest"
+LINUX_DOWNLOAD_TIMEOUT = 600.0
+LINUX_DOWNLOAD_CAP = 512 * 1024 * 1024  # sanity ceiling; real asset ~51 MB
+
+
+def _linux_install_root() -> str:
+    """Install root (~/.local/share/Jackett) — computed lazily so HOME
+    overrides/tests behave."""
+    return os.path.join(os.path.expanduser("~"), ".local", "share", "Jackett")
 
 
 # ----------------------------------------------------------------------
@@ -78,10 +99,17 @@ _CREATE_NO_WINDOW = 0x08000000
 def server_config_candidates() -> List[str]:
     """Jackett's ServerConfig.json locations, most likely first.
 
-    The service install writes C:\\ProgramData\\Jackett; a user-mode
-    (tray/console) install keeps its config under LOCALAPPDATA.
+    Windows: the service install writes C:\\ProgramData\\Jackett; a
+    user-mode (tray/console) install keeps its config under LOCALAPPDATA.
+    Linux: every install mode (console binary, systemd service) uses
+    ~/.config/Jackett (Jackett's Unix ApplicationData path).
     """
     paths: List[str] = []
+    if sys.platform.startswith("linux"):
+        conf = os.path.expanduser("~/.config")
+        paths.append(os.path.join(conf, "Jackett", "ServerConfig.json"))
+        paths.append(os.path.join(conf, "jackett", "ServerConfig.json"))
+        return paths
     for env in ("ProgramData", "LOCALAPPDATA"):
         base = os.environ.get(env)
         if base:
@@ -235,6 +263,106 @@ def _shell_execute_runas(file_path: str, params: str,
         return code.value == 0, int(code.value)
     finally:
         kernel32.CloseHandle(info.hProcess)
+
+
+# ----------------------------------------------------------------------
+# Linux user-mode install (download + extract + spawn, no root)
+# ----------------------------------------------------------------------
+
+def linux_jackett_binary() -> Optional[str]:
+    """The `jackett` console binary of our user-mode install, if present."""
+    p = os.path.join(_linux_install_root(), "Jackett", "jackett")
+    return p if os.path.isfile(p) else None
+
+
+def _download_linux_tarball(dest: str, say: Callable[[str], None]) -> bool:
+    """Fetch the official glibc x64 tarball from the latest GitHub release."""
+    try:
+        say("Downloading Jackett from the official GitHub release…")
+        api = requests.get(LINUX_RELEASE_API, timeout=30.0,
+                           headers={"Accept": "application/vnd.github+json",
+                                    "User-Agent": "DeepFlux"})
+        api.raise_for_status()
+        url = None
+        for asset in api.json().get("assets", []):
+            if asset.get("name") == LINUX_TARBALL_ASSET:
+                url = asset.get("browser_download_url")
+                break
+        if not url:
+            say(f"Release carries no {LINUX_TARBALL_ASSET} asset.")
+            return False
+        with requests.get(url, stream=True, timeout=LINUX_DOWNLOAD_TIMEOUT) as resp:
+            resp.raise_for_status()
+            size = int(resp.headers.get("Content-Length") or 0)
+            if size and size > LINUX_DOWNLOAD_CAP:
+                say("Download larger than expected — aborted.")
+                return False
+            written = 0
+            with open(dest, "wb") as f:
+                for chunk in resp.iter_content(256 * 1024):
+                    if not chunk:
+                        continue
+                    written += len(chunk)
+                    if written > LINUX_DOWNLOAD_CAP:
+                        say("Download larger than expected — aborted.")
+                        return False
+                    f.write(chunk)
+        return True
+    except Exception as exc:
+        logger.warning("Jackett Linux download failed: %s", exc)
+        return False
+
+
+def _install_linux_jackett(say: Callable[[str], None]) -> bool:
+    """Download, extract and LAUNCH Jackett as a user-mode process.
+
+    No root anywhere: the tarball lands in ~/.local/share/Jackett, the
+    config in ~/.config/Jackett. The console binary is spawned detached
+    (its own session) with --NoRestart, mirroring Jackett's own
+    jackett_launcher.sh. Returns True once the binary is running."""
+    if not sys.platform.startswith("linux"):
+        return False
+    binary = linux_jackett_binary()
+    if not binary:
+        root = _linux_install_root()
+        os.makedirs(root, exist_ok=True)
+        dest = os.path.join(root, LINUX_TARBALL_ASSET)
+        if not _download_linux_tarball(dest, say):
+            return False
+        try:
+            say("Extracting…")
+            with tarfile.open(dest, "r:gz") as tar:
+                tar.extractall(root)  # noqa: S202 — official asset
+        except Exception as exc:
+            logger.warning("Jackett tarball extract failed: %s", exc)
+            return False
+        finally:
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+        binary = linux_jackett_binary()
+        if not binary:
+            say("The archive did not contain the expected Jackett layout.")
+            return False
+        try:
+            os.chmod(binary, 0o755)
+        except OSError:
+            pass
+    say("Starting Jackett (user mode, no admin rights)…")
+    try:
+        subprocess.Popen(
+            [binary, "--NoRestart"],
+            cwd=os.path.dirname(binary),
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+    except OSError as exc:
+        logger.warning("Jackett spawn failed: %s", exc)
+        return False
+    return True
 
 
 # ----------------------------------------------------------------------
@@ -404,6 +532,31 @@ def run_setup(config_path: Optional[str] = None,
         if server_cfg:
             say("Jackett is installed but not answering — starting it…")
             started = bool(jackett.start(config) and jackett.wait_until_ready(config))
+        if not started and sys.platform.startswith("linux"):
+            # One path covers "no install at all" (download + extract +
+            # spawn) and "our install exists but never finished its first
+            # run" (config file still missing — the spawn creates it).
+            if not _install_linux_jackett(say):
+                result["error"] = "linux-install-failed"
+                say("Jackett could not be downloaded or started — check the "
+                    "network and try again, or install it from "
+                    "https://github.com/Jackett/Jackett.")
+                return result
+            result["installed"] = True
+            say("Jackett installed — waiting for its first configuration…")
+            server_cfg = _wait_for_server_config(SERVER_CONFIG_TIMEOUT)
+            if not server_cfg:
+                result["error"] = "no-server-config"
+                say("Jackett started but its configuration file never appeared.")
+                return result
+            config.indexer.url = base_url_from(server_cfg)
+            config.indexer.api_key = server_cfg["api_key"]
+            if not jackett.wait_until_ready(config, timeout=SERVICE_ONLINE_TIMEOUT):
+                result["error"] = "not-running"
+                say("Jackett installed but is not answering yet — DeepFlux will "
+                    "keep trying at startup.")
+                return result
+            started = True
         if not started:
             installer = installer_path or find_bundled_installer()
             if not installer:

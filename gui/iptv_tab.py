@@ -552,7 +552,16 @@ class PlayerWidget(QWidget):
             mb = create_backend(self.surface, preferred=self._config.iptv.preferred_player,
                                 svp=svp_on)
             if mb is None:
-                self._show_error("No playback backend available. See Settings → IPTV.")
+                hint = ""
+                if sys.platform == "linux":
+                    try:
+                        from PySide6.QtGui import QGuiApplication
+                        if QGuiApplication.platformName() not in ("xcb", "offscreen", "minimal"):
+                            hint = (" Video embedding needs X11/XWayland — launch with"
+                                    " QT_QPA_PLATFORM=xcb.")
+                    except Exception:
+                        pass
+                self._show_error("No playback backend available. See Settings → IPTV." + hint)
                 return False
             # Snapshot the WANTED state (setting on + this item class), not
             # whether the backend honors it, so a VLC backend or a missing

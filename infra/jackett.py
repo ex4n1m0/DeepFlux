@@ -51,8 +51,11 @@ _MACOS_EXE_CANDIDATES = (
 # (root/systemd install) or ~/.config/Jackett (user install); it serves the
 # API in-process just like the Windows console host. Starting the systemd
 # service needs elevation, so DeepFlux only ever spawns the binary directly.
+# The ~/.local/share path is our own user-mode install from the one-click
+# setup (infra/jackett_setup.py::_install_linux_jackett).
 _LINUX_EXE_CANDIDATES = (
     "/opt/jackett/jackett",
+    os.path.expanduser("~/.local/share/Jackett/Jackett/jackett"),
     os.path.expanduser("~/.config/Jackett/jackett"),
 )
 

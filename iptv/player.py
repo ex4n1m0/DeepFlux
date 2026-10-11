@@ -21,6 +21,9 @@ themselves are Qt-light so they can be unit-tested without a display.
 """
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
+import glob
 import logging
 import math
 import os
@@ -31,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Bundled DLL discovery
+# Bundled player-library discovery
 # ---------------------------------------------------------------------------
 
 def _bundled_dll_dir() -> str:
@@ -53,6 +56,71 @@ def ensure_mpv_dll_on_path() -> None:
     d = _bundled_dll_dir()
     if d and d not in os.environ.get("PATH", ""):
         os.environ["PATH"] = d + os.pathsep + os.environ.get("PATH", "")
+    if os.name == "posix":
+        _ensure_bundled_so_findable()
+
+
+# ---------------------------------------------------------------------------
+# Linux: bundled .so loading
+# ---------------------------------------------------------------------------
+
+_orig_find_library = None
+
+
+def _bundled_so_base() -> str:
+    """Directory holding the AppImage-bundled player libraries, or ''.
+
+    The Linux workflow drops libmpv.so.2 + its dependency closure (each
+    rpath-patched to $ORIGIN) into ``_internal/mpvlibs`` — ``sys._MEIPASS``
+    is the onedir ``_internal`` when frozen."""
+    base = getattr(sys, "_MEIPASS", "")
+    if base and glob.glob(os.path.join(base, "mpvlibs", "libmpv.so*")):
+        return os.path.join(base, "mpvlibs")
+    return ""
+
+
+def _ensure_bundled_so_findable() -> None:
+    """Make ctypes' find_library resolve AppImage-bundled player libraries.
+
+    python-mpv loads libmpv via ``ctypes.util.find_library('mpv')``, which
+    on Linux consults the ldconfig cache and gcc — neither knows about
+    libraries inside an AppImage, so the import would fail on a clean
+    machine even though libmpv.so.2 sits right there in _internal. We wrap
+    find_library to return the bundled file's ABSOLUTE path for the player
+    libraries (an absolute path short-circuits the search entirely);
+    everything else falls through to the original lookup. Also preload the
+    library with RTLD_GLOBAL so a later CDLL by SONAME reuses it."""
+    global _orig_find_library
+    if sys.platform == "darwin" or not hasattr(ctypes.util, "find_library"):
+        return
+    base = _bundled_so_base()
+    if not base:
+        return
+    if _orig_find_library is None:
+        _orig_find_library = ctypes.util.find_library
+
+    def _find_with_bundle(name: str):
+        try:
+            if name:
+                # Shortest basename wins: libmpv.so.2 (the SONAME) sorts
+                # before libmpv.so.2.0.0 in the same glob.
+                hits = sorted(glob.glob(os.path.join(base, f"lib{name}.so*")),
+                              key=lambda p: len(os.path.basename(p)))
+                if hits:
+                    return hits[0]
+        except Exception:
+            pass
+        return _orig_find_library(name)
+
+    ctypes.util.find_library = _find_with_bundle
+    # Preload so python-mpv's CDLL(soname) hits the already-mapped object
+    # even if its own lookup path differs.
+    try:
+        sofile = _find_with_bundle("mpv")
+        if sofile:
+            ctypes.CDLL(sofile, mode=ctypes.RTLD_GLOBAL)
+    except OSError as exc:
+        logger.warning("bundled libmpv preload failed: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -683,6 +751,7 @@ class LibVLCBackend(PlayerBackend):
         self._media: Any = None
 
     def create(self) -> bool:
+        ensure_mpv_dll_on_path()  # also wires the bundled-.so lookup on Linux
         try:
             import vlc  # noqa: E402
         except OSError as exc:

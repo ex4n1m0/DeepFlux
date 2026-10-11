@@ -1,19 +1,20 @@
-"""Windows registry registration for the Chrome native messaging host.
+"""Native messaging host registration for the Chrome extension.
 
-Registers DeepFlux as a native messaging host so Chrome can launch it
-via chrome.runtime.connectNative("com.deeptorrent.integration").
+Windows: the host manifest JSON is written to the user's AppData directory
+and a per-user registry key is created pointing to it.
 
-The host manifest JSON is written to the user's AppData directory, and
-a registry key is created pointing to it.
-
-Registry location (per-user):
     HKCU\\SOFTWARE\\Google\\Chrome\\NativeMessagingHosts\\com.deeptorrent.integration
         (Default) = "C:\\Users\\{user}\\AppData\\Roaming\\DeepTorrent\\native_messaging_host.json"
+
+Linux: Chrome/Chromium/Edge/Brave read manifests directly from
+    ~/.config/<browser>/NativeMessagingHosts/com.deeptorrent.integration.json
+so registration = writing that JSON file into each browser's config dir
+(no registry, no root).
 
 The host manifest contains:
     name:           com.deeptorrent.integration
     description:    DeepFlux Integration Module
-    path:           path to Deeptorrent4.exe
+    path:           path to the DeepFlux executable/AppImage
     type:           stdio
     allowed_origins: ["chrome-extension://{EXTENSION_ID}/"]
 """
@@ -35,6 +36,17 @@ HOST_DESCRIPTION = "DeepFlux Integration Module"
 # Development registration also requires the exact ID shown for the unpacked
 # extension; native-messaging manifests must never use a wildcard origin.
 DEFAULT_EXTENSION_ID = ""
+
+# Browsers (Linux) that read user-level native messaging manifests from
+# ~/.config/<dir>/NativeMessagingHosts/. Written unconditionally — a missing
+# browser simply never reads its copy.
+_LINUX_BROWSER_DIRS = (
+    "google-chrome",
+    "chromium",
+    "google-chrome-beta",
+    "microsoft-edge",
+    "brave-browser",
+)
 
 
 def _get_host_manifest_path() -> str:
@@ -99,15 +111,90 @@ def write_host_manifest(extension_id: str = "") -> str:
     return manifest_path
 
 
+def _get_host_path_linux() -> str:
+    """Return the executable path Chrome should launch (Linux).
+
+    AppImage: the DURABLE image file — sys.executable points into the
+    ephemeral /tmp/.mount_* dir which dies with this instance. tar.gz
+    frozen: the binary itself. Development: a generated .sh wrapper
+    (Chrome cannot pass arguments, so it must point at a runnable file)."""
+    if getattr(sys, "frozen", False):
+        return os.environ.get("APPIMAGE") or sys.executable
+    app_dir = os.path.join(os.path.expanduser("~"), ".local", "share", "DeepFlux")
+    os.makedirs(app_dir, exist_ok=True)
+    wrapper = os.path.join(app_dir, "native_host.sh")
+    main_py = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "main.py"))
+    try:
+        with open(wrapper, "w", encoding="utf-8", newline="\n") as f:
+            f.write(f'#!/bin/sh\nexec "{sys.executable}" "{main_py}" --native-messaging "$@"\n')
+        os.chmod(wrapper, 0o755)
+        return wrapper
+    except OSError as exc:
+        logger.error("Failed to write native host wrapper: %s", exc)
+        return sys.executable
+
+
+def _linux_manifest_paths() -> list:
+    dirs = []
+    for browser in _LINUX_BROWSER_DIRS:
+        d = os.path.join(os.path.expanduser("~"), ".config", browser,
+                         "NativeMessagingHosts")
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            continue
+        dirs.append(os.path.join(d, f"{HOST_NAME}.json"))
+    return dirs
+
+
+def _register_native_host_linux(extension_id: str) -> bool:
+    exe_path = _get_host_path_linux()
+    extension_id = (extension_id or DEFAULT_EXTENSION_ID).strip().lower()
+    if not re.fullmatch(r"[a-p]{32}", extension_id):
+        logger.error("A valid 32-character Chrome extension ID is required")
+        return False
+    manifest = {
+        "name": HOST_NAME,
+        "description": HOST_DESCRIPTION,
+        "path": exe_path,
+        "type": "stdio",
+        "allowed_origins": [f"chrome-extension://{extension_id}/"],
+    }
+    ok = True
+    for path in _linux_manifest_paths():
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, indent=2)
+        except OSError as exc:
+            logger.error("Failed to write %s: %s", path, exc)
+            ok = False
+    if ok:
+        logger.info("Registered native messaging host manifests for Linux browsers")
+    return ok
+
+
+def _unregister_native_host_linux() -> bool:
+    ok = True
+    for path in _linux_manifest_paths():
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError as exc:
+            logger.error("Failed to remove %s: %s", path, exc)
+            ok = False
+    return ok
+
+
 def register_native_host(extension_id: str = "") -> bool:
-    """Register the native messaging host in the Windows registry.
+    """Register the native messaging host.
 
-    Creates the HKCU registry key pointing to the host manifest JSON.
-    This allows Chrome to find and launch DeepFlux as a native messaging host.
-
-    Returns True on success, False on failure."""
+    Windows: creates the HKCU registry key pointing to the host manifest
+    JSON. Linux: writes the manifest JSON into each browser's
+    NativeMessagingHosts config dir. Returns True on success."""
+    if sys.platform == "linux":
+        return _register_native_host_linux(extension_id)
     if sys.platform != "win32":
-        logger.warning("Native messaging registration is only supported on Windows")
+        logger.warning("Native messaging registration is only supported on Windows and Linux")
         return False
 
     try:
@@ -136,9 +223,11 @@ def register_native_host(extension_id: str = "") -> bool:
 
 
 def unregister_native_host() -> bool:
-    """Remove the native messaging host registration from the Windows registry.
+    """Remove the native messaging host registration.
 
     Returns True on success, False on failure."""
+    if sys.platform == "linux":
+        return _unregister_native_host_linux()
     if sys.platform != "win32":
         return False
 

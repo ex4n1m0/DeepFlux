@@ -14,16 +14,22 @@
 - Quick check: `python -c "import ast; ast.parse(open(<file>, encoding='utf-8').read())"`
 - Tests: `python -m pytest tests/ -v` — CAVEAT (2026-09-13, this dev
   machine): a SINGLE-process run of the whole suite can die with a native
-  access violation while GC walks the heap during the room tests
-  (`state.py::_channel_locked` frames in the dump). It is a heap-layout /
-  GC-timing artifact of the one giant process — native libs loaded via
-  collection + 900 collected items; every individual file, subset, and the
-  SPLIT invocation are 100% stable, and reverting any single app file does
-  not prevent it. Release gate: run the suite split —
+  access violation while GC walks the heap (2026-09-13:
+  `state.py::_channel_locked` frames; 2026-10-11: Shiboken's
+  signature-loader `inspect.getsource` inside
+  `gui/jackett_setup_dialog.py`'s import, with iptv artwork workers alive —
+  reproduced on PRISTINE HEAD, i.e. NOT tied to any change). It is a
+  heap-layout / GC-timing artifact of giant single processes — native libs
+  loaded via collection; every individual file and small subset is 100%
+  stable. KNOWN POISON PAIR: `test_iptv.py` + `test_jackett_setup.py` in
+  ONE process segfaults (proven pre-existing 2026-10-11 via git worktree
+  of HEAD) — keep them in different chunks. Release gate: run the suite in
+  FOUR chunks —
   `python -m pytest tests/test_a*.py tests/test_b*.py tests/test_c*.py -q`
-  then the same for d–z globs (d e f g h i j l m n o r s t u v x y —
-  re-check `ls tests/ | cut -c9 | sort -u` when a test file with a NEW
-  first letter lands, like test_updater.py's "u" in 2026-09-19).
+  then d–i (d e f g h i), then j–o (j l m n o), then r–z
+  (r s t u v x y — re-check `ls tests/ | cut -c9 | sort -u` when a test
+  file with a NEW first letter lands, like test_updater.py's "u" in
+  2026-09-19).
 - Tests must NEVER write the real `~/.deeptorrent/config.json`: the autouse
   fixture in `tests/conftest.py` redirects `DeeptorrentConfig.default_config_path`
   for every test; still pass explicit paths whenever
@@ -270,18 +276,44 @@
   red noise there. Local gate before pushing mac-affecting changes: the
   split a-c/d-z invocation PLUS `python packaging/verify_boot.py`.
 
-## Linux build (CI-only, added 2026-09-18)
-- Same feature scope as macOS (Browser, Agent, Torrents & Downloads, Room,
-  Commander; NO Play tab) — the ONE guard `_PLAY_TAB_SUPPORTED =
-  sys.platform == "win32"` covers both platforms, and
-  `packaging/verify_boot.py` (renamed from verify_macos_boot.py) asserts
-  the right shape per platform. Do NOT regress the guard: an unguarded
-  `self.iptv_tab` reference crashes the Linux build at startup.
-- Keyless by design (same as macOS CI). No signing concept exists on Linux
-  at all: AppImages run with zero warnings once the exec bit is set — no
-  Gatekeeper/SmartScreen analog, no certificate to buy, publisher
-  reputation to rebuild, or "unblock file" note needed. Users just
-  `chmod +x DeepFlux-*.AppImage && ./DeepFlux-*.AppImage`.
+## Linux build (CI-only; FULL FEATURE since the 2026-10-11 port)
+- The Linux build is now a FULL build (owner decision 2026-10-11, reversing
+  the 2026-09-18 scope cut): Browser, Agent, Torrents & Downloads, Room,
+  Commander AND the Play tab. `_PLAY_TAB_SUPPORTED =
+  sys.platform in ("win32", "linux")` (gui/main_window.py); macOS stays
+  excluded (libmpv cannot embed into Qt there without a render-API
+  rewrite). `packaging/verify_boot.py` asserts the right shape per
+  platform off the same flag. Do NOT regress the guard: an unguarded
+  `self.iptv_tab` reference crashes the macOS build at startup.
+- PLAY-ON-LINUX architecture (all verified in the 2026-10-11 study, do not
+  re-derive): video embeds via X11 window IDs (mpv `--wid`, libvlc
+  `set_xwindow`); native Wayland has NO cross-client window embedding
+  (mpv docs; VLC issue #16106), so main.py defaults
+  `QT_QPA_PLATFORM=xcb` on linux (XWayland; an explicit env var wins — CI's
+  offscreen QPA relies on that). libmpv ships in `_internal/mpvlibs/`: the
+  workflow apt-installs libmpv2 + patchelf, ldd-walks libmpv.so.2's
+  closure (skipping glibc core + the driver-matched GL/EGL/GBM/DRM/vulkan
+  stack), copies it into mpvlibs and sets `--set-rpath '$ORIGIN'` on every
+  lib so loading needs NO LD_LIBRARY_PATH (spawned subprocesses like
+  system ffmpeg can never pick the bundled libav* up). python-mpv loads
+  via `ctypes.util.find_library('mpv')`, which cannot see AppImage-bundled
+  libs — `iptv/player.py::_ensure_bundled_so_findable` wraps find_library
+  to return the bundled absolute path (an absolute path short-circuits the
+  search). VLC is NOT bundled: python-vlc ships, the fallback activates
+  only on machines with a system VLC (its import raises OSError otherwise
+  — caught, degrades to mpv). Compact PiP (SetWindowPos topmost) and the
+  WS_EX_NOACTIVATE SVP-child patch remain win32-only by design.
+- The DeepSeek shared key IS embedded (owner decision 2026-10-11): GitHub
+  Actions secret `EMBED_SHARED_DEEPSEEK_API_KEY` →
+  `packaging/gen_embedded_keys_from_env.py` writes an obfuscated
+  `_embedded_keys.py` before PyInstaller (values never printed; the script
+  REFUSES to overwrite an existing local key file without
+  DF_OVERWRITE_EMBEDDED_KEYS=1). Same exposure as the public Windows setup
+  exe; adding more slots later = add the secret + one env line. All other
+  shared keys stay Windows-setup-only.
+- No signing concept exists on Linux at all: AppImages run with zero
+  warnings once the exec bit is set — no Gatekeeper/SmartScreen analog.
+  Users just `chmod +x DeepFlux-*.AppImage && ./DeepFlux-*.AppImage`.
 - Build machine: `.github/workflows/linux-build.yml` on ubuntu-24.04
   (pin the version — `ubuntu-latest` can move under you; ubuntu-22.04
   entered deprecation 2026-09-17, actions/runner-images#14254). The runner
@@ -289,8 +321,28 @@
   13, Fedora 40+, Arch; Debian 12/Ubuntu 22.04 users are out until a
   manylinux_2_28 container job exists). The workflow apt-installs the
   QtWebEngine runtime libs (libnss3, libasound2t64, libatk-bridge, the
-  libxcb set incl. libxcb-cursor0 — a classic Qt6-on-Debian gap) for the
-  offscreen boot smoke.
+  libxcb set incl. libxcb-cursor0 — a classic Qt6-on-Debian gap) plus
+  libmpv2/patchelf for the player stack.
+- AUTO-UPDATE (Linux, since the port): same ritual as Windows but against
+  `website/deepflux/latest-linux.json` (feed file lands at release time
+  with the AppImage's size+sha256); `infra/updater.py` gates on
+  win32|linux + frozen, stages in `~/.local/state/DeepFlux/updates`, and a
+  detached `/bin/sh` helper (apply_update.sh) waits for our PID, chmod +x,
+  `mv`s over the AppImage path (POSIX rename over a running image is safe
+  — the process keeps its mount inode) and relaunches `$APPIMAGE`. Not an
+  AppImage (tar.gz/source) → "downloaded, run it manually" path.
+  `other_instances_running` pgrep-matches the full APPIMAGE path.
+- Linux parity reworks shipped with the port: file associations =
+  .desktop + hicon icon + xdg-mime default ONLY for x-bittorrent and
+  x-scheme-handler/magnet (forcing video/audio defaults would be rude;
+  `--register-associations` works on linux); native messaging manifests
+  land in `~/.config/{google-chrome,chromium,microsoft-edge,brave-browser,
+  }/NativeMessagingHosts/` (host path = $APPIMAGE — sys.executable inside
+  an AppImage is the ephemeral /tmp/.mount_* dir and must never be used);
+  bookmark import scans ~/.config chrome/chromium/edge/brave/vivaldi +
+  ~/.mozilla and the flatpak Firefox dir; fresh frozen installs seed the
+  sample Macau playlist via `infra/first_run.py` (run_gui, frozen+linux+
+  no-config-file-only — the mirror of the Windows installer seed).
 - CI gotchas hit on the way to green (2026-09-18, do not re-derive):
   * QtMultimedia links PulseAudio on Linux — `libpulse0` must be apt'd or
     `import gui.voice_input` (module-level QAudioSource import in
@@ -304,7 +356,7 @@
     QtWayland compositor plugins need `libwayland-server0` (not on a
     headless runner) — apt the three libwayland-* runtime packages.
   * linuxdeploy rejects non-square icons ("invalid x resolution") — the
-    workflow pads DeepFlux4.png onto a square canvas and downscales to
+    workflow pads the logo onto a square canvas and downscales to
     512x512 with Pillow before calling it.
 - Artifacts: `DeepFlux-<ver>-Linux-x86_64.AppImage` (PRIMARY — linuxdeploy
   bundles the SYSTEM library closure so users need zero apt installs;
@@ -312,38 +364,35 @@
   same onedir as `...-Linux-x86_64.tar.gz` (fallback; needs the distro's
   Qt/Chromium runtime libs). CI also smokes the packaged AppImage itself
   (`--help` under offscreen) — catches bootloader/lib problems the source
-  boot test can't. linuxdeploy's continuous build URL is the standard one;
-  the AppImage icon is the tracked DeepFlux4.png directly (no generator).
-- Spec: `packaging/app_linux.spec` = app_macos.spec minus BUNDLE, minus
-  mac-only EXE args; keeps the mpv/vlc excludes (gitignore whitelists it
-  next to the other two specs).
-- No ffmpeg is bundled on Linux either: `find_ffmpeg` PATH-finds
+  boot test can't. linuxdeploy's continuous build URL is the standard one.
+- Spec: `packaging/app_linux.spec` = full app scope (iptv hiddenimports,
+  milkdrop datas, nacl/argon2 collect_alls — previously only pulled in
+  transitively); mpv/vlc NOT in excludes anymore.
+- No ffmpeg is bundled on Linux: `find_ffmpeg` PATH-finds
   /usr/bin/ffmpeg after the user (or the agent, via run_shell) installs
-  the distro package — the SYSTEM_PROMPT has a linux-only note (agent/loop.py)
+  the distro package — the SYSTEM_PROMPT has a linux note (agent/loop.py)
   with the apt/dnf/pacman guidance + Jackett at /opt/jackett/jackett or
   ~/.config/Jackett/jackett (systemd service; starting it needs elevation
   the app doesn't have — infra/jackett.py spawns the binary directly
   instead, same as the mac .app path).
+- SVP on Linux: SVP 4 for Linux EXISTS (svp-team.com, $24.99 lifetime;
+  needs VapourSynth R60+, Python 3.12, SVP's own mpv build) — the Windows
+  out-of-process architecture maps to it, but `iptv/mpv_process.py`'s IPC
+  is Windows-named-pipe only (PIPE_PATH `\\.\pipe\mpvpipe`, PeekNamedPipe
+  reader with no POSIX path). Until that is rewritten onto
+  `--input-ipc-server` unix sockets, SVP stays Windows-only in practice
+  (find_install returns None on Linux → clean in-process mpv fallback).
 - Telemetry now sends `sys.platform` (win32/darwin/linux) instead of
   `os.name` — os.name collapsed mac+linux into one "posix" bucket; the
   heartbeat payload is the only place they're distinguishable.
-- Website (LIVE since 2026-09-18): deepflux.space carries a third primary
-  button for `DeepFlux-<X>-Linux-x86_64.AppImage` through the same
-  /api/download counter (FILE_RE already accepts it). Only the AppImage is
-  hosted (the tar.gz stays a CI artifact — hosting both doubles the deploy
-  for little benefit); `website/**/*.AppImage` + `website/**/*.tar.gz` are
-  gitignored like the exe/dmg, and the same refresh ritual applies: fresh
+- Website: the AppImage button was LIVE 2026-09-18→2026-09-24 and was
+  REMOVED when the site went Windows-only (commit 8dc7666; old URLs 404).
+  Reviving it is an owner decision; the mechanics are unchanged — fresh
   CI run → `gh run download -n "DeepFlux-<X>-Linux-x86_64"` → swap the
-  AppImage in the dir → update hrefs + meta date → delete the old file →
-  `vercel --prod --yes --scope timedivision`. The smartscreen note covers
-  Linux with a chmod +x line (no security warnings exist there).
-- The Play tab is PERMANENTLY Windows-only (owner decision 2026-09-18,
-  extending the macOS call to Linux): do not propose re-enabling it on
-  either platform. For the record, Linux X11 XEmbed (mpv wid=winId(),
-  LibVLCBackend.set_xwindow) would have been technically feasible — the
-  decision is product scope, not a technical wall like macOS's render-API
-  rewrite. If it is ever revisited, the 2026-09-18 feasibility study in
-  agent memory lists what it would take (xcb forcing, libmpv bundling).
+  AppImage into website/deepflux/ → update hrefs + meta date → delete the
+  old file → `vercel --prod --yes --scope timedivision`, and now ALSO
+  write `latest-linux.json` (version/file/size/sha256 of the deployed
+  AppImage) for the auto-updater.
 
 ## Auto-update (Windows, since 4.9)
 - The Windows build updates ITSELF: `infra/updater.py` (Qt-free) checks

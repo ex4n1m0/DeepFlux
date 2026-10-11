@@ -4,14 +4,23 @@ DeepFlux never bundles SVP (proprietary, per-PC license, ~$25 lifetime with
 a 30-day trial). This module only *detects and cooperates with* the user's
 own SVP 4 install, using SVP's documented mpv contract:
 
-- mpv is created with ``input-ipc-server=mpvpipe`` (a Windows named pipe).
+- Windows: mpv is created with ``input-ipc-server=mpvpipe`` (a named pipe).
   SVP Manager discovers the instance through it and injects its VapourSynth
   filter chain (svpflow motion interpolation) over IPC once playback starts.
-- mpv's VapourSynth bridge delay-loads ``VSScript.dll``/``vapoursynth.dll``
-  at first use; those must resolve to SVP's portable runtime in
-  ``<SVP>\\mpv64`` (SVP's own log warns "PATH doesn't contain mpv64 folder,
-  libmpv players may not work"). :func:`prepare_environment` puts that
-  folder on PATH/PYTHONPATH before mpv init.
+- Linux (SVP 4 for Linux, verified against the real installer 2026-10-11):
+  same contract on a UNIX domain socket — SVP's shipped mpv.conf sets
+  ``input-ipc-server=/tmp/mpvsocket`` and SVPManager watches that path.
+  Per-user install at ``~/SVP4`` (IFW TargetDir; legacy installs
+  ``~/SVP 4``, distro packages /opt/svp); the mpv component (opt.mpv)
+  installs SVP's own build at ``~/SVP4/mpv/mpv`` with libmpv.so.2 next to
+  it, and the manager binary is ``SVPManager`` (a plain GUI process — no
+  daemon, no systemd unit; needs ``lsof`` installed to resolve the mpv
+  pid from the socket peer).
+- On Windows mpv's VapourSynth bridge delay-loads
+  ``VSScript.dll``/``vapoursynth.dll`` at first use; those must resolve to
+  SVP's portable runtime in ``<SVP>\\mpv64`` (SVP's own log warns "PATH
+  doesn't contain mpv64 folder, libmpv players may not work").
+  :func:`prepare_environment` puts that folder on PATH before mpv init.
 - VapourSynth filters take software frames only, so SVP mode also forces
   ``hwdec=auto-copy`` (copy-back) at mpv creation — see player.py.
 
@@ -22,6 +31,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -32,21 +42,32 @@ logger = logging.getLogger(__name__)
 # Windows from a windowed app. 0 on other platforms.
 _CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-MANAGER_EXE = "SVPManager.exe"
+_IS_LINUX = sys.platform.startswith("linux")
+MANAGER_EXE = "SVPManager" if _IS_LINUX else "SVPManager.exe"
 
-# SVP 4's default install dirs (it is a 32-bit-built installer even on x64).
-_DEFAULT_DIRS = (
-    r"C:\Program Files (x86)\SVP 4",
-    r"C:\Program Files\SVP 4",
-)
+# SVP 4's default install dirs. Windows: Program Files (the installer is a
+# 32-bit build even on x64). Linux: per-user IFW install (current
+# TargetDir ~/SVP4, legacy "SVP 4" with a space) + the distro /opt/svp
+# packages (AUR svp/svp-bin).
+if _IS_LINUX:
+    _DEFAULT_DIRS = (
+        os.path.join(os.path.expanduser("~"), "SVP4"),
+        os.path.join(os.path.expanduser("~"), "SVP 4"),
+        "/opt/svp",
+    )
+else:
+    _DEFAULT_DIRS = (
+        r"C:\Program Files (x86)\SVP 4",
+        r"C:\Program Files\SVP 4",
+    )
 
 
 @dataclass
 class SvpInstall:
     """Paths into a detected SVP 4 installation."""
-    install_dir: str   # e.g. C:\Program Files (x86)\SVP 4
-    manager_exe: str   # SVPManager.exe
-    runtime_dir: str   # mpv64 — portable VapourSynth+Python, plus mpv.exe
+    install_dir: str   # e.g. C:\Program Files (x86)\SVP 4 / ~/SVP4
+    manager_exe: str   # SVPManager(.exe)
+    runtime_dir: str   # mpv64 (win) / mpv (linux) — SVP's own player + runtime
 
     @property
     def usable(self) -> bool:
@@ -54,13 +75,15 @@ class SvpInstall:
 
     @property
     def mpv_exe(self) -> str:
-        """SVP's own mpv.exe (installed with the "mpv video player" package).
+        """SVP's own mpv binary (installed with the "mpv video player"
+        package: mpv64\\mpv.exe on Windows, mpv/mpv on Linux).
 
         The out-of-process backend runs THIS binary: it sits next to SVP's
         portable VapourSynth, so the frame server resolves without any
         environment gymnastics, and it's a C host so VSScript initializes
         normally. Empty string when the user didn't install the component."""
-        p = os.path.join(self.runtime_dir, "mpv.exe")
+        name = "mpv" if _IS_LINUX else "mpv.exe"
+        p = os.path.join(self.runtime_dir, name)
         return p if os.path.isfile(p) else ""
 
 
@@ -92,11 +115,19 @@ def _registry_install_dir() -> str:
 
 
 def _runtime_dir(install_dir: str) -> str:
-    """The folder SVP expects on PATH for libmpv-based players.
+    """The folder holding SVP's own player + VapourSynth runtime.
 
-    ``mpv64`` holds SVP's portable VapourSynth (vapoursynth.dll +
+    Windows: ``mpv64`` holds SVP's portable VapourSynth (vapoursynth.dll +
     vsscript.dll + embedded Python); accept the dir only when the DLL is
-    really there so a partial/removed install doesn't half-activate."""
+    really there so a partial/removed install doesn't half-activate.
+    Linux: the opt.mpv component installs SVP's mpv build + libmpv.so.2
+    into ``mpv``; the mpv BINARY is the anchor (the VapourSynth stack is
+    resolved by SVPManager's generated scripts, not by our PATH)."""
+    if _IS_LINUX:
+        cand = os.path.join(install_dir, "mpv")
+        if os.path.isfile(os.path.join(cand, "mpv")):
+            return cand
+        return ""
     cand = os.path.join(install_dir, "mpv64")
     if os.path.isfile(os.path.join(cand, "vapoursynth.dll")):
         return cand
@@ -119,8 +150,15 @@ def find_install() -> Optional[SvpInstall]:
 
 
 def is_manager_running() -> bool:
-    """True when SVPManager.exe is in the process list."""
+    """True when the SVP Manager process is in the process list."""
     try:
+        if _IS_LINUX:
+            # -x matches the exact process NAME (no cmdline false positives).
+            out = subprocess.run(
+                ["pgrep", "-x", MANAGER_EXE],
+                capture_output=True, text=True, timeout=10,
+            ).stdout
+            return bool(out.strip())
         out = subprocess.run(
             ["tasklist", "/FO", "CSV", "/NH", "/FI", f"IMAGENAME eq {MANAGER_EXE}"],
             capture_output=True, text=True, timeout=10,
@@ -131,11 +169,23 @@ def is_manager_running() -> bool:
         return False
 
 
+def _kill_manager() -> None:
+    if _IS_LINUX:
+        subprocess.run(["pkill", "-x", MANAGER_EXE], capture_output=True)
+    else:
+        subprocess.run(["taskkill", "/F", "/IM", MANAGER_EXE],
+                       capture_output=True, creationflags=_CREATION_FLAGS)
+
+
 def start_manager(inst: SvpInstall) -> bool:
-    """Launch SVP Manager; it then discovers mpv via the mpvpipe named pipe."""
+    """Launch SVP Manager; it then discovers mpv via the IPC pipe/socket."""
     try:
-        subprocess.Popen([inst.manager_exe], cwd=inst.install_dir,
-                         creationflags=_CREATION_FLAGS)
+        if _IS_LINUX:
+            subprocess.Popen([inst.manager_exe], cwd=inst.install_dir,
+                             start_new_session=True)
+        else:
+            subprocess.Popen([inst.manager_exe], cwd=inst.install_dir,
+                             creationflags=_CREATION_FLAGS)
         return True
     except OSError as exc:
         logger.warning("could not start SVP Manager: %s", exc)
@@ -189,8 +239,7 @@ def ensure_manager(inst: SvpInstall, wait_s: float = 15.0) -> bool:
     if is_manager_running() and _started_by_us:
         return True
     if is_manager_running():
-        subprocess.run(["taskkill", "/F", "/IM", MANAGER_EXE],
-                       capture_output=True, creationflags=_CREATION_FLAGS)
+        _kill_manager()
         for _ in range(20):  # wait for the old one to exit
             if not is_manager_running():
                 break

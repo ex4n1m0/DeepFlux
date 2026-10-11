@@ -99,14 +99,17 @@ from gui.win_taskbar import TaskbarProgress
 from gui.browser_bridge import BrowserBridge, accept_language_header, normalize_browser_target
 from gui.browser_history import BrowserHistory
 from gui.browser_channel import create_channel, channel_injection_script
-# The Play (IPTV/player) tab is Windows-ONLY — permanent owner decision
-# (2026-09-18) covering macOS AND Linux: libmpv cannot embed into a Qt
-# widget on macOS without rewriting playback on the mpv render API, and
-# the Linux build ships without it by the same decision (X11 XEmbed would
-# have been technically feasible there — do not re-litigate). Everything
+# The Play (IPTV/player) tab is Windows + Linux. macOS stays excluded
+# (owner decision 2026-09-18): libmpv cannot embed into a Qt widget there
+# without rewriting playback on the mpv render API. Linux was excluded by
+# the same 2026-09-18 decision and RE-INCLUDED by the owner's 2026-10-11
+# full-feature study: mpv --wid / libvlc set_xwindow embed fine under X11,
+# so the Linux build forces QT_QPA_PLATFORM=xcb (XWayland on Wayland
+# sessions — native Wayland has no cross-client window embedding) and
+# bundles libmpv (see iptv/player.py + packaging/app_linux.spec). Everything
 # downstream (tab creation, agent iptv_* tools, menus,
 # stream-while-downloading) keys off this flag.
-_PLAY_TAB_SUPPORTED = sys.platform == "win32"
+_PLAY_TAB_SUPPORTED = sys.platform in ("win32", "linux")
 if _PLAY_TAB_SUPPORTED:
     from gui.iptv_tab import AgentIPTVBridge, IPTVTab
     from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog
@@ -6576,8 +6579,17 @@ def run_gui(config_path: Optional[str] = None, open_targets: Optional[List[str]]
     # labels (restart-to-apply; gui/i18n contract).
     from gui.i18n import set_language
     from config import DeeptorrentConfig as _Cfg
-    set_language(
-        _Cfg.from_file(config_path or _Cfg.default_config_path()).ui_language)
+    _cfg_path = config_path or _Cfg.default_config_path()
+    _cfg_existed = os.path.isfile(_cfg_path)
+    _cfg = _Cfg.from_file(_cfg_path)
+    # Fresh frozen-Linux installs have no installer to seed the sample
+    # playlist — apply the same seed the Inno postinstall step writes.
+    try:
+        from infra.first_run import maybe_seed_fresh_install
+        maybe_seed_fresh_install(_cfg, _cfg_path, _cfg_existed)
+    except Exception:
+        logger.debug("first-run seed skipped", exc_info=True)
+    set_language(_cfg.ui_language)
     window = MainWindow(config_path=config_path)
     window.show()
     # Targets passed on the command line (file associations / "Open with").

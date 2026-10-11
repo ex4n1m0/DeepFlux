@@ -69,6 +69,22 @@ HELP_HTML_ZH = r"""
 <b>⋯</b> 菜单按钮（播放页、文件管理页的功能键栏和下载列表都是如此），播放器
 的控制条也会切换为紧凑按钮 —— 一切仍可触达，任何东西都不会消失。</p>
 
+<h2>Linux 版（AppImage）</h2>
+
+<p>Linux 版以 AppImage 形式发布：下载后执行一次
+<code>chmod +x DeepFlux-*.AppImage</code> 即可运行 —— 无需安装，也没有安全警告。
+请把它放在你有写入权限的目录（推荐主目录）：帮助 → <i>检查更新…</i>
+会直接原地替换 AppImage，无需终端操作。首次启动会自动加入与
+Windows 安装包相同的示例播放列表。</p>
+
+<p>两个 Linux 特有事项：播放页的视频通过 X11 输出 —— 在 Wayland 桌面上
+应用会自动以 XWayland 方式启动，但如果你自行设置了
+<code>QT_QPA_PLATFORM=wayland</code>，窗口内嵌视频将无法工作。另外
+FFmpeg（用于海报、字幕和录制）不随包附带 —— 请用系统包管理器安装
+（<code>sudo apt install ffmpeg</code> 或等价命令），DeepFlux 会自动在 PATH 中
+找到它。若想把 DeepFlux 设为 .torrent 文件和磁力链接的默认程序，
+在终端中运行一次 AppImage 并加 <code>--register-associations</code> 参数即可。</p>
+
 <h2>页面总览</h2>
 
 <table>

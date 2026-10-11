@@ -2,11 +2,13 @@ name: Linux build
 
 # Builds the Linux AppImage + tar.gz on GitHub's free Ubuntu runner.
 # PyInstaller cannot cross-compile, so this workflow IS the Linux build
-# machine. Same feature scope as the macOS build: KEYLESS (users enter
-# their own API keys) and no Play/IPTV tab (see _PLAY_TAB_SUPPORTED in
-# gui/main_window.py). No signing exists on Linux at all — an AppImage
-# runs as soon as it has the exec bit (chmod +x), so there is no
-# Gatekeeper/SmartScreen step to worry about.
+# machine. FULL feature build since the 2026-10-11 port (owner decision):
+# Play/IPTV tab included via X11 embedding (the app forces
+# QT_QPA_PLATFORM=xcb → XWayland), libmpv + dependency closure bundled,
+# and the DeepSeek shared key embedded from the EMBED_SHARED_DEEPSEEK_API_KEY
+# secret (same exposure as the public Windows setup exe; git stays keyless).
+# No signing exists on Linux at all — an AppImage runs as soon as it has
+# the exec bit (chmod +x), so there is no Gatekeeper/SmartScreen step.
 #
 # Runner is pinned to ubuntu-24.04 (glibc 2.39 floor: Ubuntu 24.04+,
 # Debian 13, Fedora 40+, Arch). ubuntu-22.04 entered deprecation
@@ -32,7 +34,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install system libraries (Qt/Chromium runtime deps)
+      - name: Install system libraries (Qt/Chromium + libmpv runtime deps)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -44,15 +46,27 @@ jobs:
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xfixes0 \
             libxcomposite1 libxdamage1 libxrandr2 libxtst6 libx11-6 \
             libdrm2 libgbm1 libegl1 libgl1 \
-            libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0
+            libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 \
+            libmpv2 patchelf
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           # Not in requirements.txt but imported by the app (dev machines
-          # carry them; CI must be explicit).
-          pip install cryptography defusedxml Pillow PyInstaller
+          # carry them; CI must be explicit). python-vlc is the OPTIONAL
+          # VLC fallback backend (pure ctypes wrapper — only activates on
+          # machines with a system VLC; libvlc itself is not bundled).
+          pip install cryptography defusedxml Pillow PyInstaller python-vlc
+
+      - name: Embed shared DeepSeek key (from secret, obfuscated)
+        env:
+          EMBED_SHARED_DEEPSEEK_API_KEY: ${{ secrets.EMBED_SHARED_DEEPSEEK_API_KEY }}
+        run: |
+          # Writes an obfuscated _embedded_keys.py at the repo root ONLY when
+          # the secret exists; values never appear in logs. app_linux.spec
+          # bundles it via the conditional _embedded_keys hiddenimport.
+          python packaging/gen_embedded_keys_from_env.py
 
       - name: Offscreen boot smoke test
         env:
@@ -70,6 +84,73 @@ jobs:
 
       - name: Build onedir (PyInstaller)
         run: python -m PyInstaller packaging/app_linux.spec --clean --noconfirm
+
+      - name: Bundle libmpv runtime closure (_internal/mpvlibs)
+        run: |
+          # libmpv is dlopen'ed via ctypes, so PyInstaller/linuxdeploy never
+          # see it in any ELF NEEDED scan — collect it by hand. Copy
+          # libmpv.so.2 plus its transitive deps (ldd walk, resolved through
+          # symlinks) EXCEPT the glibc core and the system graphics stack
+          # (GL/EGL/GBM/DRM/vulkan must stay driver-matched on the target),
+          # then point every copied lib at its neighbours via $ORIGIN rpath
+          # so loading needs no LD_LIBRARY_PATH — spawned subprocesses
+          # (system ffmpeg, Jackett) can never pick these up by accident.
+          python - <<'PYEOF'
+          import os, re, subprocess, shutil, glob, stat
+
+          skip_re = re.compile(
+              r"^(ld-linux|libc\.so|libm\.so|libpthread\.so|libdl\.so|librt\.so|"
+              r"libresolv\.so|libutil\.so|libcrypt\.so|libanl\.so|"
+              r"libGL\.|libEGL\.|libGLES\.|libglapi\.|libgbm\.|libdrm\.|"
+              r"libwayland-|libvulkan\.|libGLX\.|libOpenGL\.)")
+
+          dest = "dist/DeepFlux/_internal/mpvlibs"
+          os.makedirs(dest, exist_ok=True)
+          root = None
+          for pat in ("/usr/lib/x86_64-linux-gnu/libmpv.so.2*",
+                      "/lib/x86_64-linux-gnu/libmpv.so.2*"):
+              hits = glob.glob(pat)
+              if hits:
+                  root = os.path.realpath(hits[0])
+                  break
+          assert root, "libmpv.so.2 not found — is libmpv2 installed?"
+          print("libmpv root:", root)
+
+          queue, seen, copied = [root], set(), []
+          while queue:
+              path = queue.pop()
+              if path in seen:
+                  continue
+              seen.add(path)
+              out = subprocess.run(["ldd", path], capture_output=True, text=True).stdout
+              for line in out.splitlines():
+                  parts = line.strip().split("=>")
+                  if len(parts) != 2:
+                      continue
+                  lib = parts[1].strip().split()[0] if parts[1].strip() else ""
+                  if not lib or not os.path.isabs(lib):
+                      continue
+                  lib = os.path.realpath(lib)
+                  base = os.path.basename(lib)
+                  if skip_re.match(base):
+                      continue
+                  if lib not in seen:
+                      queue.append(lib)
+              dst = os.path.join(dest, os.path.basename(path))
+              if not os.path.exists(dst):
+                  shutil.copy2(path, dst)
+                  copied.append(os.path.basename(path))
+          print(f"copied {len(copied)} libs into mpvlibs")
+          assert os.path.basename(root) in (os.path.basename(f) for f in glob.glob(dest + "/*")), "libmpv itself missing"
+          for so in glob.glob(dest + "/*.so*"):
+              os.chmod(so, os.stat(so).st_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+          PYEOF
+          # $ORIGIN rpath on every bundled lib: each resolves its neighbours
+          # internally, no LD_LIBRARY_PATH anywhere.
+          for so in dist/DeepFlux/_internal/mpvlibs/*.so*; do
+            patchelf --set-rpath '$ORIGIN' "$so"
+          done
+          echo "mpvlibs contents:" && ls dist/DeepFlux/_internal/mpvlibs | head -40
 
       - name: Package tar.gz
         run: |

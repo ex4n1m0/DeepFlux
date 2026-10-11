@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import shutil
+import sys
 import sqlite3
 import tempfile
 from dataclasses import dataclass
@@ -36,11 +37,23 @@ def detect_browser_sources() -> List[BrowserSource]:
     sources: List[BrowserSource] = []
 
     # Chromium-family: <User Data>/<profile>/Bookmarks (JSON).
-    for name, root in (
+    chromium_roots = [
         ("Chrome", Path(local) / "Google" / "Chrome" / "User Data"),
         ("Edge", Path(local) / "Microsoft" / "Edge" / "User Data"),
         ("Brave", Path(local) / "BraveSoftware" / "Brave-Browser" / "User Data"),
-    ):
+    ]
+    if sys.platform.startswith("linux"):
+        # ~/.config/<browser> on Linux — Default/Profile N live one level
+        # deeper on Windows (inside "User Data"), directly on Linux.
+        conf = Path.home() / ".config"
+        chromium_roots = [
+            ("Chrome", conf / "google-chrome"),
+            ("Chromium", conf / "chromium"),
+            ("Edge", conf / "microsoft-edge"),
+            ("Brave", conf / "BraveSoftware" / "Brave-Browser"),
+            ("Vivaldi", conf / "vivaldi"),
+        ]
+    for name, root in chromium_roots:
         if not root.is_dir():
             continue
         profiles = [p for p in root.iterdir() if p.is_dir() and (p.name == "Default" or p.name.startswith("Profile "))]
@@ -51,6 +64,18 @@ def detect_browser_sources() -> List[BrowserSource]:
                 sources.append(BrowserSource(browser=label, kind="chromium", path=str(bookmarks_file)))
 
     # Firefox: places.sqlite inside each profile.
+    if sys.platform.startswith("linux"):
+        ff_roots = [
+            Path.home() / ".mozilla" / "firefox",
+            Path.home() / ".var" / "app" / "org.mozilla.firefox" / ".mozilla" / "firefox",  # flatpak
+        ]
+        for root in ff_roots:
+            if not root.is_dir():
+                continue
+            for prof in sorted(root.glob("*.default*")):
+                if (prof / "places.sqlite").is_file():
+                    sources.append(BrowserSource(browser=f"Firefox ({prof.name})", kind="firefox", path=str(prof)))
+        return sources
     ff_profiles = Path(roaming) / "Mozilla" / "Firefox" / "Profiles"
     if ff_profiles.is_dir():
         for prof in sorted(p for p in ff_profiles.iterdir() if p.is_dir()):

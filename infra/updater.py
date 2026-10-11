@@ -1,11 +1,20 @@
-"""In-app auto-update for the Windows build (frozen installs only).
+"""In-app auto-update for the frozen Windows and Linux builds.
 
-Flow: a daily-gated feed check (``deepflux.space/deepflux/latest.json``)
-returns the newest version + its setup exe's size and sha256 → the GUI
-offers "Update now / Later / Skip this version" → the setup exe is
-downloaded with a streamed, Range-resumable transfer and verified → a
-detached PowerShell helper waits for this process to exit, runs the
-installer silently and relaunches the app.
+Windows flow: a daily-gated feed check (``deepflux.space/deepflux/
+latest.json``) returns the newest version + its setup exe's size and
+sha256 → the GUI offers "Update now / Later / Skip this version" → the
+setup exe is downloaded with a streamed, Range-resumable transfer and
+verified → a detached PowerShell helper waits for this process to exit,
+runs the installer silently and relaunches the app.
+
+Linux flow (AppImage, since the 2026-10-11 full port): same feed ritual
+against ``latest-linux.json``; the verified AppImage is applied by a
+detached /bin/sh helper that waits for our PID to exit, ``chmod +x`` the
+new file and ``mv``s it over the running AppImage's path (POSIX rename
+swaps the directory entry while the running process keeps its old inode —
+no root needed as long as the AppImage lives in a user-writable spot),
+then relaunches it. Non-AppImage installs (tar.gz) degrade to the
+"downloaded, run it manually" path.
 
 Why a full setup exe instead of a patch framework: the Inno installer IS
 the supported upgrade path (Jackett payload, file associations, Chrome
@@ -21,9 +30,9 @@ the download is rejected unless size AND sha256 match the feed — the same
 trust root as a manual website download. Files written by the app carry no
 Mark-of-the-Web, so the silent installer run does not hit SmartScreen
 (residual: Win11 Smart App Control, when enabled, still evaluates unsigned
-exes — same as a manual install). The updater is deliberately NOT exposed
-as an agent tool: a page-borne prompt injection must never be able to
-trigger an installer run.
+exes — same as a manual install). AppImages carry no MOTW analog at all.
+The updater is deliberately NOT exposed as an agent tool: a page-borne
+prompt injection must never be able to trigger an installer run.
 
 Qt-free — same shape as ``dlmgr/ytdlp_update.py``: a background thread
 calls :func:`maybe_check_update` at startup; the GUI layer (gui/
@@ -49,6 +58,7 @@ from config import APP_VERSION, DeeptorrentConfig
 logger = logging.getLogger(__name__)
 
 FEED_URL = "https://deepflux.space/deepflux/latest.json"
+FEED_URL_LINUX = "https://deepflux.space/deepflux/latest-linux.json"
 FEED_BODY_LIMIT = 64 * 1024          # the feed is a few hundred bytes
 CHECK_INTERVAL_SECONDS = 24 * 3600   # at most one probe per day
 DOWNLOAD_CHUNK = 256 * 1024
@@ -83,9 +93,9 @@ class UpdateInfo:
 
 
 def updates_supported() -> bool:
-    """Auto-update exists only in the frozen Windows build — source runs and
-    the macOS/Linux builds (whose binaries the feed never carries) skip it."""
-    return sys.platform == "win32" and bool(getattr(sys, "frozen", False))
+    """Auto-update exists in the frozen Windows and Linux builds — source
+    runs and macOS (whose binaries the feed never carries) skip it."""
+    return sys.platform in ("win32", "linux") and bool(getattr(sys, "frozen", False))
 
 
 def is_newer(latest: str, current: str) -> bool:
@@ -131,10 +141,11 @@ def parse_feed(body: bytes) -> Optional[UpdateInfo]:
 
 
 def fetch_feed(timeout: float = 10.0) -> UpdateInfo:
-    """Fetch + validate the feed. Raises on network/API failure."""
+    """Fetch + validate the platform's feed. Raises on network/API failure."""
     from dlmgr.http_client import get
 
-    response = get(FEED_URL, timeout=timeout, stream=True)
+    response = get(FEED_URL_LINUX if sys.platform == "linux" else FEED_URL,
+                   timeout=timeout, stream=True)
     response.raise_for_status()
     body = b""
     for chunk in response.iter_content(8 * 1024):
@@ -188,9 +199,12 @@ def maybe_check_update(
 # --------------------------------------------------------------------------
 
 def updates_dir() -> Path:
-    """Staging dir for downloaded setup exes. %LOCALAPPDATA%\DeepFlux\
-updates — user-writable, stable across reinstalls, and deliberately NOT
-inside ~/.deeptorrent (which the uninstaller wipes)."""
+    """Staging dir for downloaded update payloads. Windows:
+    %LOCALAPPDATA%\\DeepFlux\\updates — user-writable, stable across
+    reinstalls, and deliberately NOT inside ~/.deeptorrent (which the
+    uninstaller wipes). Linux: the XDG state dir (~/.local/state)."""
+    if sys.platform == "linux":
+        return Path.home() / ".local" / "state" / "DeepFlux" / "updates"
     base = os.environ.get("LOCALAPPDATA") or str(Path.home())
     return Path(base) / "DeepFlux" / "updates"
 
@@ -311,7 +325,15 @@ def install_dir() -> Path:
 
 
 def install_dir_writable() -> bool:
+    """Whether the silent apply can run. Windows: the install dir (Inno
+    reuses it). Linux: the AppImage file itself (the helper mv's over it)."""
     try:
+        if sys.platform == "linux":
+            target = appimage_path()
+            if target is None:
+                return False  # tar.gz/source install → manual update path
+            parent = target.parent
+            return parent.is_dir() and os.access(str(parent), os.W_OK)
         path = install_dir()
         return os.access(str(path), os.W_OK) and path.is_dir()
     except OSError:
@@ -319,8 +341,28 @@ def install_dir_writable() -> bool:
 
 
 def other_instances_running() -> int:
-    """DeepFlux.exe processes besides this one. A second instance holds the
-    bundle's files open and would break the silent reinstall."""
+    """DeepFlux processes besides this one. A second instance holds the
+    bundle's files open and would break the silent reinstall / AppImage
+    replace."""
+    if sys.platform == "linux":
+        # The AppImage runtime sets APPIMAGE to the launched file. Only
+        # probe when we actually are an AppImage (otherwise the update is a
+        # manual download anyway) and match the FULL path so unrelated
+        # processes that merely mention "DeepFlux" don't block the update.
+        target = os.environ.get("APPIMAGE", "")
+        if not target:
+            return 0
+        try:
+            out = subprocess.run(
+                ["pgrep", "-f", target], capture_output=True, text=True, timeout=10,
+            ).stdout
+        except Exception:
+            return 0  # do not block the update on a failed probe
+        # pgrep never matches itself, but our own mount/launcher lineage
+        # might — exclude our PID before counting.
+        pids = {int(p) for p in out.split() if p.isdigit()}
+        pids.discard(os.getpid())
+        return max(0, len(pids))
     if sys.platform != "win32":
         return 0
     try:
@@ -332,6 +374,21 @@ def other_instances_running() -> int:
     except Exception:
         return 0  # do not block the update on a failed probe
     return max(0, out.count('"DeepFlux.exe"') - 1)
+
+
+def appimage_path() -> Optional[Path]:
+    """Path of the running AppImage, or None (source run / tar.gz install).
+
+    The AppImage runtime exports APPIMAGE; inside the mounted squashfs,
+    sys.executable points at the mount dir, which must never be written."""
+    raw = os.environ.get("APPIMAGE", "")
+    if raw and os.path.isfile(raw):
+        return Path(raw)
+    return None
+
+
+def _sh_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\\''") + "'"
 
 
 def _ps_quote(value: str) -> str:
@@ -373,6 +430,44 @@ def build_helper(setup_path: Path, app_pid: int, app_exe: str, log_path: Path) -
     return helper
 
 
+def build_posix_helper(new_path: Path, app_pid: int, target: Path,
+                       log_path: Path) -> Path:
+    """Write the detached apply script for the AppImage flow.
+
+    POSIX sh (always present on Linux) can poll a PID, swap the file and
+    relaunch. The replace is an ``mv`` over the AppImage path — the running
+    process keeps its old mount (inode), so the swap is safe without
+    waiting for the squashfs to unmount."""
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    script = "\n".join([
+        "#!/bin/sh",
+        f"APP_PID={int(app_pid)}",
+        f"NEW={_sh_quote(str(new_path))}",
+        f"TARGET={_sh_quote(str(target))}",
+        f"LOG={_sh_quote(str(log_path))}",
+        "log() { printf '%s %s\\n' \"$(date -Is)\" \"$1\" >> \"$LOG\"; }",
+        "# Wait for the app to exit — its graceful shutdown saves download",
+        "# resume data and the config.",
+        "deadline=$(( $(date +%s) + 90 ))",
+        "while kill -0 \"$APP_PID\" 2>/dev/null; do",
+        "  if [ \"$(date +%s)\" -gt \"$deadline\" ]; then log \"app $APP_PID still running after 90s\"; exit 1; fi",
+        "  sleep 1",
+        "done",
+        "log \"app exited; applying update\"",
+        "chmod +x \"$NEW\" || { log 'chmod failed'; exit 1; }",
+        "mv -f \"$NEW\" \"$TARGET\" || { log 'replace failed'; exit 1; }",
+        "log \"replaced $TARGET\"",
+        "nohup \"$TARGET\" >/dev/null 2>&1 &",
+        "log \"relaunched\"",
+        "rm -f \"$0\"",
+        "",
+    ])
+    helper = new_path.parent / "apply_update.sh"
+    helper.write_text(script, encoding="utf-8", newline="\n")
+    helper.chmod(0o755)
+    return helper
+
+
 def apply_update(setup_path: Path, app_pid: Optional[int] = None) -> Path:
     """Spawn the detached apply helper and return its script path. Call
     this RIGHT BEFORE triggering the app's normal shutdown — the helper
@@ -382,6 +477,23 @@ def apply_update(setup_path: Path, app_pid: Optional[int] = None) -> Path:
     pid = int(app_pid or os.getpid())
     log_path = Path.home() / ".deeptorrent" / "logs" / "update.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "linux":
+        target = appimage_path()
+        if target is None:
+            raise UpdateError(
+                "not running as an AppImage — apply the downloaded file manually")
+        if not setup_path.name.endswith(".AppImage"):
+            raise UpdateError(f"unexpected update payload: {setup_path.name}")
+        helper = build_posix_helper(setup_path, pid, target, log_path)
+        # start_new_session detaches the helper from our process group so it
+        # survives our exit (and never receives our signals).
+        subprocess.Popen(
+            ["/bin/sh", str(helper)],
+            start_new_session=True,
+            close_fds=True,
+        )
+        logger.info("update helper spawned (pid %s, target %s)", pid, target)
+        return helper
     helper = build_helper(setup_path, pid, os.path.abspath(sys.executable), log_path)
     # CREATE_NO_WINDOW only — combining it with DETACHED_PROCESS is an
     # INVALID CreateProcess combination on which the child dies instantly

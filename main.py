@@ -357,6 +357,13 @@ def _forward_to_running_instance(targets: List[str]) -> bool:
 
 
 def main() -> None:
+    # Linux: the Play tab embeds mpv/VLC video via X11 window IDs, and
+    # Wayland has no cross-client window embedding — so default Qt to xcb
+    # (XWayland on Wayland sessions). An explicit QT_QPA_PLATFORM from the
+    # user/CI (offscreen boot tests) always wins.
+    if sys.platform == "linux" and not os.environ.get("QT_QPA_PLATFORM"):
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+
     # Give the built-in Chromium browser the same network privacy features as
     # mainstream browsers: DNS-over-HTTPS via Cloudflare and Encrypted Client
     # Hello (ECH). ISPs/middleboxes that reset TLS connections based on
@@ -384,7 +391,7 @@ def main() -> None:
     parser.add_argument(
         "--register-native-host",
         action="store_true",
-        help="Register the native messaging host in the Windows registry and exit.",
+        help="Register the native messaging host (Windows registry / Linux browser config dirs) and exit.",
     )
     parser.add_argument(
         "--unregister-native-host",

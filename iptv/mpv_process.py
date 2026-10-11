@@ -4,15 +4,20 @@ Why this exists: SVP 4 injects its motion-interpolation chain through
 VapourSynth, and VapourSynth embeds its own CPython. libmpv running *inside*
 DeepFlux's Python process therefore cannot initialize it — VSScript either
 fails or deadlocks against our interpreter (see :mod:`iptv.svp`). A separate
-``mpv.exe`` is a plain C host, so VapourSynth works there exactly as it does
+mpv binary is a plain C host, so VapourSynth works there exactly as it does
 for every other SVP-supported player.
 
-VERIFIED live on 23.976 fps content with SVP 4.7: mpv embeds into the Qt
-surface via ``--wid``, SVP attaches to the same ``mpvpipe`` named pipe we
-use for control, injects ``vf=vapoursynth[svp]``, and output rises to
-``estimated-vf-fps`` 119.88 — while our own pause/seek commands keep
+VERIFIED live on 23.976 fps content with SVP 4.7 (Windows): mpv embeds into
+the Qt surface via ``--wid``, SVP attaches to the same ``mpvpipe`` named
+pipe we use for control, injects ``vf=vapoursynth[svp]``, and output rises
+to ``estimated-vf-fps`` 119.88 — while our own pause/seek commands keep
 returning ``error: success``. mpv accepts several simultaneous IPC clients,
 so sharing the pipe with SVP Manager is fine.
+
+On Linux (SVP 4 for Linux, verified against its installer payload
+2026-10-11) the same contract runs over a UNIX domain socket at
+``/tmp/mpvsocket`` — the path SVP's own shipped mpv.conf sets and
+SVPManager watches for. mpv still embeds via ``--wid`` (X11/XWayland).
 
 This backend is used ONLY in SVP mode; everything else keeps the in-process
 :class:`iptv.player.MpvBackend`, which stays faster (no IPC hop) and needs
@@ -24,6 +29,8 @@ import ctypes
 import json
 import logging
 import os
+import select
+import socket
 import subprocess
 import threading
 import time
@@ -34,11 +41,16 @@ from .player import PlayerBackend
 logger = logging.getLogger(__name__)
 
 _CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_IS_POSIX = os.name == "posix"
 
-# SVP Manager scans for mpv's default pipe name; using it is what makes SVP
-# discover the player at all.
-PIPE_NAME = "mpvpipe"
-PIPE_PATH = r"\\.\pipe" + "\\" + PIPE_NAME
+# SVP Manager scans for mpv's default IPC name; using it is what makes SVP
+# discover the player at all. Windows: a named pipe (relative name). Linux:
+# a full filesystem path — SVP's shipped mpv.conf sets /tmp/mpvsocket.
+if _IS_POSIX:
+    PIPE_NAME = "/tmp/mpvsocket"
+else:
+    PIPE_NAME = "mpvpipe"
+PIPE_PATH = PIPE_NAME if _IS_POSIX else (r"\\.\pipe" + "\\" + PIPE_NAME)
 
 # Properties we mirror into the PlayerBackend callbacks. "duration" must be
 # OBSERVED, not read once after loadfile: mpv doesn't know it until the file
@@ -141,10 +153,13 @@ class MpvProcessBackend(PlayerBackend):
         super().__init__(parent_widget)
         self._exe = mpv_exe
         self._proc: Optional[subprocess.Popen] = None
-        self._pipe: Any = None
+        self._pipe: Any = None      # Windows: file handle on the named pipe
+        self._sock: Optional[socket.socket] = None  # Linux: the unix socket
         self._reader: Optional[threading.Thread] = None
         self._stop = threading.Event()
-        # ONE lock for both directions — the pipe handle is synchronous.
+        # ONE lock for both directions — the Windows pipe handle is
+        # synchronous (see _bytes_available); the socket keeps the same
+        # discipline for symmetry.
         self._io_lock = threading.RLock()
         self._rid = 0
         self._pending: Dict[int, Dict[str, Any]] = {}
@@ -164,6 +179,8 @@ class MpvProcessBackend(PlayerBackend):
         except Exception:
             logger.warning("out-of-process mpv: host widget has no window handle")
             return False
+        if _IS_POSIX:
+            self._unlink_stale_socket()
         args = [
             self._exe,
             f"--wid={wid}",
@@ -193,7 +210,7 @@ class MpvProcessBackend(PlayerBackend):
             logger.warning("out-of-process mpv: spawn failed: %s", exc)
             return False
         if not self._connect():
-            logger.warning("out-of-process mpv: IPC pipe never appeared")
+            logger.warning("out-of-process mpv: IPC endpoint never appeared")
             self.destroy()
             return False
         self._stop.clear()
@@ -203,18 +220,46 @@ class MpvProcessBackend(PlayerBackend):
         for i, prop in enumerate(_OBSERVED, start=1):
             self._send({"command": ["observe_property", i, prop]})
         # mpv's child window appears once it creates the video output; patch
-        # it in the background so create() never waits on it.
+        # it in the background so create() never waits on it (Windows only —
+        # POSIX returns immediately inside).
         _make_child_no_activate(wid)
         return True
 
+    @staticmethod
+    def _unlink_stale_socket() -> None:
+        """Remove a leftover /tmp/mpvsocket from a crashed mpv.
+
+        mpv refuses to bind an existing path; a stale socket would make the
+        spawn fail. If some OTHER live mpv owns it, connecting succeeds and
+        we leave it alone — that player's SVP session wins this round."""
+        try:
+            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            probe.settimeout(0.3)
+            try:
+                probe.connect(PIPE_PATH)
+                return  # alive owner — do not touch
+            except OSError:
+                pass
+            finally:
+                probe.close()
+            os.unlink(PIPE_PATH)
+        except OSError:
+            pass
+
     def _connect(self, timeout: float = 15.0) -> bool:
-        """Open mpv's IPC pipe (it appears shortly after the process starts)."""
+        """Open mpv's IPC endpoint (it appears shortly after the process
+        starts): the named pipe on Windows, the unix socket on Linux."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
                 return False        # mpv died on startup
             try:
-                self._pipe = open(PIPE_PATH, "r+b", buffering=0)
+                if _IS_POSIX:
+                    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                    s.connect(PIPE_PATH)
+                    self._sock = s
+                else:
+                    self._pipe = open(PIPE_PATH, "r+b", buffering=0)
                 return True
             except OSError:
                 time.sleep(0.2)
@@ -222,16 +267,19 @@ class MpvProcessBackend(PlayerBackend):
 
     def destroy(self) -> None:
         self._stop.set()
-        if self._pipe is not None:
+        if self._pipe is not None or self._sock is not None:
             try:
                 self._send({"command": ["quit"]})
             except Exception:
                 pass
-            try:
-                self._pipe.close()
-            except Exception:
-                pass
+            for handle in (self._sock, self._pipe):
+                try:
+                    if handle is not None:
+                        handle.close()
+                except Exception:
+                    pass
             self._pipe = None
+            self._sock = None
         if self._proc is not None:
             try:
                 self._proc.wait(timeout=3)
@@ -246,10 +294,17 @@ class MpvProcessBackend(PlayerBackend):
     # -- IPC plumbing --------------------------------------------------------
     def _send(self, payload: dict) -> None:
         """Fire-and-forget one IPC message."""
+        data = (json.dumps(payload) + "\n").encode("utf-8")
+        if _IS_POSIX:
+            sock = self._sock
+            if sock is None:
+                return
+            with self._io_lock:
+                sock.sendall(data)
+            return
         pipe = self._pipe
         if pipe is None:
             return
-        data = (json.dumps(payload) + "\n").encode("utf-8")
         with self._io_lock:      # same lock as reads: the handle is synchronous
             pipe.write(data)
 
@@ -258,7 +313,7 @@ class MpvProcessBackend(PlayerBackend):
 
         Never raises: a dead or slow player must degrade to a no-op rather
         than take the GUI thread down with it."""
-        if self._pipe is None:
+        if self._pipe is None and self._sock is None:
             return None
         with self._pending_lock:
             self._rid += 1
@@ -287,27 +342,45 @@ class MpvProcessBackend(PlayerBackend):
         return default if val is None else val
 
     def _read_loop(self) -> None:
-        """Parse newline-delimited JSON from mpv until the pipe closes.
+        """Parse newline-delimited JSON from mpv until the endpoint closes.
 
-        Polls with PeekNamedPipe and only reads what is already buffered, so
-        the shared handle is never held in a blocking read (see
-        :func:`_bytes_available`). Partial lines carry over between reads."""
+        Windows: polls with PeekNamedPipe and only reads what is already
+        buffered, so the shared handle is never held in a blocking read (see
+        :func:`_bytes_available`). Linux: select() guards each recv so the
+        same short-read guarantee holds for the shared socket. Partial lines
+        carry over between reads either way."""
         buf = b""
         while not self._stop.is_set():
-            pipe = self._pipe
-            if pipe is None:
-                break
-            chunk = b""
-            try:
-                with self._io_lock:
-                    n = _bytes_available(pipe)
-                    if n:
-                        chunk = pipe.read(n)
-            except Exception:
-                break
-            if not chunk:
-                time.sleep(_POLL_INTERVAL)
-                continue
+            if _IS_POSIX:
+                sock = self._sock
+                if sock is None:
+                    break
+                chunk = b""
+                try:
+                    ready, _, _ = select.select([sock], [], [], _POLL_INTERVAL)
+                    if not ready:
+                        continue
+                    with self._io_lock:
+                        chunk = sock.recv(65536)
+                    if not chunk:
+                        break   # mpv closed the socket
+                except Exception:
+                    break
+            else:
+                pipe = self._pipe
+                if pipe is None:
+                    break
+                chunk = b""
+                try:
+                    with self._io_lock:
+                        n = _bytes_available(pipe)
+                        if n:
+                            chunk = pipe.read(n)
+                except Exception:
+                    break
+                if not chunk:
+                    time.sleep(_POLL_INTERVAL)
+                    continue
             buf += chunk
             *lines, buf = buf.split(b"\n")
             for raw in lines:
@@ -372,7 +445,7 @@ class MpvProcessBackend(PlayerBackend):
 
     # -- transport -----------------------------------------------------------
     def play(self, url: str, headers: Optional[dict] = None) -> None:
-        if self._pipe is None and not self.create():
+        if self._pipe is None and self._sock is None and not self.create():
             if self.on_error:
                 self.on_error("Playback backend unavailable")
             return
@@ -516,7 +589,7 @@ class MpvProcessBackend(PlayerBackend):
 
     def buffer_status(self) -> Dict[str, Any]:
         """Return live mpv cache/playback state over IPC."""
-        if self._pipe is None:
+        if self._pipe is None and self._sock is None:
             return {}
         try:
             pct = self._get("cache-buffering-state")
@@ -552,4 +625,4 @@ class MpvProcessBackend(PlayerBackend):
 
     @property
     def is_playing(self) -> bool:
-        return self._pipe is not None and not self._paused
+        return (self._pipe is not None or self._sock is not None) and not self._paused

@@ -195,16 +195,17 @@ Platform note (macOS build):
 """
 
 
-# Linux build: same feature scope as macOS (no Play tab, no bundled FFmpeg)
-# but different package-manager and PATH answers.
+# Linux build: FULL feature build since the 2026-10-11 port — the Play
+# tab and the iptv_* tools exist (X11/XWayland embedding), but FFmpeg is
+# still distro-installed and Jackett has no Windows-style service control.
 if sys.platform.startswith("linux"):
     SYSTEM_PROMPT += """
 
 Platform note (Linux build):
-- This build has NO Play/IPTV tab, no in-app video player, and no iptv_* tools. Never suggest them; media files open in the user's system player. Stream-while-downloading is unavailable.
+- The Play/IPTV tab and all iptv_* tools ARE available in this build (video plays through embedded mpv; on Wayland sessions the app runs under XWayland). SVP motion interpolation requires the user's own SVP 4 for Linux install.
 - No FFmpeg is bundled. Install it with the distro's package manager via run_shell (`sudo apt install ffmpeg`, or dnf/pacman/zypper as appropriate). It lands in /usr/bin/ffmpeg, which the app auto-detects from PATH; only if detection fails, set `download.ffmpeg_path` to `/usr/bin/ffmpeg` with set_settings.
 - winget does not exist on Linux; use apt/dnf/pacman/zypper.
-- Jackett (if installed) lives at /opt/jackett/jackett (system install) or ~/.config/Jackett/jackett, usually managed as a systemd service: tell the user to run `sudo systemctl start jackett` themselves if it is unreachable — starting services needs elevation the app doesn't have.
+- Jackett (if installed) lives at /opt/jackett/jackett (system install) or ~/.local/share/Jackett/jackett / ~/.config/Jackett/jackett (user installs), usually managed as a systemd service: tell the user to run `sudo systemctl start jackett` themselves if it is unreachable — starting system services needs elevation the app doesn't have (a user-mode Jackett binary can be spawned directly).
 """
 
 
