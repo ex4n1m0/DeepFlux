@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 5.5 — User Guide</h1>
+<h1>DeepFlux 5.6 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -566,7 +566,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 5.5 — AI Deep Search</p>
+<p>DeepFlux 5.6 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
