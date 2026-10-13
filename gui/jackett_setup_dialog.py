@@ -59,13 +59,17 @@ class _SetupWorker(QThread):
     line = Signal(str)
     done = Signal(dict)
 
-    def __init__(self, config_path: Optional[str], parent=None):
+    def __init__(self, config_path: Optional[str], mode: str = "jackett", parent=None):
         super().__init__(parent)
         self._config_path = config_path
+        self._mode = mode
 
     def run(self):
-        from infra.jackett_setup import run_setup
         try:
+            if self._mode == "flaresolverr":
+                from infra.flaresolverr import run_setup
+            else:
+                from infra.jackett_setup import run_setup
             result = run_setup(config_path=self._config_path, on_progress=self.line.emit)
         except Exception as exc:  # never leave the window stuck on a crash
             result = {"ok": False, "error": f"exception:{exc}"}
@@ -73,23 +77,38 @@ class _SetupWorker(QThread):
 
 
 class JackettSetupDialog(QDialog):
-    def __init__(self, config_path: Optional[str] = None, parent=None):
+    _MODES = {
+        "jackett": {
+            "title": "DeepFlux — torrent search setup",
+            "heading": "Setting up torrent search",
+            "subline": "Installing and linking the Jackett service, then adding its public "
+                       "indexers. You may see one Windows permission prompt.",
+        },
+        "flaresolverr": {
+            "title": "DeepFlux — Cloudflare unlock setup",
+            "heading": "Setting up FlareSolverr",
+            "subline": "Extracting the bundled FlareSolverr (about 700 MB) and linking it "
+                       "into Jackett — this unlocks Cloudflare-protected torrent sites. "
+                       "No permission prompt needed.",
+        },
+    }
+
+    def __init__(self, config_path: Optional[str] = None, mode: str = "jackett",
+                 parent=None):
         super().__init__(parent)
-        self.setWindowTitle(tr('DeepFlux — torrent search setup'))
+        texts = self._MODES.get(mode, self._MODES["jackett"])
+        self.setWindowTitle(tr(texts["title"]))
         self.setModal(False)
         self._result: dict = {}
+        self._mode = mode
 
         root = QWidget(objectName="setupRoot")
         layout = QVBoxLayout(root)
         layout.setContentsMargins(18, 16, 18, 14)
         layout.setSpacing(8)
 
-        heading = QLabel(tr('Setting up torrent search'), objectName="heading")
-        subline = QLabel(
-            tr("Installing and linking the Jackett service, then adding its public "
-               "indexers. You may see one Windows permission prompt."),
-            objectName="subline",
-        )
+        heading = QLabel(tr(texts["heading"]), objectName="heading")
+        subline = QLabel(tr(texts["subline"]), objectName="subline")
         subline.setWordWrap(True)
 
         self.log = QPlainTextEdit(readOnly=True)
@@ -111,7 +130,7 @@ class JackettSetupDialog(QDialog):
         self.setStyleSheet(_STYLE)
         self.resize(640, 460)
 
-        self._worker = _SetupWorker(config_path, self)
+        self._worker = _SetupWorker(config_path, mode=self._mode, parent=self)
         self._worker.line.connect(self._on_line)
         self._worker.done.connect(self._on_done)
         self._worker.start()
@@ -129,9 +148,14 @@ class JackettSetupDialog(QDialog):
         self._result = result
         if result.get("ok"):
             self.log.appendPlainText("")
-            self.log.appendPlainText(
-                f"✓ Done — {result.get('sources_enabled', 0)} torrent sources enabled."
-            )
+            if self._mode == "flaresolverr":
+                self.log.appendPlainText(
+                    "✓ Done — Cloudflare-protected sites are being unblocked. "
+                    "The first search through one may take up to a minute "
+                    "while the challenge is solved.")
+            else:
+                self.log.appendPlainText(
+                    f"✓ Done — {result.get('sources_enabled', 0)} torrent sources enabled.")
         else:
             self.log.appendPlainText("")
             self.log.appendPlainText(
@@ -151,7 +175,8 @@ class JackettSetupDialog(QDialog):
         self.move(frame.topLeft())
 
 
-def run_setup_jackett_dialog(config_path: Optional[str] = None) -> int:
+def run_setup_jackett_dialog(config_path: Optional[str] = None,
+                             mode: str = "jackett") -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Deeptorrent")
     try:
@@ -159,7 +184,7 @@ def run_setup_jackett_dialog(config_path: Optional[str] = None) -> int:
         load_app_fonts(app)
     except Exception:
         pass
-    dialog = JackettSetupDialog(config_path=config_path)
+    dialog = JackettSetupDialog(config_path=config_path, mode=mode)
     dialog.show()
     dialog.center_on_screen()
     return app.exec()

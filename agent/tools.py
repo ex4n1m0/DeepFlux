@@ -32,6 +32,7 @@ from agent.memory import MemoryStore
 from agent.rss import RSSMonitor
 from infra import jackett
 from infra.indexer_health import (
+    KIND_FLARE,
     KIND_JACKETT,
     KIND_UNKNOWN,
     ZOMBIE_FAILURES,
@@ -2846,6 +2847,10 @@ class ToolRegistry:
             summary = _failure_summary()
             if summary:
                 result["failure_summary"] = summary
+            if KIND_FLARE in fail_kinds:
+                # Cloudflare walls seen — opportunistically make sure our
+                # local FlareSolverr is up so the next search benefits.
+                self._maybe_start_flaresolverr()
             return result
 
         def _failure_or_empty() -> Dict[str, Any]:
@@ -2970,6 +2975,24 @@ class ToolRegistry:
             quick,
             remaining_public=max(0, enabled_public - len(public)),
         )
+
+    def _maybe_start_flaresolverr(self) -> None:
+        """After a search hit Cloudflare walls, make sure OUR local FlareSolverr
+        is up (installer step / manual install) so the next search benefits.
+        Daemon thread: starting it (first boot opens the bundled Chromium)
+        must never block the search result. No-op when it isn't configured,
+        isn't installed, or is a custom remote URL."""
+        try:
+            from infra import flaresolverr
+            url = (self.config.indexer.flare_solverr_url or "").strip()
+            if not url or flaresolverr.find_executable() is None:
+                return
+            threading.Thread(
+                target=flaresolverr.notify_flare_failure,
+                args=(self.config,), daemon=True, name="flare-autostart",
+            ).start()
+        except Exception as exc:
+            logger.debug("flare auto-start dispatch failed: %s", exc)
 
     @staticmethod
     def _annotate_quick(result: Dict[str, Any], quick: bool, remaining_public: int) -> Dict[str, Any]:

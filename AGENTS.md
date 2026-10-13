@@ -108,6 +108,43 @@
     without the file still compiles — it just offers no Jackett step.
   * Tests: `tests/test_jackett_setup.py` (mocked HTTP/ctypes/config writes,
     plus an offscreen dialog run).
+- FlareSolverr installer final step (added 2026-10-13): a second
+  DEFAULT-CHECKED postinstall checkbox "Install FlareSolverr to unblock
+  Cloudflare-protected torrent sites (about 700 MB on disk)" runs
+  `DeepFlux.exe --setup-flaresolverr` AFTER the Jackett entry (it pushes the
+  URL into Jackett) and BEFORE launch. The step is
+  `infra/flaresolverr.py::run_setup` (same dialog, mode="flaresolverr"):
+  extract the bundled zip next to the app → DELETE the zip (~378 MB saved;
+  Inno reinstalls it on every install) → start detached (ENV-only config:
+  PORT=8191 HOST=127.0.0.1 loopback-only, no CLI flags exist) → persist
+  `indexer.flare_solverr_url` → `jackett.set_flaresolverr_url`. VERIFIED
+  facts — do not re-derive by guessing:
+  * The OFFICIAL FlareSolverr repo ships Windows binaries now (the 21hsmw
+    fork is NOT needed): v3.5.2 `flaresolverr_windows_x64.zip`, MIT, a
+    self-contained PyInstaller onedir that bundles its OWN Chromium at
+    `_internal/chrome/chrome.exe` — NO system-Chrome dependency. Health:
+    `GET /health` → 200 `{"status": "ok"}` on port 8191.
+  * MEASURED live on this machine (96-indexer Jackett): linking FlareSolverr
+    made 15 of 19 Cloudflare-walled indexers functional (8 answered with
+    results incl. eztv + both kickasstorrents; 7 more solved the challenge
+    and returned clean zero-hits). 1337x's CURRENT challenge is NOT solvable
+    by it ("FlareSolverr was unable to pass"), two sites exceed the ~55s
+    solve window, torrentproject2's failure isn't CF at all. First solves
+    take 40-90s, cookies cached afterwards — expect a slow first search.
+  * `fetch_flaresolverr.py` pins version/sha256 (asset digest from the
+    GitHub API) into `packaging/flaresolverr/PINNED.json` + the MIT notice
+    into `_internal\licenses\`; the zip is gitignored and reuses a local
+    copy when the digest matches (no 378 MB re-download on rebuilds).
+    Setup exe grows by ~378 MB (zip stored near-as-is inside Inno).
+  * Auto-start (never a service): the GUI's hourly Jackett-sync thread and
+    the search tier's flare-failure path both call
+    `flaresolverr.ensure_running` — only ever for OUR default local URL
+    (`http://127.0.0.1:8191/`; a custom remote URL is never started), only
+    when `find_executable()` finds the extracted install. POSIX:
+    FlareSolverr is Windows-setup-only (find_executable → None → clean
+    no-op; the URL field still works for manual instances).
+  * Tests: `tests/test_flaresolverr.py` (fake zip with the official layout,
+    env/detached spawn, ensure_running gating, link pipeline, POSIX refusal).
 - Installer-seeded config.json (CurStepChanged ssPostInstall): the seed is
   MINIMAL and must stay that way — ONLY real overrides, never a copy of
   defaults (config.py is the single source of truth; from_file fills the

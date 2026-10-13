@@ -69,10 +69,13 @@ organize files, all with your confirmation for sensitive actions.</p>
       its public indexers are added, and its API key is linked. To redo it by
       hand, run <code>"C:\Users\&lt;you&gt;\AppData\Local\Programs\DeepFlux\DeepFlux.exe"
       --setup-jackett</code> (one Windows permission prompt appears).
-      Many public indexers sit behind Cloudflare — install
+      Many public indexers sit behind Cloudflare — the installer's
+      <i>“Install FlareSolverr”</i> final step (or re-running the installer)
+      extracts the bundled solver and links it into Jackett for you, and
+      DeepFlux starts it automatically whenever it is configured but not
+      running. By hand: install
       <a href="https://github.com/FlareSolverr/FlareSolverr">FlareSolverr</a>
-      and paste its URL into Jackett Settings → <i>FlareSolverr API URL</i>
-      (DeepFlux writes it into Jackett for you) to unlock them.</li>
+      and paste its URL into Jackett Settings → <i>FlareSolverr API URL</i>.</li>
   <li><b>Optional search keys:</b> add a Brave or Perplexity API key (environment
       variables <code>BRAVE_API_KEY</code> / <code>DEEPSEEK_API_KEY</code> also work).
       Web searches then query DuckDuckGo, Brave, and Perplexity in parallel and

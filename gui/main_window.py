@@ -4010,6 +4010,24 @@ class MainWindow(QMainWindow):
             return
         if result:
             self._agent_signals.event.emit({"type": "jackett_sync", **result})
+        # Same lazy-start contract as Jackett itself: when FlareSolverr is
+        # configured (our local instance) but down — e.g. after a reboot —
+        # bring it up so Cloudflare-walled indexers work again. Cheap health
+        # check when it's already running; a custom remote URL is never ours.
+        try:
+            from infra import flaresolverr
+            if (self.config.indexer.flare_solverr_url
+                    and flaresolverr.find_executable() is not None
+                    and not flaresolverr.is_running()
+                    and flaresolverr.ensure_running(self.config)):
+                self._agent_signals.event.emit({
+                    "type": "flaresolverr",
+                    "success": True,
+                    "message": "FlareSolverr was not running — started it "
+                               "(Cloudflare-protected indexers are unlocked).",
+                })
+        except Exception as exc:
+            logger.debug("FlareSolverr auto-start check failed: %s", exc)
 
     # ------------------------------------------------------------------
     # yt-dlp freshness check (startup only — the probe itself is daily-gated)

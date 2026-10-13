@@ -86,6 +86,16 @@ Source: "{#BuildDir}\DeepFlux\*"; DestDir: "{app}"; Flags: ignoreversion recurse
 ; that --setup-jackett runs elevated, plus its license notice.
 Source: "{#JackettDir}\Jackett.Installer.Windows.exe"; DestDir: "{app}\_internal\jackett"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#JackettDir}\jackett-gpl2.txt"; DestDir: "{app}\_internal\licenses"; Flags: ignoreversion skipifsourcedoesntexist
+; FlareSolverr final step payload: the official Windows zip (MIT, unmodified;
+; self-contained incl. its own Chromium) that --setup-flaresolverr extracts
+; next to the app and links into Jackett, plus its license notice. Adds
+; ~378 MB to the setup file; skipifsourcedoesntexist keeps zip-less builds
+; compiling (they just don't offer the step).
+#ifndef FlareSolverrDir
+#define FlareSolverrDir "flaresolverr"
+#endif
+Source: "{#FlareSolverrDir}\flaresolverr_windows_x64.zip"; DestDir: "{app}\_internal\flaresolverr"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#FlareSolverrDir}\flaresolverr-mit.txt"; DestDir: "{app}\_internal\licenses"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -100,6 +110,11 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "--register-associations"; Descri
 ; (one UAC), reads Jackett's API key, adds its public indexers and tests
 ; the connection. No nowait: the entries are sequential.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-jackett"; Description: "Set up Jackett torrent search now (recommended) — installs the service and public sources"; Flags: postinstall skipifsilent
+; FlareSolverr final step — after Jackett (it pushes the URL into Jackett's
+; config) and before launch. Extracts the bundled zip (~700 MB on disk),
+; starts the local service and links it, unlocking Cloudflare-protected
+; indexers. Measured 2026-10-13: 15 of 19 walled indexers functional.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-flaresolverr"; Description: "Install FlareSolverr to unblock Cloudflare-protected torrent sites (about 700 MB on disk)"; Flags: postinstall skipifsilent
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
@@ -116,19 +131,17 @@ procedure CurPageChanged(CurPageID: Integer);
 var
   I: Integer;
 begin
-  // Default-CHECK the Jackett final-step checkbox: Inno always creates
-  // postinstall checkboxes unchecked, and the whole point of the step is
+  // Default-CHECK the final-step checkboxes: Inno always creates
+  // postinstall checkboxes unchecked, and the whole point of the steps is
   // that a default install ships a working torrent search (user decision
-  // 2026-09-16). Runs when the finished page is built, after the RunList
-  // is populated.
+  // 2026-09-16; extended to FlareSolverr 2026-10-13). Runs when the
+  // finished page is built, after the RunList is populated.
   if CurPageID <> wpFinished then
     Exit;
   for I := 0 to WizardForm.RunList.Items.Count - 1 do
-    if Pos('Jackett', WizardForm.RunList.ItemCaption[I]) > 0 then
-    begin
+    if (Pos('Jackett', WizardForm.RunList.ItemCaption[I]) > 0) or
+       (Pos('FlareSolverr', WizardForm.RunList.ItemCaption[I]) > 0) then
       WizardForm.RunList.Checked[I] := True;
-      Break;
-    end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

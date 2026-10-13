@@ -264,6 +264,9 @@ ZH_CN: dict[str, str] = {
     "Fetching from Jackett...": "正在从 Jackett 获取...",
     "File Operation": "文件操作",
     "FlareSolverr API URL:": "FlareSolverr API 地址：",
+    "DeepFlux — Cloudflare unlock setup": "DeepFlux —— Cloudflare 解锁设置",
+    "Setting up FlareSolverr": "正在设置 FlareSolverr",
+    "Extracting the bundled FlareSolverr (about 700 MB) and linking it into Jackett — this unlocks Cloudflare-protected torrent sites. No permission prompt needed.": "正在解压内置的 FlareSolverr（约 700 MB）并关联到 Jackett —— 这将解锁受 Cloudflare 保护的种子站。无需权限提示。",
     "File not found on disk. The torrent may not be fully downloaded.":
         "磁盘上找不到该文件。种子可能尚未下载完成。",
     "Files and folders; native drag and drop is disabled for safety":

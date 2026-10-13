@@ -1,0 +1,248 @@
+"""FlareSolverr service management + the installer's setup step.
+
+FlareSolverr (MIT, github.com/FlareSolverr/FlareSolverr) solves Cloudflare's
+anti-bot challenge for Jackett. Measured live 2026-10-13 on this machine:
+with it running, 15 of 19 Cloudflare-walled indexers became functional
+(incl. eztv and kickasstorrents; 1337x's current challenge is NOT solvable
+by it); first solves take 40-90s, then cookies are cached.
+
+The official Windows build (v3.5.2, pinned by packaging/fetch_flaresolverr.py)
+is a self-contained PyInstaller onedir that bundles its OWN Chromium — no
+system Chrome dependency — and configures itself purely through ENV vars.
+DeepFlux treats it exactly like Jackett (infra/jackett.py): the installer
+ships the zip, ``--setup-flaresolverr`` extracts it next to the app, starts
+it and links the URL into Jackett's own config through the verified admin
+API; afterwards the app lazily starts it whenever it is configured but down.
+
+All functions are safe to call from a background thread. POSIX: FlareSolverr
+is Windows-setup-only for now — find_executable returns None there and
+everything degrades to a clean no-op (the URL field still works for a
+manually installed instance on any platform).
+"""
+from __future__ import annotations
+
+import logging
+import os
+import subprocess
+import sys
+import time
+import zipfile
+from typing import Any, Callable, Dict, List, Optional
+
+import requests
+
+from config import DeeptorrentConfig
+
+logger = logging.getLogger(__name__)
+
+ZIP_NAME = "flaresolverr_windows_x64.zip"
+# Local, loopback-only binding (HOST=127.0.0.1): the solver is for OUR
+# Jackett, not the LAN.
+DEFAULT_URL = "http://127.0.0.1:8191/"
+DEFAULT_PORT = 8191
+START_TIMEOUT = 90.0     # first boot launches the bundled Chromium — slow
+EXTRACT_PROGRESS_EVERY = 50   # log lines between zip-extract progress notes
+
+# Per AGENTS.md: Windows subprocess spawns must not flash a console window.
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+_DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0)
+
+
+def install_root() -> str:
+    """Where the extracted flaresolverr/ tree lives (next to the frozen exe;
+    in dev, inside packaging/)."""
+    if getattr(sys, "frozen", False):
+        base = os.path.dirname(sys.executable)
+    else:
+        base = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "packaging", "flaresolverr")
+    return os.path.join(base, "flaresolverr")
+
+
+def find_executable() -> Optional[str]:
+    """Path to flaresolverr.exe when the setup step has extracted it."""
+    if sys.platform != "win32":
+        return None
+    exe = os.path.join(install_root(), "flaresolverr.exe")
+    return exe if os.path.isfile(exe) else None
+
+
+def _zip_candidates() -> List[str]:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return [os.path.join(sys._MEIPASS, "flaresolverr", ZIP_NAME)]
+    return [os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         "packaging", "flaresolverr", ZIP_NAME)]
+
+
+def is_running(url: str = DEFAULT_URL, timeout: float = 3.0) -> bool:
+    """True when FlareSolverr answers its /health endpoint (verified live:
+    200 {"status": "ok"})."""
+    try:
+        resp = requests.get(f"{url.rstrip('/')}/health", timeout=timeout)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
+def start(url: str = DEFAULT_URL) -> bool:
+    """Spawn FlareSolverr detached (loopback-only, headless) — the same
+    lazy-start pattern as infra.jackett.start. Readiness needs
+    wait_until_ready()."""
+    exe = find_executable()
+    if not exe:
+        logger.info("No FlareSolverr executable found (setup step not run)")
+        return False
+    env = dict(os.environ,
+               PORT=str(DEFAULT_PORT),
+               HOST="127.0.0.1",
+               LOG_LEVEL="info")
+    try:
+        subprocess.Popen(
+            [exe],
+            cwd=os.path.dirname(exe),
+            env=env,
+            creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
+            close_fds=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        logger.info("Started FlareSolverr: %s", exe)
+        return True
+    except Exception as exc:
+        logger.warning("Failed to start FlareSolverr %s: %s", exe, exc)
+        return False
+
+
+def wait_until_ready(url: str = DEFAULT_URL, timeout: float = START_TIMEOUT) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if is_running(url):
+            return True
+        time.sleep(1.0)
+    return is_running(url)
+
+
+def ensure_running(config: DeeptorrentConfig, url: str = DEFAULT_URL) -> bool:
+    """Start FlareSolverr when the user's config points at OUR default local
+    instance, it is installed, and it is down (a custom/remote URL is never
+    ours to start). Cheap when already running."""
+    configured = (config.indexer.flare_solverr_url or "").strip().rstrip("/").lower()
+    if configured != DEFAULT_URL.rstrip("/").lower():
+        return False
+    if is_running(url):
+        return True
+    if not start(url):
+        return False
+    return wait_until_ready(url)
+
+
+def notify_flare_failure(config: DeeptorrentConfig) -> None:
+    """Called by the search tier when Cloudflare-challenged indexers show up:
+    makes sure our local solver is up so the NEXT search (and Jackett's
+    retry) benefits. Never blocks the search — worst case it is a no-op."""
+    try:
+        ensure_running(config)
+    except Exception as exc:
+        logger.debug("flare auto-start failed: %s", exc)
+
+
+def run_setup(config_path: Optional[str] = None,
+              zip_path: Optional[str] = None,
+              on_progress: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+    """The installer's FlareSolverr final step (``DeepFlux --setup-flaresolverr``).
+
+    Idempotent pipeline: extract the bundled zip next to the app, delete the
+    zip (the extracted tree replaces it — saves ~378 MB), start the service,
+    save ``indexer.flare_solverr_url`` and push it into Jackett's own config
+    when Jackett is linked. Never elevates, never touches Jackett beyond the
+    one admin-config write."""
+    def say(msg: str) -> None:
+        if on_progress:
+            try:
+                on_progress(msg)
+            except Exception:
+                pass
+        logger.info("flaresolverr-setup: %s", msg)
+
+    config_path = config_path or DeeptorrentConfig.default_config_path()
+    config = DeeptorrentConfig.from_file(config_path)
+    result: Dict[str, Any] = {
+        "ok": False, "error": None, "extracted": False, "started": False,
+        "already_running": False, "jackett_linked": False,
+    }
+
+    if sys.platform != "win32":
+        result["error"] = "The bundled FlareSolverr setup is Windows-only."
+        return result
+
+    # Already set up? Just make sure it runs.
+    if find_executable() is not None:
+        if is_running():
+            say("FlareSolverr is already installed and running.")
+            result["already_running"] = True
+        else:
+            say("FlareSolverr is installed — starting it…")
+            if not (start() and wait_until_ready()):
+                result["error"] = "installed copy did not start"
+                return result
+            result["started"] = True
+    else:
+        candidates = [zip_path] if zip_path else _zip_candidates()
+        source_zip = next((p for p in candidates if p and os.path.isfile(p)), None)
+        if source_zip is None:
+            result["error"] = "FlareSolverr was not bundled with this build."
+            say(result["error"])
+            return result
+        say(f"Extracting FlareSolverr ({os.path.getsize(source_zip) / 1e6:.0f} MB)…")
+        try:
+            root = os.path.dirname(install_root())
+            os.makedirs(root, exist_ok=True)
+            with zipfile.ZipFile(source_zip) as zf:
+                entries = zf.namelist()
+                for i, name in enumerate(entries):
+                    zf.extract(name, root)
+                    if (i + 1) % EXTRACT_PROGRESS_EVERY == 0:
+                        say(f"  {i + 1}/{len(entries)} files…")
+        except Exception as exc:
+            result["error"] = f"extraction failed: {exc}"
+            say(result["error"])
+            return result
+        result["extracted"] = True
+        say("Extraction complete — removing the bundled zip to save disk space…")
+        try:
+            os.remove(source_zip)
+        except OSError as exc:
+            logger.debug("zip cleanup failed (harmless): %s", exc)
+
+        if find_executable() is None:
+            result["error"] = "zip did not contain flaresolverr/flaresolverr.exe"
+            say(result["error"])
+            return result
+        say("Starting FlareSolverr (first boot opens its bundled browser)…")
+        if not (start() and wait_until_ready()):
+            result["error"] = "FlareSolverr did not answer on port 8191 in time"
+            say(result["error"])
+            return result
+        result["started"] = True
+
+    # Persist the URL in DeepFlux's config…
+    config.indexer.flare_solverr_url = DEFAULT_URL
+    try:
+        config.to_file(config_path)
+    except Exception as exc:
+        logger.warning("Failed to persist flare_solverr_url: %s", exc)
+
+    # …and link it into Jackett when the key is there (the step normally runs
+    # right after --setup-jackett, so Jackett is up).
+    from infra import jackett
+    if config.indexer.api_key:
+        say("Linking FlareSolverr into Jackett…")
+        link = jackett.set_flaresolverr_url(config, DEFAULT_URL)
+        result["jackett_linked"] = bool(link.get("success"))
+        say(link.get("message") or "")
+    else:
+        say("Jackett is not linked yet — the URL is saved and will be pushed "
+            "when you connect Jackett.")
+
+    result["ok"] = True
+    return result

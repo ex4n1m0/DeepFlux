@@ -57,10 +57,11 @@ HELP_HTML_ZH = r"""
       API 密钥已关联。要手动重做，请运行
       <code>"C:\Users\&lt;你&gt;\AppData\Local\Programs\DeepFlux\DeepFlux.exe"
       --setup-jackett</code>（会出现一次 Windows 权限提示）。许多公共索引站
-      在 Cloudflare 后面 —— 安装
+      在 Cloudflare 后面 —— 安装程序结尾的<i>“安装 FlareSolverr”</i>步骤
+      （或重新运行安装程序）会解压内置的 FlareSolverr 并自动关联到 Jackett，
+      DeepFlux 也会在它没运行时自动启动它。手动方式：安装
       <a href="https://github.com/FlareSolverr/FlareSolverr">FlareSolverr</a>
-      后把它的地址填到 Jackett 设置 → <i>FlareSolverr API 地址</i>
-      （DeepFlux 会替你写入 Jackett）即可解锁它们。</li>
+      后把它的地址填到 Jackett 设置 → <i>FlareSolverr API 地址</i>。</li>
   <li><b>可选的搜索密钥：</b>添加 Brave 或 Perplexity API 密钥（环境变量
       <code>BRAVE_API_KEY</code> / <code>DEEPSEEK_API_KEY</code> 也可以）。
       之后网页搜索会并行查询 DuckDuckGo、Brave 和 Perplexity 并合并结果 ——

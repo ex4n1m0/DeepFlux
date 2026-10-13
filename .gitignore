@@ -56,3 +56,8 @@ _embedded_keys.py
 # Bundled Jackett installer (~42 MB, fetched+hashed by packaging/fetch_jackett.py;
 # PINNED.json and the GPL notice ARE tracked so builds stay reviewable)
 packaging/jackett/*.exe
+
+# Bundled FlareSolverr zip (~378 MB, fetched+hashed by packaging/fetch_flaresolverr.py;
+# PINNED.json and the MIT notice ARE tracked so builds stay reviewable)
+packaging/flaresolverr/*.zip
+packaging/flaresolverr/flaresolverr/

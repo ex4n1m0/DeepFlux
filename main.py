@@ -420,6 +420,12 @@ def main() -> None:
              "API key, add all public indexers, and test the connection.",
     )
     parser.add_argument(
+        "--setup-flaresolverr",
+        action="store_true",
+        help="Installer final step: extract the bundled FlareSolverr, start it and "
+             "link it into Jackett to unlock Cloudflare-protected indexers.",
+    )
+    parser.add_argument(
         "targets",
         nargs="*",
         help="Files or URIs to open (.torrent, magnet:, media files, html) — used by file associations.",
@@ -475,6 +481,11 @@ def main() -> None:
     if args.setup_jackett:
         from gui.jackett_setup_dialog import run_setup_jackett_dialog
         return run_setup_jackett_dialog(config_path=args.config)
+
+    # --- Installer final step: FlareSolverr extraction + Jackett link -----
+    if args.setup_flaresolverr:
+        from gui.jackett_setup_dialog import run_setup_jackett_dialog
+        return run_setup_jackett_dialog(config_path=args.config, mode="flaresolverr")
 
     # --- Single instance: forward opened files/URIs to a running DeepFlux ---
     if args.targets and _forward_to_running_instance(args.targets):
