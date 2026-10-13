@@ -86,7 +86,8 @@ _wanted_datas = [
     (os.path.join(project_root, "packaging", "fonts", "JetBrainsMono-OFL.txt"), "packaging/fonts"),
     (os.path.join(project_root, "DeepFlux5.png"), "."),
     # Agent-tab watermark: the website hero banner (same file as deepflux.space).
-    (os.path.join(project_root, "website", "deepflux", "DeepFluxBanner.webp"), "."),
+    (os.path.join(project_root, "DeepFluxNeonBanner.webp"), "."),
+(os.path.join(project_root, "website", "deepflux", "DeepFluxBanner.webp"), "."),
     (os.path.join(project_root, "packaging", "icons", "back.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "forward.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "reload.svg"), "packaging/icons"),

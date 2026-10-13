@@ -263,6 +263,7 @@ ZH_CN: dict[str, str] = {
     "Fetch from Jackett": "从 Jackett 获取",
     "Fetching from Jackett...": "正在从 Jackett 获取...",
     "File Operation": "文件操作",
+    "FlareSolverr API URL:": "FlareSolverr API 地址：",
     "File not found on disk. The torrent may not be fully downloaded.":
         "磁盘上找不到该文件。种子可能尚未下载完成。",
     "Files and folders; native drag and drop is disabled for safety":

@@ -611,12 +611,87 @@
   a forced run that reaches Jackett but fetches nothing reports
   `sync_failed` so the GUI can warn.
   Merge policy everywhere (auto-sync AND the manual "Fetch from Jackett"
-  button — both share `fetch_indexers`/`merge_sources`): newly fetched
+  button — both share `merge_sources`; the sync path additionally runs the
+  zombie cleanup below): newly fetched
   indexers start ENABLED (configured-in-Jackett = meant to be searched);
-  sources the user explicitly disabled keep their state across re-fetches.
+  sources the user explicitly disabled keep their state across re-fetches;
+  per-source popularity overrides and `origin` survive too.
   Results
   surface in the Agent tab as a dim `jackett_sync` event (unreachable
   notice shown once per session).
+- Indexer health + cleanup (2026-10-13 study follow-up — measured live on 96
+  indexers: 22 failed every search, 19 of them Cloudflare-walled because
+  Jackett had NO FlareSolverr, incl. 1337x which the quick pass queries
+  FIRST; 4 snapshot sources no longer existed in Jackett):
+  * `infra/indexer_health.py` — persistent per-indexer failure memory in
+    `~/.deeptorrent/indexer_health.json` (env `DF_INDEXER_HEALTH` override;
+    tests/conftest.py autouse fixture redirects it — never let a test touch
+    the real file). 2 consecutive failures → 30-min cooldown, doubling to an
+    8h cap; cooling indexers are SKIPPED by `_jackett_search_tiered` and
+    re-probed automatically when the cooldown expires (CF walls are
+    intermittent — never permanently disable on cooldown). Jackett-level
+    failures ("Max retries exceeded"/refused — the service itself is down)
+    are classified KIND_JACKETT and NEVER recorded against an indexer, or a
+    Jackett outage mass-cooldowns the whole list. KIND_UNKNOWN ("Unknown
+    indexer" — Jackett's deterministic answer) bypasses cooldown so the
+    count climbs every search; at 3 strikes `is_dead_zombie` flips and the
+    Jackett tier stops querying the source. SECURITY-REVIEW RULE (HIGH
+    finding 2026-10-13): a search NEVER mutates or persists the config —
+    struck-out sources stay ENABLED (their web-search tier value must
+    survive; legacy manual website sources draw the same "Unknown indexer"
+    and used to get auto-disabled, killing them). Recovery: sync_sources
+    calls record_success for every CONFIGURED fetched id, so re-configuring
+    an indexer in Jackett revives it at the next sync ("is not configured"
+    also classifies unknown — without the reset that skip would be a dead
+    end).
+  * `classify_indexer_error` maps real Jackett error strings to stable kinds
+    (flare/down/moved/unknown/rate/jackett/timeout/auth/parse); the search
+    result carries a compact `failure_summary` (kind → count + example
+    indexers + a hint like "configure FlareSolverr"; plus cooling and
+    zombie_skipped counts) so the LLM can ADVISE instead of retrying
+    blindly. Raw error entries are first-line-truncated (Jackett
+    descriptions carry full .NET stack traces) and body-parsed error text
+    is `_scrub_query_secrets`-scrubbed like every other error path.
+  * `TorznabClient._interpret_response` (bug found live 2026-10-13): Jackett
+    reports per-indexer failures as HTTP 400/500 WITH a torznab <error> XML
+    body (code 900 wrapping the real IndexerException) or a JSON
+    {"error": ...} envelope ("Unknown indexer: <id>"). The old
+    raise_for_status()-first collapsed every one of those to "400 Client
+    Error", hiding the reason — parse the body FIRST, HTTP status last.
+  * Provenance: `SourceConfig.origin` — "jackett" (managed, auto-removed by
+    sync when the id vanishes from Jackett's FULL definition list returned
+    by t=indexers, ~650 ids incl. unconfigured), "manual" (agent/user adds —
+    never dropped; NOT queried in the Jackett tier UNLESS the id is a
+    genuine Jackett id present in the definitions sidecar — a manual re-add
+    of "1337x" should still be searched through Jackett), "" (legacy —
+    upgraded to "jackett" on first sync when Jackett knows the id, otherwise
+    protected like manual). The sync also persists the definition-id list as
+    a sidecar (`~/.deeptorrent/jackett_definitions.json`, env
+    DF_JACKETT_DEFINITIONS; conftest redirects it) — legacy ""-origin
+    sources ABSENT from it are probed FIRST on every search (they sit at
+    the popularity tail, so early-exiting sweeps would otherwise never
+    reach them; the probe excludes dead/cooling/struck-out ids so query
+    variants and the auto deep sweep never re-probe a suspect that already
+    failed this search). Verified live: the machine's 3 true zombies struck
+    out after exactly 3 searches (zamundarip is NOT one — Jackett answers
+    it 200 with an empty RSS, harmless zero-hit).
+  * GUI: the new `flaresolverr` event message is HTML-escaped at the
+    `_append_event` sink like its sibling branches (tool_progress etc.) —
+    it embeds the agent-settable flare URL and exception text.
+  * `SourceConfig.torznab_caps` — per-indexer category ids, free from the
+    same t=indexers `<caps>` element. When a category is requested the tier
+    skips indexers whose caps clearly don't cover it (anime-only site for a
+    movie query); EMPTY caps never filter. Parent matching both directions
+    (`_caps_support`).
+  * FlareSolverr wiring: `IndexerConfig.flare_solverr_url` + a field in the
+    Jackett Settings dialog; saving a NON-empty URL pushes it into Jackett
+    via `jackett.set_flaresolverr_url` (admin session = jackett_setup's
+    /UI/Login cookie dance; verified live: GET+POST
+    `/api/v2.0/server/config`, lowercase key `flaresolverrurl`, full-object
+    POST back is exactly what the WebUI does). Empty field NEVER wipes a URL
+    set directly in Jackett. Result surfaces as a dim `flaresolverr` event.
+  * `IndexerConfig.timeout` default dropped 60→25s (measured p95 7.8s, max
+    12.2s; only dead-site 522s ran ~20s). Saved configs keep their value.
 
 ## LLM subsystem (agent/)
 - `llm.py` — OpenAI-compatible client (`DeepSeekClient` by name, talks to any

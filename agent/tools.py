@@ -30,6 +30,16 @@ from config import DeeptorrentConfig, LLM_PROVIDER_PRESETS, source_popularity
 from engine import TorrentEngine
 from agent.memory import MemoryStore
 from agent.rss import RSSMonitor
+from infra import jackett
+from infra.indexer_health import (
+    KIND_JACKETT,
+    KIND_UNKNOWN,
+    ZOMBIE_FAILURES,
+    classify_indexer_error,
+    health_store,
+    kind_hint,
+    kind_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2617,6 +2627,28 @@ class ToolRegistry:
             )
         return last_error
 
+    @staticmethod
+    def _caps_support(caps: List[int], category: str) -> bool:
+        """True when an indexer's torznab caps plausibly cover a category.
+
+        Conservative by design: matching parent/root ids on either side
+        (caps=[2010] supports a 2000 query; caps=[2000] supports a 2020
+        query); custom 1xxxxx tracker categories participate the same way.
+        Only called with non-empty caps AND a non-empty category."""
+        try:
+            want = int(category)
+        except (TypeError, ValueError):
+            return True
+
+        def parent(cid: int) -> int:
+            return (cid // 1000) * 1000
+
+        want_parent = parent(want)
+        for cap in caps:
+            if cap == want or cap == want_parent or parent(cap) == want:
+                return True
+        return False
+
     def _jackett_search_tiered(self, query: str, category: str = "", quick: bool = False,
                                dead: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """Per-indexer Jackett search: private indexers first (in parallel), then
@@ -2628,6 +2660,23 @@ class ToolRegistry:
         Per-indexer queries return quickly, so private-first actually saves time
         here — unlike the all-in-one 'all' endpoint, which waits for every indexer.
         Falls back to the 'all' endpoint when no sources are configured.
+
+        Health-aware since the 2026-10-13 study (infra/indexer_health.py):
+        - indexers whose failures put them in cooldown are SKIPPED (they are
+          re-probed automatically once the cooldown expires — Cloudflare
+          walls are intermittent);
+        - manual website sources (origin "manual") are not Jackett indexers
+          and are never queried here;
+        - when a category is set, indexers whose torznab caps clearly don't
+          cover it (anime-only site for a movie query) are skipped;
+        - every failure is classified and recorded; the LLM gets a compact
+          `failure_summary` ("19 Cloudflare-walled — needs FlareSolverr")
+          instead of only raw exception text, so it can advise the user;
+        - a source that keeps answering "Unknown indexer" is provably not a
+          Jackett indexer: after ZOMBIE_FAILURES consecutive hits the tier
+          stops querying it through Jackett (health-store state only — the
+          config is NEVER mutated by a search; the source stays enabled for
+          the web tier, and jackett-origin zombies are removed by the sync).
 
         `dead` (indexer-id → error) is shared across the whole search: indexers
         that failed once are skipped for later variants/sweeps. Per-indexer
@@ -2644,9 +2693,18 @@ class ToolRegistry:
                 return self._prioritize_private_results(result)
             return result
 
+        store = health_store()
+        cooling = store.cooling()
         local_errors: List[str] = []
+        fail_kinds: Dict[str, List[str]] = {}  # kind → indexer names
         queried = 0
         failed = 0
+
+        def _short_error(text: str) -> str:
+            """First line of a Jackett error, capped — descriptions carry
+            full .NET stack traces (measured >1 KB per indexer)."""
+            line = (text or "").splitlines()[0].strip() if text else ""
+            return line[:140] or "unknown error"
 
         def _search_one(src) -> Tuple[List[Dict[str, Any]], Optional[str]]:
             try:
@@ -2656,57 +2714,169 @@ class ToolRegistry:
                 outcome = {"success": False, "results": [], "error": str(exc)}
             error = outcome.get("error")
             if error:
-                logger.warning("Indexer %s search failed: %s", src.id, error)
-                dead[src.id] = f"{src.name}: {error}"
+                kind = classify_indexer_error(error)
+                short = _short_error(error)
+                logger.warning("Indexer %s search failed [%s]: %s", src.id, kind, short)
+                if kind != KIND_JACKETT:
+                    # Jackett-level failures (service down, bad key) are not
+                    # this indexer's fault — never cooldown the list for them.
+                    # Repeated "Unknown indexer" strikes mark the source a
+                    # dead zombie (is_dead_zombie): the Jackett tier stops
+                    # querying it, but the CONFIG is never touched here —
+                    # search_indexers is a read-only tool and legacy manual
+                    # sources also draw "Unknown indexer" (they aren't Jackett
+                    # indexers at all; their web-tier value must survive).
+                    # True jackett-origin zombies are removed by the sync.
+                    store.record_failure(src.id, kind, short)
+                dead[src.id] = f"{src.name}: {kind_label(kind)}"
                 return [], error
+            store.record_success(src.id)
             results = outcome.get("results", [])
             for r in results:
                 r.setdefault("indexer", src.name)
                 r["source_type"] = src.type
             return results, None
 
+        # Zombie suspects (legacy ""-origin sources whose id is absent from the
+        # definition list saved by the last Jackett sync) sit at the popularity
+        # tail, so early-exiting sweeps rarely reach them and their "Unknown
+        # indexer" strikes accumulate too slowly. Probe them FIRST instead —
+        # each costs ~0.1s (Jackett answers "Unknown indexer" instantly) —
+        # until they strike out (is_dead_zombie → never Jackett-queried again).
+        # `dead`/`cooling` exclusions keep query variants and the auto deep
+        # sweep from re-probing a suspect that already failed this search.
+        # A missing/failed sidecar (empty set) disables the probe entirely.
+        definition_ids = jackett.load_definition_ids()
+        suspect_results: List[Dict[str, Any]] = []
+        if definition_ids:
+            suspects = [s for s in sources
+                        if s.enabled and s.id and s.origin == ""
+                        and s.id not in definition_ids
+                        and s.id not in dead and s.id not in cooling
+                        and not store.is_dead_zombie(s.id)]
+            if suspects:
+                self._progress(f"Checking {len(suspects)} source(s) missing from Jackett…")
+                with ThreadPoolExecutor(max_workers=min(6, len(suspects))) as pool:
+                    futures = {pool.submit(_search_one, s): s for s in suspects}
+                    for future in as_completed(futures):
+                        src = futures[future]
+                        queried += 1
+                        results, error = future.result()
+                        if error:
+                            failed += 1
+                            local_errors.append(f"{src.name}: {_short_error(error)}")
+                            fail_kinds.setdefault(classify_indexer_error(error), []).append(src.name)
+                        else:
+                            suspect_results.extend(results)
+                # Dead-marked suspects are skipped by _tier_filter below; on a
+                # (theoretical) healthy answer the results still count.
+
+        def _tier_filter(s):
+            # Query only sources that can plausibly answer through Jackett.
+            if not (s.enabled and s.id and s.id not in dead):
+                return False
+            if store.is_dead_zombie(s.id):
+                # Struck out with "Unknown indexer" — provably not a Jackett
+                # indexer. Keep it ENABLED (its web-tier value survives);
+                # jackett-origin ids are removed by the sync instead.
+                return False
+            if s.origin == "manual":
+                # Manual website sources aren't Jackett indexers — except when
+                # the user re-added a genuine Jackett id (sidecar knows it).
+                return bool(definition_ids) and s.id in definition_ids
+            if s.id in cooling:
+                return False
+            if category and s.torznab_caps and not self._caps_support(s.torznab_caps, category):
+                return False
+            return True
+
         private = sorted(
-            (s for s in sources if s.enabled and s.id and s.type == "private" and s.id not in dead),
+            (s for s in sources if _tier_filter(s) and s.type == "private"),
             key=source_popularity, reverse=True,
         )
         public = sorted(
-            (s for s in sources if s.enabled and s.id and s.type != "private" and s.id not in dead),
+            (s for s in sources if _tier_filter(s) and s.type != "private"),
             key=source_popularity, reverse=True,
         )
-        full_public_count = len(public)
+        # The FULL enabled public count drives the deep_available hint —
+        # cooling/caps-skipped indexers may be back for a later search.
+        enabled_public = sum(1 for s in sources
+                             if s.enabled and s.id and s.origin != "manual" and s.type != "private")
+        skipped = [s for s in sources if s.enabled and s.id and s.origin != "manual"
+                   and s.id not in dead and s.type != "private" and not _tier_filter(s)]
+        if skipped:
+            self._progress(
+                f"Skipping {len(skipped)} public indexer(s) "
+                f"({len(cooling)} in failure cooldown, rest off-category)"
+            )
         if quick:
             public = public[:1]
         min_seeders = self.config.sources.min_seeders
         batch_size = max(1, self.config.sources.search_batch_size)
         min_results = max(1, self.config.sources.min_results)
 
+        def _failure_summary() -> Dict[str, Any]:
+            """Compact classified summary — what failed and WHY, so the agent
+            can advise (e.g. 'configure FlareSolverr') instead of retrying."""
+            summary: Dict[str, Any] = {}
+            if fail_kinds:
+                summary["failed"] = {
+                    kind: {
+                        "count": len(names),
+                        "indexers": names[:6],
+                        "hint": kind_hint(kind),
+                    }
+                    for kind, names in sorted(fail_kinds.items(),
+                                              key=lambda kv: -len(kv[1]))
+                }
+            if cooling:
+                summary["cooling"] = len(cooling)
+            zombies = [s.name for s in sources
+                       if s.enabled and s.id and store.is_dead_zombie(s.id)]
+            if zombies:
+                summary["zombie_skipped"] = {
+                    "count": len(zombies),
+                    "hint": "These sources no longer exist in Jackett and are no "
+                            "longer queried through it (they still work for web "
+                            "search; jackett-managed ones are removed at the next sync).",
+                }
+            return summary
+
+        def _attach_summary(result: Dict[str, Any]) -> Dict[str, Any]:
+            summary = _failure_summary()
+            if summary:
+                result["failure_summary"] = summary
+            return result
+
         def _failure_or_empty() -> Dict[str, Any]:
             """Zero hits: an explicit failure when every queried indexer errored
             (the agent must retry, not conclude 'no results'), a clean empty
             result when at least one indexer answered."""
             if queried and failed == queried:
-                return {
+                result = {
                     "success": False,
                     "results": [],
                     "error": f"All {queried} Jackett indexer(s) failed to respond",
                     "errors": list(local_errors),
                 }
-            if not queried and dead:
+                return _attach_summary(result)
+            if not queried and (dead or cooling):
                 # Every configured indexer was dead-marked earlier in this
-                # search (e.g. the deep sweep after an all-failed quick
-                # pass) — nothing could be queried. That is a connectivity
-                # failure, NOT a clean zero: without this, the search
-                # reported a bogus failure→web-fallback flip-flop.
-                return {
+                # search or is in cooldown — nothing could be queried. That
+                # is a connectivity failure, NOT a clean zero: without this,
+                # the search reported a bogus failure→web-fallback flip-flop.
+                result = {
                     "success": False,
                     "results": [],
-                    "error": f"All {len(dead)} Jackett indexer(s) failed earlier in this search",
+                    "error": (f"All {len(dead)} Jackett indexer(s) failed earlier in this search"
+                              + (f"; {len(cooling)} in failure cooldown" if cooling else "")),
                     "errors": list(dead.values()),
                 }
+                return _attach_summary(result)
             result: Dict[str, Any] = {"success": False, "results": []}
             if local_errors:
                 result["errors"] = list(local_errors)
-            return result
+            return _attach_summary(result)
 
         # Private tier: query all private indexers in parallel.
         private_results: List[Dict[str, Any]] = []
@@ -2720,8 +2890,9 @@ class ToolRegistry:
                     results, error = future.result()
                     if error:
                         failed += 1
-                        local_errors.append(f"{src.name}: {error}")
-                        self._progress(f"{src.name}: query failed — {error}")
+                        local_errors.append(f"{src.name}: {_short_error(error)}")
+                        fail_kinds.setdefault(classify_indexer_error(error), []).append(src.name)
+                        self._progress(f"{src.name}: {kind_label(classify_indexer_error(error))}")
                         continue
                     best = max((r.get("seeders", 0) or 0 for r in results), default=0)
                     detail = f", best {best} seeds" if results else ""
@@ -2743,12 +2914,14 @@ class ToolRegistry:
                 if local_errors:
                     result["errors"] = list(local_errors)
                     result["note"] += f" {len(local_errors)} indexer(s) failed — results may be incomplete."
-                return self._annotate_quick(result, quick, remaining_public=full_public_count)
+                store.flush()
+                return self._annotate_quick(_attach_summary(result), quick,
+                                            remaining_public=enabled_public)
             if private_results:
                 self._progress(f"Private results too weak (best {best_private} seeds) — expanding to public indexers")
 
         # Public tier: popularity-ordered batches, stop once good enough.
-        all_results = list(private_results)
+        all_results = list(private_results) + list(suspect_results)
         for start in range(0, len(public), batch_size):
             batch = public[start:start + batch_size]
             self._progress(
@@ -2763,8 +2936,10 @@ class ToolRegistry:
                     results, error = future.result()
                     if error:
                         failed += 1
-                        local_errors.append(f"{src.name}: {error}")
-                        self._progress(f"{src.name}: query failed — {error}")
+                        local_errors.append(f"{src.name}: {_short_error(error)}")
+                        kind = classify_indexer_error(error)
+                        fail_kinds.setdefault(kind, []).append(src.name)
+                        self._progress(f"{src.name}: {kind_label(kind)}")
                         continue
                     if results:
                         best = max((r.get("seeders", 0) or 0 for r in results), default=0)
@@ -2782,6 +2957,7 @@ class ToolRegistry:
                 )
                 break
 
+        store.flush()
         if not all_results:
             return _failure_or_empty()
         ranked = self._rank_results(all_results, query)
@@ -2790,9 +2966,9 @@ class ToolRegistry:
             result["errors"] = list(local_errors)
             result["note"] = f"{len(local_errors)} indexer(s) failed — results may be incomplete."
         return self._annotate_quick(
-            result,
+            _attach_summary(result),
             quick,
-            remaining_public=max(0, full_public_count - len(public)),
+            remaining_public=max(0, enabled_public - len(public)),
         )
 
     @staticmethod
@@ -3757,7 +3933,7 @@ class ToolRegistry:
     def _list_torrent_sources(self) -> Dict[str, Any]:
         rows = [{
             "id": s.id, "name": s.name, "url": s.url, "type": s.type,
-            "enabled": s.enabled, "categories": list(s.categories),
+            "enabled": s.enabled, "categories": list(s.categories), "origin": s.origin,
         } for s in self.config.sources.sources]
         return {
             "success": True,
@@ -3789,6 +3965,7 @@ class ToolRegistry:
         source = SourceConfig(
             id=slug, name=name, url=url, type=type, enabled=bool(enabled),
             categories=[c for c in (categories or []) if str(c).strip()],
+            origin="manual",  # never auto-removed/zombie-disabled by the Jackett sync
         )
         existing.append(source)
         self._persist_config()
@@ -4605,7 +4782,6 @@ class TorznabClient:
         try:
             url = f"{self.config.url.rstrip('/')}{self.config.torznab_path}"
             resp = requests.get(url, params=params, timeout=self.config.timeout)
-            resp.raise_for_status()
         except Exception as exc:
             # Error text embeds the full URL — scrub the query so the
             # Jackett apikey never reaches the LLM/logs (most common case:
@@ -4614,7 +4790,7 @@ class TorznabClient:
             logger.warning("Indexer search failed: %s", err)
             return {"success": False, "results": [], "error": err}
 
-        return self._parse_torznab(resp.text)
+        return self._interpret_response(resp)
 
     def search_indexer(self, indexer_id: str, query: str, category: str = "") -> Dict[str, Any]:
         """Search a single Jackett indexer by id (substituted into the torznab path)."""
@@ -4635,12 +4811,55 @@ class TorznabClient:
         try:
             url = f"{self.config.url.rstrip('/')}{path}"
             resp = requests.get(url, params=params, timeout=self.config.timeout)
-            resp.raise_for_status()
         except Exception as exc:
             err = _scrub_query_secrets(str(exc))
             logger.warning("Indexer %s search failed: %s", indexer_id, err)
             return {"success": False, "results": [], "error": err}
 
+        return self._interpret_response(resp)
+
+    def _interpret_response(self, resp) -> Dict[str, Any]:
+        """Turn a Jackett HTTP response into a search outcome.
+
+        VERIFIED live (2026-10-13): Jackett reports many per-indexer failures
+        as HTTP 400/500 WITH a torznab <error> XML body (code 900 wrapping
+        the real IndexerException — e.g. the Cloudflare challenge text), and
+        unknown indexers as HTTP 500 with a JSON {"error": "Unknown
+        indexer: <id>"} envelope. raise_for_status() first reduced ALL of
+        those to "400/500 Client/Server Error", hiding the actual reason —
+        parse the body first, then fall back to the HTTP status."""
+        # 1. Body-borne errors (any status — Jackett also uses 200 for these).
+        # Scrubbed like every other error path: a hostile/misbehaving server
+        # at the configured URL can echo the request (which carries the
+        # apikey in its query string) back inside an error body.
+        text = resp.text or ""
+        if text.lstrip().startswith("<"):
+            try:
+                import xml.etree.ElementTree as ET
+
+                root = ET.fromstring(text)
+                err = root if root.tag == "error" else root.find(".//error")
+                if err is not None:
+                    desc = err.get("description") or (err.text or "").strip() or "unknown torznab error"
+                    desc = _scrub_query_secrets(desc)
+                    logger.warning("Torznab error response: %s", desc)
+                    return {"success": False, "results": [], "error": f"Indexer error: {desc}"}
+            except Exception:
+                pass  # not XML — fall through
+        else:
+            try:
+                payload = resp.json()
+                message = payload.get("error") if isinstance(payload, dict) else None
+                if message:
+                    return {"success": False, "results": [],
+                            "error": _scrub_query_secrets(str(message))}
+            except Exception:
+                pass
+        # 2. HTTP-level failure with no parsable error body.
+        if resp.status_code >= 400:
+            err = _scrub_query_secrets(f"HTTP {resp.status_code}: {resp.reason or 'error'}")
+            logger.warning("Indexer HTTP failure: %s", err)
+            return {"success": False, "results": [], "error": err}
         return self._parse_torznab(resp.text)
 
     def _throttle(self) -> None:

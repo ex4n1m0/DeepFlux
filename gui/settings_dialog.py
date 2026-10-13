@@ -109,6 +109,26 @@ class IndexerSettingsDialog(QDialog):
         self.idx_jackett_path.setPlaceholderText(tr('Optional — path to JackettTray.exe (auto-detect when blank)'))
         idx_layout.addRow(tr('Executable:'), self.idx_jackett_path)
 
+        self.idx_flaresolverr = QLineEdit()
+        self.idx_flaresolverr.setPlaceholderText("http://127.0.0.1:8191/")
+        self.idx_flaresolverr.setToolTip(
+            "FlareSolverr solves Cloudflare's anti-bot challenge for indexers\n"
+            "behind it (in a 2026-10-13 measurement, 19 of 22 failing indexers\n"
+            "were Cloudflare-walled — including 1337x, eztv and kickasstorrents).\n"
+            "Saving a non-empty URL writes it into Jackett's server config.\n"
+            "Clearing the field here never removes it from Jackett."
+        )
+        idx_layout.addRow(tr('FlareSolverr API URL:'), self.idx_flaresolverr)
+
+        flare_hint = QLabel(
+            "Optional. FlareSolverr (github.com/FlareSolverr/FlareSolverr) unlocks\n"
+            "Cloudflare-protected indexers in Jackett — run it, then paste its URL\n"
+            "here (default port 8191). Saving pushes the URL into Jackett for you."
+        )
+        flare_hint.setObjectName("hint")
+        flare_hint.setWordWrap(True)
+        idx_layout.addRow("", flare_hint)
+
         idx_hint = QLabel(
             "Jackett runs on port 9117 — download from https://github.com/Jackett/Jackett\n"
             "Add your torrent sites in the Jackett web UI, then set the API key in File → API Keys\n"
@@ -132,12 +152,14 @@ class IndexerSettingsDialog(QDialog):
         self.idx_torznab_path.setText(self.config.indexer.torznab_path)
         self.idx_auto_start.setChecked(self.config.indexer.auto_start)
         self.idx_jackett_path.setText(self.config.indexer.jackett_path)
+        self.idx_flaresolverr.setText(self.config.indexer.flare_solverr_url)
 
     def _save_and_accept(self) -> None:
         self.config.indexer.url = self.idx_url.text().strip() or "http://localhost:9117"
         self.config.indexer.torznab_path = self.idx_torznab_path.text().strip() or "/api/v2.0/indexers/all/results/torznab"
         self.config.indexer.auto_start = self.idx_auto_start.isChecked()
         self.config.indexer.jackett_path = self.idx_jackett_path.text().strip()
+        self.config.indexer.flare_solverr_url = self.idx_flaresolverr.text().strip()
         self.accept()
 
 

@@ -184,11 +184,20 @@ class IndexerConfig:
     url: str = "http://localhost:9117"  # Jackett base URL
     api_key: str = ""
     torznab_path: str = "/api/v2.0/indexers/all/results/torznab"
-    timeout: int = 60  # aggregate 'all indexers' queries can be slow
+    # 25s (down from 60, 2026-10-13): measured live over all 96 configured
+    # indexers — answered queries p50 1.0s / p95 7.8s / max 12.2s; the only
+    # ~20s responses were dead sites (Error 522). Saved configs keep their
+    # own value; only fresh installs get this default.
+    timeout: int = 25
     # Start Jackett automatically when it's configured but not running
     # (Windows service first, then the tray/console executable).
     auto_start: bool = True
     jackett_path: str = ""  # explicit Jackett exe path; empty = auto-detect
+    # FlareSolverr API URL pushed into Jackett's server config (admin API)
+    # when set via Jackett Settings — 19 of 22 failing indexers in the
+    # 2026-10-13 study were Cloudflare-challenged with no FlareSolverr.
+    # Empty = never touch Jackett's own setting.
+    flare_solverr_url: str = ""
 
 
 @dataclass
@@ -301,6 +310,14 @@ class SourceConfig:
     enabled: bool = True
     categories: List[str] = field(default_factory=list)  # e.g. ["Movies", "TV"]
     popularity: int = 0    # 0 = unknown (falls back to DEFAULT_SOURCE_POPULARITY); higher = searched earlier
+    # Provenance (2026-10-13 Jackett study): "jackett" entries are managed by
+    # the Jackett sync (auto-removed when Jackett drops the definition),
+    # "manual" entries come from the user/agent and are never auto-removed.
+    # "" = legacy (pre-field) — treated as jackett for queries, never dropped.
+    origin: str = ""
+    # Torznab category ids this indexer supports (fetched by the Jackett
+    # sync from t=indexers <caps>; empty = unknown, never filtered).
+    torznab_caps: List[int] = field(default_factory=list)
 
 
 # Rough popularity tiers for known sources (higher = more popular / better seeded).

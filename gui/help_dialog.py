@@ -68,7 +68,11 @@ organize files, all with your confirmation for sensitive actions.</p>
       DeepFlux installation, this is already done — the service is installed,
       its public indexers are added, and its API key is linked. To redo it by
       hand, run <code>"C:\Users\&lt;you&gt;\AppData\Local\Programs\DeepFlux\DeepFlux.exe"
-      --setup-jackett</code> (one Windows permission prompt appears).</li>
+      --setup-jackett</code> (one Windows permission prompt appears).
+      Many public indexers sit behind Cloudflare — install
+      <a href="https://github.com/FlareSolverr/FlareSolverr">FlareSolverr</a>
+      and paste its URL into Jackett Settings → <i>FlareSolverr API URL</i>
+      (DeepFlux writes it into Jackett for you) to unlock them.</li>
   <li><b>Optional search keys:</b> add a Brave or Perplexity API key (environment
       variables <code>BRAVE_API_KEY</code> / <code>DEEPSEEK_API_KEY</code> also work).
       Web searches then query DuckDuckGo, Brave, and Perplexity in parallel and
@@ -532,6 +536,11 @@ your own under Settings → AI &amp; API Keys.)
 <div class="warn">
 <b>No search results:</b> Make sure Jackett is running and your sources are enabled
 (Download → Sources). Without Jackett, the agent falls back to slower web searches.
+Indexers that keep failing are put in a cooldown automatically (skipped for a while,
+then re-tried), and sources that no longer exist in Jackett are skipped for Jackett
+searches automatically — check the Agent tab's dim event lines to see which and why.
+If many indexers report Cloudflare challenges, install FlareSolverr and set its URL in
+Download → Jackett Settings.
 To set everything up in one go, run DeepFlux with <code>--setup-jackett</code>
 (see Getting Started) or re-run the DeepFlux installer and keep the
 <i>“Set up Jackett torrent search now”</i> box checked.

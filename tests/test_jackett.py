@@ -13,6 +13,10 @@ _INDEXERS_XML = """<?xml version="1.0" encoding="UTF-8"?>
     <title>IPTorrents</title>
     <link>https://iptorrents.com/</link>
     <type>private</type>
+    <caps><categories>
+      <category id="2000" name="Movies"/>
+      <category id="5000" name="TV"/>
+    </categories></caps>
   </indexer>
   <indexer id="1337x" configured="true">
     <title>1337x</title>
@@ -78,6 +82,20 @@ def test_fetch_indexers_only_configured(mock_get):
     assert mock_get.call_args.kwargs["params"]["t"] == "indexers"
 
 
+@patch("infra.jackett.requests.get")
+def test_fetch_indexers_detailed_caps_and_definitions(mock_get):
+    """One t=indexers call yields caps per configured indexer AND the full
+    definition-id set (configured + unconfigured) for zombie detection."""
+    mock_get.return_value = _xml_response()
+    sources, definitions = jackett.fetch_indexers_detailed(_jackett_config())
+    assert {s.id for s in sources} == {"iptorrents", "1337x"}
+    assert sources[0].origin == "jackett"
+    assert sources[0].torznab_caps == [2000, 5000]
+    assert sources[1].torznab_caps == []  # no <caps> element — never filtered
+    # The UNCONFIGURED indexer is not a source but IS a known definition.
+    assert definitions == {"iptorrents", "1337x", "notsetup"}
+
+
 def test_merge_sources_preserves_disabled_and_enables_new():
     existing = [SourceConfig(id="iptorrents", name="IPTorrents", enabled=False),
                 SourceConfig(id="oldgone", name="Old", enabled=True),
@@ -114,12 +132,15 @@ def test_merge_sources_bootstrap_enables_all():
 # sync_sources
 # ----------------------------------------------------------------------
 
-@patch("infra.jackett.fetch_indexers")
+@patch("infra.jackett.fetch_indexers_detailed")
 def test_sync_sources_bootstrap_enables_and_stamps(mock_fetch, tmp_path):
-    mock_fetch.return_value = [
-        SourceConfig(id="iptorrents", name="IPTorrents", type="private"),
-        SourceConfig(id="1337x", name="1337x", type="public"),
-    ]
+    mock_fetch.return_value = (
+        [
+            SourceConfig(id="iptorrents", name="IPTorrents", type="private", origin="jackett"),
+            SourceConfig(id="1337x", name="1337x", type="public", origin="jackett"),
+        ],
+        {"iptorrents", "1337x"},
+    )
     config = _jackett_config()
     config_path = str(tmp_path / "config.json")
     result = jackett.sync_sources(config, config_path)
@@ -132,12 +153,69 @@ def test_sync_sources_bootstrap_enables_and_stamps(mock_fetch, tmp_path):
     assert reloaded.sources.last_jackett_fetch > 0
 
 
-@patch("infra.jackett.fetch_indexers", return_value=[])
+@patch("infra.jackett.fetch_indexers_detailed", return_value=([], set()))
 def test_sync_sources_keeps_list_when_jackett_empty(mock_fetch):
     config = _jackett_config()
     config.sources.sources = [SourceConfig(id="iptorrents", name="IPTorrents", enabled=True)]
     assert jackett.sync_sources(config) is None
     assert [s.id for s in config.sources.sources] == ["iptorrents"]
+
+
+@patch("infra.jackett.fetch_indexers_detailed")
+def test_sync_sources_drops_zombies_keeps_manual_and_upgrades_legacy(mock_fetch, tmp_path):
+    """Origin-provenance cleanup (2026-10-13 study): jackett-origin sources
+    removed from Jackett's full definition list are zombies — dropped and
+    reported. Manual sources and unknown-provenance ("") survivors stay.
+    The definition-id sidecar is (re)written so searches can strike out the
+    legacy zombies that survive this sync."""
+    mock_fetch.return_value = (
+        [SourceConfig(id="iptorrents", name="IPTorrents", type="private", origin="jackett")],
+        {"iptorrents", "zombie-upgrader"},  # full definition list incl. unconfigured
+    )
+    config = _jackett_config()
+    config.sources.sources = [
+        # Was synced from Jackett; Jackett later removed the definition.
+        SourceConfig(id="u2p", name="U2P", origin="jackett", enabled=True),
+        # Added by the user/agent — never auto-removed, even absent from Jackett.
+        SourceConfig(id="myfansite", name="My Fan Site", origin="manual", enabled=True),
+        # Legacy pre-origin source still known to Jackett → upgraded, survives.
+        SourceConfig(id="zombie-upgrader", name="Legacy", origin="", enabled=True),
+        # Legacy pre-origin source Jackett never heard of → protected (may be manual).
+        SourceConfig(id="oldmystery", name="Old Mystery", origin="", enabled=True),
+    ]
+    result = jackett.sync_sources(config, str(tmp_path / "config.json"))
+    remaining = {s.id for s in config.sources.sources}
+    assert remaining == {"iptorrents", "myfansite", "zombie-upgrader", "oldmystery"}
+    assert result["removed_zombies"] == ["U2P"]
+    by_id = {s.id: s for s in config.sources.sources}
+    assert by_id["zombie-upgrader"].origin == "jackett"  # upgraded during sync
+    assert by_id["myfansite"].origin == "manual"
+    assert by_id["oldmystery"].origin == ""
+
+
+def test_definition_ids_sidecar_round_trip(tmp_path, monkeypatch):
+    """The sync persists Jackett's full definition-id set; searches read it to
+    fast-path zombie suspects. Missing/corrupt file = empty set = never filter."""
+    path = tmp_path / "defs.json"
+    monkeypatch.setenv("DF_JACKETT_DEFINITIONS", str(path))
+    assert jackett.load_definition_ids() == set()  # no file yet
+    jackett.save_definition_ids({"1337x", "iptorrents", "notsetup"})
+    assert jackett.load_definition_ids() == {"1337x", "iptorrents", "notsetup"}
+    path.write_text("{broken", encoding="utf-8")
+    assert jackett.load_definition_ids() == set()
+
+
+@patch("infra.jackett.fetch_indexers_detailed")
+def test_sync_writes_definition_sidecar(mock_fetch, tmp_path, monkeypatch):
+    path = tmp_path / "defs.json"
+    monkeypatch.setenv("DF_JACKETT_DEFINITIONS", str(path))
+    mock_fetch.return_value = (
+        [SourceConfig(id="iptorrents", name="IPTorrents", type="private", origin="jackett")],
+        {"iptorrents", "notsetup"},
+    )
+    config = _jackett_config()
+    jackett.sync_sources(config, str(tmp_path / "config.json"))
+    assert jackett.load_definition_ids() == {"iptorrents", "notsetup"}
 
 
 # ----------------------------------------------------------------------

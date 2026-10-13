@@ -18,3 +18,21 @@ def isolate_default_config_path(monkeypatch, tmp_path):
     path = tmp_path / ".deeptorrent" / "config.json"
     monkeypatch.setattr(DeeptorrentConfig, "default_config_path", lambda: str(path))
     return path
+
+
+@pytest.fixture(autouse=True)
+def isolate_indexer_health(monkeypatch, tmp_path):
+    """Never read/write the real ~/.deeptorrent indexer-state files.
+
+    Same isolation rule as the config redirect above: the search tier
+    records per-indexer failures through a process-wide singleton and reads
+    the Jackett definitions sidecar, so tests must point both at per-test
+    temp files and drop the singleton before and after (a stale singleton
+    would carry failures between tests; a real sidecar would turn unrelated
+    ""-origin test sources into zombie suspects)."""
+    from infra import indexer_health
+    monkeypatch.setenv("DF_INDEXER_HEALTH", str(tmp_path / "indexer_health.json"))
+    monkeypatch.setenv("DF_JACKETT_DEFINITIONS", str(tmp_path / "jackett_definitions.json"))
+    indexer_health.reset_health_store_singleton()
+    yield
+    indexer_health.reset_health_store_singleton()

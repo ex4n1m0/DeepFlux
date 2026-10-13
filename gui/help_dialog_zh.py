@@ -56,7 +56,11 @@ HELP_HTML_ZH = r"""
       种子搜索”</i>勾选，这一步已经完成 —— 服务已安装、公共索引器已添加、
       API 密钥已关联。要手动重做，请运行
       <code>"C:\Users\&lt;你&gt;\AppData\Local\Programs\DeepFlux\DeepFlux.exe"
-      --setup-jackett</code>（会出现一次 Windows 权限提示）。</li>
+      --setup-jackett</code>（会出现一次 Windows 权限提示）。许多公共索引站
+      在 Cloudflare 后面 —— 安装
+      <a href="https://github.com/FlareSolverr/FlareSolverr">FlareSolverr</a>
+      后把它的地址填到 Jackett 设置 → <i>FlareSolverr API 地址</i>
+      （DeepFlux 会替你写入 Jackett）即可解锁它们。</li>
   <li><b>可选的搜索密钥：</b>添加 Brave 或 Perplexity API 密钥（环境变量
       <code>BRAVE_API_KEY</code> / <code>DEEPSEEK_API_KEY</code> 也可以）。
       之后网页搜索会并行查询 DuckDuckGo、Brave 和 Perplexity 并合并结果 ——
@@ -442,7 +446,11 @@ AI 密钥随每个 DeepFlux 新版本轮换，过旧的副本可能失去 AI 访
 
 <div class="warn">
 <b>搜索不到结果：</b>确认 Jackett 正在运行且你的源已启用（下载 → 源）。
-没有 Jackett 时智能体退回较慢的网页搜索。要一次性配好，运行
+没有 Jackett 时智能体退回较慢的网页搜索。持续失败的索引器会自动进入
+冷却（暂时跳过，稍后自动重试）；Jackett 中已不存在的源会自动不再通过
+Jackett 搜索 —— 智能体标签页的暗色事件行会说明是哪些、为什么。如果很多
+索引器报告 Cloudflare 验证，请安装 FlareSolverr 并在 下载 → Jackett 设置
+里填写其 API 地址。要一次性配好，运行
 <code>--setup-jackett</code> 启动 DeepFlux（见快速上手），或重新运行
 DeepFlux 安装程序并保留<i>“现在设置 Jackett 种子搜索”</i>勾选。
 </div>

@@ -1367,10 +1367,13 @@ class MainWindow(QMainWindow):
         return ""
 
     def _resolve_banner_path(self) -> str:
-        """Find the wordmark banner (the website's hero art) for the Agent
-        tab watermark. Same file as deepflux.space's banner; a square icon
-        fallback keeps the tab usable if the art is ever removed."""
+        """Find the wordmark banner for the Agent tab background (owner art,
+        2026-10-13: DeepFluxNeonBanner.webp — the neon wordmark + particle
+        streams). The website hero banner and a square icon stay as fallbacks
+        so the tab keeps working if the art is ever removed."""
         candidates = [
+            os.path.join(os.path.dirname(__file__), "..", "DeepFluxNeonBanner.webp"),
+            os.path.join(sys._MEIPASS, "DeepFluxNeonBanner.webp") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "website", "deepflux", "DeepFluxBanner.webp"),
             os.path.join(sys._MEIPASS, "DeepFluxBanner.webp") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "DeepFlux5.png"),
@@ -4460,8 +4463,20 @@ class MainWindow(QMainWindow):
                         parts.append(f"fetched {total} indexer(s) from Jackett and enabled them")
                     else:
                         parts.append(f"fetched {total} indexer(s) from Jackett ({enabled} enabled)")
+                if event.get("removed_zombies"):
+                    parts.append(f"removed {len(event['removed_zombies'])} source(s) that no longer exist in Jackett")
                 if parts:
                     self._append_event("🧩 " + "; ".join(parts) + ".")
+            elif etype == "flaresolverr":
+                # Escape like the sibling branches (tool_progress/tool_end):
+                # the message embeds the user/agent-settable flare URL and
+                # requests exception text — raw markup must never reach the
+                # chat document (a one-click link could be injected).
+                message = str(event.get("message") or
+                              ("FlareSolverr URL saved in Jackett." if event.get("success")
+                               else "FlareSolverr config push failed."))
+                message = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                self._append_event("🧩 " + message)
             elif etype == "ytdlp_update":
                 if self._ytdlp_notice_shown:
                     return
@@ -6040,6 +6055,19 @@ class MainWindow(QMainWindow):
             # The user just (re)entered the key — sync the sources list now,
             # starting Jackett first if needed.
             self._start_jackett_sync(force=True)
+            # A non-empty FlareSolverr URL is pushed into Jackett's own config
+            # (admin API) in the background; an empty field never wipes a URL
+            # the user may have set directly in Jackett's web UI.
+            flare_url = self.config.indexer.flare_solverr_url
+            if flare_url:
+                def _push_flare() -> None:
+                    from infra import jackett
+                    try:
+                        result = jackett.set_flaresolverr_url(self.config, flare_url)
+                    except Exception as exc:  # set_flaresolverr_url already catches; belt+braces
+                        result = {"success": False, "message": f"FlareSolverr config push failed: {exc}"}
+                    self._agent_signals.event.emit({"type": "flaresolverr", **result})
+                threading.Thread(target=_push_flare, daemon=True, name="flaresolverr-push").start()
 
     def _open_downloads_settings(self, page: str = "all") -> None:
         """Open one focused download settings page."""
