@@ -136,6 +136,24 @@ def ensure_running(config: DeeptorrentConfig, url: str = DEFAULT_URL) -> bool:
     return wait_until_ready(url)
 
 
+def cleanup_bundled_zip() -> None:
+    """Delete the bundled zip once the extracted install exists.
+
+    Inno re-copies the zip on EVERY install and update — including silent
+    self-updates, which skip the postinstall step that would otherwise
+    consume it — so without this it lingers as ~378 MB of dead weight in
+    _internal after each auto-update."""
+    if find_executable() is None:
+        return
+    for path in _zip_candidates():
+        try:
+            if path and os.path.isfile(path):
+                os.remove(path)
+                logger.info("Removed the bundled FlareSolverr zip (already extracted)")
+        except OSError as exc:
+            logger.debug("bundled zip cleanup failed: %s", exc)
+
+
 def notify_flare_failure(config: DeeptorrentConfig) -> None:
     """Called by the search tier when Cloudflare-challenged indexers show up:
     makes sure our local solver is up so the NEXT search (and Jackett's
@@ -177,6 +195,7 @@ def run_setup(config_path: Optional[str] = None,
 
     # Already set up? Just make sure it runs.
     if find_executable() is not None:
+        cleanup_bundled_zip()  # upgrade re-copied it; the extraction exists
         if is_running():
             say("FlareSolverr is already installed and running.")
             result["already_running"] = True

@@ -156,6 +156,26 @@ def test_run_setup_idempotent_when_already_running(mock_running, mock_start, moc
     assert result["ok"] is True and result["already_running"] is True
 
 
+def test_cleanup_bundled_zip_removes_zip_when_extracted(tmp_path, monkeypatch):
+    """Installs/updates (incl. silent self-updates) re-copy the bundled zip;
+    with the extracted install present it must be deleted, without it kept."""
+    exe = tmp_path / "flaresolverr" / "flaresolverr.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"MZ")
+    monkeypatch.setattr(flaresolverr.sys, "platform", "win32")
+    monkeypatch.setattr(flaresolverr, "install_root", lambda: str(tmp_path / "flaresolverr"))
+    zip_copy = tmp_path / "bundled.zip"
+    zip_copy.write_bytes(b"zip")
+    monkeypatch.setattr(flaresolverr, "_zip_candidates", lambda: [str(zip_copy)])
+    flaresolverr.cleanup_bundled_zip()
+    assert not zip_copy.exists()
+    # Without the extracted exe the zip is NOT touched (setup needs it).
+    zip_copy.write_bytes(b"zip")
+    exe.unlink()
+    flaresolverr.cleanup_bundled_zip()
+    assert zip_copy.exists()
+
+
 def test_run_setup_without_zip_fails_softly(tmp_path, monkeypatch):
     monkeypatch.setattr(flaresolverr.sys, "platform", "win32")
     monkeypatch.setattr(flaresolverr, "install_root", lambda: str(tmp_path / "nowhere" / "flaresolverr"))

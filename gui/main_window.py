@@ -4016,6 +4016,10 @@ class MainWindow(QMainWindow):
         # check when it's already running; a custom remote URL is never ours.
         try:
             from infra import flaresolverr
+            # An install/update re-copies the bundled zip; delete it when the
+            # extracted copy exists (the postinstall step is skipped under
+            # /VERYSILENT self-updates, so this is the reliable cleanup point).
+            flaresolverr.cleanup_bundled_zip()
             if (self.config.indexer.flare_solverr_url
                     and flaresolverr.find_executable() is not None
                     and not flaresolverr.is_running()
