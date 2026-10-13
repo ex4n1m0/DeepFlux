@@ -1,8 +1,8 @@
 {
-  "version": "5.6",
-  "file": "DeepFlux5.6Setup.exe",
-  "size": 370808153,
-  "sha256": "e0e40ca181ceef5cae53ce037264b01afbce93e63ef3b8e89d1441e5aa3e8742",
+  "version": "5.7",
+  "file": "DeepFlux5.7Setup.exe",
+  "size": 751218400,
+  "sha256": "b936a31f1cd4363f6e957e26eb5b62456437f3e753ff3032f3ec4280bb67d574",
   "released": "2026-10-13",
-  "notes": "DeepFlux 5.6 - torrent search gets a health system: failing indexers cool down and recover automatically, Cloudflare-walled sites are identified by name (add FlareSolverr in Jackett Settings to unlock 1337x, eztv and friends), dead sources are cleaned up, and search results explain what failed and why. New Agent-tab artwork."
+  "notes": "DeepFlux 5.7 - the installer now sets up FlareSolverr (default-on final step), unlocking Cloudflare-protected torrent sites such as EZTV and KickassTorrent (measured: 15 of 19 walled indexers become searchable). Also ships the torrent-search health system and the new Agent tab artwork."
 }

@@ -1,8 +1,8 @@
 {
-  "version": "5.6",
-  "file": "DeepFlux-5.6-Linux-x86_64.AppImage",
-  "size": 628136440,
-  "sha256": "f04b0974bab757127c052b74e1ef5eae9a2fe1cf5c44b0d7975399869b8c1d25",
+  "version": "5.7",
+  "file": "DeepFlux-5.7-Linux-x86_64.AppImage",
+  "size": 628148728,
+  "sha256": "481a49833c86b290a1893a501e1524562efef7adffa798fcae807404da722c21",
   "released": "2026-10-13",
-  "notes": "DeepFlux 5.6 for Linux - torrent search health system (cooldown circuit breaker, Cloudflare/FlareSolverr identification, dead-source cleanup) and new Agent-tab artwork, same as Windows."
+  "notes": "DeepFlux 5.7 for Linux - torrent search health system (cooldown circuit breaker, Cloudflare/FlareSolverr identification, dead-source cleanup) and new Agent-tab artwork, same as Windows. FlareSolverr bundling is Windows-only for now."
 }
