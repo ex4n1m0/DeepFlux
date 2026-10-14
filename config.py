@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "5.7"
+APP_VERSION = "5.8"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -177,6 +177,11 @@ class LLMConfig:
     stream: bool = True             # stream tokens to the UI as they arrive
     memory_enabled: bool = True     # persistent local memory (markdown files on disk)
     memory_dir: str = ""            # empty = default (~/.deeptorrent/memory)
+    # YOLO mode (owner request 2026-10-13): the agent NEVER asks for tool
+    # confirmation — run_shell, deletions, everything executes immediately.
+    # Deliberately NOT settable by the agent itself (set_settings deny list):
+    # a prompt injection must not be able to unlock its own gates.
+    yolo_mode: bool = False
 
 
 @dataclass

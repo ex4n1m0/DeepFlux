@@ -1511,6 +1511,20 @@ class MainWindow(QMainWindow):
         status_btn.clicked.connect(self._show_agent_diagnostics)
         agent_input_layout.addWidget(status_btn)
 
+        yolo_btn = QPushButton(tr('YOLO'))
+        yolo_btn.setObjectName("btn_secondary")
+        yolo_btn.setCheckable(True)
+        yolo_btn.setChecked(self.config.llm.yolo_mode)
+        yolo_btn.setToolTip(
+            "YOLO mode: the agent runs EVERYTHING without asking — shell\n"
+            "commands, downloads, file deletions, settings writes. Off by\n"
+            "default; enabling is your call and applies to the next message."
+        )
+        yolo_btn.clicked.connect(self._on_yolo_toggle)
+        self.yolo_btn = yolo_btn
+        self._sync_yolo_button()
+        agent_input_layout.addWidget(yolo_btn)
+
         search_btn = QPushButton(tr('Search'))
         search_btn.setObjectName("btn_accent")
         search_btn.setToolTip(tr('Instant web sweep — no agent involved (Ctrl+Enter)'))
@@ -2822,6 +2836,47 @@ class MainWindow(QMainWindow):
             )
         if added or errors:
             self._refresh()
+
+    def _sync_yolo_button(self) -> None:
+        """Reflect llm.yolo_mode on the toggle (accent + label when on)."""
+        on = bool(self.config.llm.yolo_mode)
+        self.yolo_btn.blockSignals(True)
+        self.yolo_btn.setChecked(on)
+        self.yolo_btn.blockSignals(False)
+        wanted = "btn_accent" if on else "btn_secondary"
+        if self.yolo_btn.objectName() != wanted:
+            self.yolo_btn.setObjectName(wanted)
+            self.yolo_btn.style().unpolish(self.yolo_btn)
+            self.yolo_btn.style().polish(self.yolo_btn)
+
+    def _on_yolo_toggle(self) -> None:
+        """User toggled YOLO mode — confirm the risky direction, persist, and
+        make sure the running agent picks it up on the next message."""
+        want = self.yolo_btn.isChecked()
+        if want and not self.config.llm.yolo_mode:
+            box = QMessageBox(QMessageBox.Warning, tr("YOLO mode"),
+                              tr("Turn off ALL agent confirmations?"),
+                              QMessageBox.Yes | QMessageBox.No, self)
+            box.setInformativeText(
+                "The agent will run shell commands, downloads, file deletions and\n"
+                "settings changes immediately, without asking. Only enable this if\n"
+                "you accept that a misunderstood request can act on your machine\n"
+                "unattended. The agent itself can never switch this on."
+            )
+            if box.exec() != QMessageBox.Yes:
+                self._sync_yolo_button()  # snap back to off
+                return
+        self.config.llm.yolo_mode = want
+        try:
+            self.config.to_file(self.config_path)
+        except Exception as exc:
+            logger.warning("Failed to persist yolo_mode: %s", exc)
+        self._sync_yolo_button()
+        state = "ON — tools run without confirmation" if want else "OFF"
+        self._append_event(f"🔓 YOLO mode {state}.")
+        # The loop reads config per chat and shares this config object; the
+        # reload also rebuilds the registry so nothing caches the old mode.
+        self._reload_agent()
 
     def _show_agent_diagnostics(self) -> None:
         try:

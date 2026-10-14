@@ -142,7 +142,12 @@ def cleanup_bundled_zip() -> None:
     Inno re-copies the zip on EVERY install and update — including silent
     self-updates, which skip the postinstall step that would otherwise
     consume it — so without this it lingers as ~378 MB of dead weight in
-    _internal after each auto-update."""
+    _internal after each auto-update. FROZEN ONLY: in a dev tree the
+    "bundled zip" is the fetch-script build input in packaging/ and the
+    E2E extraction sits next to it — cleaning there would eat the build
+    input (bit us 2026-10-13: a dev GUI run deleted the pinned zip)."""
+    if not getattr(sys, "frozen", False):
+        return
     if find_executable() is None:
         return
     for path in _zip_candidates():

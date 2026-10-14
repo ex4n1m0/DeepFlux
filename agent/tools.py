@@ -168,6 +168,10 @@ _SETTINGS_SECTIONS = (
 _SETTINGS_DENY_PATHS = {
     ("llm", "stream"), ("llm", "memory_enabled"),  # from_file forces both True
     ("llm", "memory_dir"),                          # memory lives at a fixed root
+    # YOLO mode unlocks run_shell/deletions without asking — the AGENT must
+    # never be able to switch it on (prompt injection would unlock its own
+    # gates); only the user's GUI toggle can.
+    ("llm", "yolo_mode"),
     # The full toolset (~89 schemas) ships in EVERY request now; an agent
     # write that shrinks this below the schema floor would floor _fit_context
     # and silently wipe the whole conversation on every turn.

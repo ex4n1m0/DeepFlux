@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 5.7 — User Guide</h1>
+<h1>DeepFlux 5.8 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -202,6 +202,12 @@ downloads, deleting files, cancelling a download (which deletes the partial file
 playing IPTV content, clicking or submitting forms in the
 browser, and every app-setup change (adding sources, writing keys, changing
 settings). Read-only actions (searching, listing, status checks) run immediately.</p>
+<p><b>YOLO mode</b> (the 🔓 <i>YOLO</i> button next to the agent input) turns ALL
+confirmations off: the agent runs shell commands, downloads, deletions and settings
+changes immediately, without asking. It is off by default, and the agent itself can
+never switch it on — only you can, from that button. With it on, a misunderstood
+request can act on your machine unattended; the agent still narrates destructive
+actions (exact commands and paths) as it performs them.</p>
 
 <div class="note">
 <b>Tip:</b> Jackett gives much better results than web searches. Install it and add
@@ -569,7 +575,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 5.7 — AI Deep Search</p>
+<p>DeepFlux 5.8 — AI Deep Search</p>
 <p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>

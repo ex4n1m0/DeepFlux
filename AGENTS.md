@@ -772,6 +772,18 @@
   watchdog auto-heal setting. The enabled watchdog is started by GUI/CLI, records
   first observations without false stalls, has per-torrent cooldowns, and can
   mutate only through its torrent-recovery allowlist.
+- YOLO mode (owner request 2026-10-13, shipped 5.8): `config.llm.yolo_mode`
+  disables ALL tool confirmations — `_queue_confirmation` returns None, so
+  run_shell/deletions/settings writes execute immediately. SECURITY RULE:
+  `("llm", "yolo_mode")` is in `_SETTINGS_DENY_PATHS` — the agent can NEVER
+  set it via set_settings (a prompt injection must not unlock its own gates);
+  only the user's GUI toggle (🔓 YOLO button by the agent input, warning
+  dialog on enable, `MainWindow._on_yolo_toggle`) can. The system prompt
+  gains an UNATTENDED MODE paragraph when on (otherwise models narrate
+  waiting for approvals that never come). The watchdog auto-heal allowlist
+  is NOT affected — yolo changes chat confirmations only. Tests:
+  tests/test_yolo_mode.py (immediate execution, default-off unchanged,
+  deny, mid-conversation toggle, prompt paragraph).
 - `search_indexers` has `deep` param: default quick pass = private tier +
   top-1 public source; zero hits auto-escalate to the full sweep. The GUI
   never passes `deep=True` directly — only the agent does; the Agent tab's

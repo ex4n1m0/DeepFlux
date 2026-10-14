@@ -1,7 +1,7 @@
 {
-  "version": "v0.24.2830",
+  "version": "v0.24.2850",
   "asset": "Jackett.Installer.Windows.exe",
-  "size": 42509500,
-  "sha256": "99a25f190ac8501f1c536d1340db99a36fd56ae727979493a79b33db360beb01",
-  "downloaded": "2026-10-13"
+  "size": 42544277,
+  "sha256": "98f0f93f36dd30d61747da4c430e679f73b10dc09f85827f08394110ea1646fc",
+  "downloaded": "2026-10-14"
 }
