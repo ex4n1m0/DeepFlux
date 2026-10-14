@@ -1,8 +1,8 @@
 {
-  "version": "5.7",
-  "file": "DeepFlux5.7Setup.exe",
-  "size": 751218400,
-  "sha256": "b936a31f1cd4363f6e957e26eb5b62456437f3e753ff3032f3ec4280bb67d574",
-  "released": "2026-10-13",
-  "notes": "DeepFlux 5.7 - the installer now sets up FlareSolverr (default-on final step), unlocking Cloudflare-protected torrent sites such as EZTV and KickassTorrent (measured: 15 of 19 walled indexers become searchable). Also ships the torrent-search health system and the new Agent tab artwork."
+  "version": "5.8",
+  "file": "DeepFlux5.8Setup.exe",
+  "size": 751286722,
+  "sha256": "4bd1fae3cd8d208026523598167523c8d2d52094e1c1facec2e5c0c24869f53a",
+  "released": "2026-10-14",
+  "notes": "DeepFlux 5.8 - YOLO mode: turn off ALL agent confirmations with one button (the YOLO toggle by the agent input) and the agent acts immediately - shell commands, downloads, deletions, settings - while narrating what it does. Off by default; only you can switch it on."
 }
