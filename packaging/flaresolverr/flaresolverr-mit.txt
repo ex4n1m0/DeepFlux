@@ -2,7 +2,7 @@ FlareSolverr v3.5.2 — https://github.com/FlareSolverr/FlareSolverr
 Bundled unmodified as flaresolverr_windows_x64.zip (sha256 309abd7c821546325ae6c509b40d969c5e39034be2314d21b3f5e0517feda7a7).
 FlareSolverr is licensed under the MIT License; source for this
 exact release: https://raw.githubusercontent.com/FlareSolverr/FlareSolverr/v3.5.2/LICENSE
-Retrieved 2026-10-14.
+Retrieved 2026-10-15.
 ----------------------------------------------------------------------
 
 MIT License
