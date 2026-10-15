@@ -436,14 +436,36 @@
   `https://deepflux.space/deepflux/latest.json` daily (startup background
   thread + Help → "Check for Updates…"), the GUI (`gui/update_dialog.py` +
   main_window `_update_*` methods) offers Update now / Later / Skip this
-  version, downloads the setup exe with a Range-resumable streamed transfer
-  to `%LOCALAPPDATA%\DeepFlux\updates\`, verifies size + sha256 against the
-  feed, then a detached PowerShell helper (apply_update → apply_update.ps1)
+  version, downloads the setup exe to `%LOCALAPPDATA%\DeepFlux\updates\`
+  with a SEGMENTED PARALLEL transfer (since 5.9 — see below), verifies
+  size + sha256 against the feed, then a detached PowerShell helper
+  (apply_update → apply_update.ps1)
   waits for our PID to exit, runs `setup.exe /VERYSILENT
   /SUPPRESSMSGBOXES /NORESTART`, relaunches DeepFlux and deletes the setup
   file. Log: `~/.deeptorrent/logs/update.log`. Nothing ever installs
   without the user's click, and the updater is deliberately NOT an agent
   tool (prompt injection must never trigger an installer run).
+- Segmented download (5.9): payloads are ~750 MB now, so
+  `updater._download_segmented` drives the ENGINE'S OWN
+  `dlmgr/segment.py::SegmentWorker` — 6 parallel byte-range connections
+  writing into ONE preallocated (sparse-truncated) .part file, same
+  boundaries formula as the engine (`SEGMENT_MIN_SPAN` 512 KiB floor).
+  A `Range: bytes=0-0` probe gates the mode: 206 + Content-Range total ==
+  feed size → segmented; 200/ignored → single-stream fallback
+  (`_download_stream`, the old append-resume path). A probe total that
+  DISAGREES with the feed fails loudly ("feed is stale") instead of
+  downloading wrong bytes. Resume is per-segment via a sidecar
+  `<file>.part.segs.json` (completed-bytes per range + the probe ETag —
+  an ETag change discards the state; flushed every 2s and on every exit
+  path; deleted on success). Stalled workers (SegmentWorker.is_stalled)
+  are stopped and respawned from their persisted offset up to
+  `SEGMENT_RESPAWNS` per attempt. MEASURED live 2026-10-15 (751 MB exe on
+  Vercel): ranged GETs answer 206 + stable strong ETag, but the FIRST
+  ranged GET on a cold edge took ~49s while the next answered in ~0.1s —
+  the probe timeout is 60s so it absorbs the cold start and the parallel
+  workers begin warm. Tests: tests/test_updater.py (parallel layout,
+  sidecar resume, etag change, cancel-keeps-state + retry, respawn
+  budget, no-range fallback, stale-feed error).
 - VERIFIED facts (2026-09-19 study) — do not re-derive:
   * The install is PER-USER: installer.iss `PrivilegesRequired=lowest` →
     `{autopf}` = `%LOCALAPPDATA%\Programs\DeepFlux` (HKCU uninstall key), so

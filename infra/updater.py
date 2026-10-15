@@ -3,9 +3,11 @@
 Windows flow: a daily-gated feed check (``deepflux.space/deepflux/
 latest.json``) returns the newest version + its setup exe's size and
 sha256 → the GUI offers "Update now / Later / Skip this version" → the
-setup exe is downloaded with a streamed, Range-resumable transfer and
-verified → a detached PowerShell helper waits for this process to exit,
-runs the installer silently and relaunches the app.
+setup exe is downloaded with a SEGMENTED parallel transfer (the download
+engine's own ``SegmentWorker`` byte-range workers; single-stream fallback
+when the server ignores Range) and verified → a detached PowerShell
+helper waits for this process to exit, runs the installer silently and
+relaunches the app.
 
 Linux flow (AppImage, since the 2026-10-11 full port): same feed ritual
 against ``latest-linux.json``; the verified AppImage is applied by a
@@ -63,7 +65,22 @@ FEED_BODY_LIMIT = 64 * 1024          # the feed is a few hundred bytes
 CHECK_INTERVAL_SECONDS = 24 * 3600   # at most one probe per day
 DOWNLOAD_CHUNK = 256 * 1024
 DOWNLOAD_RETRIES = 4
-_MAX_SETUP_BYTES = 2 * 1024 * 1024 * 1024  # sanity ceiling; real builds ~370 MB
+_MAX_SETUP_BYTES = 2 * 1024 * 1024 * 1024  # sanity ceiling; real builds ~750 MB
+
+# Segmented transfer (5.9): update payloads are hundreds of MB, so the
+# download reuses the engine's SegmentWorker — parallel byte-range
+# connections writing into one preallocated file. Sizes below the
+# threshold stay on the single-stream path (probe overhead isn't worth
+# it). Resume state lives in a small sidecar next to the .part file.
+SEGMENT_CONNECTIONS = 6                 # parallel range connections
+SEGMENT_MIN_BYTES = 4 * 1024 * 1024     # smaller payloads: single stream
+SEGMENT_MIN_SPAN = 512 * 1024           # segment size floor (engine parity)
+SEGMENT_RESPAWNS = 6                    # per-segment restarts per attempt
+SEGMENT_POLL = 0.05                     # monitor cadence (s)
+SEGMENT_FLUSH_EVERY = 2.0               # sidecar flush cadence (s)
+SEGMENT_RESTART_DELAY = 1.0             # cooldown before a failed segment restarts
+PROGRESS_STEP = 256 * 1024              # progress callback granularity (bytes)
+DOWNLOAD_BACKOFFS = (0, 2, 5, 15)       # whole-transfer retry delays
 _VERSION_RE = re.compile(r"^\d+(\.\d+)*$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -231,11 +248,12 @@ def download_update(
     progress: Optional[Callable[[int, int], None]] = None,
     cancel: Optional[threading.Event] = None,
 ) -> Path:
-    """Stream the setup exe to the staging dir with Range resume.
+    """Download the setup exe to the staging dir with a segmented parallel
+    transfer (Range-resumable both within and across attempts).
 
     Returns the VERIFIED final path. Raises UpdateError on failure — a
-    failed transfer keeps its .part file so the next attempt resumes
-    instead of restarting the ~370 MB download.
+    failed transfer keeps its .part file + segment-state sidecar so the
+    next attempt resumes instead of restarting the ~750 MB download.
     """
     dest_dir = updates_dir()
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -244,17 +262,8 @@ def download_update(
         return final  # already downloaded (retry after a failed apply)
 
     part = dest_dir / (info.file + ".part")
-    if part.exists() and part.stat().st_size == info.size:
-        # A complete-but-unverified .part (interrupted between the last
-        # write and the hash check). Accept or discard it outright — a
-        # Range request for the full size would answer 416.
-        if _sha256_of(part).lower() == info.sha256.lower():
-            os.replace(part, final)
-            return final
-        part.unlink()
-    backoffs = (0, 2, 5, 15)
     last_error: Optional[Exception] = None
-    for attempt, backoff in enumerate(backoffs):
+    for attempt, backoff in enumerate(DOWNLOAD_BACKOFFS):
         if backoff:
             time.sleep(backoff)
         if cancel is not None and cancel.is_set():
@@ -280,7 +289,269 @@ def _download_once(
     progress: Optional[Callable[[int, int], None]],
     cancel: Optional[threading.Event],
 ) -> Path:
+    if info.size >= SEGMENT_MIN_BYTES:
+        result = _download_segmented(info, final, part, progress, cancel)
+        if result is not None:
+            return result
+        # Server does not honor Range requests — one connection it is.
+    return _download_stream(info, final, part, progress, cancel)
+
+
+# --------------------------------------------------------------------------
+# Segmented transfer (reuses dlmgr.segment.SegmentWorker)
+# --------------------------------------------------------------------------
+
+def _probe_ranges(info: UpdateInfo) -> Optional[tuple]:
+    """Ask the server for one byte to learn whether Range requests work.
+
+    Returns (if_range_token, total_size) — the token is the ETag (or
+    Last-Modified date) used for If-Range resume validation. Returns None
+    when ranges are not supported. Raises UpdateError when the deployed
+    file's size disagrees with the feed (a stale feed must fail loudly,
+    not download the wrong bytes and lose to the hash check)."""
     from dlmgr.http_client import get
+
+    # 60s: the FIRST ranged GET on a cold edge took ~49s live (751 MB
+    # asset, 2026-10-15 measurement) while every following one answered in
+    # ~0.1s — the probe warms the URL so the parallel workers start hot.
+    response = get(info.url, headers={"Range": "bytes=0-0"}, timeout=60, stream=True)
+    try:
+        response.raise_for_status()
+        if response.status_code != 206:
+            return None
+        header = (response.headers.get("Content-Range") or "").strip()
+        match = re.fullmatch(r"bytes\s+(\d+)-(\d+)/(\d+)", header, re.IGNORECASE)
+        if match is None:
+            return None
+        total = int(match.group(3))
+        if total != info.size:
+            raise UpdateError(
+                f"the deployed file is {total} bytes but the feed announced "
+                f"{info.size} — the update feed is stale")
+        token = response.headers.get("ETag") or response.headers.get("Last-Modified") or ""
+        return (token, total)
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
+
+def _segment_layout(size: int) -> list:
+    """Deterministic byte spans — the same formula the engine uses, so a
+    resumed attempt maps its saved state onto identical boundaries."""
+    count = max(1, min(size // SEGMENT_MIN_SPAN, SEGMENT_CONNECTIONS))
+    seg_size = size // count
+    return [(i * seg_size, (i + 1) * seg_size - 1 if i < count - 1 else size - 1)
+            for i in range(count)]
+
+
+def _sidecar_path(part: Path) -> Path:
+    return Path(str(part) + ".segs.json")
+
+
+def _load_sidecar(path: Path, size: int, layout: list, if_range: str) -> Optional[list]:
+    """Completed-bytes per segment, or None when the state does not apply
+    (corrupt, different layout, or the remote file changed — a different
+    ETag means the bytes already on disk may belong to the old artifact)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict) or data.get("size") != size:
+        return None
+    saved = data.get("segments")
+    if not isinstance(saved, list) or len(saved) != len(layout):
+        return None
+    completed = []
+    for (start, end), entry in zip(layout, saved):
+        try:
+            s, e, c = int(entry[0]), int(entry[1]), int(entry[2])
+        except Exception:
+            return None
+        if (s, e) != (start, end):
+            return None
+        completed.append(max(0, min(c, end - start + 1)))
+    if if_range and data.get("etag") and data.get("etag") != if_range:
+        return None
+    return completed
+
+
+def _save_sidecar(path: Path, size: int, layout: list, completed: list, if_range: str) -> None:
+    payload = {
+        "size": size,
+        "etag": if_range,
+        "segments": [[s, e, c] for (s, e), c in zip(layout, completed)],
+    }
+    tmp = Path(str(path) + ".tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _download_segmented(
+    info: UpdateInfo,
+    final: Path,
+    part: Path,
+    progress: Optional[Callable[[int, int], None]],
+    cancel: Optional[threading.Event],
+) -> Optional[Path]:
+    """Parallel byte-range transfer using the engine's SegmentWorker.
+
+    Returns None when the server does not honor Range requests. All exit
+    paths (success, failure, cancel) flush the sidecar, so an interrupted
+    attempt resumes at range granularity on the next try."""
+    from dlmgr.job import SegmentState, SegmentStatus
+    from dlmgr.segment import SegmentWorker
+
+    probe = _probe_ranges(info)
+    if probe is None:
+        return None
+    if_range, _total = probe
+    layout = _segment_layout(info.size)
+    sidecar = _sidecar_path(part)
+    completed = _load_sidecar(sidecar, info.size, layout, if_range)
+    if completed is None:
+        completed = [0] * len(layout)
+        # Sparse preallocation: ONE truncation up front, before any worker
+        # exists — the workers then open r+b and write at their own offsets
+        # (never truncating; see the SegmentWorker no-truncate lesson).
+        with open(part, "wb") as f:
+            f.truncate(info.size)
+        _save_sidecar(sidecar, info.size, layout, completed, if_range)
+
+    states = []
+    for i, (start, end) in enumerate(layout):
+        state = SegmentState(index=i, start_byte=start, end_byte=end,
+                             completed_bytes=completed[i])
+        if state.completed_bytes >= state.total_bytes:
+            state.status = SegmentStatus.DONE
+        states.append(state)
+
+    base = sum(s.completed_bytes for s in states)
+    if progress:
+        progress(base, info.size)
+
+    lock = threading.Lock()
+    delivered = [0]   # bytes fetched this attempt (for progress reporting)
+    emitted = [0]
+
+    def _on_chunk(n: int) -> None:
+        with lock:
+            delivered[0] += n
+            if delivered[0] - emitted[0] >= PROGRESS_STEP:
+                emitted[0] = delivered[0]
+                if progress:
+                    progress(base + delivered[0], info.size)
+
+    workers: dict = {}
+    attempts = [0] * len(states)
+    failures: dict = {}
+    respawn_at: dict = {}
+    last_flush = time.monotonic()
+
+    def _spawn(i: int) -> None:
+        states[i].status = SegmentStatus.PENDING
+        states[i].error = ""
+        worker = SegmentWorker(
+            url=info.url,
+            segment=states[i],
+            file_path=str(part),
+            on_progress=_on_chunk,
+            if_range=if_range,
+            expected_file_size=info.size,
+        )
+        workers[i] = worker
+        attempts[i] += 1
+        worker.start()
+
+    try:
+        for i, state in enumerate(states):
+            if state.status is not SegmentStatus.DONE:
+                _spawn(i)
+
+        while True:
+            if cancel is not None and cancel.is_set():
+                raise _Cancelled()
+            now = time.monotonic()
+
+            # Reap dead workers. A segment that didn't finish is PENDING
+            # (stopped/incomplete) or ERROR — both restart from their
+            # persisted completed_bytes once the cooldown passes. A worker
+            # is only ever respawned after its thread is gone, so two
+            # workers can never write the same range concurrently.
+            for i, worker in list(workers.items()):
+                if worker.is_alive():
+                    if worker.is_stalled:
+                        worker.stop()  # exits at its next chunk boundary
+                    continue
+                del workers[i]
+                state = states[i]
+                if state.status is SegmentStatus.DONE:
+                    continue
+                failures[i] = state.error or "incomplete"
+                respawn_at[i] = now + SEGMENT_RESTART_DELAY
+
+            if all(s.status is SegmentStatus.DONE for s in states) and not workers:
+                break
+
+            for i, state in enumerate(states):
+                if state.status is SegmentStatus.DONE or i in workers:
+                    continue
+                if now < respawn_at.get(i, 0.0):
+                    continue
+                if attempts[i] >= SEGMENT_RESPAWNS:
+                    raise UpdateError(
+                        f"segment {i} kept failing: {failures.get(i, 'incomplete')}")
+                _spawn(i)
+
+            if now - last_flush >= SEGMENT_FLUSH_EVERY:
+                _save_sidecar(sidecar, info.size, layout,
+                              [s.completed_bytes for s in states], if_range)
+                last_flush = now
+            time.sleep(SEGMENT_POLL)
+    finally:
+        # Persist whatever was reached — success deletes the sidecar below,
+        # cancel/failure keep it so the next attempt resumes.
+        try:
+            _save_sidecar(sidecar, info.size, layout,
+                          [s.completed_bytes for s in states], if_range)
+        except OSError:
+            pass
+        for worker in workers.values():
+            worker.stop()
+        for worker in workers.values():
+            worker.join(timeout=15)
+
+    if part.stat().st_size != info.size:
+        raise UpdateError(f"download incomplete ({part.stat().st_size} of {info.size} bytes)")
+    if progress:
+        progress(info.size, info.size)
+    if _sha256_of(part).lower() != info.sha256.lower():
+        part.unlink(missing_ok=True)
+        sidecar.unlink(missing_ok=True)
+        raise UpdateError("download failed the integrity check (sha256 mismatch)")
+    os.replace(part, final)
+    sidecar.unlink(missing_ok=True)
+    return final
+
+
+def _download_stream(
+    info: UpdateInfo,
+    final: Path,
+    part: Path,
+    progress: Optional[Callable[[int, int], None]],
+    cancel: Optional[threading.Event],
+) -> Path:
+    from dlmgr.http_client import get
+
+    if part.exists() and part.stat().st_size == info.size:
+        # A complete-but-unverified .part (interrupted between the last
+        # write and the hash check). Accept or discard it outright — a
+        # Range request for the full size would answer 416.
+        if _sha256_of(part).lower() == info.sha256.lower():
+            os.replace(part, final)
+            return final
+        part.unlink()
+    _sidecar_path(part).unlink(missing_ok=True)  # never mix resume bookkeeping
 
     done = part.stat().st_size if part.exists() else 0
     headers = {"Range": f"bytes={done}-"} if done else None

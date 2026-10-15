@@ -37,7 +37,7 @@ HELP_HTML_ZH = r"""
 </head>
 <body>
 
-<h1>DeepFlux 5.8 —— 用户指南</h1>
+<h1>DeepFlux 5.9 —— 用户指南</h1>
 
 <p>DeepFlux 是一个 AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室
 和文件管理器。AI 智能体可以搜索并下载种子、查找直链下载、管理你的媒体库 ——
@@ -426,7 +426,8 @@ onlyhumans.deepflux.space/join 上同一个房间应用 —— 所以 DeepFlux �
 下载 → 下载设置）。有新版本时，一个小对话框提供<b>立即更新</b>、<b>稍后提醒</b>
 和<b>跳过此版本</b>。也可以随时通过 <b>帮助 → 检查更新…</b> 手动检查。</p>
 
-<p><b>立即更新</b> 会下载新的安装文件并校验，然后关闭 DeepFlux、安装新版本
+<p><b>立即更新</b> 会通过六个并行分段连接下载新的安装文件（中断后可从断点
+续传），校验后关闭 DeepFlux、安装新版本
 并重启 —— 无需去网站下载、无需安装向导。没有你的点击，任何东西都不会被
 安装。你的源、API 密钥和设置全部保留（更新在原地重装并保留配置），活动
 下载自动暂停并在之后继续。更新日志在 <code>~/.deeptorrent/logs/update.log</code>，
@@ -480,7 +481,7 @@ AES-128 加密的流。
 </table>
 
 <h2>版本</h2>
-<p>DeepFlux 5.8 —— AI 深度搜索</p>
+<p>DeepFlux 5.9 —— AI 深度搜索</p>
 <p>AI：DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
 
 </body>

@@ -87,8 +87,9 @@ class UpdateDialog(QDialog):
 
 
 class UpdateProgressDialog(QDialog):
-    """Streams the setup exe (Range-resumable). Closing keeps the partial
-    file, so a retry continues instead of restarting the ~370 MB download."""
+    """Downloads the setup exe (segmented parallel transfer, resumable).
+    Closing keeps the partial file + range state, so a retry continues
+    instead of restarting the ~750 MB download."""
 
     def __init__(self, parent, info: UpdateInfo, signals: _UpdateSignals) -> None:
         super().__init__(parent)

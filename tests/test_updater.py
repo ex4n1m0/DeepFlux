@@ -164,10 +164,10 @@ def test_maybe_check_network_failure_is_silent(monkeypatch):
 # ---------------------------------------------------------------------------
 
 class _FakeResponse:
-    def __init__(self, chunks, status_code=200):
+    def __init__(self, chunks, status_code=200, headers=None):
         self._chunks = [c for c in chunks if c]
         self.status_code = status_code
-        self.headers = {}
+        self.headers = dict(headers or {})
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -175,6 +175,55 @@ class _FakeResponse:
 
     def iter_content(self, chunk_size):
         return iter(self._chunks)
+
+    def close(self):
+        pass
+
+
+class _RangeServer:
+    """Fake http_client.get serving byte ranges from an in-memory blob —
+    what a range-capable static host (the deploy CDN) looks like to the
+    updater. Records every (Range header, status) it answered."""
+
+    def __init__(self, data, etag='"v1"', chunk=1024, support_ranges=True,
+                 delay=0.0, fail_range=None):
+        import re as _re
+        self.data = data
+        self.etag = etag
+        self.chunk = chunk
+        self.support_ranges = support_ranges
+        self.delay = delay
+        self.fail_range = fail_range   # predicate (start, end) -> bool: 500
+        self.requests = []
+        self._re = _re
+
+    def get(self, url, headers=None, timeout=15, stream=False):
+        rng = (headers or {}).get("Range")
+        if not self.support_ranges or not rng:
+            self.requests.append((rng, 200))
+            return _FakeResponse([self.data[i:i + self.chunk]
+                                  for i in range(0, len(self.data), self.chunk)], 200)
+        m = self._re.fullmatch(r"bytes=(\d+)-(\d*)", rng)
+        assert m is not None, f"malformed Range header: {rng!r}"
+        start = int(m.group(1))
+        end = int(m.group(2)) if m.group(2) else len(self.data) - 1
+        if self.fail_range and self.fail_range(start, end):
+            self.requests.append((rng, 500))
+            return _FakeResponse([], 500)
+        body = self.data[start:end + 1]
+
+        def _chunks():
+            for i in range(0, len(body), self.chunk):
+                if self.delay:
+                    time.sleep(self.delay)
+                yield body[i:i + self.chunk]
+
+        self.requests.append((rng, 206))
+        return _FakeResponse(_chunks(), 206, headers={
+            "Content-Range": f"bytes {start}-{end}/{len(self.data)}",
+            "ETag": self.etag,
+            "Accept-Ranges": "bytes",
+        })
 
 
 def _info_for(data: bytes) -> UpdateInfo:
@@ -225,6 +274,7 @@ def test_download_resumes_from_part(monkeypatch, stage_dir):
 
 
 def test_download_rejects_hash_mismatch(monkeypatch, stage_dir):
+    monkeypatch.setattr(updater, "DOWNLOAD_BACKOFFS", (0, 0, 0, 0))
     data = os.urandom(3000)
     # Size matches the feed, the hash does not — corrupted transfer.
     info = UpdateInfo(version="9.9", file="DeepFlux9.9Setup.exe",
@@ -239,6 +289,7 @@ def test_download_rejects_hash_mismatch(monkeypatch, stage_dir):
 
 
 def test_download_rejects_oversize_body(monkeypatch, stage_dir):
+    monkeypatch.setattr(updater, "DOWNLOAD_BACKOFFS", (0, 0, 0, 0))
     data = os.urandom(2048)
     info = _info_for(data[:100])  # feed announces 100 bytes
     import dlmgr.http_client as http_client
@@ -271,6 +322,164 @@ def test_download_returns_cached_verified_file(monkeypatch, stage_dir):
                         lambda *a, **k: pytest.fail("should not download"))
     path = updater.download_update(info)
     assert path.read_bytes() == data
+
+
+# ---------------------------------------------------------------------------
+# Segmented download (5.9) — parallel byte-range workers
+# ---------------------------------------------------------------------------
+
+def _enable_segments(monkeypatch, min_span=256):
+    """Shrink the segment thresholds so a few-KB blob exercises the real
+    parallel path (probe → layout → workers → sidecar)."""
+    monkeypatch.setattr(updater, "SEGMENT_MIN_BYTES", 1024)
+    monkeypatch.setattr(updater, "SEGMENT_MIN_SPAN", min_span)
+    monkeypatch.setattr(updater, "DOWNLOAD_BACKOFFS", (0, 0, 0, 0))
+    monkeypatch.setattr(updater, "SEGMENT_RESTART_DELAY", 0.0)
+    monkeypatch.setattr(updater, "SEGMENT_FLUSH_EVERY", 0.05)
+
+
+def test_download_segmented_parallel_and_verified(monkeypatch, stage_dir):
+    import dlmgr.http_client as http_client
+    data = os.urandom(5000)
+    info = _info_for(data)
+    _enable_segments(monkeypatch)
+    server = _RangeServer(data)
+    monkeypatch.setattr(http_client, "get", server.get)
+    seen = []
+    path = updater.download_update(info, progress=lambda d, t: seen.append((d, t)))
+    assert path.read_bytes() == data
+    # Probe + several DISTINCT ranges → the transfer really was parallel.
+    assert ("bytes=0-0", 206) in server.requests
+    ranges = [r for r, s in server.requests if s == 206 and r != "bytes=0-0"]
+    assert len(set(ranges)) >= 2
+    # Progress is monotonic and reaches the full size.
+    assert seen and seen[-1] == (len(data), len(data))
+    assert all(b >= a for (a, _), (b, _) in zip(seen, seen[1:]))
+    # Success cleans up the staging artifacts.
+    assert not (stage_dir / (info.file + ".part")).exists()
+    assert not updater._sidecar_path(stage_dir / (info.file + ".part")).exists()
+
+
+def test_download_segmented_resumes_from_sidecar(monkeypatch, stage_dir):
+    import dlmgr.http_client as http_client
+    data = os.urandom(4000)
+    info = _info_for(data)
+    _enable_segments(monkeypatch)
+    layout = updater._segment_layout(len(data))
+    stage_dir.mkdir(parents=True)
+    part = stage_dir / (info.file + ".part")
+    # Segment 0 fully on disk, segment 1 half done, the rest missing.
+    completed = []
+    with open(part, "wb") as f:
+        f.truncate(len(data))
+    with open(part, "r+b") as f:
+        for i, (start, end) in enumerate(layout):
+            done = (end - start + 1) if i == 0 else ((end - start + 1) // 2 if i == 1 else 0)
+            if done:
+                f.seek(start)
+                f.write(data[start:start + done])
+            completed.append(done)
+    updater._save_sidecar(updater._sidecar_path(part), len(data), layout,
+                          completed, '"v1"')
+    server = _RangeServer(data, etag='"v1"')
+    monkeypatch.setattr(http_client, "get", server.get)
+    path = updater.download_update(info)
+    assert path.read_bytes() == data
+    ranges = [r for r, s in server.requests if s == 206 and r != "bytes=0-0"]
+    # The finished segment is never re-fetched; the half-done one resumes
+    # mid-range; a missing one starts at its own span.
+    first_start, first_end = layout[0]
+    assert f"bytes={first_start}-{first_end}" not in ranges
+    s1, e1 = layout[1]
+    assert f"bytes={s1 + completed[1]}-{e1}" in ranges
+
+
+def test_download_segmented_etag_change_discards_state(monkeypatch, stage_dir):
+    import dlmgr.http_client as http_client
+    data = os.urandom(4000)
+    info = _info_for(data)
+    _enable_segments(monkeypatch)
+    layout = updater._segment_layout(len(data))
+    stage_dir.mkdir(parents=True)
+    part = stage_dir / (info.file + ".part")
+    with open(part, "wb") as f:
+        f.truncate(len(data))
+    updater._save_sidecar(updater._sidecar_path(part), len(data), layout,
+                          [e - s + 1 for s, e in layout], '"OLD"')
+    # The server now serves a DIFFERENT artifact under the same name —
+    # the saved state must be discarded, not trusted.
+    server = _RangeServer(data, etag='"NEW"')
+    monkeypatch.setattr(http_client, "get", server.get)
+    path = updater.download_update(info)
+    assert path.read_bytes() == data
+    ranges = [r for r, s in server.requests if s == 206 and r != "bytes=0-0"]
+    assert f"bytes=0-{layout[0][1]}" in ranges  # restarted from scratch
+
+
+def test_download_segmented_cancel_keeps_state(monkeypatch, stage_dir):
+    import threading
+    import dlmgr.http_client as http_client
+    data = os.urandom(6000)
+    info = _info_for(data)
+    _enable_segments(monkeypatch)
+    cancel = threading.Event()
+
+    def on_progress(done, total):
+        cancel.set()  # the user hits Cancel as soon as bytes start flowing
+
+    server = _RangeServer(data, delay=0.02)
+    monkeypatch.setattr(http_client, "get", server.get)
+    with pytest.raises(updater.UpdateError, match="cancel"):
+        updater.download_update(info, progress=on_progress, cancel=cancel)
+    part = stage_dir / (info.file + ".part")
+    assert part.exists() and part.stat().st_size == len(data)  # preallocated
+    assert updater._sidecar_path(part).exists()
+
+    # A retry after cancelling picks up where the ranges left off.
+    server2 = _RangeServer(data, etag=server.etag)
+    monkeypatch.setattr(http_client, "get", server2.get)
+    path = updater.download_update(info)
+    assert path.read_bytes() == data
+
+
+def test_download_segmented_respawn_budget(monkeypatch, stage_dir):
+    import dlmgr.http_client as http_client
+    data = os.urandom(4000)
+    info = _info_for(data)
+    _enable_segments(monkeypatch)
+    layout = updater._segment_layout(len(data))
+    broken = layout[2]
+    server = _RangeServer(data, fail_range=lambda s, e: (s, e) == broken)
+    monkeypatch.setattr(http_client, "get", server.get)
+    with pytest.raises(updater.UpdateError, match="segment 2"):
+        updater.download_update(info)
+
+
+def test_download_falls_back_when_ranges_unsupported(monkeypatch, stage_dir):
+    import dlmgr.http_client as http_client
+    data = os.urandom(5000)
+    info = _info_for(data)
+    _enable_segments(monkeypatch)
+    server = _RangeServer(data, support_ranges=False)
+    monkeypatch.setattr(http_client, "get", server.get)
+    path = updater.download_update(info)
+    assert path.read_bytes() == data
+    # Probe (Range 0-0, answered 200) then a single plain GET.
+    assert ("bytes=0-0", 200) in server.requests
+    assert sum(1 for r, s in server.requests if r is None) == 1
+
+
+def test_download_segmented_feed_size_mismatch(monkeypatch, stage_dir):
+    import dlmgr.http_client as http_client
+    data = os.urandom(4000)
+    # Feed announces a size the deployed file disagrees with.
+    info = UpdateInfo(version="9.9", file="DeepFlux9.9Setup.exe",
+                      size=len(data) - 7, sha256=hashlib.sha256(data).hexdigest())
+    _enable_segments(monkeypatch)
+    server = _RangeServer(data)
+    monkeypatch.setattr(http_client, "get", server.get)
+    with pytest.raises(updater.UpdateError, match="feed is stale"):
+        updater.download_update(info)
 
 
 def test_verify_file(tmp_path):
