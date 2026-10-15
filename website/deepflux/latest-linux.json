@@ -1,8 +1,8 @@
 {
-  "version": "5.8",
-  "file": "DeepFlux-5.8-Linux-x86_64.AppImage",
-  "size": 628390392,
-  "sha256": "e12f2af5fb5d2fbf87d97c876ea4aba38eb17f6056d54728693c8b3ca118c81d",
-  "released": "2026-10-14",
-  "notes": "DeepFlux 5.8 for Linux - YOLO mode (one-toggle no-confirmation agent, user-enabled only) plus the torrent-search health system refinements, same as Windows."
+  "version": "5.9",
+  "file": "DeepFlux-5.9-Linux-x86_64.AppImage",
+  "size": 628398584,
+  "sha256": "41c5296ab6df28d700d9298fb742150ffad021c4ac77345d3b1cb71c125f5ef7",
+  "released": "2026-10-15",
+  "notes": "DeepFlux 5.9 for Linux - segmented update downloads (six parallel connections, range-by-range resume), same as Windows."
 }

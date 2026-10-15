@@ -1,8 +1,8 @@
 {
-  "version": "5.8",
-  "file": "DeepFlux5.8Setup.exe",
-  "size": 751286722,
-  "sha256": "4bd1fae3cd8d208026523598167523c8d2d52094e1c1facec2e5c0c24869f53a",
-  "released": "2026-10-14",
-  "notes": "DeepFlux 5.8 - YOLO mode: turn off ALL agent confirmations with one button (the YOLO toggle by the agent input) and the agent acts immediately - shell commands, downloads, deletions, settings - while narrating what it does. Off by default; only you can switch it on."
+  "version": "5.9",
+  "file": "DeepFlux5.9Setup.exe",
+  "size": 751303853,
+  "sha256": "fbbd8c3574f2c471f3ad4a2013f5afe50bbebe5cf6aa331dcf867b5e7c7d1828",
+  "released": "2026-10-15",
+  "notes": "DeepFlux 5.9 - segmented update downloads: the big installer now arrives over six parallel connections instead of one, and an interrupted download resumes range-by-range instead of starting over."
 }
