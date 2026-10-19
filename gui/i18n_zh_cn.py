@@ -746,4 +746,29 @@ ZH_CN: dict[str, str] = {
         "AI 驱动的下载管理器，内置浏览器、播放器、社区聊天室和文件管理器。\n\n"
         "AI：DeepSeek / OpenRouter / 自定义\n"
         "网页搜索：DuckDuckGo、Brave、Perplexity（并行）",
+    # --- Local models (built-in AI, 6.0) — API Keys → AI page ------------
+    "Local Models (built-in AI — uncensored, offline)":
+        "本地模型（内置 AI —— 无审查、离线）",
+    "Detecting hardware…": "正在检测硬件…",
+    "Hardware detection unavailable.": "硬件检测不可用。",
+    "This PC": "本机",
+    "Recommended": "推荐",
+    "Recommended for this PC": "为这台电脑推荐",
+    "Download": "下载",
+    "Remove": "移除",
+    "installed": "已安装",
+    "not installed": "未安装",
+    "Cancel download": "取消下载",
+    "Test local server": "测试本地服务器",
+    "Local server running": "本地服务器运行中",
+    "Local server not running. It starts automatically with DeepFlux once a model is installed and the endpoint is set to Local AI.":
+        "本地服务器未运行。安装模型并将端点设为 Local AI 后，它会随 DeepFlux 自动启动。",
+    "Remove local model": "移除本地模型",
+    "Delete": "删除",
+    "about": "约",
+    "from this PC?": "，从这台电脑删除？",
+    "Downloading an uncensored AI model matched to this PC's hardware (2-9 GB depending on GPU/RAM). It runs entirely on this machine — no account, no permission prompt, and an interrupted download resumes on the next run.":
+        "正在下载与这台电脑硬件匹配的无审查 AI 模型（2-9 GB，取决于显卡/内存）。它完全在本机运行 —— 无需账号、无权限提示，中断的下载下次会续传。",
+    "Setting up local AI": "正在设置本地 AI",
+    "DeepFlux — local AI setup": "DeepFlux —— 本地 AI 设置",
 }

@@ -1,0 +1,16 @@
+{
+  "version": "b11729",
+  "assets": {
+    "cpu": {
+      "asset": "llama-b11729-bin-win-cpu-x64.zip",
+      "size": 19667517,
+      "sha256": "aef737d26bffd08ceeb7be75f045bdef6d1ecc3187e0f4a1a3b0d878a03d2550"
+    },
+    "vulkan": {
+      "asset": "llama-b11729-bin-win-vulkan-x64.zip",
+      "size": 32316693,
+      "sha256": "dd9b1aef10a45c25c5170d2b78b861dd43e27db63a8c56e310ac261268c3af5c"
+    }
+  },
+  "downloaded": "2026-10-19"
+}

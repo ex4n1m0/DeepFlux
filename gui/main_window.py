@@ -780,7 +780,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config_path = config_path or DeeptorrentConfig.default_config_path()
         self.config = DeeptorrentConfig.from_file(self.config_path)
-        if not self.config.llm.api_key and self.config.llm.provider != "custom":
+        # "local" (bundled llama.cpp server) is keyless by design — it must
+        # not be downgraded to the offline demo mode.
+        if (not self.config.llm.api_key
+                and self.config.llm.provider not in ("custom", "local")):
             self.config.llm.provider = "dummy"
 
         self.engine = TorrentEngine(
@@ -873,6 +876,14 @@ class MainWindow(QMainWindow):
         self._ytdlp_notice_shown = False  # outdated notice: once per session
         threading.Thread(target=self._ytdlp_update_worker, daemon=True,
                          name="ytdlp-update").start()
+
+        # Local AI (6.0): when the "local" provider is configured, reap any
+        # orphaned llama-server from a previous run and make sure ours is up
+        # (the installer step normally left it running). A configured-but-
+        # missing model (e.g. a /VERYSILENT update skipped the step) surfaces
+        # a dim notice pointing at the in-app download UI.
+        threading.Thread(target=self._local_model_worker, daemon=True,
+                         name="local-model-start").start()
 
         # In-app auto-update (Windows frozen builds only — the worker checks
         # and no-ops elsewhere). Daily-gated feed probe; installing always
@@ -4102,6 +4113,33 @@ class MainWindow(QMainWindow):
         if result:
             self._agent_signals.event.emit({"type": "ytdlp_update", **result})
 
+    def _local_model_worker(self) -> None:
+        """Lazy-start the bundled llama.cpp server for the "local" provider
+        (same contract as Jackett/FlareSolverr auto-start) and surface a
+        notice when the selected model isn't installed."""
+        from infra import local_model
+        if self.config.llm.provider != "local":
+            return
+        try:
+            local_model.reap_orphan()
+            entry = local_model.entry_by_id(self.config.llm.model)
+            if not ((entry and local_model.is_installed(entry))
+                    or local_model.installed_models()):
+                self._agent_signals.event.emit({
+                    "type": "local_model", "success": False,
+                    "message": "Local AI is selected but no model is installed "
+                               "yet — download one in File → API Keys → AI.",
+                })
+                return
+            was_down = not local_model.is_running()
+            if local_model.ensure_running(self.config) and was_down:
+                self._agent_signals.event.emit({
+                    "type": "local_model", "success": True,
+                    "message": "Local AI server was not running — started it.",
+                })
+        except Exception as exc:
+            logger.debug("local model startup check failed: %s", exc)
+
     # ------------------------------------------------------------------
     # In-app auto-update (Windows frozen builds; see infra/updater.py)
     # ------------------------------------------------------------------
@@ -4569,6 +4607,13 @@ class MainWindow(QMainWindow):
                 self._append_event(
                     f"📼 YouTube downloader (yt-dlp {installed}) is outdated — "
                     f"{latest} is available. {hint}")
+            elif etype == "local_model":
+                # Escape like the sibling branches: message text must never
+                # reach the chat document as raw markup.
+                message = str(event.get("message") or "")
+                message = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                prefix = "🧠 " if event.get("success") else "⚠️ "
+                self._append_event(prefix + message)
         except Exception:
             logger.debug("event handler failed", exc_info=True)
 
@@ -6314,6 +6359,11 @@ class MainWindow(QMainWindow):
             self.agent.start_watchdog()
         self._rss_monitor = RSSMonitor(self.config.rss)
         logger.info("Agent reloaded with provider=%s", self.config.llm.provider)
+        # Provider switch to/from local: bring the llama.cpp server in line
+        # with the (possibly different) model in the background.
+        if self.config.llm.provider == "local":
+            threading.Thread(target=self._local_model_worker, daemon=True,
+                             name="local-model-reload").start()
 
     # ------------------------------------------------------------------
     # RSS feeds
@@ -6601,6 +6651,15 @@ class MainWindow(QMainWindow):
         # Stop an in-progress voice recording so the mic handle is released.
         if getattr(self, "_voice_rec", None) is not None and self._voice_rec.recording:
             self._voice_rec.stop()
+
+        # Stop the local llama.cpp server we own (loopback-only child of
+        # this app; force-kill exits skip this, and the next boot's
+        # reap_orphan cleans up the leftover).
+        try:
+            from infra import local_model
+            local_model.stop_server()
+        except Exception:
+            pass
 
         # Best-effort telemetry "leaving" note — never blocks the quit.
         try:

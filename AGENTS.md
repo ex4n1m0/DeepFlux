@@ -752,6 +752,77 @@
   * `IndexerConfig.timeout` default dropped 60→25s (measured p95 7.8s, max
     12.2s; only dead-site 522s ran ~20s). Saved configs keep their value.
 
+## Local AI — uncensored models via bundled llama.cpp (since 6.0)
+- The "local" provider (LLM_PROVIDER_PRESETS["local"]) runs an UNCENSORED
+  model on the user's machine through the official llama.cpp
+  `llama-server` (MIT; pinned by `packaging/fetch_llama.py` — CPU + Vulkan
+  Windows x64 zips, ~52 MB; llama.cpp marks EVERY release prerelease, that
+  is just their convention). Default-on installer step
+  `--setup-localmodel` (third postinstall checkbox, after FlareSolverr):
+  extract both runtimes into `~/.deeptorrent/llama/{cpu,vulkan}/` (frozen
+  builds DELETE the zips after extraction; dev keeps them — the
+  flaresolverr lesson), detect hardware, download the matched GGUF, switch
+  the provider. Server: `127.0.0.1:8199` ONLY, `--alias <model-id> -c 32768
+  --no-webui --reasoning-format deepseek -t cores/2` + `-ngl all` only when
+  the weights fit 90% VRAM (b11727 defaults `-ngl` to AUTO otherwise —
+  fits layers to VRAM itself). VERIFIED live 2026-10-19 on the RTX 5080:
+  health in 8s, chat 1.2s, SSE stream + tool call parse clean;
+  `--reasoning-format deepseek` maps Qwen3.5's inline thinking onto
+  `reasoning_content`, which `DeepSeekClient._consume_stream` already
+  dims in the UI — without it thinking leaks into content.
+- Model ladder = TRACKED manifest `infra/local_models.json` (pinned by
+  `packaging/pin_local_models.py`; the HF tree API's LFS `oid` IS the
+  sha256 — pinning needs NO multi-GB download). Families:
+  HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive Q4_K_M/Q6_K/Q8_0
+  (primary GPU) + mradermacher/Huihui-Qwen3.5-4B-abliterated Q4_K_M/Q6_K/
+  Q8_0 (CPU/small-VRAM fallback; same Qwen3.5 template). Fit matrix is
+  ModelSwarm's, ported verbatim: `ram_est = ceil128(weights + 128 + 256MB)`
+  must fit 90% RAM; weights ≤ 90% VRAM = gpu_full (bigger quant wins);
+  else gpu_partial; else ram_only where SMALLER wins (deliberate deviation
+  — agent loops are multi-turn, CPU decode speed is king; MSP peaked at
+  8 GiB). GPU detection = the Vulkan build's own `--list-devices` parse —
+  INTEGRATED GPUs rank LAST regardless of size (live gotcha: this
+  machine's "Intel(R) Graphics" reports 18275 MiB of SHARED memory and
+  outranks the RTX 5080's real 16003 — `_is_integrated_gpu`).
+- Downloader (`local_model.download_model`): plain requests against
+  `{repo}/resolve/{commit}/{file}`, Range-resumable `.part` sidecar, 4
+  attempts with backoffs, final size + full-file sha256 against the
+  manifest (LFS files are content-addressed, so resume concatenation is
+  byte-exact across edge nodes). Downloads land in
+  `~/.deeptorrent/models/<id>/` (shared home with the whisper model).
+  MEASURED: 2.52 GiB in 19s (~140 MB/s avg). Cancel keeps the .part.
+- Provider gates (keyless local must NEVER fossilize to "dummy"):
+  `settings_dialog._save_and_accept`, `MainWindow.__init__`, and the
+  `main.py` Repl gate all exempt `"local"` like `"custom"`; `from_file`
+  never injects the shared DeepSeek key into it and never remaps its
+  models (it IS in the stale-fast_model clearing tuple). Provider-switch
+  rule (installer step + settings download): switch only when the RAW
+  config file has NO user-typed `llm.api_key` AND provider ∈
+  missing/""/"deepseek"/"dummy" — raw file, because from_file injects the
+  shared key and would make default machines look keyed. A deliberate
+  cloud choice is never stomped.
+- Server lifecycle mirrors flaresolverr: `ensure_running` (provider local
+  + OUR base URL only; restarts when the running server's model_id
+  differs from config), health `/health`, startup budgets 600s GPU /
+  240s CPU, `server.json` state (pid/port/variant/model_id), `reap_orphan`
+  at boot kills a recorded-but-unhealthy pid (a HEALTHY one is adopted —
+  the installer step's process exits after starting it, on Windows the
+  child survives), `stop_server` via taskkill /T /F from closeEvent /
+  Repl.shutdown. Variant choice: vulkan when GPU detected (falls back to
+  the cpu build on spawn failure). GUI: `_local_model_worker` startup
+  thread + a `local_model` dim event (HTML-escaped like flaresolverr's);
+  File → API Keys → AI has the whole ladder with hardware line,
+  recommendation, Download/Remove/Test.
+- Packaging: installer.iss [Files] wildcards `llama-*-bin-win-cpu-x64.zip`
+  etc. into `_internal\llama` (skipifsourcedoesntexist); app.spec globs the
+  zips into datas dest "llama" + `local_models.json` into dest "infra"
+  (resolved via `__file__`'s dir — works dev AND frozen) +
+  hiddenimports infra.local_model{,_setup}. Manifest/model-id literals are
+  pinned in THREE places (config preset models[0],
+  local_model.DEFAULT_MODEL_ID, the manifest) — test_manifest_agrees pins
+  them together. conftest redirects DF_MODELS_DIR/DF_LLAMA_DIR — tests
+  must never touch the real models dir (real whisper + GGUFs live there).
+
 ## LLM subsystem (agent/)
 - `llm.py` — OpenAI-compatible client (`DeepSeekClient` by name, talks to any
   provider in `LLM_PROVIDER_PRESETS` in config.py: deepseek / openrouter /

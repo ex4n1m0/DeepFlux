@@ -4,11 +4,18 @@ Runs `DeepFlux --setup-jackett` (see infra/jackett_setup.py): a small dark
 log window that streams the bootstrap's progress lines so the user sees
 something happening between the UAC prompt and the final summary. It is a
 self-contained QApplication entry point — the main window is never built.
+
+The same dialog serves the FlareSolverr and local-model steps (mode=
+"flaresolverr" / "localmodel"). While the worker thread runs, closing the
+window is intercepted: destroying a running QThread is a Qt fatal error,
+and the local-model download can run for a long time — the user gets a
+cancel offer instead (partial downloads resume on the next run).
 """
 from __future__ import annotations
 from gui.i18n import tr
 
 import sys
+import threading
 from typing import Optional
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -17,7 +24,9 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -57,20 +66,32 @@ QPushButton:disabled { color: #5a6a80; }
 
 class _SetupWorker(QThread):
     line = Signal(str)
+    # Local-model step: byte progress (done, total) for the multi-GB
+    # download — text lines alone can't show that honestly.
+    byte_progress = Signal(int, int)
     done = Signal(dict)
 
     def __init__(self, config_path: Optional[str], mode: str = "jackett", parent=None):
         super().__init__(parent)
         self._config_path = config_path
         self._mode = mode
+        self.cancel = threading.Event()
 
     def run(self):
         try:
             if self._mode == "flaresolverr":
                 from infra.flaresolverr import run_setup
+            elif self._mode == "localmodel":
+                from infra.local_model_setup import run_setup
             else:
                 from infra.jackett_setup import run_setup
-            result = run_setup(config_path=self._config_path, on_progress=self.line.emit)
+            kwargs = {}
+            if self._mode == "localmodel":
+                kwargs["on_bytes"] = lambda done, total: (
+                    self.byte_progress.emit(done, total))
+                kwargs["cancel"] = self.cancel
+            result = run_setup(config_path=self._config_path,
+                               on_progress=self.line.emit, **kwargs)
         except Exception as exc:  # never leave the window stuck on a crash
             result = {"ok": False, "error": f"exception:{exc}"}
         self.done.emit(result or {})
@@ -90,6 +111,14 @@ class JackettSetupDialog(QDialog):
             "subline": "Extracting the bundled FlareSolverr (about 700 MB) and linking it "
                        "into Jackett — this unlocks Cloudflare-protected torrent sites. "
                        "No permission prompt needed.",
+        },
+        "localmodel": {
+            "title": "DeepFlux — local AI setup",
+            "heading": "Setting up local AI",
+            "subline": "Downloading an uncensored AI model matched to this PC's "
+                       "hardware (2-9 GB depending on GPU/RAM). It runs entirely "
+                       "on this machine — no account, no permission prompt, and "
+                       "an interrupted download resumes on the next run.",
         },
     }
 
@@ -115,14 +144,27 @@ class JackettSetupDialog(QDialog):
         self.log.setFont(QFont("Consolas", 9))
         self.log.setMaximumBlockCount(2000)
 
+        # Byte-accurate bar for the local-model download (hidden otherwise).
+        self.progress = QProgressBar()
+        self.progress.setTextVisible(False)
+        self.progress.setVisible(mode == "localmodel")
+
         self.close_btn = QPushButton(tr('Close'))
         self.close_btn.setEnabled(False)
         self.close_btn.clicked.connect(self.accept)
 
+        # Local-model step only: cancel the multi-GB download (partial
+        # progress is kept and resumes on the next run).
+        self.cancel_btn = QPushButton(tr('Cancel download'))
+        self.cancel_btn.setVisible(mode == "localmodel")
+        self.cancel_btn.clicked.connect(self._cancel_download)
+
         layout.addWidget(heading)
         layout.addWidget(subline)
         layout.addWidget(self.log, 1)
+        layout.addWidget(self.progress)
         layout.addWidget(self.close_btn, 0, Qt.AlignRight)
+        layout.addWidget(self.cancel_btn, 0, Qt.AlignRight)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -132,8 +174,59 @@ class JackettSetupDialog(QDialog):
 
         self._worker = _SetupWorker(config_path, mode=self._mode, parent=self)
         self._worker.line.connect(self._on_line)
+        self._worker.byte_progress.connect(self._on_byte_progress)
         self._worker.done.connect(self._on_done)
         self._worker.start()
+
+    def _worker_running(self) -> bool:
+        return self._worker is not None and self._worker.isRunning()
+
+    def _cancel_download(self) -> None:
+        if self._worker_running() and not self._worker.cancel.is_set():
+            self._worker.cancel.set()
+            self.log.appendPlainText(
+                "Cancelling after the current chunk — the partial download "
+                "resumes on the next run.")
+
+    def closeEvent(self, event) -> None:
+        # Destroying a running QThread is a Qt FATAL (the dialog owns the
+        # worker). While the step runs, closing means cancel-then-wait (the
+        # download mode) or wait (the service modes).
+        if not self._worker_running():
+            event.accept()
+            return
+        if self._mode == "localmodel" and not self._worker.cancel.is_set():
+            reply = QMessageBox.question(
+                self, tr('Setup is running'),
+                tr('The download is still in progress. Cancel it and close? '
+                   '(Partial progress is kept and resumes on the next run.)'),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self._worker.cancel.set()
+                self.close_btn.setEnabled(False)
+                self.log.appendPlainText("Cancelling…")
+            event.ignore()
+            return
+        QMessageBox.information(
+            self, tr('Setup is running'),
+            tr('Please wait for this step to finish (you can watch the '
+               'progress above).'))
+        event.ignore()
+
+    def reject(self) -> None:
+        # Esc goes through reject() — same running-worker guard as the X.
+        if self._worker_running():
+            QMessageBox.information(
+                self, tr('Setup is running'),
+                tr('Please wait for this step to finish (you can watch the '
+                   'progress above).'))
+            return
+        super().reject()
+
+    def _on_byte_progress(self, done: int, total: int):
+        if total > 0:
+            self.progress.setRange(0, 100)
+            self.progress.setValue(int(done * 100 / total))
 
     def _on_line(self, text: str):
         # Also mirror to stdout: visible when launched from a console,
@@ -146,9 +239,12 @@ class JackettSetupDialog(QDialog):
 
     def _on_done(self, result: dict):
         self._result = result
+        self.cancel_btn.setVisible(False)
         if result.get("ok"):
             self.log.appendPlainText("")
-            if self._mode == "flaresolverr":
+            if result.get("summary"):
+                self.log.appendPlainText(f"✓ Done — {result['summary']}")
+            elif self._mode == "flaresolverr":
                 self.log.appendPlainText(
                     "✓ Done — Cloudflare-protected sites are being unblocked. "
                     "The first search through one may take up to a minute "

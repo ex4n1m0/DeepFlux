@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 5.9 — User Guide</h1>
+<h1>DeepFlux 6.0 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -184,6 +184,29 @@ RSS feeds → generic web search. If a quick search finds nothing, it automatica
 escalates to a full sweep of all sources. Web search queries every configured
 provider in parallel (DuckDuckGo always, plus Brave and Perplexity when their keys
 are set) and merges the results — a Perplexity key adds a synthesized answer.</p>
+
+<h3>Local AI (built-in, uncensored)</h3>
+<p>The agent can run on a local model instead of a cloud API — nothing leaves
+your PC and no key or account is needed. The installer offers this at the end
+of setup ("Set up local uncensored AI now"): DeepFlux detects your GPU and RAM,
+picks the matching model from a pinned Hugging Face ladder, downloads it once
+(2-9 GB, resumable) and makes it the default. The models are uncensored
+Qwen3.5 builds, so the agent answers without cloud-style refusals.</p>
+<ul>
+  <li><b>Where things live:</b> models in <code>~/.deeptorrent/models/</code>,
+    the llama.cpp engine in <code>~/.deeptorrent/llama/</code>. The server binds
+    only to your own machine (127.0.0.1:8199) and starts with the app.</li>
+  <li><b>Manage models:</b> File → API Keys → AI lists every model with its
+    size and status, your detected hardware, the recommended pick, and
+    Download / Remove buttons. Interrupted downloads resume where they
+    stopped.</li>
+  <li><b>Switch anytime:</b> the same dialog's "API endpoint" combo moves
+    between Local AI and the cloud providers — a saved cloud key is kept and
+    works the moment you switch back.</li>
+</ul>
+<div class="note"><b>Trade-off:</b> a local 4-9B model is weaker than the cloud
+flash model on long tool chains. If answers get sloppy, switch the endpoint
+back to a cloud key — both setups can coexist.</div>
 
 <h3>Voice input</h3>
 <p>The 🎤 button next to the agent input toggles dictation: click to start
@@ -572,13 +595,14 @@ the native host wasn't registered.
 <table>
   <tr><td><code>~/.deeptorrent/config.json</code></td><td>All settings</td></tr>
   <tr><td><code>~/.deeptorrent/memory/</code></td><td>Agent's persistent notes</td></tr>
-  <tr><td><code>~/.deeptorrent/models/</code></td><td>Voice recognition model (whisper)</td></tr>
+  <tr><td><code>~/.deeptorrent/models/</code></td><td>Voice model (whisper) + local AI models</td></tr>
+  <tr><td><code>~/.deeptorrent/llama/</code></td><td>Local AI engine (llama.cpp)</td></tr>
   <tr><td><code>~/Downloads/DeepFlux/</code></td><td>Default download folder</td></tr>
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 5.9 — AI Deep Search</p>
-<p>AI via DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
+<p>DeepFlux 6.0 — AI Deep Search</p>
+<p>AI via built-in local models (uncensored, offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
 </html>

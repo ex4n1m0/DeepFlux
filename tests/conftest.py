@@ -36,3 +36,17 @@ def isolate_indexer_health(monkeypatch, tmp_path):
     indexer_health.reset_health_store_singleton()
     yield
     indexer_health.reset_health_store_singleton()
+
+
+@pytest.fixture(autouse=True)
+def isolate_local_model(monkeypatch, tmp_path):
+    """Never touch the real ~/.deeptorrent/models (whisper weights + real
+    GGUFs, multi-GB) or ~/.deeptorrent/llama (extracted runtimes), and drop
+    the cached hardware probe so a test can't leak the host's GPU into the
+    next one (or spawn a real llama-server device probe)."""
+    monkeypatch.setenv("DF_MODELS_DIR", str(tmp_path / "models"))
+    monkeypatch.setenv("DF_LLAMA_DIR", str(tmp_path / "llama"))
+    from infra import local_model
+    monkeypatch.setattr(local_model, "_hw_cache", None)
+    yield
+    monkeypatch.setattr(local_model, "_hw_cache", None)

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import sys
 import threading
 import time
 from typing import List, Optional, Tuple
@@ -24,12 +25,14 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
@@ -694,6 +697,15 @@ class APIKeysDialog(QDialog):
     # fetch. Carries List[SourceConfig] on success, the Exception on failure.
     jkt_fetch_done = Signal(object)
 
+    # Local-model bridges: hardware probe result, download progress
+    # (model_id, done_bytes, total_bytes), download completion
+    # (model_id, result-dict-or-Exception), and off-thread UI actions
+    # (action name, payload) for Remove/Test.
+    local_hw_done = Signal(object)
+    local_dl_progress = Signal(str, int, int)
+    local_dl_done = Signal(str, object)
+    local_action_done = Signal(str, object)
+
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None,
                  page: str = "all") -> None:
         super().__init__(parent)
@@ -711,8 +723,19 @@ class APIKeysDialog(QDialog):
         roomy(self)
         self.setStyleSheet(_SHARED_STYLE)
         self.jkt_fetch_done.connect(self._on_jkt_fetch_done)
+        self.local_hw_done.connect(self._on_local_hw)
+        self.local_dl_progress.connect(self._on_local_dl_progress)
+        self.local_dl_done.connect(self._on_local_dl_done)
+        self.local_action_done.connect(self._on_local_action_done)
+        self._local_cancel = threading.Event()
+        self._local_hw: Optional[object] = None
+        # Staged local-provider switch (applied only on OK — Cancel must not
+        # leave the live config pointing at a provider the user rejected).
+        self._pending_local_entry: Optional[dict] = None
         self._build_ui()
         self._load_values()
+        if self._page in ("all", "ai") and sys.platform == "win32":
+            self._start_local_hw_probe()
 
     # ------------------------------------------------------------------
 
@@ -732,6 +755,12 @@ class APIKeysDialog(QDialog):
         fl = QFormLayout(llm_group)
         self.llm_endpoint = QComboBox()
         for pid, preset in LLM_PROVIDER_PRESETS.items():
+            # The bundled llama.cpp runtime ships in the Windows setup only;
+            # off-win32 the local entry must not be selectable (the preset
+            # stays in config.py so saved configs from Windows installs —
+            # and the shared tests — keep loading unchanged).
+            if pid == "local" and sys.platform != "win32":
+                continue
             self.llm_endpoint.addItem(preset["label"], pid)
         self.llm_endpoint.currentIndexChanged.connect(self._on_endpoint_changed)
         fl.addRow(tr('API endpoint:'), self.llm_endpoint)
@@ -751,6 +780,76 @@ class APIKeysDialog(QDialog):
             "https://openrouter.ai/keys (OpenRouter). Custom OpenAI-compatible "
             "endpoints may leave the key blank when their server allows it."))
         layout.addWidget(llm_group)
+
+        # --- Local models (bundled llama.cpp, no key) — Windows only -------
+        # The uncensored GGUF ladder managed by infra/local_model.py. Downloads
+        # are resumable and sha256-verified; the recommended row matches this
+        # machine's GPU/RAM (fit matrix ported from the ModelSwarm project).
+        self._local_rows: dict = {}
+        from infra import local_model
+        self._local_manifest = [] if sys.platform != "win32" else local_model.load_manifest()
+        local_group = None
+        if sys.platform == "win32":
+            local_group = QGroupBox(tr('Local Models (built-in AI — uncensored, offline)'))
+            vl = QVBoxLayout(local_group)
+            vl.setSpacing(6)
+            self.local_hw_label = QLabel(tr('Detecting hardware…'))
+            self.local_hw_label.setObjectName("hint")
+            self.local_hw_label.setWordWrap(True)
+            self.local_reco_label = QLabel("")
+            self.local_reco_label.setWordWrap(True)
+            vl.addWidget(self.local_hw_label)
+            vl.addWidget(self.local_reco_label)
+            for entry in self._local_manifest:
+                row = QHBoxLayout()
+                name = QLabel(entry["label"])
+                status = QLabel("")
+                status.setObjectName("hint")
+                dl_btn = QPushButton(tr('Download'))
+                rm_btn = QPushButton(tr('Remove'))
+                dl_btn.clicked.connect(lambda _=False, e=entry: self._local_download(e))
+                rm_btn.clicked.connect(lambda _=False, e=entry: self._local_remove(e))
+                row.addWidget(name, 1)
+                row.addWidget(status)
+                row.addWidget(dl_btn)
+                row.addWidget(rm_btn)
+                wrap = QWidget()
+                wrap.setLayout(row)
+                vl.addWidget(wrap)
+                self._local_rows[entry["id"]] = (status, dl_btn, rm_btn)
+            self.local_progress = QProgressBar()
+            self.local_progress.setTextVisible(False)
+            self.local_progress.setVisible(False)
+            self.local_progress_lbl = QLabel("")
+            self.local_progress_lbl.setObjectName("hint")
+            self.local_cancel_btn = QPushButton(tr('Cancel download'))
+            self.local_cancel_btn.setVisible(False)
+            self.local_cancel_btn.clicked.connect(self._local_cancel_download)
+            prow = QHBoxLayout()
+            prow.addWidget(self.local_progress, 1)
+            prow.addWidget(self.local_progress_lbl)
+            prow.addWidget(self.local_cancel_btn)
+            pwrap = QWidget()
+            pwrap.setLayout(prow)
+            vl.addWidget(pwrap)
+            test_row = QHBoxLayout()
+            self.local_test_btn = QPushButton(tr('Test local server'))
+            self.local_test_btn.clicked.connect(self._local_test)
+            self.local_test_result = QLabel("")
+            self.local_test_result.setObjectName("hint")
+            self.local_test_result.setWordWrap(True)
+            test_row.addWidget(self.local_test_btn)
+            test_row.addWidget(self.local_test_result, 1)
+            twrap = QWidget()
+            twrap.setLayout(test_row)
+            vl.addWidget(twrap)
+            vl.addWidget(_api_hint(
+                "Local models run entirely on this PC through the bundled llama.cpp "
+                "server (no API key, nothing sent to the cloud). Downloading a "
+                "model offers to make it the agent when no cloud key of your own "
+                "is configured. Interrupted downloads resume where they stopped."))
+            self._refresh_local_rows()
+            layout.addWidget(local_group)
 
         # --- Jackett ---
         jkt_group = QGroupBox(tr('Jackett (Torrent Search)'))
@@ -870,7 +969,7 @@ class APIKeysDialog(QDialog):
         layout.addWidget(ost_group)
 
         sections = {
-            "ai": (llm_group,),
+            "ai": (llm_group, local_group),
             "search": (jkt_group, ws_group),
             "media": (tmdb_group, omdb_group, fanart_group),
             "adult": (tpdb_group, stash_group),
@@ -878,9 +977,11 @@ class APIKeysDialog(QDialog):
         }
         visible = sections.get(self._page)
         if visible is not None:
-            for group in (llm_group, jkt_group, ws_group, tmdb_group, omdb_group,
-                          fanart_group, tpdb_group, stash_group, ost_group):
-                group.setVisible(group in visible)
+            for group in (llm_group, local_group, jkt_group, ws_group, tmdb_group,
+                          omdb_group, fanart_group, tpdb_group, stash_group,
+                          ost_group):
+                if group is not None:
+                    group.setVisible(group in visible)
 
         layout.addStretch()
         scroll.setWidget(body)
@@ -1003,6 +1104,216 @@ class APIKeysDialog(QDialog):
         )
         self.jkt_test_result.setStyleSheet("color: #a8edff;")
 
+    # -- Local models (bundled llama.cpp) ------------------------------------
+
+    def _start_local_hw_probe(self) -> None:
+        """Hardware probe runs llama-server --list-devices (a subprocess) —
+        keep it off the GUI thread; the label fills in when it lands."""
+        from infra import local_model
+
+        def work() -> None:
+            try:
+                hw = local_model.detect_hardware(refresh=True)
+            except Exception:
+                hw = None
+            try:
+                self.local_hw_done.emit(hw)
+            except RuntimeError:
+                pass  # dialog closed mid-probe
+
+        threading.Thread(target=work, daemon=True, name="local-hw-probe").start()
+
+    def _on_local_hw(self, hw) -> None:
+        from infra import local_model
+        if hw is None:
+            self.local_hw_label.setText(tr('Hardware detection unavailable.'))
+            return
+        self._local_hw = hw
+        self.local_hw_label.setText(f"{tr('This PC')}: {hw.summary()}")
+        entry, reason = local_model.recommend(hw, self._local_manifest)
+        if entry is None:
+            self.local_reco_label.setText(f"{tr('Recommended')}: {reason}")
+        else:
+            self.local_reco_label.setText(f"{tr('Recommended for this PC')}: {reason}")
+
+    def _refresh_local_rows(self) -> None:
+        from infra import local_model
+        for entry in self._local_manifest:
+            widgets = self._local_rows.get(entry["id"])
+            if not widgets:
+                continue
+            status, dl_btn, rm_btn = widgets
+            installed = local_model.is_installed(entry)
+            status.setText("✓ " + tr('installed') if installed else tr('not installed'))
+            dl_btn.setEnabled(not installed)
+            rm_btn.setEnabled(installed)
+
+    def _local_download(self, entry: dict) -> None:
+        from infra import local_model
+        widgets = self._local_rows.get(entry["id"])
+        if not widgets or not widgets[1].isEnabled():
+            return
+        self._local_cancel.clear()
+        for status, dl_btn, rm_btn in self._local_rows.values():
+            dl_btn.setEnabled(False)
+            rm_btn.setEnabled(False)
+        self.local_progress.setVisible(True)
+        self.local_progress.setRange(0, 100)
+        self.local_progress.setValue(0)
+        self.local_progress_lbl.setText(
+            f"0 / {int(entry['size']) / 1024**3:.1f} GiB")
+        self.local_cancel_btn.setVisible(True)
+
+        def work() -> None:
+            try:
+                path = local_model.download_model(
+                    entry,
+                    on_progress=lambda done, total: (
+                        self.local_dl_progress.emit(entry["id"], done, total)),
+                    cancel=self._local_cancel)
+                outcome = {"ok": True, "path": path}
+            except Exception as exc:  # RuntimeError cancel/network or real error
+                outcome = exc
+            try:
+                self.local_dl_done.emit(entry["id"], outcome)
+            except RuntimeError:
+                pass  # dialog closed mid-download; the .part resumes later
+
+        threading.Thread(target=work, daemon=True,
+                         name=f"local-dl-{entry['id']}").start()
+
+    def _local_cancel_download(self) -> None:
+        self._local_cancel.set()
+
+    def _on_local_dl_progress(self, model_id: str, done: int, total: int) -> None:
+        if total > 0:
+            self.local_progress.setValue(int(done * 100 / total))
+            self.local_progress_lbl.setText(f"{done / 1024**3:.1f} / {total / 1024**3:.1f} GiB")
+
+    def _on_local_dl_done(self, model_id: str, outcome) -> None:
+        from infra import local_model
+        self.local_cancel_btn.setVisible(False)
+        self.local_progress.setVisible(False)
+        self._refresh_local_rows()
+        if isinstance(outcome, Exception):
+            self.local_test_result.setText(f"Download stopped: {outcome}")
+            self.local_test_result.setStyleSheet("color: #ffcc00;")
+            return
+        entry = local_model.entry_by_id(model_id)
+        if entry is None:
+            return
+        # Offer the freshly downloaded model as the agent when this machine
+        # is in "default state" (same semantics as the installer step: a
+        # user-typed key or a deliberate openrouter/custom choice wins; the
+        # SHARED DeepSeek key doesn't count — it's injected, not chosen).
+        if self._local_auto_switch_ok():
+            self._apply_local_provider(entry)
+        else:
+            self.local_test_result.setText(
+                f"{entry['label']} installed — switch the endpoint above to "
+                "'Local AI (built-in, uncensored)' to use it.")
+            self.local_test_result.setStyleSheet("color: #a8edff;")
+
+    def _local_auto_switch_ok(self) -> bool:
+        """Gate for auto-selecting local after a download / on save."""
+        from config import llm_key_is_shared
+        if self.llm_key.text().strip():
+            return False  # the user typed a key in THIS dialog session
+        provider = self.config.llm.provider
+        if provider == "local":
+            return True
+        if provider not in ("", "deepseek", "dummy"):
+            return False  # deliberate cloud choice (openrouter/custom)
+        key = self.config.llm.api_key
+        return not key or llm_key_is_shared()
+
+    def _apply_local_provider(self, entry: dict) -> None:
+        """STAGE the switch to the local provider (visuals only). The live
+        config is mutated exclusively by _save_and_accept — Cancel must not
+        leave it pointing at a provider the user walked away from."""
+        self._pending_local_entry = entry
+        idx = self.llm_endpoint.findData("local")
+        if idx >= 0:
+            self.llm_endpoint.setCurrentIndex(idx)
+        self.llm_base_url.setText(LLM_PROVIDER_PRESETS["local"]["base_url"])
+        self.local_test_result.setText(
+            f"{entry['label']} ready — it becomes the agent when you press OK.")
+        self.local_test_result.setStyleSheet("color: #a8edff;")
+
+    def _local_remove(self, entry: dict) -> None:
+        confirm = QMessageBox.question(
+            self, tr('Remove local model'),
+            tr('Delete') + f" {entry['label']} " + tr('from this PC?') +
+            " (" + tr('about') + f" {int(entry['size']) / 1024**3:.1f} GiB)")
+        if confirm != QMessageBox.Yes:
+            return
+
+        def work() -> None:
+            from infra import local_model
+            try:
+                local_model.remove_model(entry)
+                outcome = {"ok": True, "id": entry["id"]}
+            except Exception as exc:
+                outcome = exc
+            try:
+                self.local_action_done.emit("remove", outcome)
+            except RuntimeError:
+                pass  # dialog closed
+
+        threading.Thread(target=work, daemon=True,
+                         name="local-model-remove").start()
+
+    def _local_test(self) -> None:
+        self.local_test_result.setText(tr('Testing…'))
+        self.local_test_result.setStyleSheet("color: #2a7abf;")
+
+        def work() -> None:
+            from infra import local_model
+            try:
+                ok, detail = local_model.test_endpoint()
+                outcome = {"ok": ok, "detail": detail}
+            except Exception as exc:
+                outcome = {"ok": False, "detail": str(exc)}
+            try:
+                self.local_action_done.emit("test", outcome)
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=work, daemon=True,
+                         name="local-model-test").start()
+
+    def _on_local_action_done(self, action: str, outcome) -> None:
+        from infra import local_model
+        if action == "remove":
+            self._refresh_local_rows()
+            if isinstance(outcome, Exception):
+                self.local_test_result.setText(f"Remove failed: {outcome}")
+                self.local_test_result.setStyleSheet("color: #ff3366;")
+                return
+            # Removing the ACTIVE model leaves config pointing at an absent
+            # id — reconcile to another installed model (or the preset
+            # default) so the request/alias pair stays honest.
+            if (self.config.llm.provider == "local"
+                    and self.config.llm.model == outcome.get("id")):
+                installed = local_model.installed_models()
+                self.config.llm.model = (installed[0]["id"] if installed
+                                         else LLM_PROVIDER_PRESETS["local"]["models"][0])
+                self.config.llm.fast_model = self.config.llm.model
+            self.local_test_result.setText(tr('Model removed.'))
+            self.local_test_result.setStyleSheet("color: #a8edff;")
+            return
+        # action == "test"
+        if outcome.get("ok"):
+            self.local_test_result.setText(
+                f"✓ {tr('Local server running')} — {outcome.get('detail', '')}")
+            self.local_test_result.setStyleSheet("color: #a8edff;")
+        else:
+            self.local_test_result.setText(
+                tr('Local server not running. It starts automatically with '
+                   'DeepFlux once a model is installed and the endpoint is '
+                   'set to Local AI.'))
+            self.local_test_result.setStyleSheet("color: #ffcc00;")
+
     def _load_values(self) -> None:
         provider = self.config.llm.provider
         idx = self.llm_endpoint.findData(provider if provider in LLM_PROVIDER_PRESETS else "deepseek")
@@ -1035,11 +1346,34 @@ class APIKeysDialog(QDialog):
                 QMessageBox.warning(self, tr('Custom LLM'), tr('Enter both a base URL and model name for the custom endpoint.'))
                 return
             self.config.llm.api_key = self.llm_key.text().strip()
-            self.config.llm.provider = provider if self.config.llm.api_key or provider == "custom" else "dummy"
+            # "local" (bundled llama.cpp server) is keyless by design, like
+            # "custom" — it must not be downgraded to offline demo mode.
+            self.config.llm.provider = (
+                provider
+                if self.config.llm.api_key or provider in ("custom", "local")
+                else "dummy")
             self.config.llm.base_url = base_url
             if provider == "custom":
                 self.config.llm.model = model
                 self.config.llm.fast_model = ""
+            elif provider == "local":
+                # The model is managed by the Local Models section. A staged
+                # download switch wins; otherwise keep the current id when
+                # it's a manifest id AND still installed, else the first
+                # installed model, else the preset default. The base URL is
+                # fixed (our loopback server), never user-typed.
+                from infra import local_model
+                staged = self._pending_local_entry
+                if staged is not None:
+                    self.config.llm.model = staged["id"]
+                else:
+                    installed = local_model.installed_models()
+                    ids = {e["id"] for e in installed}
+                    if self.config.llm.model not in ids:
+                        self.config.llm.model = (installed[0]["id"] if installed
+                                                 else LLM_PROVIDER_PRESETS["local"]["models"][0])
+                self.config.llm.fast_model = self.config.llm.model
+                self.config.llm.base_url = LLM_PROVIDER_PRESETS["local"]["base_url"]
             else:
                 models = LLM_PROVIDER_PRESETS[provider].get("models") or []
                 if models:

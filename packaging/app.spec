@@ -86,6 +86,21 @@ if os.path.isdir(licenses_dir):
         if fname.lower().endswith((".txt", ".md", ".html")):
             license_datas.append((os.path.join(licenses_dir, fname), "licenses"))
 
+# Local AI (6.0): the pinned llama.cpp runtime zips (names carry the
+# version, e.g. llama-b11727-bin-win-vulkan-x64.zip, so glob the dir) and
+# the tracked model manifest read by infra/local_model.py. Missing zips
+# only drop the installer's local-model step (skipifsourcedoesntexist).
+llama_dir = os.path.join(project_root, "packaging", "llama")
+llama_zips = []
+if os.path.isdir(llama_dir):
+    for fname in os.listdir(llama_dir):
+        if fname.lower().endswith(".zip"):
+            llama_zips.append((os.path.join(llama_dir, fname), "llama"))
+if not llama_zips:
+    print("WARNING: no llama.cpp runtime zips in packaging/llama — "
+          "run packaging/fetch_llama.py before the release build "
+          "(the build still works, just without the local AI step).")
+
 # Data files — only include those that exist so a missing asset fails softly
 # instead of aborting the whole PyInstaller build with a cryptic error.
 _wanted_datas = [
@@ -121,6 +136,9 @@ _wanted_datas = [
     # Windows and PyInstaller would merge the two into one directory.
     (os.path.join(project_root, "packaging", "milkdrop"), "milkdrop"),
     (os.path.join(project_root, "MilkDrop"), "milkdrop/presets"),
+    # Local AI: the pinned model ladder (repo/commit/sha256 per quant)
+    # consumed by infra/local_model.py via its own module directory.
+    (os.path.join(project_root, "infra", "local_models.json"), "infra"),
 ]
 datas = [(src, dst) for src, dst in _wanted_datas if os.path.exists(src)]
 if len(datas) != len(_wanted_datas):
@@ -131,7 +149,7 @@ a = Analysis(
     [os.path.join(project_root, "main.py")],
     pathex=[project_root],
     binaries=libtorrent_binaries + yt_dlp_binaries + mpv_binaries + vlc_binaries + curl_cffi_binaries + ddgs_binaries + primp_binaries + fake_useragent_binaries + crypto_binaries + nacl_binaries + argon2_binaries + fw_binaries + ct2_binaries + ort_binaries + tok_binaries + hf_binaries,
-    datas=datas + yt_dlp_datas + curl_cffi_datas + ddgs_datas + primp_datas + fake_useragent_datas + crypto_datas + nacl_datas + argon2_datas + license_datas + fw_datas + ct2_datas + ort_datas + tok_datas + hf_datas,
+    datas=datas + llama_zips + yt_dlp_datas + curl_cffi_datas + ddgs_datas + primp_datas + fake_useragent_datas + crypto_datas + nacl_datas + argon2_datas + license_datas + fw_datas + ct2_datas + ort_datas + tok_datas + hf_datas,
     hiddenimports=[
         "engine",
         "engine.torrent_engine",
@@ -188,6 +206,8 @@ a = Analysis(
         "native_messaging.register",
         "infra",
         "infra.file_associations",
+        "infra.local_model",
+        "infra.local_model_setup",
         "config",
         # Local-only build secret (see AGENTS.md): bundle the untracked
         # shared-key module when it exists on this machine — the setup exe

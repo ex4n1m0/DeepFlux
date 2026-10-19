@@ -68,7 +68,10 @@ class Repl:
     def __init__(self, config_path: Optional[str] = None) -> None:
         self.config_path = config_path or DeeptorrentConfig.default_config_path()
         self.config = DeeptorrentConfig.from_file(self.config_path)
-        if self.config.llm.api_key or self.config.llm.provider == "custom":
+        # "local" (bundled llama.cpp server) is keyless by design — like
+        # "custom" it must not be downgraded to the offline demo mode.
+        if (self.config.llm.api_key
+                or self.config.llm.provider in ("custom", "local")):
             # A persisted "dummy" (GUI wrote it on a no-key shutdown) heals
             # back to DeepSeek once a key exists again.
             if self.config.llm.provider not in LLM_PROVIDER_PRESETS:
@@ -92,6 +95,9 @@ class Repl:
         # Keep the Jackett source list fresh / start Jackett if needed (no-op
         # when Jackett isn't configured). Background — never blocks the REPL.
         threading.Thread(target=self._jackett_sync, daemon=True).start()
+        # Local AI: lazily start the bundled llama.cpp server when the
+        # "local" provider is configured (clean no-op otherwise).
+        threading.Thread(target=self._local_model_start, daemon=True).start()
         # Daily-gated yt-dlp freshness probe (outdated = partial downloads).
         threading.Thread(target=self._ytdlp_update_check, daemon=True).start()
         # Anonymous usage ping — live user count on the website; silent.
@@ -124,6 +130,20 @@ class Repl:
         if result and result.get("changed"):
             print(f"\n[Jackett] Synced {result['total']} indexer(s) "
                   f"({result['enabled']} enabled).")
+
+    def _local_model_start(self) -> None:
+        from infra import local_model
+        if self.config.llm.provider != "local":
+            return
+        try:
+            local_model.reap_orphan()
+            if local_model.ensure_running(self.config):
+                print("\n[local AI] llama.cpp server ready on 127.0.0.1:8199.")
+            else:
+                print("\n[local AI] no local model installed yet — download one "
+                      "in the app (File → API Keys → AI).")
+        except Exception:
+            logger.debug("local model start failed", exc_info=True)
 
     def run(self) -> None:
         print("Deeptorrent REPL. Type 'help' for hints or 'exit' to quit.")
@@ -267,6 +287,11 @@ class Repl:
         self.agent.stop_watchdog()
         self.tools.shutdown()
         self.engine.stop()
+        try:
+            from infra import local_model
+            local_model.stop_server()
+        except Exception:
+            pass
         print("Goodbye.")
 
 
@@ -426,6 +451,13 @@ def main() -> None:
              "link it into Jackett to unlock Cloudflare-protected indexers.",
     )
     parser.add_argument(
+        "--setup-localmodel",
+        action="store_true",
+        help="Installer final step: extract the bundled llama.cpp runtimes and "
+             "download the hardware-matched uncensored model that becomes the "
+             "default local AI (no cloud key needed).",
+    )
+    parser.add_argument(
         "targets",
         nargs="*",
         help="Files or URIs to open (.torrent, magnet:, media files, html) — used by file associations.",
@@ -486,6 +518,11 @@ def main() -> None:
     if args.setup_flaresolverr:
         from gui.jackett_setup_dialog import run_setup_jackett_dialog
         return run_setup_jackett_dialog(config_path=args.config, mode="flaresolverr")
+
+    # --- Installer final step: local AI (llama.cpp + model download) ------
+    if args.setup_localmodel:
+        from gui.jackett_setup_dialog import run_setup_jackett_dialog
+        return run_setup_jackett_dialog(config_path=args.config, mode="localmodel")
 
     # --- Single instance: forward opened files/URIs to a running DeepFlux ---
     if args.targets and _forward_to_running_instance(args.targets):

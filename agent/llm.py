@@ -76,6 +76,12 @@ class DeepSeekClient(LLMClient):
         self.capabilities = preset
         if self.provider == "deepseek":
             self.api_key = config.api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+        elif self.provider == "local":
+            # The local llama.cpp server is loopback-only and keyless; a key
+            # carried over in the config (e.g. the shared DeepSeek key that
+            # from_file injected before the user switched providers) must
+            # never be sent anywhere — not even to 127.0.0.1.
+            self.api_key = ""
         else:
             self.api_key = config.api_key
         preset_models = preset.get("models") or []

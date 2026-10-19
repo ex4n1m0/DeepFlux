@@ -1,0 +1,84 @@
+{
+  "manifest_version": 1,
+  "generated": "2026-10-19",
+  "models": [
+    {
+      "id": "qwen35-9b-uncensored-q4km",
+      "repo": "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive",
+      "revision": "0a41c68809d375475f954be12ba7c40efa56c2a9",
+      "file": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf",
+      "size": 5627044224,
+      "sha256": "2ca636d9e81d3d23ca9b60c234fe185d30ec082eeba69ce770fdb0c76559a4f5",
+      "quant": "Q4_K_M",
+      "params_b": 9,
+      "family": "qwen3.5-9b-uncensored",
+      "license": "apache-2.0",
+      "label": "Qwen3.5 9B Uncensored \u2014 Q4_K_M (5.2 GiB)"
+    },
+    {
+      "id": "qwen35-9b-uncensored-q6k",
+      "repo": "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive",
+      "revision": "0a41c68809d375475f954be12ba7c40efa56c2a9",
+      "file": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q6_K.gguf",
+      "size": 7359259008,
+      "sha256": "c0ba7beb68fd3fe47891bd549486d38dcf62d00817296ea314ad37017f5a4986",
+      "quant": "Q6_K",
+      "params_b": 9,
+      "family": "qwen3.5-9b-uncensored",
+      "license": "apache-2.0",
+      "label": "Qwen3.5 9B Uncensored \u2014 Q6_K (6.9 GiB)"
+    },
+    {
+      "id": "qwen35-9b-uncensored-q8",
+      "repo": "HauhauCS/Qwen3.5-9B-Uncensored-HauhauCS-Aggressive",
+      "revision": "0a41c68809d375475f954be12ba7c40efa56c2a9",
+      "file": "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q8_0.gguf",
+      "size": 9527501184,
+      "sha256": "99e7f2201c0046b05d2825e4d8be6a2efad2b87b071cd55d37bdd9fbe201a58b",
+      "quant": "Q8_0",
+      "params_b": 9,
+      "family": "qwen3.5-9b-uncensored",
+      "license": "apache-2.0",
+      "label": "Qwen3.5 9B Uncensored \u2014 Q8_0 (8.9 GiB)"
+    },
+    {
+      "id": "huihui-qwen35-4b-abliterated-q4km",
+      "repo": "mradermacher/Huihui-Qwen3.5-4B-abliterated-GGUF",
+      "revision": "4a5daa6fbefca5fe822dc65fcb95cc4576fa9720",
+      "file": "Huihui-Qwen3.5-4B-abliterated.Q4_K_M.gguf",
+      "size": 2707514688,
+      "sha256": "423f10b6ec2d99c3378143d7cd3b80eb4887b3ed92103103ac59173b404f4f7c",
+      "quant": "Q4_K_M",
+      "params_b": 4,
+      "family": "qwen3.5-4b-abliterated",
+      "license": "apache-2.0",
+      "label": "Qwen3.5 4B Uncensored \u2014 Q4_K_M (2.5 GiB)"
+    },
+    {
+      "id": "huihui-qwen35-4b-abliterated-q6k",
+      "repo": "mradermacher/Huihui-Qwen3.5-4B-abliterated-GGUF",
+      "revision": "4a5daa6fbefca5fe822dc65fcb95cc4576fa9720",
+      "file": "Huihui-Qwen3.5-4B-abliterated.Q6_K.gguf",
+      "size": 3464056128,
+      "sha256": "8deb9dcea61455b5c2ca5523e08c41c5c5d884c6180e4536dd85f6b51c37c7c6",
+      "quant": "Q6_K",
+      "params_b": 4,
+      "family": "qwen3.5-4b-abliterated",
+      "license": "apache-2.0",
+      "label": "Qwen3.5 4B Uncensored \u2014 Q6_K (3.2 GiB)"
+    },
+    {
+      "id": "huihui-qwen35-4b-abliterated-q8",
+      "repo": "mradermacher/Huihui-Qwen3.5-4B-abliterated-GGUF",
+      "revision": "4a5daa6fbefca5fe822dc65fcb95cc4576fa9720",
+      "file": "Huihui-Qwen3.5-4B-abliterated.Q8_0.gguf",
+      "size": 4482403648,
+      "sha256": "1e78f9b48c8b69242fa45bbbbeb439ed818a71381a6362130d62a38561c3756d",
+      "quant": "Q8_0",
+      "params_b": 4,
+      "family": "qwen3.5-4b-abliterated",
+      "license": "apache-2.0",
+      "label": "Qwen3.5 4B Uncensored \u2014 Q8_0 (4.2 GiB)"
+    }
+  ]
+}

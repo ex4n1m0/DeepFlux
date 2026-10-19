@@ -37,7 +37,7 @@ HELP_HTML_ZH = r"""
 </head>
 <body>
 
-<h1>DeepFlux 5.9 —— 用户指南</h1>
+<h1>DeepFlux 6.0 —— 用户指南</h1>
 
 <p>DeepFlux 是一个 AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室
 和文件管理器。AI 智能体可以搜索并下载种子、查找直链下载、管理你的媒体库 ——
@@ -156,6 +156,26 @@ RSS 订阅 → 通用网页搜索。快速搜索一无所获时会自动升级�
 完整扫描。网页搜索并行查询所有已配置的服务商（DuckDuckGo 总是参与，
 Brave 和 Perplexity 在配置密钥后加入）并合并结果 —— Perplexity 密钥还会
 附上一段综合答案。</p>
+
+<h3>本地 AI（内置，无审查）</h3>
+<p>智能体可以运行在本地模型上，替代云端 API —— 什么都不离开你的电脑，
+也不需要密钥或账号。安装程序在最后一步提供此选项（"Set up local
+uncensored AI now"）：DeepFlux 检测你的显卡和内存，从固定的 Hugging Face
+模型清单中挑选匹配的型号，一次性下载（2-9 GB，支持断点续传）并设为默认。
+模型为无审查（uncensored）的 Qwen3.5 系列，智能体不会给出云端式的拒绝
+回答。</p>
+<ul>
+  <li><b>存放位置：</b>模型在 <code>~/.deeptorrent/models/</code>，llama.cpp
+    引擎在 <code>~/.deeptorrent/llama/</code>。服务器只绑定本机
+    （127.0.0.1:8199），随应用一起启动。</li>
+  <li><b>管理模型：</b>File → API Keys → AI 列出所有型号、大小和状态，
+    显示检测到的硬件与推荐型号，并提供 Download / Remove 按钮。中断的
+    下载会从断点继续。</li>
+  <li><b>随时切换：</b>同一对话框的"API endpoint"下拉框可在本地 AI 与
+    云端之间切换 —— 已保存的云端密钥保留，切回去立即生效。</li>
+</ul>
+<div class="note"><b>取舍：</b>本地 4-9B 模型在复杂工具链上弱于云端 flash
+模型。如果回答变差，切回云端即可 —— 两套配置可以共存。</div>
 
 <h3>语音输入</h3>
 <p>智能体输入框旁的 🎤 按钮切换听写：点击开始录音（按钮变红），再点一次停止 ——
@@ -476,13 +496,14 @@ AES-128 加密的流。
 <table>
   <tr><td><code>~/.deeptorrent/config.json</code></td><td>全部设置</td></tr>
   <tr><td><code>~/.deeptorrent/memory/</code></td><td>智能体的持久笔记</td></tr>
-  <tr><td><code>~/.deeptorrent/models/</code></td><td>语音识别模型（whisper）</td></tr>
+  <tr><td><code>~/.deeptorrent/models/</code></td><td>语音模型（whisper）+ 本地 AI 模型</td></tr>
+  <tr><td><code>~/.deeptorrent/llama/</code></td><td>本地 AI 引擎（llama.cpp）</td></tr>
   <tr><td><code>~/Downloads/DeepFlux/</code></td><td>默认下载文件夹</td></tr>
 </table>
 
 <h2>版本</h2>
-<p>DeepFlux 5.9 —— AI 深度搜索</p>
-<p>AI：DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
+<p>DeepFlux 6.0 —— AI 深度搜索</p>
+<p>AI：内置本地模型（无审查、离线）或 DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
 
 </body>
 </html>

@@ -3,7 +3,7 @@
 ; Then open this script in Inno Setup and Compile.
 
 #define MyAppName "DeepFlux"
-#define MyAppVersion "5.9"
+#define MyAppVersion "6.0"
 #define MyAppPublisher "DeepFlux"
 #define MyAppExeName "DeepFlux.exe"
 ; PyInstaller onedir output, relative to this script (packaging/..\dist).
@@ -28,7 +28,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir={#BuildOutputDir}
-OutputBaseFilename=DeepFlux5.9Setup
+OutputBaseFilename=DeepFlux6.0Setup
 SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -96,6 +96,14 @@ Source: "{#JackettDir}\jackett-gpl2.txt"; DestDir: "{app}\_internal\licenses"; F
 #endif
 Source: "{#FlareSolverrDir}\flaresolverr_windows_x64.zip"; DestDir: "{app}\_internal\flaresolverr"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#FlareSolverrDir}\flaresolverr-mit.txt"; DestDir: "{app}\_internal\licenses"; Flags: ignoreversion skipifsourcedoesntexist
+; Local AI step payloads: the official llama.cpp CPU + Vulkan runtimes (MIT,
+; unmodified) pinned by packaging/fetch_llama.py. --setup-localmodel extracts
+; both into the user's data dir and downloads the hardware-matched uncensored
+; GGUF (2-9 GB, from Hugging Face — never bundled here). Adds ~52 MB to the
+; setup file; skipifsourcedoesntexist keeps zip-less builds compiling.
+Source: "llama\llama-*-bin-win-cpu-x64.zip"; DestDir: "{app}\_internal\llama"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "llama\llama-*-bin-win-vulkan-x64.zip"; DestDir: "{app}\_internal\llama"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "llama\llama-mit.txt"; DestDir: "{app}\_internal\licenses"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -115,6 +123,11 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-jackett"; Description: "
 ; starts the local service and links it, unlocking Cloudflare-protected
 ; indexers. Measured 2026-10-13: 15 of 19 walled indexers functional.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-flaresolverr"; Description: "Install FlareSolverr to unblock Cloudflare-protected torrent sites (about 700 MB on disk)"; Flags: postinstall skipifsilent
+; Local AI final step — after FlareSolverr, before launch. Extracts the
+; bundled llama.cpp runtimes and downloads the uncensored model matched to
+; this PC (2-9 GB from Hugging Face, resumable), then makes it the default
+; agent. Skips cleanly on machines too small for any local model.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-localmodel"; Description: "Set up local uncensored AI now (recommended) — downloads a model that runs on this PC (2-9 GB, no account)"; Flags: postinstall skipifsilent
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
@@ -134,13 +147,15 @@ begin
   // Default-CHECK the final-step checkboxes: Inno always creates
   // postinstall checkboxes unchecked, and the whole point of the steps is
   // that a default install ships a working torrent search (user decision
-  // 2026-09-16; extended to FlareSolverr 2026-10-13). Runs when the
-  // finished page is built, after the RunList is populated.
+  // 2026-09-16; extended to FlareSolverr 2026-10-13 and local AI
+  // 2026-10-19). Runs when the finished page is built, after the RunList
+  // is populated.
   if CurPageID <> wpFinished then
     Exit;
   for I := 0 to WizardForm.RunList.Items.Count - 1 do
     if (Pos('Jackett', WizardForm.RunList.ItemCaption[I]) > 0) or
-       (Pos('FlareSolverr', WizardForm.RunList.ItemCaption[I]) > 0) then
+       (Pos('FlareSolverr', WizardForm.RunList.ItemCaption[I]) > 0) or
+       (Pos('local uncensored AI', WizardForm.RunList.ItemCaption[I]) > 0) then
       WizardForm.RunList.Checked[I] := True;
 end;
 

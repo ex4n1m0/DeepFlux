@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "5.9"
+APP_VERSION = "6.0"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -114,6 +114,13 @@ def shared_room_secret() -> str:
     return _SHARED_ROOM_KEY
 
 
+def llm_key_is_shared() -> bool:
+    """True when the CURRENT in-memory llm.api_key is the injected shared
+    key (not typed by the user). Used by the local-model UI to apply the
+    same "default-state machine" switch rule as the installer step."""
+    return "llm.api_key" in _SHARED_KEY_SLOTS
+
+
 # DeepFlux is DeepSeek-native and also supports OpenAI-compatible endpoints.
 # Provider capability metadata controls payload differences instead of assuming
 # every endpoint accepts DeepSeek-specific fields.
@@ -149,6 +156,24 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
         "streaming": True,
         "tools": True,
         "key_hint": "Enter the endpoint base URL, model name, and API key required by your provider.",
+    },
+    # Local AI (6.0): an uncensored GGUF served by the bundled llama.cpp
+    # runtime (infra/local_model.py) on 127.0.0.1:8199 — no key, no cloud.
+    # The model id must stay in sync with DEFAULT_MODEL_ID in
+    # infra/local_model.py + infra/local_models.json (pinned by
+    # tests/test_local_model.py). Hardware-matched installs may persist a
+    # different manifest id into llm.model; the setup step manages that.
+    "local": {
+        "label": "Local AI (built-in, uncensored)",
+        "base_url": "http://127.0.0.1:8199/v1",
+        "models": ["qwen35-9b-uncensored-q4km"],
+        "reasoning_effort": False,
+        "effort_map": {},
+        "streaming": True,
+        "tools": True,
+        "key_hint": "Runs a local uncensored model on your own GPU/CPU — no API "
+                    "key, nothing leaves this PC. Download/remove models under "
+                    "AI → Local models below.",
     },
 }
 
@@ -817,10 +842,10 @@ class DeeptorrentConfig:
             elif _provider_now == "openrouter" and _saved in _openrouter_aliases:
                 llm_clean[_field] = _openrouter_aliases[_saved]
 
-        # Migration: a switch to OpenRouter/custom keeps the DeepSeek fast-model
-        # default, which may not exist there — clear it so summary
+        # Migration: a switch to OpenRouter/custom/local keeps the DeepSeek
+        # fast-model default, which may not exist there — clear it so summary
         # calls fall back to the main model instead of 404ing.
-        if llm_clean.get("provider") in ("openrouter", "custom") and llm_clean.get("fast_model") in LLM_PROVIDER_PRESETS["deepseek"]["models"]:
+        if llm_clean.get("provider") in ("openrouter", "custom", "local") and llm_clean.get("fast_model") in LLM_PROVIDER_PRESETS["deepseek"]["models"]:
             llm_clean["fast_model"] = ""
 
         # Migration: the artwork cache cap was 500 MB and never enforced; the

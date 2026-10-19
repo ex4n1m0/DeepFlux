@@ -61,3 +61,7 @@ packaging/jackett/*.exe
 # PINNED.json and the MIT notice ARE tracked so builds stay reviewable)
 packaging/flaresolverr/*.zip
 packaging/flaresolverr/flaresolverr/
+
+# Bundled llama.cpp runtime zips (~52 MB, fetched+hashed by packaging/fetch_llama.py;
+# PINNED.json and the MIT notice ARE tracked so builds stay reviewable)
+packaging/llama/*.zip

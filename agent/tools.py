@@ -185,6 +185,9 @@ _SETTINGS_DENY_PATHS = {
 
 # Fields that accept only a fixed set of values — validated on write so a
 # typo can't brick a subsystem until the next settings dialog visit.
+# ("llm","provider") deliberately EXCLUDES "local": the bundled-model
+# provider is a user-GUI/installer choice only — a prompt injection must
+# not be able to point the agent's LLM traffic anywhere, even loopback.
 _SETTING_ENUMS: Dict[Tuple[str, str], Tuple[str, ...]] = {
     ("llm", "provider"): ("deepseek", "openrouter", "custom"),
     ("iptv", "vod_group_mode"): ("year", "category"),

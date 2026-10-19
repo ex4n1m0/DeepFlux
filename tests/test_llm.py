@@ -240,6 +240,7 @@ def test_create_llm_client_providers():
     assert isinstance(create_llm_client(LLMConfig(provider="deepseek")), DeepSeekClient)
     assert isinstance(create_llm_client(LLMConfig(provider="openrouter")), DeepSeekClient)
     assert isinstance(create_llm_client(LLMConfig(provider="custom", base_url="http://localhost:1234/v1", model="local")), DeepSeekClient)
+    assert isinstance(create_llm_client(LLMConfig(provider="local")), DeepSeekClient)
     assert isinstance(create_llm_client(LLMConfig(provider="dummy")), DummyLLMClient)
     with pytest.raises(ValueError):
         create_llm_client(LLMConfig(provider="bogus"))
