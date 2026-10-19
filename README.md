@@ -14,7 +14,7 @@ anything destructive.
 
 Website and installer: **https://deepflux.space**
 
-**Current version: 6.0** (2026-10-19) — kept in sync with
+**Current version: 6.0.1** (2026-10-19) — kept in sync with
 `packaging/installer.iss` by the pre-commit hook in `.git/hooks/`.
 
 ## Features
