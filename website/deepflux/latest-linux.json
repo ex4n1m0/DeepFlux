@@ -1,8 +1,8 @@
 {
-  "version": "6.0",
-  "file": "DeepFlux-6.0-Linux-x86_64.AppImage",
-  "size": 628648440,
-  "sha256": "bff28337660075a6404723ad09c0209a9dd754e6c22b1203642576b3bb896ec0",
+  "version": "6.0.1",
+  "file": "DeepFlux-6.0.1-Linux-x86_64.AppImage",
+  "size": 628652536,
+  "sha256": "d5671cc7c317faf6ef635c1e9653f17260639225d2ae1def6c4d4035daa6bb56",
   "released": "2026-10-19",
-  "notes": "DeepFlux 6.0 for Linux - local uncensored AI support (the model downloader is Windows-setup for now; the Linux build keeps the built-in cloud key) plus the 6.0 agent improvements."
+  "notes": "DeepFlux 6.0.1 for Linux - same local AI reliability fixes as Windows."
 }
