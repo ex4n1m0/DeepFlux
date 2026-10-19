@@ -603,14 +603,35 @@ def start_server(entry: Dict[str, Any],
     tier = fit_tier(hw, entry) or "ram_only"
 
     with _server_lock:
+        state = _state()
         if is_running():
-            if _state().get("model_id") == entry["id"]:
+            if not state.get("pid"):
+                # A healthy server with NO state file (spawned outside
+                # start_server, or its state was cleaned up): ADOPT it —
+                # b11727+ accepts any model name, so it keeps serving;
+                # replacing it would just race the port (live lesson
+                # 2026-10-19: the replacement died on bind while the
+                # healthy original carried on anyway).
+                logger.info("adopting stateless llama-server on port %d", DEFAULT_PORT)
                 return True
-            stop_server()
+            if state.get("model_id") == entry["id"]:
+                return True
+            stop_server()  # deliberate model switch: replace it
 
-        want_vulkan = hw.vram_mb > 0 and find_server_exe("vulkan")
+        # A load of THIS model may already be in flight (spawned by another
+        # thread/process; GPU loads take up to the full budget to bind the
+        # port). Respawning on the same port would kill both — wait on it.
+        if (state.get("model_id") == entry["id"] and state.get("pid")
+                and time.time() - (state.get("started") or 0) < _load_budget(hw)):
+            if _pid_is_our_server(int(state["pid"]), state.get("exe")):
+                return True
+
+        # Always prefer the Vulkan runtime when present: the hardware probe
+        # is ADVISORY (a transient --list-devices failure once forced the
+        # CPU build on a 16 GB GPU machine — the vulkan binary also runs
+        # CPU-only when no device is present, so this is strictly safer).
         attempts: List[Tuple[str, str]] = []
-        if want_vulkan:
+        if find_server_exe("vulkan"):
             attempts.append(("vulkan", build_server_args(gguf, entry["id"], hw, tier, "vulkan")))
         if find_server_exe("cpu"):
             attempts.append(("cpu", build_server_args(gguf, entry["id"], hw, tier, "cpu")))
@@ -633,10 +654,13 @@ def start_server(entry: Dict[str, Any],
         return False
 
 
+def _load_budget(hw: Optional[HardwareInfo] = None) -> float:
+    hw = hw or detect_hardware()
+    return START_TIMEOUT_GPU if hw.vram_mb else START_TIMEOUT_CPU
+
+
 def wait_until_ready(timeout: Optional[float] = None) -> bool:
-    hw = detect_hardware()
-    budget = timeout if timeout is not None else (
-        START_TIMEOUT_GPU if hw.vram_mb else START_TIMEOUT_CPU)
+    budget = timeout if timeout is not None else _load_budget()
     deadline = time.time() + budget
     while time.time() < deadline:
         if is_running():
@@ -739,9 +763,7 @@ def reap_orphan() -> None:
         if is_running():
             return
         started = state.get("started") or 0
-        hw = detect_hardware()
-        budget = START_TIMEOUT_GPU if hw.vram_mb else START_TIMEOUT_CPU
-        if time.time() - started < budget:
+        if time.time() - started < _load_budget():
             return  # mid-load, not orphaned
         if _pid_is_our_server(int(pid), state.get("exe")):
             logger.info("reaping unhealthy llama-server pid %s", pid)

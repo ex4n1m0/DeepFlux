@@ -284,6 +284,76 @@ def test_server_args_contract():
     assert "-ngl" not in args3
 
 
+def test_start_server_adopts_stateless_healthy_server(monkeypatch, tmp_path):
+    """A healthy server whose state file is gone (spawned outside
+    start_server) must be ADOPTED, not replaced — the replacement would
+    lose the port race and both would be useless (live lesson 2026-10-19)."""
+    entry = dict(next(iter(local_model.load_manifest())))
+    gguf = local_model.model_path(entry)
+    os.makedirs(os.path.dirname(gguf), exist_ok=True)
+    with open(gguf, "wb") as fh:
+        fh.write(b"x" * 8)
+    monkeypatch.setattr(local_model, "is_running", lambda timeout=2.5: True)
+    spawns = []
+    monkeypatch.setattr(local_model, "_spawn", lambda exe, args: spawns.append(exe) or 111)
+    # No state file at all -> adopt.
+    assert local_model.start_server(entry) is True
+    assert spawns == []
+    # State naming a DIFFERENT model -> deliberate switch, replace it.
+    other = dict(entry)
+    other["id"] = "another-model"
+    local_model._write_state({"pid": 4711, "port": 8199, "model_id": "another-model",
+                              "started": 1.0})
+    monkeypatch.setattr(local_model, "stop_server", lambda: True)
+    monkeypatch.setattr(local_model, "find_server_exe",
+                        lambda variant="vulkan": f"C:/ll/{variant}/llama-server.exe")
+    assert local_model.start_server(entry) is True
+    assert len(spawns) == 1  # the replacement spawn DID happen
+
+
+def test_start_server_waits_on_in_flight_load(monkeypatch, tmp_path):
+    """A same-model load already in progress (spawned moments ago, port not
+    bound yet) must be WAITED ON, not double-spawned onto the same port —
+    the double spawn raced both servers to death in live use (2026-10-19)."""
+    import time as _time
+    entry = dict(next(iter(local_model.load_manifest())))
+    gguf = local_model.model_path(entry)
+    os.makedirs(os.path.dirname(gguf), exist_ok=True)
+    with open(gguf, "wb") as fh:
+        fh.write(b"x" * 8)
+    monkeypatch.setattr(local_model, "is_running", lambda timeout=2.5: False)
+    monkeypatch.setattr(local_model, "_pid_is_our_server", lambda pid, exe=None: True)
+    monkeypatch.setattr(local_model, "_load_budget", lambda hw=None: 600.0)
+    spawns = []
+    monkeypatch.setattr(local_model, "_spawn", lambda exe, args: spawns.append(exe) or 111)
+    local_model._write_state({"pid": 4711, "port": 8199, "model_id": entry["id"],
+                              "started": _time.time() - 5, "exe": "x"})
+    hw = local_model.HardwareInfo(cpu_cores=8, ram_mb=32768, vram_mb=16384)
+    assert local_model.start_server(entry, hw=hw) is True
+    assert spawns == []  # waited on the in-flight load instead
+
+
+def test_start_server_prefers_vulkan_even_without_gpu_info(monkeypatch, tmp_path):
+    """The hardware probe is ADVISORY: a transient --list-devices failure
+    (vram_mb == 0) must not force the CPU build — the vulkan binary runs
+    CPU-only when no device exists, so it stays first."""
+    entry = dict(next(iter(local_model.load_manifest())))
+    gguf = local_model.model_path(entry)
+    os.makedirs(os.path.dirname(gguf), exist_ok=True)
+    with open(gguf, "wb") as fh:
+        fh.write(b"x" * 8)
+    monkeypatch.setattr(local_model, "is_running", lambda timeout=2.5: False)
+    monkeypatch.setattr(local_model, "_pid_is_our_server", lambda pid, exe=None: False)
+    monkeypatch.setattr(local_model, "find_server_exe",
+                        lambda variant="vulkan": f"C:/ll/{variant}/llama-server.exe")
+    spawns = []
+    monkeypatch.setattr(local_model, "_spawn",
+                        lambda exe, args: spawns.append(os.path.basename(os.path.dirname(exe))) or 111)
+    no_gpu = local_model.HardwareInfo(cpu_cores=8, ram_mb=32768, vram_mb=0)
+    assert local_model.start_server(entry, hw=no_gpu) is True
+    assert spawns == ["vulkan"]  # vulkan attempted even with no GPU info
+
+
 def test_ensure_running_gates_on_provider_and_url(monkeypatch):
     calls = []
     monkeypatch.setattr(local_model, "start_server",

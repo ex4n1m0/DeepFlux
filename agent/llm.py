@@ -155,16 +155,26 @@ class DeepSeekClient(LLMClient):
 
         Only the request establishment is retried — once a streaming response
         body starts arriving, errors propagate instead of duplicating tokens.
+
+        The LOCAL provider gets a much longer establishment window: its
+        server is lazily started by the app and a cold model load takes
+        8-60+ s before the port answers — the first chat after launch must
+        WAIT for it, not error out (backoff capped so the total window
+        stays under the loader's 240 s CPU budget).
         """
+        if self.provider == "local":
+            max_attempts, max_wait = 12, 30.0
+        else:
+            max_attempts, max_wait = _MAX_ATTEMPTS, float("inf")
         last_exc: Optional[Exception] = None
         want_stream = bool(payload.get("stream"))
-        for attempt in range(1, _MAX_ATTEMPTS + 1):
+        for attempt in range(1, max_attempts + 1):
             try:
                 response = requests.post(url, headers=headers, json=payload, timeout=120, stream=want_stream)
-                if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS:
+                if response.status_code in _RETRYABLE_STATUS and attempt < max_attempts:
                     wait = (2 ** (attempt - 1)) + random.random()
                     logger.warning("DeepSeek API %s (attempt %d/%d) — retrying in %.1fs",
-                                   response.status_code, attempt, _MAX_ATTEMPTS, wait)
+                                   response.status_code, attempt, max_attempts, wait)
                     response.close()
                     time.sleep(wait)
                     continue
@@ -172,11 +182,11 @@ class DeepSeekClient(LLMClient):
                 return response
             except (requests.ConnectionError, requests.Timeout) as exc:
                 last_exc = exc
-                if attempt >= _MAX_ATTEMPTS:
+                if attempt >= max_attempts:
                     break
-                wait = (2 ** (attempt - 1)) + random.random()
+                wait = min(max_wait, (2 ** (attempt - 1))) + random.random()
                 logger.warning("DeepSeek request failed (attempt %d/%d): %s — retrying in %.1fs",
-                               attempt, _MAX_ATTEMPTS, exc, wait)
+                               attempt, max_attempts, exc, wait)
                 time.sleep(wait)
         assert last_exc is not None
         raise last_exc

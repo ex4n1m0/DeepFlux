@@ -58,6 +58,23 @@ def test_retry_exhausted_raises(mock_post, mock_sleep):
 
 @patch("agent.llm.time.sleep")
 @patch("agent.llm.requests.post")
+def test_local_provider_waits_out_model_load(mock_post, mock_sleep):
+    """The local server binds its port only after the model loads (8-60+s
+    cold). Connection refusals during that window must be retried FAR
+    longer than the cloud 3-attempt window, not surfaced as an error."""
+    ok = _ok_response(_chat_payload("finally"))
+    refusals = [requests.ConnectionError("refused")] * 6
+    mock_post.side_effect = refusals + [ok]
+
+    client = DeepSeekClient(LLMConfig(provider="local"))
+    msg = client.chat([{"role": "user", "content": "hi"}])
+
+    assert msg.content == "finally"
+    assert mock_post.call_count == 7  # 6 refusals waited out + success
+
+
+@patch("agent.llm.time.sleep")
+@patch("agent.llm.requests.post")
 def test_client_error_not_retried(mock_post, mock_sleep):
     fail = MagicMock()
     fail.status_code = 401
