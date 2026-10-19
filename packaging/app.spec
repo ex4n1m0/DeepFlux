@@ -139,6 +139,11 @@ _wanted_datas = [
     # Local AI: the pinned model ladder (repo/commit/sha256 per quant)
     # consumed by infra/local_model.py via its own module directory.
     (os.path.join(project_root, "infra", "local_models.json"), "infra"),
+    # FlareSolverr download pin (version/asset/size/sha256): since 6.0 the
+    # 378 MB zip is NOT bundled (it pushed the setup exe past Vercel's
+    # per-file cap); --setup-flaresolverr fetches the pinned release and
+    # verifies the digest against this file at runtime.
+    (os.path.join(project_root, "packaging", "flaresolverr", "PINNED.json"), "flaresolverr"),
 ]
 datas = [(src, dst) for src, dst in _wanted_datas if os.path.exists(src)]
 if len(datas) != len(_wanted_datas):

@@ -194,13 +194,26 @@ def test_cleanup_bundled_zip_never_runs_in_dev(tmp_path, monkeypatch):
     assert zip_copy.exists()  # untouched in a dev tree
 
 
-def test_run_setup_without_zip_fails_softly(tmp_path, monkeypatch):
+def test_run_setup_without_zip_downloads_pinned_release(tmp_path, monkeypatch):
+    """Since 6.0 the zip is not bundled: the step downloads the pinned
+    official release (Vercel per-file cap). A failed download fails soft."""
     monkeypatch.setattr(flaresolverr.sys, "platform", "win32")
     monkeypatch.setattr(flaresolverr, "install_root", lambda: str(tmp_path / "nowhere" / "flaresolverr"))
     with patch.object(flaresolverr, "_zip_candidates", return_value=[]):
-        result = flaresolverr.run_setup(config_path=str(tmp_path / "c.json"), zip_path=None)
-    assert result["ok"] is False
-    assert "not bundled" in result["error"]
+        # Download unavailable (offline) -> soft failure with retry hint.
+        with patch.object(flaresolverr, "_download_pinned_zip", return_value=None):
+            result = flaresolverr.run_setup(config_path=str(tmp_path / "c.json"), zip_path=None)
+        assert result["ok"] is False
+        assert "could not be downloaded" in result["error"]
+
+        # Download succeeds -> extraction proceeds from the downloaded zip.
+        dl_zip = tmp_path / "downloaded.zip"
+        _make_fake_zip(dl_zip)
+        with patch.object(flaresolverr, "_download_pinned_zip",
+                          side_effect=lambda say: str(dl_zip)):
+            with patch.object(flaresolverr, "start", return_value=True),                  patch.object(flaresolverr, "wait_until_ready", return_value=True):
+                result = flaresolverr.run_setup(config_path=str(tmp_path / "c.json"), zip_path=None)
+        assert result["ok"] is True and result["extracted"] is True
 
 
 @patch("infra.flaresolverr.is_running", return_value=False)

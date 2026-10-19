@@ -86,15 +86,14 @@ Source: "{#BuildDir}\DeepFlux\*"; DestDir: "{app}"; Flags: ignoreversion recurse
 ; that --setup-jackett runs elevated, plus its license notice.
 Source: "{#JackettDir}\Jackett.Installer.Windows.exe"; DestDir: "{app}\_internal\jackett"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#JackettDir}\jackett-gpl2.txt"; DestDir: "{app}\_internal\licenses"; Flags: ignoreversion skipifsourcedoesntexist
-; FlareSolverr final step payload: the official Windows zip (MIT, unmodified;
-; self-contained incl. its own Chromium) that --setup-flaresolverr extracts
-; next to the app and links into Jackett, plus its license notice. Adds
-; ~378 MB to the setup file; skipifsourcedoesntexist keeps zip-less builds
-; compiling (they just don't offer the step).
+; FlareSolverr final step: NOT bundled as a zip since 6.0 — the 378 MB zip
+; pushed the setup exe past Vercel's per-file serving cap (751.3 MB served
+; fine as 5.9; 802.4 MB hard-500s). --setup-flaresolverr downloads the
+; pinned official release (digest-checked, PINNED.json ships in the app)
+; and links it into Jackett. Only the MIT notice ships here.
 #ifndef FlareSolverrDir
 #define FlareSolverrDir "flaresolverr"
 #endif
-Source: "{#FlareSolverrDir}\flaresolverr_windows_x64.zip"; DestDir: "{app}\_internal\flaresolverr"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#FlareSolverrDir}\flaresolverr-mit.txt"; DestDir: "{app}\_internal\licenses"; Flags: ignoreversion skipifsourcedoesntexist
 ; Local AI step payload: the official llama.cpp CPU + Vulkan runtimes (MIT,
 ; unmodified) pinned by packaging/fetch_llama.py. They reach the app via
@@ -120,10 +119,11 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "--register-associations"; Descri
 ; the connection. No nowait: the entries are sequential.
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-jackett"; Description: "Set up Jackett torrent search now (recommended) — installs the service and public sources"; Flags: postinstall skipifsilent
 ; FlareSolverr final step — after Jackett (it pushes the URL into Jackett's
-; config) and before launch. Extracts the bundled zip (~700 MB on disk),
-; starts the local service and links it, unlocking Cloudflare-protected
-; indexers. Measured 2026-10-13: 15 of 19 walled indexers functional.
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-flaresolverr"; Description: "Install FlareSolverr to unblock Cloudflare-protected torrent sites (about 700 MB on disk)"; Flags: postinstall skipifsilent
+; config) and before launch. Downloads the pinned official release (~378 MB,
+; digest-checked), extracts it (~700 MB on disk), starts the local service
+; and links it, unlocking Cloudflare-protected indexers. Measured 2026-10-13:
+; 15 of 19 walled indexers functional.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-flaresolverr"; Description: "Install FlareSolverr to unblock Cloudflare-protected torrent sites (downloads about 700 MB)"; Flags: postinstall skipifsilent
 ; Local AI final step — after FlareSolverr, before launch. Extracts the
 ; bundled llama.cpp runtimes and downloads the uncensored model matched to
 ; this PC (2-9 GB from Hugging Face, resumable), then makes it the default

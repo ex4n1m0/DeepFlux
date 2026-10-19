@@ -136,6 +136,14 @@
     into `_internal\licenses\`; the zip is gitignored and reuses a local
     copy when the digest matches (no 378 MB re-download on rebuilds).
     Setup exe grows by ~378 MB (zip stored near-as-is inside Inno).
+    CHANGED 2026-10-19 (6.0): the zip is NO LONGER BUNDLED — adding the
+    llama runtimes pushed the setup exe to 802.4 MB and Vercel hard-500s
+    files over ~750 MiB (5.9's 751.3 MB still served). --setup-flaresolverr
+    now DOWNLOADS the pinned official release at setup time
+    (infra/flaresolverr.py::_download_pinned_zip, digest-checked against
+    packaging/flaresolverr/PINNED.json which ships via app.spec datas);
+    offline installs fail soft with a retry hint. Keep future setup-exe
+    growth under ~750 MiB or move more payload to setup-time downloads.
   * Auto-start (never a service): the GUI's hourly Jackett-sync thread and
     the search tier's flare-failure path both call
     `flaresolverr.ensure_running` — only ever for OUR default local URL

@@ -21,6 +21,8 @@ manually installed instance on any platform).
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -72,6 +74,71 @@ def _zip_candidates() -> List[str]:
         return [os.path.join(sys._MEIPASS, "flaresolverr", ZIP_NAME)]
     return [os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                          "packaging", "flaresolverr", ZIP_NAME)]
+
+
+def _pinned_release() -> Optional[Dict[str, Any]]:
+    """The tracked pin written by packaging/fetch_flaresolverr.py
+    (version/asset/size/sha256) — shipped into _internal/flaresolverr/ by
+    app.spec so the frozen setup step downloads the exact reviewed bytes."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        path = os.path.join(sys._MEIPASS, "flaresolverr", "PINNED.json")
+    else:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "packaging", "flaresolverr", "PINNED.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if data.get("version") and data.get("sha256") else None
+    except Exception:
+        return None
+
+
+_DL_CAP = 600 * 1024 * 1024  # sanity cap; the zip is ~378 MB
+
+
+def _download_pinned_zip(say: Callable[[str], None]) -> Optional[str]:
+    """Download the pinned official FlareSolverr zip (stream-hashed against
+    the pin) into a temp file next to the extraction target. Returns the
+    path, or None on any failure (the caller reports it)."""
+    pin = _pinned_release()
+    if pin is None:
+        say("No FlareSolverr pin available — cannot download.")
+        return None
+    url = ("https://github.com/FlareSolverr/FlareSolverr/releases/download/"
+           f"{pin['version']}/{pin['asset']}")
+    dest = os.path.join(os.path.dirname(install_root()), ZIP_NAME + ".download")
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    say(f"Downloading FlareSolverr {pin['version']} from the official release "
+        f"({pin['size'] / 1e6:.0f} MB)…")
+    try:
+        sha = hashlib.sha256()
+        got = 0
+        with requests.get(url, stream=True, timeout=(15, 90)) as dl:
+            dl.raise_for_status()
+            with open(dest, "wb") as fh:
+                for chunk in dl.iter_content(chunk_size=1024 * 512):
+                    if not chunk:
+                        continue
+                    got += len(chunk)
+                    if got > _DL_CAP:
+                        raise RuntimeError("download exceeded the sanity cap")
+                    sha.update(chunk)
+                    fh.write(chunk)
+    except Exception as exc:
+        say(f"Download failed: {exc}")
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return None
+    if got != pin.get("size") or sha.hexdigest() != pin["sha256"]:
+        say("Downloaded file failed the pinned digest check — aborting.")
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return None
+    return dest
 
 
 def is_running(url: str = DEFAULT_URL, timeout: float = 3.0) -> bool:
@@ -214,9 +281,17 @@ def run_setup(config_path: Optional[str] = None,
         candidates = [zip_path] if zip_path else _zip_candidates()
         source_zip = next((p for p in candidates if p and os.path.isfile(p)), None)
         if source_zip is None:
-            result["error"] = "FlareSolverr was not bundled with this build."
-            say(result["error"])
-            return result
+            # Since 6.0 the zip is NOT bundled in the setup exe (it pushed
+            # the installer past Vercel's per-file serving cap — 5.9 at
+            # 751.3 MB served, 6.0 at 802.4 MB got hard 500s). The step
+            # downloads the pinned official release instead, same contract
+            # as the local-model step and Linux Jackett.
+            source_zip = _download_pinned_zip(say)
+            if not source_zip:
+                result["error"] = ("FlareSolverr could not be downloaded "
+                                   "(no network?). Retry from Help → User Guide.")
+                say(result["error"])
+                return result
         say(f"Extracting FlareSolverr ({os.path.getsize(source_zip) / 1e6:.0f} MB)…")
         try:
             root = os.path.dirname(install_root())
