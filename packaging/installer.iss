@@ -96,13 +96,14 @@ Source: "{#JackettDir}\jackett-gpl2.txt"; DestDir: "{app}\_internal\licenses"; F
 #endif
 Source: "{#FlareSolverrDir}\flaresolverr_windows_x64.zip"; DestDir: "{app}\_internal\flaresolverr"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#FlareSolverrDir}\flaresolverr-mit.txt"; DestDir: "{app}\_internal\licenses"; Flags: ignoreversion skipifsourcedoesntexist
-; Local AI step payloads: the official llama.cpp CPU + Vulkan runtimes (MIT,
-; unmodified) pinned by packaging/fetch_llama.py. --setup-localmodel extracts
-; both into the user's data dir and downloads the hardware-matched uncensored
-; GGUF (2-9 GB, from Hugging Face — never bundled here). Adds ~52 MB to the
-; setup file; skipifsourcedoesntexist keeps zip-less builds compiling.
-Source: "llama\llama-*-bin-win-cpu-x64.zip"; DestDir: "{app}\_internal\llama"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "llama\llama-*-bin-win-vulkan-x64.zip"; DestDir: "{app}\_internal\llama"; Flags: ignoreversion skipifsourcedoesntexist
+; Local AI step payload: the official llama.cpp CPU + Vulkan runtimes (MIT,
+; unmodified) pinned by packaging/fetch_llama.py. They reach the app via
+; app.spec's datas into _internal\llama (shipped by the recursive
+; {#BuildDir} entry above — do NOT also add packaging\llama here: that
+; duplicated every zip into the 6.0 setup, +52 MB of dead weight).
+; --setup-localmodel extracts both into the user's data dir and downloads
+; the hardware-matched uncensored GGUF (2-9 GB, from Hugging Face — never
+; bundled here). Adds ~52 MB to the setup file.
 Source: "llama\llama-mit.txt"; DestDir: "{app}\_internal\licenses"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]

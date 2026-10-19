@@ -747,7 +747,7 @@
           <li class="hide-mobile"><a class="navlink" href="#install">Install</a></li>
           <li class="hide-mobile"><a class="navlink" href="#trust">Privacy</a></li>
           <li class="hide-mobile"><a class="navlink" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">GitHub</a></li>
-          <li class="hide-mobile"><span class="pill">v5.9</span></li>
+          <li class="hide-mobile"><span class="pill">v6.0</span></li>
           <li>
             <details class="lang">
               <summary class="pill" aria-haspopup="menu" aria-label="Change language">
@@ -761,7 +761,7 @@
             </details>
           </li>
           <li>
-            <a class="btn btn-primary btn-nav" data-os-primary aria-label="Download DeepFlux" href="/api/download?f=DeepFlux5.9Setup.exe" download>
+            <a class="btn btn-primary btn-nav" data-os-primary aria-label="Download DeepFlux" href="/api/download?f=DeepFlux6.0Setup.exe" download>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span class="os-label">Download</span>
             </a>
@@ -788,11 +788,11 @@
       <div class="cta-row">
         <!-- /api/download counts the click (Upstash counter) then 302s to the
              static file; it redirects uncounted when the counter isn't set up. -->
-        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.9Setup.exe" download>
+        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux6.0Setup.exe" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Download for Windows</span>
         </a>
-        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-5.9-Linux-x86_64.AppImage" download>
+        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-6.0-Linux-x86_64.AppImage" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Download for Linux</span>
         </a>
@@ -904,9 +904,9 @@
           <div class="panel-head">
             <div>
               <div class="panel-title">Windows 10 / 11 &middot; 64-bit</div>
-              <div class="panel-sub">v5.9 &middot; 751.3 MB &middot; per-user install, no admin &middot; updates itself in-app</div>
+              <div class="panel-sub">v6.0 &middot; 802.4 MB &middot; per-user install, no admin &middot; updates itself in-app</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux5.9Setup.exe" download>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux6.0Setup.exe" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Download setup
             </a>
@@ -916,6 +916,9 @@
             per-user, no UAC prompt, and keeps your settings on upgrades.</li>
             <li>Optionally let the installer <b>set up Jackett torrent search</b>
             for you (one checkbox, one click).</li>
+            <li>New in v6.0: the installer can also <b>download a local
+            uncensored AI model</b> matched to your hardware &mdash; the agent
+            then runs fully offline on your own GPU, no cloud involved.</li>
             <li>If Windows shows <b>&ldquo;protected your PC&rdquo;</b>: <b>More info
             &rarr; Run anyway</b>. The build is unsigned &mdash; an independent
             developer certificate is the one thing still on the shopping list.
@@ -925,12 +928,14 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
             <p>A <b>shared AI key is built in</b>, so the agent works out of the box.
             It is replaced with every release &mdash; keep DeepFlux updated, or set
-            your own key under <b>File&nbsp;&rarr;&nbsp;API Keys</b> to be fully independent.</p>
+            your own key under <b>File&nbsp;&rarr;&nbsp;API Keys</b> to be fully independent.
+            Prefer no cloud at all? v6.0 can run the agent on a <b>local uncensored
+            model</b> &mdash; nothing leaves your PC.</p>
           </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
-            <code>4bd1fae3cd8d208026523598167523c8d2d52094e1c1facec2e5c0c24869f53a</code>
-            <button class="copy" type="button" data-copy="4bd1fae3cd8d208026523598167523c8d2d52094e1c1facec2e5c0c24869f53a">Copy</button>
+            <code>db1a093f107b293bfe73f122ec2c0e916650f1aff20cb0da10862552a6df999f</code>
+            <button class="copy" type="button" data-copy="db1a093f107b293bfe73f122ec2c0e916650f1aff20cb0da10862552a6df999f">Copy</button>
           </div>
         </div>
 
@@ -938,9 +943,9 @@
           <div class="panel-head">
             <div>
               <div class="panel-title">Linux x86-64 &middot; glibc 2.39+</div>
-              <div class="panel-sub">v5.9 &middot; 628.4 MB &middot; AppImage &mdash; Ubuntu 24.04+, Debian 13, Fedora 40+, Arch &middot; full feature build</div>
+              <div class="panel-sub">v6.0 &middot; 628.6 MB &middot; AppImage &mdash; Ubuntu 24.04+, Debian 13, Fedora 40+, Arch &middot; full feature build</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-5.9-Linux-x86_64.AppImage" download>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-6.0-Linux-x86_64.AppImage" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Download AppImage
             </a>
@@ -963,8 +968,8 @@
           </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
-            <code>c95b548b8376d8d31e2e6c47fd1646912f3d7547e7e63e09aaf2d335e87abc71</code>
-            <button class="copy" type="button" data-copy="c95b548b8376d8d31e2e6c47fd1646912f3d7547e7e63e09aaf2d335e87abc71">Copy</button>
+            <code>bff28337660075a6404723ad09c0209a9dd754e6c22b1203642576b3bb896ec0</code>
+            <button class="copy" type="button" data-copy="bff28337660075a6404723ad09c0209a9dd754e6c22b1203642576b3bb896ec0">Copy</button>
           </div>
         </div>
 
@@ -1008,11 +1013,11 @@
       <h2>Ready when you are.</h2>
       <p>Free download &middot; no account &middot; your machine, your files.</p>
       <div class="cta-row">
-        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.9Setup.exe" download>
+        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux6.0Setup.exe" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Download for Windows</span>
         </a>
-        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-5.9-Linux-x86_64.AppImage" download>
+        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-6.0-Linux-x86_64.AppImage" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Download for Linux</span>
         </a>

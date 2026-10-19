@@ -1,8 +1,8 @@
 {
-  "version": "5.9",
-  "file": "DeepFlux5.9Setup.exe",
-  "size": 751303853,
-  "sha256": "fbbd8c3574f2c471f3ad4a2013f5afe50bbebe5cf6aa331dcf867b5e7c7d1828",
-  "released": "2026-10-15",
-  "notes": "DeepFlux 5.9 - segmented update downloads: the big installer now arrives over six parallel connections instead of one, and an interrupted download resumes range-by-range instead of starting over."
+  "version": "6.0",
+  "file": "DeepFlux6.0Setup.exe",
+  "size": 802376129,
+  "sha256": "db1a093f107b293bfe73f122ec2c0e916650f1aff20cb0da10862552a6df999f",
+  "released": "2026-10-19",
+  "notes": "DeepFlux 6.0 - local uncensored AI: the agent can now run entirely on your machine through a bundled llama.cpp engine - the installer offers to download a model matched to your GPU/RAM, no cloud key needed. Cloud providers are unchanged and still built in."
 }

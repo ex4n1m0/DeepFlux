@@ -171,10 +171,15 @@ def iter_carchive_strings(exe_path: str):
     if pos < 0:
         return
     # cookie: magic(8) pkgLen(u32) toc(u32) tocLen(u32) pyver(i32) pylib(64s)
+    # Offsets are relative to the ARCHIVE START, anchored on the cookie
+    # (found 2026-10-19 while gating the Linux AppImage: ELF bundles can
+    # carry trailing bytes AFTER the cookie, so len(data)-based anchoring
+    # lands in the weeds and the scan silently no-ops).
     import struct
     _magic, pkg_len, toc_off, toc_len, _pyver, _pylib = struct.unpack(
         "!8sIIIi64s", data[pos:pos + 88])
-    toc_pos = len(data) - pkg_len + toc_off
+    archive_start = pos + 88 - pkg_len
+    toc_pos = archive_start + toc_off
     toc = data[toc_pos:toc_pos + toc_len]
     p = 0
     while p < len(toc):
@@ -187,7 +192,7 @@ def iter_carchive_strings(exe_path: str):
         name = toc[p + 18:p + entry_len].rstrip(b"\x00").decode("utf-8", "replace")
         p += entry_len
         try:
-            start = len(data) - pkg_len + _entry_pos
+            start = archive_start + _entry_pos
             blob = zlib.decompress(data[start:start + _csize]) if _flag else data[start:start + _csize]
         except Exception:
             continue

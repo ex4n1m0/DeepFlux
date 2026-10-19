@@ -751,7 +751,7 @@
           <li class="hide-mobile"><a class="navlink" href="#install">安装</a></li>
           <li class="hide-mobile"><a class="navlink" href="#trust">隐私</a></li>
           <li class="hide-mobile"><a class="navlink" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">GitHub</a></li>
-          <li class="hide-mobile"><span class="pill">v5.9</span></li>
+          <li class="hide-mobile"><span class="pill">v6.0</span></li>
           <li>
             <details class="lang">
               <summary class="pill" aria-haspopup="menu" aria-label="切换语言">
@@ -765,7 +765,7 @@
             </details>
           </li>
           <li>
-            <a class="btn btn-primary btn-nav" data-os-primary aria-label="下载 DeepFlux" href="/api/download?f=DeepFlux5.9Setup.exe" download>
+            <a class="btn btn-primary btn-nav" data-os-primary aria-label="下载 DeepFlux" href="/api/download?f=DeepFlux6.0Setup.exe" download>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span class="os-label">下载</span>
             </a>
@@ -792,11 +792,11 @@
       <div class="cta-row">
         <!-- /api/download counts the click (Upstash counter) then 302s to the
              static file; it redirects uncounted when the counter isn't set up. -->
-        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.9Setup.exe" download>
+        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux6.0Setup.exe" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">下载 Windows 版</span>
         </a>
-        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-5.9-Linux-x86_64.AppImage" download>
+        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-6.0-Linux-x86_64.AppImage" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">下载 Linux 版</span>
         </a>
@@ -907,9 +907,9 @@
           <div class="panel-head">
             <div>
               <div class="panel-title">Windows 10 / 11 &middot; 64 位</div>
-              <div class="panel-sub">v5.9 &middot; 751.3 MB &middot; 按用户安装、无需管理员 &middot; 应用内自动更新</div>
+              <div class="panel-sub">v6.0 &middot; 802.4 MB &middot; 按用户安装、无需管理员 &middot; 应用内自动更新</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux5.9Setup.exe" download>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux6.0Setup.exe" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               下载安装程序
             </a>
@@ -919,6 +919,9 @@
             弹窗，升级时会保留你的设置。</li>
             <li>可以让安装程序顺便帮你<b>配好 Jackett 种子搜索</b>
             （一个勾选，一次点击）。</li>
+            <li>v6.0 新增：安装程序还能按你的硬件<b>下载本地无审查 AI
+            模型</b> —— 智能体随后完全离线运行在你自己的显卡上，
+            不经过任何云端。</li>
             <li>如果 Windows 提示<b>&ldquo;已保护你的电脑&rdquo;</b>：点<b>&ldquo;更多信息&rdquo;
             &rarr; &ldquo;仍要运行&rdquo;</b>。构建未签名 —— 独立开发者证书还在计划中。
             下方校验和可用于完整性验证。</li>
@@ -927,12 +930,13 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
             <p><b>内置共享 AI 密钥</b>，智能体开箱即用。密钥随每次发布
             更换 —— 请保持 DeepFlux 更新，或在<b>&ldquo;文件&nbsp;&rarr;&nbsp;API 密钥&rdquo;</b>里
-            填入自己的密钥以完全独立。</p>
+            填入自己的密钥以完全独立。完全不想用云端？v6.0 可以让智能体
+            运行在<b>本地无审查模型</b>上 —— 什么都不离开你的电脑。</p>
           </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
-            <code>4bd1fae3cd8d208026523598167523c8d2d52094e1c1facec2e5c0c24869f53a</code>
-            <button class="copy" type="button" data-copy="4bd1fae3cd8d208026523598167523c8d2d52094e1c1facec2e5c0c24869f53a">复制</button>
+            <code>db1a093f107b293bfe73f122ec2c0e916650f1aff20cb0da10862552a6df999f</code>
+            <button class="copy" type="button" data-copy="db1a093f107b293bfe73f122ec2c0e916650f1aff20cb0da10862552a6df999f">复制</button>
           </div>
         </div>
 
@@ -940,9 +944,9 @@
           <div class="panel-head">
             <div>
               <div class="panel-title">Linux x86-64 &middot; glibc 2.39+</div>
-              <div class="panel-sub">v5.9 &middot; 628.4 MB &middot; AppImage —— Ubuntu 24.04+、Debian 13、Fedora 40+、Arch &middot; 全功能版</div>
+              <div class="panel-sub">v6.0 &middot; 628.6 MB &middot; AppImage —— Ubuntu 24.04+、Debian 13、Fedora 40+、Arch &middot; 全功能版</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-5.9-Linux-x86_64.AppImage" download>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-6.0-Linux-x86_64.AppImage" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               下载 AppImage
             </a>
@@ -963,8 +967,8 @@
           </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
-            <code>c95b548b8376d8d31e2e6c47fd1646912f3d7547e7e63e09aaf2d335e87abc71</code>
-            <button class="copy" type="button" data-copy="c95b548b8376d8d31e2e6c47fd1646912f3d7547e7e63e09aaf2d335e87abc71">复制</button>
+            <code>bff28337660075a6404723ad09c0209a9dd754e6c22b1203642576b3bb896ec0</code>
+            <button class="copy" type="button" data-copy="bff28337660075a6404723ad09c0209a9dd754e6c22b1203642576b3bb896ec0">复制</button>
           </div>
         </div>
 
@@ -1007,11 +1011,11 @@
       <h2>准备好了就开始吧。</h2>
       <p>免费下载 &middot; 无需账号 &middot; 你的电脑，你的文件。</p>
       <div class="cta-row">
-        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux5.9Setup.exe" download>
+        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux6.0Setup.exe" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">下载 Windows 版</span>
         </a>
-        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-5.9-Linux-x86_64.AppImage" download>
+        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-6.0-Linux-x86_64.AppImage" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">下载 Linux 版</span>
         </a>
