@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "6.1.1"
+APP_VERSION = "6.2"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -194,7 +194,11 @@ class LLMConfig:
     max_turns: int = 40             # ReAct loop cap per user message; the loop self-terminates when the model stops calling tools
     max_llm_calls: int = 50
     max_tool_calls: int = 100
-    task_timeout_seconds: int = 600
+    # REMOVED 2026-10-20 (owner): the wall-clock task cap killed long deep
+    # searches mid-sweep. The field stays for saved-config compat but is no
+    # longer enforced by the loop; tasks are bounded by max_llm_calls /
+    # max_tool_calls / repeated-call limits and the Stop button instead.
+    task_timeout_seconds: int = 0
     repeated_call_limit: int = 3
     context_budget_tokens: int = 64000
     response_reserve_tokens: int = 8000

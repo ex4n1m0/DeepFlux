@@ -726,3 +726,51 @@ def test_dummy_llm_completes_pause_over_size_flow(mock_engine):
 
     assert "paused" in result["content"].lower()
     mock_engine.pause.assert_called_once_with("a" * 40)
+
+
+# ---------------------------------------------------------------------------
+# 6.2: wall-clock task limit removed; local-model guidance; deep-request rule
+# ---------------------------------------------------------------------------
+
+def test_no_wall_clock_task_limit(mock_engine):
+    """The 600s task cap was removed (owner 2026-10-20) — a long deep search
+    must never die with 'Stopped after reaching the N-second task limit'."""
+    config = DeeptorrentConfig()
+    config.llm.task_timeout_seconds = 0
+    tools = ToolRegistry(mock_engine, config)
+    loop = AgentLoop(mock_engine, config, tools=tools, llm=MockLLM([]))
+    with loop._task_lock:
+        loop._task_started_at = 0.0  # task "started" at epoch — hours ago
+        loop._llm_calls_this_task = 0
+        loop._tool_calls_this_task = 0
+        loop._loop_stop_reason = ""
+    assert loop._task_limit_reason() == ""
+
+
+def test_local_provider_gets_guidance_block(mock_engine, monkeypatch):
+    """provider=local must render the local-model guidance (quality over
+    speed, deep rule); cloud providers must not."""
+    import infra.local_model as local_model
+    config = DeeptorrentConfig()
+    config.llm.provider = "local"
+    tools = ToolRegistry(mock_engine, config)
+    monkeypatch.setattr(local_model, "detect_hardware",
+                        lambda: local_model.HardwareInfo(
+                            cpu_cores=8, ram_mb=16000, gpu_name="Test GPU", vram_mb=8000))
+    loop = AgentLoop(mock_engine, config, tools=tools, llm=MockLLM([]))
+    prompt = loop._render_system_prompt()
+    assert "Local model (IMPORTANT" in prompt
+    assert "QUALITY" in prompt and "BEATS SPEED" in prompt
+
+    config.llm.provider = "deepseek"
+    loop2 = AgentLoop(mock_engine, config, tools=tools, llm=MockLLM([]))
+    assert "Local model (IMPORTANT" not in loop2._render_system_prompt()
+
+
+def test_deep_request_rule_in_prompt(mock_engine):
+    """The word 'deep' in a user message must trigger the full sweep
+    immediately — the rule is part of the shipped system prompt."""
+    from agent.loop import SYSTEM_PROMPT
+    assert "DEEP REQUESTS" in SYSTEM_PROMPT
+    assert "`deep=true` IMMEDIATELY" in SYSTEM_PROMPT
+    assert "no quick pass first, no asking" in SYSTEM_PROMPT

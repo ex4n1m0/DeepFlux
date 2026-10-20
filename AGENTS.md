@@ -940,8 +940,20 @@
   a tool message from its assistant tool_calls); `_fit_context` also enforces
   an approximate token budget on every LLM call. Tool schemas are selected by
   task domain instead of always sending the full registry. Turns, LLM calls,
-  tool calls, repeated identical calls and wall time are bounded; the GUI Stop
-  button sets cooperative cancellation. Streaming emits `stream_delta` events;
+  tool calls and repeated identical calls are bounded; the GUI Stop
+  button sets cooperative cancellation. WALL-CLOCK TASK LIMIT REMOVED
+  2026-10-20 (owner: long deep searches hit the 600 s cap) — the check is
+  gone from `_task_limit_reason` and `llm.task_timeout_seconds` defaults to
+  0; the field survives ONLY as the cap `run_shell`'s wait timeout is
+  clamped to (`or 600` when 0), and the Agent Status dialog prints
+  "unlimited" for it. Do NOT re-add a wall-clock cap. PROMPT RULES (6.2,
+  owner): the system prompt carries a DEEP REQUESTS rule — the word "deep"
+  in a user message means `search_indexers` with `deep=true` IMMEDIATELY
+  (no quick pass first, no asking) plus web query variants until sources
+  are exhausted; and `_local_guidance()` renders a local-model block when
+  provider == "local" (nothing billed, quality beats speed, don't rush —
+  small local models otherwise stop early). Streaming emits
+  `stream_delta` events;
   GUI replaces the raw stream with the rendered bubble on finish (`_seal_stream`
   on tool turns). Confirmation preserves the complete mixed tool batch, previews
   exact redacted arguments, expires after five minutes, and never inherits the

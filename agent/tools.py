@@ -120,9 +120,9 @@ UNTRUSTED_RESULT_TOOLS = frozenset({
 # Windowed build: without CREATE_NO_WINDOW every spawn flashes a console
 # (same lesson as dlmgr/ffmpeg.py). Output is head+tail-truncated so a chatty
 # installer can't flood the LLM context. The wait cap also stays under the
-# agent task timeout (config.llm.task_timeout_seconds, default 600; the loop
-# only enforces that budget BETWEEN calls) so a hung command can't double a
-# task's worst-case runtime.
+# _SHELL_TIMEOUT_MAX ceiling (the wall-clock task limit was removed 2026-10-20;
+# task_timeout_seconds is kept as a config knob only for this wait-cap math)
+# so a hung command can't double a task's worst-case runtime.
 _SHELL_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _SHELL_OUTPUT_LIMIT = 16000
 _SHELL_TIMEOUT_MIN = 5

@@ -2930,7 +2930,10 @@ class MainWindow(QMainWindow):
             f"| Turns | {limits['max_turns']} |\n"
             f"| LLM requests | {limits['max_llm_calls']} |\n"
             f"| Tool calls | {limits['max_tool_calls']} |\n"
-            f"| Task timeout | {limits['task_timeout_seconds']} s |\n"
+            f"| Task timeout | "
+            + ("unlimited" if not limits.get("task_timeout_seconds")
+               else f"{limits['task_timeout_seconds']} s")
+            + " |\n"
             f"| Context budget | {limits['context_budget_tokens']} tokens |"
         )
 
