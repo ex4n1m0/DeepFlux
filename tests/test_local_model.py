@@ -18,6 +18,13 @@ import time
 import pytest
 
 from config import DeeptorrentConfig, LLM_PROVIDER_PRESETS
+# Heap-fragility guard (see AGENTS.md single-process AV note):
+# import the heavy agent package EARLY, before the run's
+# allocations pile up — a late first import can AV on
+# fragile heaps once local_model.py's module shape changed
+# (2026-10-20; the crash site was _compile_bytecode inside
+# agent/__init__, code paths never executed).
+import agent.llm  # noqa: F401
 from infra import local_model, local_model_setup
 
 
@@ -650,3 +657,62 @@ def test_posix_setup_step_refuses(tmp_path, monkeypatch):
     monkeypatch.setattr(local_model_setup.sys, "platform", "linux")
     result = local_model_setup.run_setup(config_path=str(tmp_path / "c.json"))
     assert result["ok"] is False and "Windows-only" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# GPU detection robustness (6.1): utf-8 probe + DXGI/nvidia-smi fallback
+# ---------------------------------------------------------------------------
+
+class _FakeProc:
+    def __init__(self, stdout="", stderr=""):
+        self.stdout = stdout
+        self.stderr = stderr
+        self.returncode = 0
+
+
+def test_vulkan_probe_parses_stderr_and_survives_non_utf8(monkeypatch):
+    monkeypatch.setattr(local_model, "find_server_exe", lambda v="vulkan": "x.exe")
+    # A localized adapter name (e.g. a zh-CN driver) must not raise a
+    # decode error through text=True's locale codec.
+    monkeypatch.setattr(local_model.subprocess, "run",
+                        lambda *a, **k: _FakeProc(
+                            stderr="  Vulkan0: NVIDIA GeForce RTX 5080 \u7b14\u8bb0\u672c GPU (16003 MiB, 15000 MiB free)"))
+    devices = local_model._vulkan_devices()
+    assert devices and devices[0][1] == 16003
+
+
+def test_missing_runtime_falls_back_to_static_inventory(monkeypatch):
+    monkeypatch.setattr(local_model, "find_server_exe",
+                        lambda v="vulkan": None)
+    from infra import hardware_monitor
+    monkeypatch.setattr(hardware_monitor, "dxgi_adapters",
+                        lambda: [("NVIDIA GeForce RTX 5080 Laptop GPU", 16003),
+                                 ("Intel(R) Graphics", 128)])
+    local_model._hw_cache = None
+    hw = local_model.detect_hardware(refresh=True)
+    assert hw.gpu_name == "NVIDIA GeForce RTX 5080 Laptop GPU"
+    assert hw.vram_mb == 16003
+
+
+def test_probe_crash_falls_back(monkeypatch):
+    monkeypatch.setattr(local_model, "find_server_exe", lambda v="vulkan": "x.exe")
+
+    def boom(*a, **k):
+        raise OSError("driver hiccup")
+    monkeypatch.setattr(local_model.subprocess, "run", boom)
+    from infra import hardware_monitor
+    monkeypatch.setattr(hardware_monitor, "dxgi_adapters", lambda: [])
+    monkeypatch.setattr(hardware_monitor, "nvidia_smi_query", lambda: [
+        {"name": "NVIDIA GPU", "util": 1.0, "mem_used_mb": 0,
+         "mem_total_mb": 16384}])
+    devices = local_model._vulkan_devices()
+    assert devices == [("NVIDIA GPU", 16384)]
+
+
+def test_fallback_ranks_discrete_over_bigger_integrated(monkeypatch):
+    from infra import hardware_monitor
+    monkeypatch.setattr(hardware_monitor, "dxgi_adapters",
+                        lambda: [("Intel(R) Graphics", 18275),
+                                 ("AMD Radeon RX 7900", 20480)])
+    ranked = local_model._fallback_devices()
+    assert ranked[0][0] == "AMD Radeon RX 7900"

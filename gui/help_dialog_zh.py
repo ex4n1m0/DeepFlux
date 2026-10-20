@@ -37,7 +37,7 @@ HELP_HTML_ZH = r"""
 </head>
 <body>
 
-<h1>DeepFlux 6.0.1 —— 用户指南</h1>
+<h1>DeepFlux 6.1 —— 用户指南</h1>
 
 <p>DeepFlux 是一个 AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室
 和文件管理器。AI 智能体可以搜索并下载种子、查找直链下载、管理你的媒体库 ——
@@ -168,9 +168,17 @@ uncensored AI now"）：DeepFlux 检测你的显卡和内存，从固定的 Hugg
   <li><b>存放位置：</b>模型在 <code>~/.deeptorrent/models/</code>，llama.cpp
     引擎在 <code>~/.deeptorrent/llama/</code>。服务器只绑定本机
     （127.0.0.1:8199），随应用一起启动。</li>
-  <li><b>管理模型：</b>File → API Keys → AI 列出所有型号、大小和状态，
-    显示检测到的硬件与推荐型号，并提供 Download / Remove 按钮。中断的
-    下载会从断点继续。</li>
+  <li><b>管理模型：</b>File → API Keys → AI 列出所有型号、大小、适配徽章和
+    状态，显示检测到的硬件与推荐型号（★），并提供 Use / Download / Remove
+    按钮。徽章标明<b>本机</b>将如何运行该型号 —— <b>GPU</b> = 完全载入显存
+    （最快）、<b>显卡+CPU</b> = 混合拆分、<b>CPU</b> = 仅用处理器 ——
+    下载前就能选对硬件扛得住的型号。<b>Use</b> 将已安装的型号设为智能体的
+    型号。中断的下载会从断点继续。</li>
+  <li><b>实时硬件栏：</b>Agent 页面顶部始终显示 CPU、内存、GPU 和显存的
+    占用。本地模型运行时留意它 —— GPU 长时间 100% 且显存快满，说明换更小
+    的型号会更快。右侧的状态芯片显示当前应答的 AI（云端或本地型号 +
+    状态圆点），点击打开模型管理。实时 GPU 数字需要 NVIDIA 驱动；其他
+    显卡仍会显示名称和显存。</li>
   <li><b>随时切换：</b>同一对话框的"API endpoint"下拉框可在本地 AI 与
     云端之间切换 —— 已保存的云端密钥保留，切回去立即生效。</li>
 </ul>
@@ -502,7 +510,7 @@ AES-128 加密的流。
 </table>
 
 <h2>版本</h2>
-<p>DeepFlux 6.0.1 —— AI 深度搜索</p>
+<p>DeepFlux 6.1 —— AI 深度搜索</p>
 <p>AI：内置本地模型（无审查、离线）或 DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
 
 </body>

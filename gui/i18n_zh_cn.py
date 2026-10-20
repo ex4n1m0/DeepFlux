@@ -771,4 +771,28 @@ ZH_CN: dict[str, str] = {
         "正在下载与这台电脑硬件匹配的无审查 AI 模型（2-9 GB，取决于显卡/内存）。它完全在本机运行 —— 无需账号、无权限提示，中断的下载下次会续传。",
     "Setting up local AI": "正在设置本地 AI",
     "DeepFlux — local AI setup": "DeepFlux —— 本地 AI 设置",
+    # --- 6.1 hardware HUD + API-keys AI page rework ---
+    "Processor load (all cores)": "处理器负载（全部核心）",
+    "System memory": "系统内存",
+    "GPU memory": "显存",
+    "Live GPU stats need the NVIDIA driver (nvidia-smi).": "实时 GPU 统计需要 NVIDIA 驱动（nvidia-smi）。",
+    "Local AI status — click to open the model manager": "本地 AI 状态 —— 点击打开模型管理",
+    "☁ Cloud AI": "☁ 云端 AI",
+    "The agent runs on a cloud provider — click to open the AI settings (local models run on this PC instead)":
+        "智能体当前使用云端服务商 —— 点击打开 AI 设置（本地模型则在本地运行）",
+    "Local AI running": "本地 AI 运行中",
+    "Local AI starting (a GPU model load can take up to a minute)": "本地 AI 启动中（GPU 加载模型最多约一分钟）",
+    "Local AI server is down — it starts automatically on the next message": "本地 AI 服务器未运行 —— 下一条消息时会自动启动",
+    "Fixed for preset providers — choose \"Custom\" to edit": "预设服务商的地址固定 —— 选择“自定义”后可编辑",
+    "👁 Show": "👁 显示",
+    "👁 Hide": "👁 隐藏",
+    "Show or hide the key": "显示或隐藏密钥",
+    "How this PC would run it (from the GPU/RAM scan)": "本机将如何运行它（来自显卡/内存扫描）",
+    "Use": "使用",
+    "Make this the agent's model (applies on OK)": "将其设为智能体的模型（点击“确定”后生效）",
+    "GPU+CPU": "显卡+CPU",
+    "won't fit": "无法运行",
+    "active": "使用中",
+    "Local models run entirely on this PC through the bundled llama.cpp server (no API key, nothing sent to the cloud). The badge on each row says how this machine would run it: GPU = full video-memory offload (fastest), GPU+CPU = split, CPU = processor only. Downloading a model offers to make it the agent when no cloud key of your own is configured. Interrupted downloads resume where they stopped.":
+        "本地模型通过内置的 llama.cpp 服务器完全在这台电脑上运行（无需 API 密钥，不向云端发送任何内容）。每行的徽章标明本机将如何运行它：GPU = 全部载入显存（最快）、GPU+CPU = 混合拆分、CPU = 仅用处理器。在自己没有配置云端密钥时，下载模型会主动将其设为智能体。中断的下载会从停止处续传。",
 }

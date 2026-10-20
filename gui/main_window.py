@@ -1250,6 +1250,10 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._setup_input_history()
         self.setAcceptDrops(True)
+        # The HUD sampler stays dormant until the UI is fully built; Agent
+        # is the landing tab, so activate it right away.
+        if getattr(self, "hw_hud", None) is not None:
+            self.hw_hud.set_active(True)
 
         # Restore window geometry from the previous session; always start
         # on the Agent tab (user request 3.5.4).
@@ -1464,6 +1468,16 @@ class MainWindow(QMainWindow):
         agents_tab.setStyleSheet("background-color: #000000;")
         agents_tab_layout = QVBoxLayout(agents_tab)
         agents_tab_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Hardware HUD (6.1): always-on CPU/RAM/GPU/VRAM strip above the
+        # chat — the live numbers are what tells the user which local model
+        # their machine can actually feed. Sampling sleeps while another
+        # tab is active (set_active below).
+        from gui.hardware_hud import HardwareHud
+        self.hw_hud = HardwareHud(self.config)
+        self.hw_hud.open_keys_requested.connect(
+            lambda: self._open_api_keys("ai"))
+        agents_tab_layout.addWidget(self.hw_hud)
 
         self.chat_history = _ChatHistoryEdit(self._resolve_banner_path())
         self.chat_history.setReadOnly(True)
@@ -4989,6 +5003,12 @@ class MainWindow(QMainWindow):
         """Enforce the 50/50 Download split when that tab becomes visible."""
         if self.main_tabs.widget(index) is self._torrents_tab:
             QTimer.singleShot(0, self._enforce_agent_split)
+        # Fires DURING _build_ui's insertTab calls, before _agents_tab is
+        # assigned — getattr, never a bare attribute.
+        hud = getattr(self, "hw_hud", None)
+        agents_tab = getattr(self, "_agents_tab", None)
+        if hud is not None and agents_tab is not None:
+            hud.set_active(self.main_tabs.widget(index) is agents_tab)
 
     def open_target(self, target: str) -> None:
         """Open a file or URI passed via file association / second instance.
@@ -6660,6 +6680,11 @@ class MainWindow(QMainWindow):
             local_model.stop_server()
         except Exception:
             pass
+
+        # Hardware HUD sampler thread.
+        hud = getattr(self, "hw_hud", None)
+        if hud is not None:
+            hud.shutdown()
 
         # Best-effort telemetry "leaving" note — never blocks the quit.
         try:

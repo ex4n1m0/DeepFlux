@@ -765,6 +765,8 @@ class APIKeysDialog(QDialog):
         self.llm_endpoint.currentIndexChanged.connect(self._on_endpoint_changed)
         fl.addRow(tr('API endpoint:'), self.llm_endpoint)
         self.llm_base_url = QLineEdit()
+        self.llm_base_url.setToolTip(tr(
+            'Fixed for preset providers — choose "Custom" to edit'))
         fl.addRow(tr('Base URL:'), self.llm_base_url)
         self.llm_model = QLineEdit()
         fl.addRow(tr('Model:'), self.llm_model)
@@ -773,21 +775,47 @@ class APIKeysDialog(QDialog):
         self.llm_key = QLineEdit()
         self.llm_key.setEchoMode(QLineEdit.Password)
         self.llm_key.setPlaceholderText(tr('sk-...'))
-        fl.addRow(tr('API Key:'), self.llm_key)
-        fl.addRow("", _api_hint(
+        # Reveal toggle — masked by default (key hygiene), one click to read
+        # back what was typed. Only THIS dialog's AI key gets it: it is the
+        # one users paste long tokens into and then ask "did it save?".
+        from PySide6.QtGui import QAction
+        self._key_visible = False
+        self._key_reveal_action = QAction(tr('👁 Show'))
+        self._key_reveal_action.setToolTip(tr('Show or hide the key'))
+        def _toggle_reveal():
+            self._key_visible = not self._key_visible
+            self.llm_key.setEchoMode(
+                QLineEdit.Normal if self._key_visible else QLineEdit.Password)
+            self._key_reveal_action.setText(
+                tr('👁 Hide') if self._key_visible else tr('👁 Show'))
+        self._key_reveal_action.triggered.connect(_toggle_reveal)
+        self.llm_key.addAction(self._key_reveal_action, QLineEdit.TrailingPosition)
+        # The pre-filled field often carries the injected SHARED key; only a
+        # real textEdited event means the user typed one (drives the
+        # auto-switch gate in _local_auto_switch_ok).
+        self._key_typed = False
+        self.llm_key.textEdited.connect(lambda _t: setattr(self, "_key_typed", True))
+        self._llm_key_hint = _api_hint(
             "DeepSeek or OpenRouter key — powers the conversational agent. "
             "Get one at https://platform.deepseek.com/api_keys (DeepSeek) or "
             "https://openrouter.ai/keys (OpenRouter). Custom OpenAI-compatible "
-            "endpoints may leave the key blank when their server allows it."))
+            "endpoints may leave the key blank when their server allows it.")
+        fl.addRow(tr('API Key:'), self.llm_key)
+        fl.addRow("", self._llm_key_hint)
+        self._llm_key_label = fl.labelForField(self.llm_key)
+        self._llm_base_url_label = fl.labelForField(self.llm_base_url)
         layout.addWidget(llm_group)
 
         # --- Local models (bundled llama.cpp, no key) — Windows only -------
         # The uncensored GGUF ladder managed by infra/local_model.py. Downloads
-        # are resumable and sha256-verified; the recommended row matches this
-        # machine's GPU/RAM (fit matrix ported from the ModelSwarm project).
+        # are resumable and sha256-verified; each row carries a FIT BADGE
+        # computed from this machine's GPU/RAM (fit matrix ported from the
+        # ModelSwarm project) so the user can see what their hardware will
+        # actually do with the model BEFORE downloading gigabytes.
         self._local_rows: dict = {}
         from infra import local_model
         self._local_manifest = [] if sys.platform != "win32" else local_model.load_manifest()
+        self._local_tiers: dict = {}          # model_id -> fit tier (or None)
         local_group = None
         if sys.platform == "win32":
             local_group = QGroupBox(tr('Local Models (built-in AI — uncensored, offline)'))
@@ -802,21 +830,32 @@ class APIKeysDialog(QDialog):
             vl.addWidget(self.local_reco_label)
             for entry in self._local_manifest:
                 row = QHBoxLayout()
+                row.setSpacing(6)
                 name = QLabel(entry["label"])
+                name.setToolTip(entry["id"])
+                fit = QLabel("")
+                fit.setToolTip(tr('How this PC would run it (from the GPU/RAM scan)'))
                 status = QLabel("")
                 status.setObjectName("hint")
+                use_btn = QPushButton(tr('Use'))
+                use_btn.setToolTip(tr('Make this the agent\'s model (applies on OK)'))
+                use_btn.clicked.connect(
+                    lambda _=False, e=entry: self._local_use(e))
                 dl_btn = QPushButton(tr('Download'))
                 rm_btn = QPushButton(tr('Remove'))
                 dl_btn.clicked.connect(lambda _=False, e=entry: self._local_download(e))
                 rm_btn.clicked.connect(lambda _=False, e=entry: self._local_remove(e))
                 row.addWidget(name, 1)
+                row.addWidget(fit)
                 row.addWidget(status)
+                row.addWidget(use_btn)
                 row.addWidget(dl_btn)
                 row.addWidget(rm_btn)
                 wrap = QWidget()
                 wrap.setLayout(row)
                 vl.addWidget(wrap)
-                self._local_rows[entry["id"]] = (status, dl_btn, rm_btn)
+                self._local_rows[entry["id"]] = (name, fit, status, use_btn,
+                                                 dl_btn, rm_btn)
             self.local_progress = QProgressBar()
             self.local_progress.setTextVisible(False)
             self.local_progress.setVisible(False)
@@ -845,9 +884,12 @@ class APIKeysDialog(QDialog):
             vl.addWidget(twrap)
             vl.addWidget(_api_hint(
                 "Local models run entirely on this PC through the bundled llama.cpp "
-                "server (no API key, nothing sent to the cloud). Downloading a "
-                "model offers to make it the agent when no cloud key of your own "
-                "is configured. Interrupted downloads resume where they stopped."))
+                "server (no API key, nothing sent to the cloud). The badge on each "
+                "row says how this machine would run it: GPU = full video-memory "
+                "offload (fastest), GPU+CPU = split, CPU = processor only. "
+                "Downloading a model offers to make it the agent when no cloud key "
+                "of your own is configured. Interrupted downloads resume where "
+                "they stopped."))
             self._refresh_local_rows()
             layout.addWidget(local_group)
 
@@ -1005,10 +1047,32 @@ class APIKeysDialog(QDialog):
         if self.llm_base_url.text().strip() in preset_urls:
             self.llm_base_url.setText(preset["base_url"])
         custom = provider == "custom"
+        # Base URL is only meaningful for custom endpoints — presets (and
+        # above all the local loopback server) have a fixed one. Read-only
+        # instead of disabled so it stays selectable/copyable.
+        self.llm_base_url.setReadOnly(not custom)
         self.llm_model.setEnabled(custom)
         self.llm_reasoning_effort.setEnabled(custom)
         models = preset.get("models") or []
         self.llm_model.setPlaceholderText(models[0] if models else "provider/model-name")
+        # Local AI is KEYLESS: the key row (label + field + hint) hides so
+        # the section stops asking for an sk-... that must stay empty.
+        local = provider == "local"
+        for widget in (self.llm_key, self._llm_key_label, self._llm_key_hint):
+            widget.setVisible(not local)
+
+    def _local_fit_badge(self, tier) -> tuple:
+        """(text, color) for a fit tier — the at-a-glance 'how will my PC
+        run this' marker on each model row."""
+        if tier == "gpu_full":
+            return tr("GPU"), "#3fb950"
+        if tier == "gpu_partial":
+            return tr("GPU+CPU"), "#2a7abf"
+        if tier == "ram_only":
+            return tr("CPU"), "#8a9ab0"
+        if tier is None:
+            return tr("won't fit"), "#f85149"
+        return "", ""
 
     # -- Jackett test (moved from Jackett Settings) --------------------------
 
@@ -1131,30 +1195,65 @@ class APIKeysDialog(QDialog):
         self._local_hw = hw
         self.local_hw_label.setText(f"{tr('This PC')}: {hw.summary()}")
         entry, reason = local_model.recommend(hw, self._local_manifest)
+        # Fit tiers per row drive the badges; the recommended row gets a
+        # star so the choice is visible before anything is downloaded.
+        self._local_tiers = {e["id"]: local_model.fit_tier(hw, e)
+                             for e in self._local_manifest}
         if entry is None:
             self.local_reco_label.setText(f"{tr('Recommended')}: {reason}")
         else:
             self.local_reco_label.setText(f"{tr('Recommended for this PC')}: {reason}")
+            self._local_reco_id = entry["id"]
+        self._refresh_local_rows()
 
     def _refresh_local_rows(self) -> None:
         from infra import local_model
+        reco_id = getattr(self, "_local_reco_id", None)
+        active_id = None
+        if self.config.llm.provider == "local":
+            active_id = self.config.llm.model
+        staged = getattr(self, "_pending_local_entry", None)
+        if staged is not None:
+            active_id = staged["id"]
         for entry in self._local_manifest:
             widgets = self._local_rows.get(entry["id"])
             if not widgets:
                 continue
-            status, dl_btn, rm_btn = widgets
+            name, fit, status, use_btn, dl_btn, rm_btn = widgets
             installed = local_model.is_installed(entry)
-            status.setText("✓ " + tr('installed') if installed else tr('not installed'))
+            size_gb = int(entry["size"]) / 1024 ** 3
+            tier = self._local_tiers.get(entry["id"], "")
+            badge, color = self._local_fit_badge(tier)
+            fit.setText(badge)
+            fit.setStyleSheet(f"color: {color}; font-weight: 600;" if color else "")
+            if installed:
+                status.setText("✓ " + tr('installed') + f" · {size_gb:.1f} GiB")
+            else:
+                status.setText(f"{size_gb:.1f} GiB")
             dl_btn.setEnabled(not installed)
             rm_btn.setEnabled(installed)
+            use_btn.setEnabled(installed)
+            use_btn.setVisible(installed)
+            # Active = what OK would persist; recommended = best fit.
+            font_bold = (entry["id"] == active_id or entry["id"] == reco_id)
+            name.setStyleSheet("font-weight: 700;" if font_bold else "")
+            prefix = "★ " if entry["id"] == reco_id else ""
+            suffix = "  ✓ " + tr("active") if entry["id"] == active_id else ""
+            name.setText(f"{prefix}{entry['label']}{suffix}")
+
+    def _local_use(self, entry: dict) -> None:
+        """Stage this installed model as THE local model (visuals now,
+        config only on OK — same contract as _apply_local_provider)."""
+        self._apply_local_provider(entry)
+        self._refresh_local_rows()
 
     def _local_download(self, entry: dict) -> None:
         from infra import local_model
         widgets = self._local_rows.get(entry["id"])
-        if not widgets or not widgets[1].isEnabled():
+        if not widgets or not widgets[4].isEnabled():
             return
         self._local_cancel.clear()
-        for status, dl_btn, rm_btn in self._local_rows.values():
+        for _name, _fit, _status, _use_btn, dl_btn, rm_btn in self._local_rows.values():
             dl_btn.setEnabled(False)
             rm_btn.setEnabled(False)
         self.local_progress.setVisible(True)
@@ -1217,8 +1316,12 @@ class APIKeysDialog(QDialog):
     def _local_auto_switch_ok(self) -> bool:
         """Gate for auto-selecting local after a download / on save."""
         from config import llm_key_is_shared
-        if self.llm_key.text().strip():
-            return False  # the user typed a key in THIS dialog session
+        # Only a key TYPED in this dialog session counts as the user
+        # choosing a cloud provider — the field may legitimately carry the
+        # injected SHARED key (masked), which must NOT block the switch
+        # (pre-6.1 it did, so default machines never got the offer).
+        if self._key_typed and self.llm_key.text().strip():
+            return False
         provider = self.config.llm.provider
         if provider == "local":
             return True
@@ -1239,6 +1342,7 @@ class APIKeysDialog(QDialog):
         self.local_test_result.setText(
             f"{entry['label']} ready — it becomes the agent when you press OK.")
         self.local_test_result.setStyleSheet("color: #a8edff;")
+        self._refresh_local_rows()
 
     def _local_remove(self, entry: dict) -> None:
         confirm = QMessageBox.question(
@@ -1290,6 +1394,11 @@ class APIKeysDialog(QDialog):
                 self.local_test_result.setText(f"Remove failed: {outcome}")
                 self.local_test_result.setStyleSheet("color: #ff3366;")
                 return
+            # A staged Use/download switch pointing at the removed model
+            # must not resurrect it on OK.
+            staged = getattr(self, "_pending_local_entry", None)
+            if staged is not None and staged.get("id") == outcome.get("id"):
+                self._pending_local_entry = None
             # Removing the ACTIVE model leaves config pointing at an absent
             # id — reconcile to another installed model (or the preset
             # default) so the request/alias pair stays honest.

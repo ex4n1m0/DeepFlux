@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 6.0.1 — User Guide</h1>
+<h1>DeepFlux 6.1 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -197,9 +197,20 @@ Qwen3.5 builds, so the agent answers without cloud-style refusals.</p>
     the llama.cpp engine in <code>~/.deeptorrent/llama/</code>. The server binds
     only to your own machine (127.0.0.1:8199) and starts with the app.</li>
   <li><b>Manage models:</b> File → API Keys → AI lists every model with its
-    size and status, your detected hardware, the recommended pick, and
-    Download / Remove buttons. Interrupted downloads resume where they
-    stopped.</li>
+    size, a fit badge and status, your detected hardware, the recommended pick
+    (★), and Use / Download / Remove buttons. The badge says how THIS machine
+    would run the model — <b>GPU</b> = fully in video memory (fastest),
+    <b>GPU+CPU</b> = split, <b>CPU</b> = processor only — so you can pick the
+    model your hardware actually handles before downloading gigabytes.
+    <b>Use</b> makes an installed model the agent's model. Interrupted
+    downloads resume where they stopped.</li>
+  <li><b>Live hardware strip:</b> the top of the Agent page always shows
+    CPU, RAM, GPU and VRAM utilization. Watch it while a local model runs —
+    a GPU pegged at 100% with VRAM nearly full means a smaller model will
+    answer faster. The chip on the right shows which AI is answering
+    (cloud, or the local model with a state dot) and opens the model
+    manager when clicked. Live GPU numbers need the NVIDIA driver; on other
+    GPUs the name and VRAM still show.</li>
   <li><b>Switch anytime:</b> the same dialog's "API endpoint" combo moves
     between Local AI and the cloud providers — a saved cloud key is kept and
     works the moment you switch back.</li>
@@ -601,7 +612,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 6.0.1 — AI Deep Search</p>
+<p>DeepFlux 6.1 — AI Deep Search</p>
 <p>AI via built-in local models (uncensored, offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>

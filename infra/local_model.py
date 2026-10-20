@@ -212,22 +212,44 @@ def _parse_devices(text: str) -> List[Tuple[str, int]]:
     return sorted(devices, key=lambda d: (_is_integrated_gpu(d[0]), -d[1]))
 
 
+def _fallback_devices() -> List[Tuple[str, int]]:
+    """Static GPU inventory for when the Vulkan probe comes up empty
+    (runtime not extracted yet / a driver hiccup): DXGI sees every D3D
+    adapter with true above-4 GB dedicated VRAM sizes, nvidia-smi covers
+    NVIDIA-only boxes where DXGI somehow failed. Same discrete-first
+    ranking as the probe — a working GPU must never be reported missing
+    just because the llama.cpp runtime is absent (owner-reported on an
+    RTX 5080 Mobile, 2026-10-20)."""
+    from infra import hardware_monitor
+    devices = hardware_monitor.dxgi_adapters() or [
+        (g["name"], g["mem_total_mb"])
+        for g in hardware_monitor.nvidia_smi_query() if g["name"]]
+    return sorted(devices, key=lambda d: (_is_integrated_gpu(d[0]), -d[1]))
+
+
 def _vulkan_devices() -> List[Tuple[str, int]]:
     """GPU name/VRAM straight from the runtime that will serve the model —
     the Vulkan backend sees every vendor with no nvml/WMI dependency
     (verified output format live 2026-10-19, llama.cpp b11727:
-    ``  Vulkan0: NVIDIA GeForce RTX 5080 Laptop GPU (16003 MiB, 15235 MiB free)``)."""
+    ``  Vulkan0: NVIDIA GeForce RTX 5080 Laptop GPU (16003 MiB, 15235 MiB free)``).
+    utf-8/replace decode so a localized adapter name can never kill the
+    probe; stderr is parsed too. Empty/failed probes fall back to static
+    enumeration (a single cold-start hiccup once forced the CPU build on a
+    16 GB GPU machine, 2026-10-19)."""
     exe = find_server_exe("vulkan")
     if not exe:
-        return []
+        return _fallback_devices()
     try:
         proc = subprocess.run(
-            [exe, "--list-devices"], capture_output=True, text=True,
+            [exe, "--list-devices"], capture_output=True,
+            encoding="utf-8", errors="replace",
             timeout=90, creationflags=_CREATE_NO_WINDOW)
-        return _parse_devices(proc.stdout or "")
+        return _parse_devices((proc.stdout or "")
+                              + "\n" + (proc.stderr or "")) \
+            or _fallback_devices()
     except Exception as exc:
         logger.debug("vulkan device probe failed: %s", exc)
-        return []
+        return _fallback_devices()
 
 
 def detect_hardware(refresh: bool = False) -> HardwareInfo:

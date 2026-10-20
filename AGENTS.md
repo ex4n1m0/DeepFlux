@@ -30,6 +30,32 @@
   (r s t u v x y — re-check `ls tests/ | cut -c9 | sort -u` when a test
   file with a NEW first letter lands, like test_updater.py's "u" in
   2026-09-19).
+  2026-10-20 UPDATE (do not re-derive — full forensic session in git
+  history): the AV is ASLR/heap-layout PROBABILISTIC, not deterministic —
+  identical commands can pass then crash on consecutive runs, and ANY
+  bytecode-shape change to a module imported by tests re-rolls the dice
+  (proven: 4 semantically identical shapes of the local_model GPU-fallback
+  change all crashed with the new code paths demonstrably NEVER EXECUTING
+  — tracers showed zero calls; an arbitrary other edit of the same file
+  passed; `PYTHONMALLOC=malloc` passed once then crashed). After landing
+  the 6.1 hardware work, both the d–i and j–o chunks became unstable;
+  the split verified green REPEATEDLY on 2026-10-20 (1142 tests total) is
+  SIX commands:
+  `a-c`, `d-g`, `h`, `i`, `local_model` SOLO (that file carries an
+  `import agent.llm` heap-fragility guard at its top — keep it),
+  `j* + llm`, `loop + memory + m n o`, and `r-z (r s t u v x y)`.
+  In full:
+  `python -m pytest tests/test_a*.py tests/test_b*.py tests/test_c*.py -q`
+  `python -m pytest tests/test_d*.py tests/test_e*.py tests/test_f*.py tests/test_g*.py -q`
+  `python -m pytest tests/test_h*.py -q`
+  `python -m pytest tests/test_i*.py -q`
+  `python -m pytest tests/test_local_model.py -q`
+  `python -m pytest tests/test_j*.py tests/test_llm.py -q`
+  `python -m pytest tests/test_loop.py tests/test_memory.py tests/test_m*.py tests/test_n*.py tests/test_o*.py -q`
+  `python -m pytest tests/test_r*.py tests/test_s*.py tests/test_t*.py tests/test_u*.py tests/test_v*.py tests/test_x*.py tests/test_y*.py -q`
+  (that is eight lines; d–g+i in ONE process and j–o in one process are
+  the current poison shapes). If a chunk native-AVs, suspect the dice
+  first: re-run / re-split before hunting code.
 - Tests must NEVER write the real `~/.deeptorrent/config.json`: the autouse
   fixture in `tests/conftest.py` redirects `DeeptorrentConfig.default_config_path`
   for every test; still pass explicit paths whenever
@@ -761,6 +787,55 @@
     12.2s; only dead-site 522s ran ~20s). Saved configs keep their value.
 
 ## Local AI — uncensored models via bundled llama.cpp (since 6.0)
+- GPU DETECTION (6.1 hardening — owner-reported "GPU not found" on an RTX
+  5080 Mobile): `local_model._vulkan_devices()` is now a CHAIN — the Vulkan
+  `--list-devices` probe (utf-8/replace decode, stderr parsed too) falls
+  back to `_fallback_devices()` = DXGI adapter enumeration, then
+  nvidia-smi, all ranked discrete-first by `_is_integrated_gpu`. A working
+  GPU can no longer be reported missing just because the llama runtime
+  isn't extracted or the probe hiccuped. The DXGI ctypes code lives in
+  `infra/hardware_monitor.py::dxgi_adapters` — VERIFIED GUIDs/vtable
+  indexes against Windows Kits dxgi.h (IID_IDXGIFactory1
+  {770aae78-f26f-4dba-a829-253c83d1b387}; EnumAdapters1 = vtable slot 12
+  — CreateSoftwareAdapter sits at 11 —; IDXGIAdapter1::GetDesc1 = slot
+  10; the DESC1 field order is VIDEO/system/shared — swapping them reads
+  0 VRAM; and COM vtable access needs a DOUBLE dereference: object →
+  lpVtbl → slots). DedicatedVideoMemory is a SIZE_T (no WMI AdapterRAM
+  4 GB wrap) and matched Vulkan's 16003 MiB exactly on the 5080 Mobile.
+- Hardware HUD (6.1): `gui/hardware_hud.py::HardwareHud` — the
+  always-visible strip at the top of the Agent page (CPU/RAM/GPU/VRAM
+  meters, custom-painted so global QSS can't restyle them, warn ≥75% /
+  danger ≥90% coloring) + the local-AI status chip (🧠 model · ● running /
+  ◐ loading / ○ down / ☁ Cloud AI) that opens File → API Keys → AI on
+  click. Sampling = ONE persistent daemon thread (2 s cadence) that
+  sleeps while the Agent tab isn't active (`set_active` from
+  `_on_main_tab_changed`, which must getattr `_agents_tab` — it fires
+  during `_build_ui`'s insertTab calls before that attr exists) and stays
+  dormant until MainWindow finishes building the UI (first tick spawns
+  subprocesses that must not race window construction). Server health is
+  probed every 3rd tick with a 0.8 s timeout (never stacks). Qt-free
+  numbers live in `infra/hardware_monitor.py`: GetSystemTimes deltas
+  (CPU), GlobalMemoryStatusEx (RAM), nvidia-smi CSV (GPU/VRAM live —
+  ~80 ms, driver-shipped at System32, 60 s failure backoff so a missing
+  binary never spawns a doomed process per poll; NO psutil — it's not in
+  requirements.txt so frozen builds can't rely on it). Non-NVIDIA GPUs
+  show name+VRAM from the static chain, no live utilization. Tests:
+  `tests/test_hardware_hud.py` (parsers, backoff, widget states, chip
+  states, open-keys signal).
+- API Keys → AI page (6.1 UX rework): per-model FIT BADGES
+  (`gpu_full`=GPU green / `gpu_partial`=GPU+CPU blue / `ram_only`=CPU
+  grey / None=won't fit red) + sizes in the status, ★ marks the
+  recommended row, `Use` stages an installed model as the agent's model
+  (same `_pending_local_entry` contract as the post-download switch —
+  config mutates only on OK), active model shows ✓. Endpoint-aware form:
+  Local hides the key row entirely (keyless by design) and locks the
+  base URL read-only; presets keep the base URL read-only (custom is the
+  only editable one). The key field got a trailing 👁 reveal QAction.
+  GATE FIX (real bug): `_local_auto_switch_ok` used to treat the
+  PRE-FILLED field text as "user typed a key" — on default machines
+  from_file injects the SHARED key into the field, so the post-download
+  auto-switch offer NEVER fired. The gate now tracks `textEdited`
+  (`_key_typed`) instead of field content.
 - The "local" provider (LLM_PROVIDER_PRESETS["local"]) runs an UNCENSORED
   model on the user's machine through the official llama.cpp
   `llama-server` (MIT; pinned by `packaging/fetch_llama.py` — CPU + Vulkan
