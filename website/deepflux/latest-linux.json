@@ -1,8 +1,8 @@
 {
-  "version": "6.1",
-  "file": "DeepFlux-6.1-Linux-x86_64.AppImage",
-  "size": 628685304,
-  "sha256": "7a20f44b6bb4dd6e2951bc1ef791093d2b6679d14a5ed9818d4e560655a4d32e",
+  "version": "6.2",
+  "file": "DeepFlux-6.2-Linux-x86_64.AppImage",
+  "size": 628681208,
+  "sha256": "15e36b53aaee7c3307c8a4842ed78b297b7da14682033fc228e9c7dcd066631e",
   "released": "2026-10-20",
-  "notes": "DeepFlux 6.1 for Linux - same release as Windows: live hardware meters, GPU detection fixes, and the reworked AI & API Keys page."
+  "notes": "DeepFlux 6.2 for Linux - same release as Windows: the task clock limit is gone, 'deep' always runs the full sweep, and the local AI gets quality-over-speed guidance."
 }
