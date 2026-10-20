@@ -740,10 +740,42 @@ def _pid_is_our_server(pid: int, exe: Optional[str] = None) -> bool:
         return False
 
 
-def stop_server() -> bool:
+def _our_llama_pids() -> List[int]:
+    """Pids of llama-server processes whose executable lives under OUR
+    llama_root(). Image-path-verified so a foreign llama.cpp app (e.g.
+    ModelSwarm's llama-server.exe — live on this machine) is never touched."""
+    pids: List[int] = []
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "(Get-Process llama-server -ErrorAction SilentlyContinue | "
+             "Select-Object -ExpandProperty Id)"],
+            capture_output=True, text=True, timeout=15,
+            creationflags=_CREATE_NO_WINDOW)
+        root = os.path.normcase(llama_root())
+        for line in (proc.stdout or "").splitlines():
+            line = line.strip()
+            if not line.isdigit():
+                continue
+            live = _process_exe(int(line))
+            if live and os.path.normcase(os.path.dirname(live)).startswith(root):
+                pids.append(int(line))
+    except Exception as exc:
+        logger.debug("llama pid enumeration failed: %s", exc)
+    return pids
+
+
+def stop_server(force: bool = False) -> bool:
     """Terminate the server (the recorded pid covers a server started by
     another DeepFlux process, e.g. the installer step). The image-verified
-    pid check means a recycled pid can never redirect the kill."""
+    pid check means a recycled pid can never redirect the kill.
+
+    force=True additionally kills ADOPTED stateless servers (healthy ones
+    whose pid our state never recorded — start_server adopts them instead
+    of replacing). The in-app UPDATE path needs this: an adopted server
+    keeps DLLs from the install dir mapped, and the installer then hits a
+    locked file (live 2026-10-20: silent install exit code 5). Normal app
+    exits keep the adopted server serving — the design is deliberate."""
     global _server_pid
     with _server_lock:
         state = _state()
@@ -761,6 +793,15 @@ def stop_server() -> bool:
                                    (kill.stderr or b"").decode(errors="replace"))
             except Exception as exc:
                 logger.debug("taskkill failed: %s", exc)
+        if force:
+            for extra in _our_llama_pids():
+                try:
+                    subprocess.run(["taskkill", "/PID", str(extra), "/T", "/F"],
+                                   capture_output=True, timeout=20,
+                                   creationflags=_CREATE_NO_WINDOW)
+                    stopped = True
+                except Exception as exc:
+                    logger.debug("taskkill adopted pid %s failed: %s", extra, exc)
         try:
             os.remove(_state_path())
         except OSError:

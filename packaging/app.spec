@@ -264,6 +264,29 @@ a = Analysis(
     noarchive=False,
 )
 
+# --- VC runtime hardening (6.1.1) ------------------------------------------
+# PySide6's wheel bundles a STALE msvcp140.dll (14.16, VS2017-era) that
+# collect_all drags into _internal. Any child process spawned by the frozen
+# app (the llama.cpp server, the Vulkan device probe — the PyInstaller
+# bootloader puts _internal on PATH) can resolve that ancient runtime
+# instead of the system's and CRASH: verified 2026-10-20, llama-server
+# (Clang 20 build) access-violated in _internal\MSVCP140.dll 14.16.27033.0.
+# Replace every bundled copy of the VC runtime with the MACHINE'S SYSTEM
+# copy (modern, redist-compatible) so the bundled DLL is strictly newer and
+# a clean machine without a VC redist still works through the bundle.
+_VC_DLLS = ("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+            "vcruntime140.dll", "vcruntime140_1.dll",
+            "concrt140.dll", "vccorlib140.dll")
+_sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+for _dll in _VC_DLLS:
+    _src = os.path.join(_sys32, _dll)
+    if not os.path.isfile(_src):
+        continue
+    _dest = _dll.lower()
+    a.binaries = [b for b in a.binaries
+                  if os.path.basename(b[1]).lower() != _dest]
+    a.binaries.append((_src, _dll))
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(

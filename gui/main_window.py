@@ -6674,10 +6674,13 @@ class MainWindow(QMainWindow):
 
         # Stop the local llama.cpp server we own (loopback-only child of
         # this app; force-kill exits skip this, and the next boot's
-        # reap_orphan cleans up the leftover).
+        # reap_orphan cleans up the leftover). force on the UPDATE exit:
+        # an adopted stateless server keeps install-dir DLLs mapped and
+        # makes the installer cancel on a locked file (live 2026-10-20).
         try:
             from infra import local_model
-            local_model.stop_server()
+            local_model.stop_server(
+                force=getattr(self, "_update_in_progress", False))
         except Exception:
             pass
 

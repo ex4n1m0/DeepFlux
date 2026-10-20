@@ -716,3 +716,37 @@ def test_fallback_ranks_discrete_over_bigger_integrated(monkeypatch):
                                  ("AMD Radeon RX 7900", 20480)])
     ranked = local_model._fallback_devices()
     assert ranked[0][0] == "AMD Radeon RX 7900"
+
+
+def test_stop_server_force_kills_adopted_stateless_servers(monkeypatch, tmp_path):
+    """The update path must kill healthy adopted servers (no recorded pid)
+    whose exe lives under OUR llama root — they keep install-dir DLLs
+    mapped and make the installer cancel on a locked file. A FOREIGN
+    llama-server (ModelSwarm's) must survive."""
+    monkeypatch.setattr(local_model, "_state", lambda: {})
+    monkeypatch.setattr(local_model, "llama_root", lambda: str(tmp_path / "llama"))
+    monkeypatch.setattr(local_model, "_pid_is_our_server", lambda pid, exe=None: False)
+    killed = []
+
+    def fake_run(cmd, *a, **k):
+        class _P:
+            returncode = 0
+            stdout = ""
+        if cmd[0] == "powershell":
+            _P.stdout = "1111\n2222\nnotapid\n"
+            return _P()
+        killed.append(cmd)
+        return _P()
+    monkeypatch.setattr(local_model.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        local_model, "_process_exe",
+        lambda pid: (str(tmp_path / "llama" / "vulkan" / "llama-server.exe")
+                     if pid == 1111 else r"C:\ModelSwarm\engine\llama-server.exe"))
+
+    local_model.stop_server(force=True)
+    # only OUR pid got a taskkill
+    assert len(killed) == 1 and "1111" in killed[0]
+    # without force, the adopted server is left alone
+    killed.clear()
+    local_model.stop_server(force=False)
+    assert not killed
