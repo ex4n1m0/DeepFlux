@@ -1,8 +1,8 @@
 {
-  "version": "6.0.1",
-  "file": "DeepFlux6.0.1Setup.exe",
-  "size": 421933508,
-  "sha256": "2207805ad4c70fcb1e7e38003dfc6c31b813385824a299e85306ae668923f11f",
-  "released": "2026-10-19",
-  "notes": "DeepFlux 6.0.1 - local AI reliability patch: the first message after switching to a local model now waits for the model to load instead of erroring, GPU detection can no longer fall back to the slow CPU build, and double server starts were fixed."
+  "version": "6.1",
+  "file": "DeepFlux6.1Setup.exe",
+  "size": 422036911,
+  "sha256": "5fce21a6ca8583fb444475cd550e75604871f8c9527b9be8084071757ee323f3",
+  "released": "2026-10-20",
+  "notes": "DeepFlux 6.1 - live CPU/RAM/GPU/VRAM meters on the Agent page, a local-AI status chip, GPU detection that can no longer miss your graphics card (DXGI/nvidia-smi fallback), and a reworked AI & API Keys page with per-model fit badges and a Use button."
 }
