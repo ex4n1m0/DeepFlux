@@ -1,8 +1,8 @@
 {
-  "version": "6.1",
-  "file": "DeepFlux6.1Setup.exe",
-  "size": 422036911,
-  "sha256": "5fce21a6ca8583fb444475cd550e75604871f8c9527b9be8084071757ee323f3",
+  "version": "6.1.1",
+  "file": "DeepFlux6.1.1Setup.exe",
+  "size": 421953226,
+  "sha256": "72cb72bd67217ecee6162f9b3c1dad30a62298ad4e1cf3d6b415a6f75f52152d",
   "released": "2026-10-20",
-  "notes": "DeepFlux 6.1 - live CPU/RAM/GPU/VRAM meters on the Agent page, a local-AI status chip, GPU detection that can no longer miss your graphics card (DXGI/nvidia-smi fallback), and a reworked AI & API Keys page with per-model fit badges and a Use button."
+  "notes": "DeepFlux 6.1.1 - hotfix: the bundled runtime could crash the local AI server on some machines (llama-server access violation in the stale bundled MSVCP140.dll), and a file locked by the local AI server could cancel the silent update. Both fixed; updates that hit a transient lock now retry once automatically."
 }
