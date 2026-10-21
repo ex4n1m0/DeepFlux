@@ -1,8 +1,8 @@
 {
-  "version": "6.3",
-  "file": "DeepFlux6.3Setup.exe",
-  "size": 421898947,
-  "sha256": "86313b110518bf5245ef59a6a33a7fcbd824ba97f12507a06374bd1642b881b4",
+  "version": "6.4",
+  "file": "DeepFlux6.4Setup.exe",
+  "size": 421893225,
+  "sha256": "ca130918825a2a56ad0d086aae6ef07b8224eccdd72e132eff55295fc2ad97c1",
   "released": "2026-10-21",
-  "notes": "DeepFlux 6.3 - Local AI overhaul: download and use ANY Hugging Face GGUF model, context windows now match each model and your hardware, a start/stop switch with loading progress frees GPU/RAM when idle, and long local searches no longer fail on context limits (results spill into persistent memory instead)."
+  "notes": "DeepFlux 6.4 - the built-in DeepSeek key is now the out-of-the-box default: fresh installs get a working AI agent with no account or setup. Local uncensored AI is still there as an opt-in choice (File -> API Keys -> AI), along with the 6.3 local-AI overhaul."
 }

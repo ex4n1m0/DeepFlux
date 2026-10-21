@@ -1,8 +1,8 @@
 {
-  "version": "6.3",
-  "file": "DeepFlux-6.3-Linux-x86_64.AppImage",
+  "version": "6.4",
+  "file": "DeepFlux-6.4-Linux-x86_64.AppImage",
   "size": 628709880,
-  "sha256": "b50f2b7f8819b6e19c6068e450f7249646bf8e102a73ff9aee5d9102301670d4",
+  "sha256": "ea0043a2082628b2ca86bc13eec6b8b5c7bc73dbc25cd86e56de4268f975dcfa",
   "released": "2026-10-21",
-  "notes": "DeepFlux 6.3 for Linux - same release as Windows: any Hugging Face GGUF model, per-model context windows matched to your hardware, a start/stop switch with loading progress, and long local searches spill into persistent memory instead of failing."
+  "notes": "DeepFlux 6.4 for Linux - same release as Windows: the built-in DeepSeek key is the out-of-the-box default agent, and local uncensored AI is an opt-in choice (File -> API Keys -> AI)."
 }
