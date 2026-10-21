@@ -6,46 +6,23 @@ download), and leaves DeepFlux in a working state on every exit path.
 
 Pipeline: extract the bundled llama.cpp runtimes -> detect hardware ->
 recommend a model from the pinned ladder -> download it (resumable,
-sha256-verified) unless already installed -> switch the LLM provider to
-"local" when the user hasn't deliberately chosen a cloud setup -> start
-the server and health-check it.
-
-Provider-switch rule (owner direction: local runs AS THE DEFAULT, but a
-deliberate cloud choice is never stomped): switch only when the RAW saved
-config has no user-typed llm.api_key and its provider is missing/""/
-"deepseek"/"dummy" — i.e. fresh installs and default-state machines. The
-raw file (not from_file) is read because from_file injects the shared
-DeepSeek key, making a default machine indistinguishable from a keyed one.
+sha256-verified) unless already installed. The provider is NEVER changed:
+the built-in DeepSeek key stays the default agent regardless (owner
+decision 6.4.1, 2026-10-21 — downloading a local model is installation
+only); users switch to local AI explicitly in File -> API Keys -> AI, and
+the server then starts on demand.
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
 import sys
 import threading
-from typing import Any, Callable, Dict, Optional
+from typing import Callable, Dict, Optional
 
 from config import DeeptorrentConfig
 from infra import local_model
 
 logger = logging.getLogger(__name__)
-
-
-def _raw_llm(config_path: str) -> Dict[str, Any]:
-    try:
-        with open(config_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        llm = data.get("llm") or {}
-        return {"api_key": llm.get("api_key") or "", "provider": llm.get("provider")}
-    except Exception:
-        return {"api_key": "", "provider": None}
-
-
-def should_default_to_local(config_path: str) -> bool:
-    raw = _raw_llm(config_path)
-    return (not raw["api_key"]
-            and raw["provider"] in (None, "", "deepseek", "dummy"))
 
 
 def run_setup(config_path: Optional[str] = None,
@@ -61,11 +38,9 @@ def run_setup(config_path: Optional[str] = None,
         logger.info("localmodel-setup: %s", msg)
 
     config_path = config_path or DeeptorrentConfig.default_config_path()
-    config = DeeptorrentConfig.from_file(config_path)
     result: Dict[str, Any] = {
         "ok": False, "error": None, "skipped": None, "downloaded": False,
-        "already_installed": False, "provider_switched": False,
-        "started": False, "model_id": None, "summary": "",
+        "already_installed": False, "model_id": None, "summary": "",
     }
 
     if sys.platform != "win32":
@@ -89,7 +64,7 @@ def run_setup(config_path: Optional[str] = None,
         result["skipped"] = reason
         result["summary"] = f"Skipped: {reason}"
         say(f"No local model recommended — {reason}")
-        say("DeepFlux keeps using its cloud AI (add a key in File → API Keys).")
+        say("DeepFlux keeps its built-in DeepSeek AI as the default.")
         return result
     result["model_id"] = entry["id"]
     say(f"Recommended for this PC: {reason}")
@@ -115,38 +90,13 @@ def run_setup(config_path: Optional[str] = None,
         result["downloaded"] = True
         say("Download verified (sha256 matches the pinned manifest).")
 
-    # 4) Provider switch (fresh installs / default-state machines only).
-    raw_provider = _raw_llm(config_path).get("provider")
-    if should_default_to_local(config_path) or raw_provider == "local":
-        switched = config.llm.provider != "local"
-        config.llm.provider = "local"
-        config.llm.base_url = local_model.DEFAULT_BASE_URL
-        config.llm.model = entry["id"]
-        config.llm.fast_model = entry["id"]
-        config.llm.api_key = ""  # the local server needs no key
-        result["provider_switched"] = switched
-        say("Local AI set as the default agent (cloud keys still work — "
-            "switch anytime in File → API Keys).")
-    else:
-        say("Keeping your configured cloud AI provider — the local model is "
-            "installed and selectable in File → API Keys.")
-
-    try:
-        config.to_file(config_path)
-    except Exception as exc:
-        logger.warning("localmodel-setup config save failed: %s", exc)
-
-    # 5) Start + health-check so the first launch is instantly usable.
-    local_model.reap_orphan()
-    if local_model.start_server(entry, hw=hw) and local_model.wait_until_ready():
-        result["started"] = True
-        say("Local AI server started — ready.")
-    else:
-        say("The model is installed but the server did not answer in time; "
-            "DeepFlux will start it automatically on launch.")
+    say("The model is installed. The built-in DeepSeek key REMAINS the "
+        "default agent — switch to 'Local AI (built-in, uncensored)' in "
+        "File → API Keys → AI whenever you want to use it; the local server "
+        "then starts automatically.")
 
     result["ok"] = True
     result["summary"] = (f"{'Downloaded' if result['downloaded'] else 'Reused'} "
-                         f"{entry['label']} — local AI "
-                         f"{'is now the default' if result['provider_switched'] else 'is available'}.")
+                         f"{entry['label']} — installed and selectable in "
+                         "File → API Keys → AI (DeepSeek stays the default).")
     return result

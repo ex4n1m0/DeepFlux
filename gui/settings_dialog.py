@@ -955,10 +955,10 @@ class APIKeysDialog(QDialog):
                 "server (no API key, nothing sent to the cloud). The badge on each "
                 "row says how this machine would run it: GPU = full video-memory "
                 "offload (fastest), GPU+CPU = split, CPU = processor only. "
-                "Downloading a model offers to make it the agent when no cloud key "
-                "of your own is configured. Interrupted downloads resume where "
-                "they stopped. The Hugging Face search below installs ANY public "
-                "GGUF model the same way."))
+                "Downloading installs the model only — the built-in DeepSeek key "
+                "stays the default agent until you switch here explicitly. "
+                "Interrupted downloads resume where they stopped. The Hugging Face "
+                "search below installs ANY public GGUF model the same way."))
             self._refresh_local_rows()
             layout.addWidget(local_group)
 
@@ -1442,34 +1442,15 @@ class APIKeysDialog(QDialog):
         self._refresh_local_rows()
         if entry is None:
             return
-        # Offer the freshly downloaded model as the agent when this machine
-        # is in "default state" (same semantics as the installer step: a
-        # user-typed key or a deliberate openrouter/custom choice wins; the
-        # SHARED DeepSeek key doesn't count — it's injected, not chosen).
-        if self._local_auto_switch_ok():
-            self._apply_local_provider(entry)
-        else:
-            self.local_test_result.setText(
-                f"{entry['label']} installed — switch the endpoint above to "
-                "'Local AI (built-in, uncensored)' to use it.")
-            self.local_test_result.setStyleSheet("color: #a8edff;")
-
-    def _local_auto_switch_ok(self) -> bool:
-        """Gate for auto-selecting local after a download / on save."""
-        from config import llm_key_is_shared
-        # Only a key TYPED in this dialog session counts as the user
-        # choosing a cloud provider — the field may legitimately carry the
-        # injected SHARED key (masked), which must NOT block the switch
-        # (pre-6.1 it did, so default machines never got the offer).
-        if self._key_typed and self.llm_key.text().strip():
-            return False
-        provider = self.config.llm.provider
-        if provider == "local":
-            return True
-        if provider not in ("", "deepseek", "dummy"):
-            return False  # deliberate cloud choice (openrouter/custom)
-        key = self.config.llm.api_key
-        return not key or llm_key_is_shared()
+        # Downloading NEVER changes the provider (owner decision 6.4.1):
+        # the built-in DeepSeek key stays the default regardless — the model
+        # is installed and selectable; the user switches explicitly via the
+        # endpoint combo or the Use button.
+        self.local_test_result.setText(
+            f"{entry['label']} installed — the built-in DeepSeek key stays "
+            "the default agent. Choose 'Local AI (built-in, uncensored)' in "
+            "the endpoint box above (or press Use) to run it.")
+        self.local_test_result.setStyleSheet("color: #a8edff;")
 
     def _apply_local_provider(self, entry: dict) -> None:
         """STAGE the switch to the local provider (visuals only). The live

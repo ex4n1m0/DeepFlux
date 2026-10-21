@@ -212,9 +212,8 @@ def test_hud_open_keys_signal(qapp):
 
 @pytest.mark.skipif(sys.platform != "win32", reason="local models are win32")
 def test_api_keys_dialog_local_ux(qapp, monkeypatch, tmp_path):
-    """Endpoint-aware rows, the auto-switch gate (shared key must NOT
-    block), fit badges and the Use button."""
-    import config as config_mod
+    """Endpoint-aware rows, fit badges, the Use button, and the
+    download-never-switches-provider rule (6.4.1)."""
     from config import DeeptorrentConfig
     from gui.settings_dialog import APIKeysDialog
     from PySide6.QtWidgets import QLineEdit
@@ -225,16 +224,17 @@ def test_api_keys_dialog_local_ux(qapp, monkeypatch, tmp_path):
     cfg = DeeptorrentConfig()
     cfg.llm.provider = "deepseek"
     cfg.llm.api_key = "sk-shared-injected"
-    monkeypatch.setitem(config_mod._SHARED_KEY_SLOTS, "llm.api_key",
-                        "sk-shared-injected")
 
     dlg = APIKeysDialog(cfg, None, page="ai")
     try:
-        # Default machine (shared key pre-filled, never typed): the local
-        # auto-switch offer must be allowed.
-        assert dlg._local_auto_switch_ok() is True
-        dlg.llm_key.textEdited.emit("sk-user")
-        assert dlg._local_auto_switch_ok() is False
+        # A completed download must NOT stage the local provider (6.4.1):
+        # the DeepSeek default stands until the user switches explicitly.
+        monkeypatch.setattr(lm, "is_installed", lambda e: True)
+        entry = lm.entry_by_id("qwen35-9b-uncensored-q4km")
+        dlg._on_local_dl_done(entry["id"], {"ok": True, "path": "x"})
+        assert dlg._pending_local_entry is None
+        assert "DeepSeek key stays" in dlg.local_test_result.text()
+        assert dlg.llm_endpoint.currentData() == "deepseek"
 
         # Local endpoint: key row hides, base URL locks.
         dlg.llm_endpoint.setCurrentIndex(dlg.llm_endpoint.findData("local"))
@@ -263,9 +263,8 @@ def test_api_keys_dialog_local_ux(qapp, monkeypatch, tmp_path):
         assert "GiB" in status.text()
         assert not use_btn.isVisibleTo(dlg) or not use_btn.isEnabled()
 
-        # Use button stages an installed model.
+        # Use button stages an installed model (the explicit switch path).
         monkeypatch.setattr(lm, "is_installed", lambda e: True)
-        entry = lm.entry_by_id("qwen35-9b-uncensored-q4km")
         dlg._local_use(entry)
         assert dlg._pending_local_entry["id"] == entry["id"]
         assert dlg.llm_endpoint.currentData() == "local"

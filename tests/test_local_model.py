@@ -542,45 +542,34 @@ def _write_config(path, llm: dict | None = None):
         json.dump(data, fh)
 
 
-def test_should_default_to_local(tmp_path):
-    p = str(tmp_path / "config.json")
-    _write_config(p)                                     # fresh install
-    assert local_model_setup.should_default_to_local(p) is True
-    _write_config(p, {"provider": "dummy"})              # keyless fossil
-    assert local_model_setup.should_default_to_local(p) is True
-    _write_config(p, {"provider": "deepseek", "api_key": "sk-user"})
-    assert local_model_setup.should_default_to_local(p) is False
-    _write_config(p, {"provider": "openrouter"})         # deliberate choice
-    assert local_model_setup.should_default_to_local(p) is False
-
-
-def test_run_setup_switches_fresh_install_to_local(tmp_path, monkeypatch):
+def test_run_setup_never_switches_provider(tmp_path, monkeypatch):
+    """6.4.1 owner rule: downloading a local model is installation only —
+    the DeepSeek default (or any current provider) is NEVER changed, and the
+    server is not started by the setup step."""
     p = str(tmp_path / "config.json")
     _write_config(p)
     hw = local_model.HardwareInfo(cpu_cores=8, ram_mb=32768,
                                   gpu_name="RTX", vram_mb=16384)
     entry = dict(_entry("Q4_K_M"))
-    started = {}
+    started = []
     monkeypatch.setattr(local_model, "ensure_runtime", lambda on_line=None: True)
     monkeypatch.setattr(local_model, "detect_hardware", lambda refresh=False: hw)
     monkeypatch.setattr(local_model, "recommend",
                         lambda h, models=None: (entry, "test reason"))
     monkeypatch.setattr(local_model, "is_installed", lambda e: True)
-    monkeypatch.setattr(local_model, "reap_orphan", lambda: None)
     monkeypatch.setattr(local_model, "start_server",
-                        lambda e, hw=None: started.setdefault("a", True))
+                        lambda e, hw=None: started.append(e) or True)
     monkeypatch.setattr(local_model, "wait_until_ready", lambda timeout=None: True)
 
     lines = []
     result = local_model_setup.run_setup(config_path=p, on_progress=lines.append)
-    assert result["ok"] and result["provider_switched"] and result["started"]
-    assert result["model_id"] == entry["id"]
+    assert result["ok"] and result["model_id"] == entry["id"]
+    assert "provider_switched" not in result
+    assert started == []  # no server start — DeepSeek stays the default
     cfg = DeeptorrentConfig.from_file(p)
-    assert cfg.llm.provider == "local"
-    assert cfg.llm.model == entry["id"]
-    assert cfg.llm.base_url == local_model.DEFAULT_BASE_URL
-    assert cfg.llm.fast_model == entry["id"]
+    assert cfg.llm.provider == "deepseek"  # untouched default
     assert any("Recommended" in ln for ln in lines)
+    assert any("REMAINS the default" in ln for ln in lines)
 
 
 def test_run_setup_never_stomps_cloud_choice(tmp_path, monkeypatch):
@@ -593,11 +582,10 @@ def test_run_setup_never_stomps_cloud_choice(tmp_path, monkeypatch):
     monkeypatch.setattr(local_model, "recommend",
                         lambda h, models=None: (entry, "test"))
     monkeypatch.setattr(local_model, "is_installed", lambda e: True)
-    monkeypatch.setattr(local_model, "reap_orphan", lambda: None)
     monkeypatch.setattr(local_model, "start_server", lambda e, hw=None: True)
     monkeypatch.setattr(local_model, "wait_until_ready", lambda timeout=None: True)
     result = local_model_setup.run_setup(config_path=p)
-    assert result["ok"] and not result["provider_switched"]
+    assert result["ok"]
     cfg = DeeptorrentConfig.from_file(p)
     assert cfg.llm.provider == "openrouter"
 
@@ -626,11 +614,12 @@ def test_run_setup_downloads_when_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(local_model, "is_installed", lambda e: False)
     monkeypatch.setattr(local_model, "download_model",
                         lambda e, on_progress=None, cancel=None: local_model.model_path(e))
-    monkeypatch.setattr(local_model, "reap_orphan", lambda: None)
     monkeypatch.setattr(local_model, "start_server", lambda e, hw=None: True)
     monkeypatch.setattr(local_model, "wait_until_ready", lambda timeout=None: True)
     result = local_model_setup.run_setup(config_path=p, on_bytes=lambda d, t: None)
-    assert result["downloaded"] and result["provider_switched"]
+    assert result["downloaded"]
+    cfg = DeeptorrentConfig.from_file(p)
+    assert cfg.llm.provider == "deepseek"  # 6.4.1: never auto-switched
 
 
 # ---------------------------------------------------------------------------

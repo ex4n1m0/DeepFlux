@@ -826,16 +826,17 @@
   (`gpu_full`=GPU green / `gpu_partial`=GPU+CPU blue / `ram_only`=CPU
   grey / None=won't fit red) + sizes in the status, ★ marks the
   recommended row, `Use` stages an installed model as the agent's model
-  (same `_pending_local_entry` contract as the post-download switch —
-  config mutates only on OK), active model shows ✓. Endpoint-aware form:
+  (`_pending_local_entry` contract — config mutates only on OK), active
+  model shows ✓. Endpoint-aware form:
   Local hides the key row entirely (keyless by design) and locks the
   base URL read-only; presets keep the base URL read-only (custom is the
   only editable one). The key field got a trailing 👁 reveal QAction.
-  GATE FIX (real bug): `_local_auto_switch_ok` used to treat the
-  PRE-FILLED field text as "user typed a key" — on default machines
-  from_file injects the SHARED key into the field, so the post-download
-  auto-switch offer NEVER fired. The gate now tracks `textEdited`
-  (`_key_typed`) instead of field content.
+  6.4.1 RULE (owner, do NOT regress): downloading a model — ladder,
+  Hugging Face, installer step — NEVER changes the provider. The built-in
+  DeepSeek key stays the default regardless; switching to local is always
+  an EXPLICIT user action (endpoint combo or Use). The old
+  `_local_auto_switch_ok` post-download auto-offer is GONE — do not
+  re-add an auto-switch of any kind.
 - The "local" provider (LLM_PROVIDER_PRESETS["local"]) runs an UNCENSORED
   model on the user's machine through the official llama.cpp
   `llama-server` (MIT; pinned by `packaging/fetch_llama.py` — CPU + Vulkan
@@ -964,12 +965,10 @@
   `settings_dialog._save_and_accept`, `MainWindow.__init__`, and the
   `main.py` Repl gate all exempt `"local"` like `"custom"`; `from_file`
   never injects the shared DeepSeek key into it and never remaps its
-  models (it IS in the stale-fast_model clearing tuple). Provider-switch
-  rule (installer step + settings download): switch only when the RAW
-  config file has NO user-typed `llm.api_key` AND provider ∈
-  missing/""/"deepseek"/"dummy" — raw file, because from_file injects the
-  shared key and would make default machines look keyed. A deliberate
-  cloud choice is never stomped.
+  models (it IS in the stale-fast_model clearing tuple). Provider
+  changes are USER-ONLY since 6.4.1 (owner): no code path auto-switches
+  to local — not the installer step, not a finished download, nothing.
+  A deliberate cloud choice is never stomped.
 - Server lifecycle mirrors flaresolverr: `ensure_running` (provider local
   + OUR base URL only; restarts when the running server's model_id
   differs from config), health `/health`, startup budgets 600s GPU /
