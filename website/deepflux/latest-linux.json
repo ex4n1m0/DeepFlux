@@ -1,8 +1,8 @@
 {
-  "version": "6.2",
-  "file": "DeepFlux-6.2-Linux-x86_64.AppImage",
-  "size": 628681208,
-  "sha256": "15e36b53aaee7c3307c8a4842ed78b297b7da14682033fc228e9c7dcd066631e",
-  "released": "2026-10-20",
-  "notes": "DeepFlux 6.2 for Linux - same release as Windows: the task clock limit is gone, 'deep' always runs the full sweep, and the local AI gets quality-over-speed guidance."
+  "version": "6.3",
+  "file": "DeepFlux-6.3-Linux-x86_64.AppImage",
+  "size": 628709880,
+  "sha256": "b50f2b7f8819b6e19c6068e450f7249646bf8e102a73ff9aee5d9102301670d4",
+  "released": "2026-10-21",
+  "notes": "DeepFlux 6.3 for Linux - same release as Windows: any Hugging Face GGUF model, per-model context windows matched to your hardware, a start/stop switch with loading progress, and long local searches spill into persistent memory instead of failing."
 }
