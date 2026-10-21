@@ -1,8 +1,8 @@
 {
-  "version": "6.4.1",
-  "file": "DeepFlux6.4.1Setup.exe",
-  "size": 421899512,
-  "sha256": "ecb0cf2849b16f98eaeb24f5a141c6bdd2afe2684392129211e03a18857b70d8",
+  "version": "6.4.2",
+  "file": "DeepFlux6.4.2Setup.exe",
+  "size": 421914627,
+  "sha256": "c91f1effe780d7bac6a794fae2fc72bcbedf20c94427add395c32ab2528aaa2c",
   "released": "2026-10-21",
-  "notes": "DeepFlux 6.4.1 - the built-in DeepSeek key now stays the default agent even when you download a local model during setup or later: downloading only installs the model, and switching to local AI is always your explicit choice."
+  "notes": "DeepFlux 6.4.2 - auto-updaters now get the built-in DeepSeek key as the default even if an older install had switched them to local AI, and the model name in the AI settings always matches the selected endpoint."
 }

@@ -1,8 +1,8 @@
 {
-  "version": "6.4.1",
-  "file": "DeepFlux-6.4.1-Linux-x86_64.AppImage",
+  "version": "6.4.2",
+  "file": "DeepFlux-6.4.2-Linux-x86_64.AppImage",
   "size": 628709880,
-  "sha256": "fd889b4917ad41fadd0a211ed146f229aad11f4b23a2d954615670d8069f3fdb",
+  "sha256": "98c6de7bdc1446d01176ef07945ed4c4115dacbb8ea0bd213579307ac3967c85",
   "released": "2026-10-21",
-  "notes": "DeepFlux 6.4.1 for Linux - same release as Windows: the built-in DeepSeek key stays the default agent even when you download a local model, and switching to local AI is always your explicit choice."
+  "notes": "DeepFlux 6.4.2 for Linux - same release as Windows: auto-updaters get the built-in DeepSeek key as the default even if an older install had switched to local AI, and the model name in the AI settings always matches the selected endpoint."
 }
