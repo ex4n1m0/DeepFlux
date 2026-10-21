@@ -845,14 +845,76 @@
   extract both runtimes into `~/.deeptorrent/llama/{cpu,vulkan}/` (frozen
   builds DELETE the zips after extraction; dev keeps them — the
   flaresolverr lesson), detect hardware, download the matched GGUF, switch
-  the provider. Server: `127.0.0.1:8199` ONLY, `--alias <model-id> -c 32768
-  --no-webui --reasoning-format deepseek -t cores/2` + `-ngl all` only when
+  the provider. Server: `127.0.0.1:8199` ONLY, `--alias <model-id> -c <ctx>
+  --no-webui --parallel 1 -t cores/2` + `-ngl all` only when
   the weights fit 90% VRAM (b11727 defaults `-ngl` to AUTO otherwise —
   fits layers to VRAM itself). VERIFIED live 2026-10-19 on the RTX 5080:
   health in 8s, chat 1.2s, SSE stream + tool call parse clean;
   `--reasoning-format deepseek` maps Qwen3.5's inline thinking onto
   `reasoning_content`, which `DeepSeekClient._consume_stream` already
   dims in the UI — without it thinking leaks into content.
+- Per-model context (2026-10-21): `<ctx>` is NOT the old fixed 32768 — it is
+  `entry_ctx()` = the GGUF's native context_length (probed from the file's
+  metadata header via `probe_gguf` — NEVER re-derive: GGUF v3 metadata keys
+  are ARCHITECTURE-prefixed (`qwen35.context_length`, not `llama.`), so the
+  probe matches by SUFFIX; tokenizer string arrays are skipped by seek),
+  capped by `ctx_cap_for` (90% RAM − weights − 256 MB; when the weights fit
+  the GPU the leftover VRAM budget binds instead, so the KV cache stays in
+  VRAM and decode stays fast — a RAM-resident KV makes GPU decode
+  CPU-bound), floored at 4096, falling back to CONTEXT_SIZE when metadata
+  is unreadable. `--parallel 1` is MANDATORY: llama-server allocates
+  n_ctx × parallel slots of KV, and the cap math assumes one slot.
+  MEASURED live on the RTX 5080: the 9B Q8 serves 42528 ctx (was 32768),
+  the 4B Q4_K_M 94560 — both KV-resident in VRAM. `--reasoning-format
+  deepseek` is now gated on the probed architecture containing "qwen3"
+  (other archs get no flag — it would mis-parse their output). The agent
+  loop's `_fit_context` clamps to `context_for_config(config)` (same
+  number the server is started with), `_local_guidance` states the real
+  window, and the AI-page rows show "… · 42K ctx" per installed model.
+  Tests: test_local_model.py probe/kv/cap/entry_ctx/argv sections.
+- Local server on/off control (2026-10-21): API Keys → AI has a
+  Start server / Stop server toggle with a progress bar. START resolves the
+  config model (else first installed), ensure_runtime + start_server, then
+  polls `server_status()` (loopback /health) — VERIFIED live: while a model
+  loads, b11727's /health answers 503 {"error":{"message":"Loading model"}}
+  with NO percentage, so the bar is INDETERMINATE and the label carries the
+  phase + elapsed seconds (GPU budget 600 s / CPU 240 s). STOP runs
+  `stop_server_manual()` = stop_server + a `manual_off` flag in
+  server.json; `ensure_running` returns False while it is set, so the app's
+  lazy auto-start CANNOT silently undo the user's Off (off means off —
+  don't regress that). start_server's fresh state write clears the flag on
+  the next Start. main_window `_local_model_worker` emits a dim notice when
+  provider=local but the server is manually off. The dialog polls the
+  state every 5 s while open (background thread; signals: hf_*/server_*).
+  Tests: test_local_model.py on/off section + test_hardware_hud.py
+  test_local_server_on_off_control.
+- Local context management (owner-reported intermittent "400 Client Error"
+  from the local agent, root-caused 2026-10-20): the server's 32K window is
+  SMALLER than the default 64K context budget — llama-server rejects any
+  request past 32K tokens with a 400 whose BODY says why ("request (N
+  tokens) exceeds the available context size (32768 tokens)"), and the old
+  client swallowed it (bare raise_for_status). Do not regress any of this:
+  * `DeepSeekClient._post_with_retry` appends the server's error body to
+    the HTTPError message (`_server_error_detail` in agent/llm.py) — local
+    agent failures must never go opaque again.
+  * `_fit_context` clamps the token budget to the SERVED per-model context
+    (`context_for_config` in infra/local_model.py — see the per-model
+    context bullet above) when provider == "local" (agent/loop.py), so the
+    app trims history BEFORE the server rejects it.
+  * Oversized local tool results are auto-ARCHIVED to the memory store's
+    daily notes instead of silently cut: `MemoryStore.archive(key,
+    tool_name, content)` writes numbered chunks each carrying the archive
+    key (derived from tool_call_id) + tool name, so `search_memory('<key>')`
+    pages the full result back. The context copy = the search_memory
+    pointer FIRST (the fitter trims tool content from the tail — a trailing
+    pointer gets cut; leading it survives the 1000-char floor) + a digest
+    (6000 chars for the freshest results, TOOL_HISTORY_MAX_CHARS for older
+    ones). Archive failures (memory disabled, secret-like content) fall
+    back to the old truncation; cloud providers are untouched. The
+    `_local_guidance()` block tells the model about the 32K window and to
+    search_memory instead of re-running searches. Tests:
+    test_loop.py local-archive/clamp tests, test_memory.py archive tests,
+    test_llm.py error-body test.
 - Model ladder = TRACKED manifest `infra/local_models.json` (pinned by
   `packaging/pin_local_models.py`; the HF tree API's LFS `oid` IS the
   sha256 — pinning needs NO multi-GB download). Families:
@@ -874,6 +936,27 @@
   byte-exact across edge nodes). Downloads land in
   `~/.deeptorrent/models/<id>/` (shared home with the whisper model).
   MEASURED: 2.52 GiB in 19s (~140 MB/s avg). Cancel keeps the .part.
+- Custom Hugging Face models (6.3 feature, GUI-ONLY — never an agent tool):
+  File → API Keys → AI has a "Custom model from Hugging Face" section —
+  `local_model.hf_search` (GET /api/models, filter=gguf, downloads-sorted,
+  LIVE-VERIFIED field names) → double-click a repo →
+  `local_model.hf_gguf_files` (GET /api/models/<repo>/tree/main; the LFS
+  `oid` IS the sha256, same pinning trick as the manifest) → pick a file →
+  the SAME download_model path (resumable, size-verified; sha256 check
+  skipped only when the tree carried no LFS oid) → Use stages it like any
+  ladder model. Custom entries live in a sidecar
+  `~/.deeptorrent/models/custom_models.json` (atomic writes, written at
+  download success only) and merge into `entry_by_id` / `installed_models`,
+  so ensure_running/start_server/main_window see them with zero special
+  casing; `remove_model` drops the sidecar record too. `custom_entry()`
+  builds the id (`hf-<repo>-<quant>-<sha1-6>`, path- and alias-safe) and
+  validates repo/file (HF_REPO_RE, no `..`) — a crafted repo id can never
+  escape models_root(). Quant tags (Q4_K_M/IQ3_XS/F16…) come from
+  `_QUANT_RE` (no trailing \b — underscores are word chars; `[_-]`-only
+  continuation so ".gguf" is never swallowed). GUI rows for custom models
+  are added dynamically (rows container + `_sync_local_rows`); the row must
+  exist BEFORE `_local_download` runs (it gates on the row's Download
+  button). Tests: tests/test_local_model.py custom/HF section.
 - Provider gates (keyless local must NEVER fossilize to "dummy"):
   `settings_dialog._save_and_accept`, `MainWindow.__init__`, and the
   `main.py` Repl gate all exempt `"local"` like `"custom"`; `from_file`

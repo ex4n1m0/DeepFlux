@@ -106,6 +106,9 @@ def entry_by_id(model_id: str) -> Optional[Dict[str, Any]]:
     for entry in load_manifest():
         if entry.get("id") == model_id:
             return entry
+    for entry in custom_models():
+        if entry.get("id") == model_id:
+            return entry
     return None
 
 
@@ -123,19 +126,165 @@ def is_installed(entry: Dict[str, Any]) -> bool:
 
 
 def installed_models() -> List[Dict[str, Any]]:
-    return [e for e in load_manifest() if is_installed(e)]
+    return [e for e in load_manifest() + custom_models() if is_installed(e)]
 
 
 def remove_model(entry: Dict[str, Any]) -> bool:
-    """Delete a model's directory (stops the server first if it is active)."""
+    """Delete a model's directory (stops the server first if it is active).
+    Custom (user-downloaded HF) models also lose their sidecar record."""
     if entry.get("id") and _state().get("model_id") == entry["id"]:
         stop_server()
     try:
         shutil.rmtree(os.path.join(models_root(), entry["id"]), ignore_errors=True)
+        if entry.get("custom") and entry.get("id"):
+            remove_custom_entry(entry["id"])
         return True
     except OSError as exc:
         logger.warning("remove_model failed: %s", exc)
         return False
+
+
+# ---------------------------------------------------------------------------
+# Custom Hugging Face models (search -> download -> use as the agent model)
+# ---------------------------------------------------------------------------
+
+HF_API = "https://huggingface.co/api"
+HF_SEARCH_LIMIT = 30
+HF_REPO_RE = re.compile(r"^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$")
+# No trailing \b: quant tags are underscore-separated (Q4_K_M, IQ3_XS) and
+# '_' is a word character, which made \b fail right after "Q4_K". Only [_-]
+# continues a tag, so ".gguf" is never swallowed into it.
+_QUANT_RE = re.compile(
+    r"[-._](iq\d+(?:[_-][a-z0-9]+)*|q\d+(?:[_-][a-z0-9]+)*|[fb]f?16)",
+    re.IGNORECASE)
+
+
+def _custom_path() -> str:
+    return os.path.join(models_root(), "custom_models.json")
+
+
+def custom_models() -> List[Dict[str, Any]]:
+    """User-downloaded HF models (sidecar JSON next to the model dirs —
+    the pinned ladder in local_models.json stays the curated default)."""
+    try:
+        with open(_custom_path(), "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        models = data.get("models", []) if isinstance(data, dict) else []
+        return [m for m in models if isinstance(m, dict) and m.get("id")
+                and m.get("repo") and m.get("file")]
+    except OSError:
+        return []
+    except Exception as exc:
+        logger.warning("custom models sidecar unreadable: %s", exc)
+        return []
+
+
+def _write_custom_entries(entries: List[Dict[str, Any]]) -> None:
+    # Atomic (temp + replace) — same lesson as config.to_file.
+    os.makedirs(models_root(), exist_ok=True)
+    tmp = _custom_path() + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump({"models": entries}, fh, indent=2)
+    os.replace(tmp, _custom_path())
+
+
+def save_custom_entry(entry: Dict[str, Any]) -> None:
+    """Append/replace a custom entry in the sidecar."""
+    entries = [e for e in custom_models() if e.get("id") != entry.get("id")]
+    entries.append(entry)
+    _write_custom_entries(entries)
+
+
+def remove_custom_entry(model_id: str) -> None:
+    entries = [e for e in custom_models() if e.get("id") != model_id]
+    _write_custom_entries(entries)
+
+
+def _slug(text: str, limit: int = 40) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:limit]
+
+
+def _quant_from_filename(filename: str) -> str:
+    """Readable quant tag for labels/ids ('q4-k-m', 'q8-0', 'f16'…)."""
+    stem = os.path.basename(filename)
+    match = _QUANT_RE.search(stem)
+    if match:
+        return _slug(match.group(1), 10)
+    return _slug(os.path.splitext(stem)[0], 10) or "gguf"
+
+
+def custom_entry(repo_id: str, filename: str, size: int, sha256: str) -> Dict[str, Any]:
+    """Manifest-shaped entry for a user-picked HF GGUF. The id is alias- and
+    path-safe ('hf-…'), so the same download/server/ensure_running machinery
+    that serves the curated ladder serves it unchanged."""
+    if not HF_REPO_RE.match(repo_id or ""):
+        raise ValueError("invalid Hugging Face repository id")
+    if not filename or filename.startswith("/") or ".." in filename:
+        raise ValueError("invalid file name")
+    quant = _quant_from_filename(filename)
+    ident = (f"hf-{_slug(repo_id)[:28]}-{quant}-"
+             f"{hashlib.sha1(f'{repo_id}/{filename}'.encode('utf-8')).hexdigest()[:6]}")
+    return {
+        "id": ident,
+        "label": f"{repo_id.split('/')[-1]} ({quant})",
+        "repo": repo_id,
+        "revision": "main",
+        "file": filename,
+        "size": int(size),
+        "sha256": sha256 or "",
+        "custom": True,
+    }
+
+
+def hf_search(query: str, limit: int = HF_SEARCH_LIMIT) -> List[Dict[str, Any]]:
+    """GGUF-filtered Hugging Face model search, most-downloaded first.
+    Raises RuntimeError on network/HTTP failure; empty list = no matches."""
+    params = {"search": query or "", "filter": "gguf", "sort": "downloads",
+              "direction": -1, "limit": max(1, min(int(limit), 100))}
+    try:
+        resp = requests.get(f"{HF_API}/models", params=params,
+                            headers={"User-Agent": HF_UA}, timeout=(10, 30))
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        raise RuntimeError(f"Hugging Face search failed: {exc}") from exc
+    out = []
+    for m in data if isinstance(data, list) else []:
+        if isinstance(m, dict) and HF_REPO_RE.match(m.get("id") or ""):
+            out.append({
+                "id": m["id"],
+                "downloads": int(m.get("downloads") or 0),
+                "likes": int(m.get("likes") or 0),
+            })
+    return out
+
+
+def hf_gguf_files(repo_id: str) -> List[Dict[str, Any]]:
+    """The .gguf files in a repo's main tree with size + LFS sha256
+    (the LFS oid IS the sha256 — same pinning trick as the manifest)."""
+    if not HF_REPO_RE.match(repo_id or ""):
+        raise RuntimeError("invalid Hugging Face repository id")
+    try:
+        resp = requests.get(f"{HF_API}/models/{repo_id}/tree/main",
+                            headers={"User-Agent": HF_UA}, timeout=(10, 60))
+        resp.raise_for_status()
+        tree = resp.json()
+    except Exception as exc:
+        raise RuntimeError(f"Could not list {repo_id}: {exc}") from exc
+    files = []
+    for item in tree if isinstance(tree, list) else []:
+        if not isinstance(item, dict) or item.get("type") != "file":
+            continue
+        name = item.get("path") or ""
+        if not name.lower().endswith(".gguf"):
+            continue
+        size = int(item.get("size") or 0)
+        if size <= 0:
+            continue
+        lfs = item.get("lfs") if isinstance(item.get("lfs"), dict) else {}
+        files.append({"file": name, "size": size, "sha256": lfs.get("oid") or ""})
+    files.sort(key=lambda f: f["size"])
+    return files
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +419,167 @@ def ram_estimate_mb(size_bytes: int) -> int:
     rounded up to 128 MB."""
     total_mb = size_bytes / (1024 * 1024) + 128 + 256
     return int((total_mb + 127) // 128 * 128)
+
+
+# ---------------------------------------------------------------------------
+# Per-model context: GGUF metadata probe + machine KV-cache budget
+# ---------------------------------------------------------------------------
+
+_GGUF_VALUE_SIZES = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 1,
+                     10: 8, 11: 8, 12: 8}
+_GGUF_UINT_UNPACK = {4: "<I", 5: "<i", 10: "<Q", 11: "<q"}
+# GGUF metadata keys are ARCHITECTURE-prefixed in current llama.cpp output
+# (qwen35.context_length, llama.block_count in older converters) — match by
+# suffix so both naming schemes work without depending on the arch value.
+_GGUF_UINT_SUFFIXES = (
+    (".context_length", "context_length"),
+    (".block_count", "block_count"),
+    (".embedding_length", "embedding_length"),
+    (".attention.head_count", "head_count"),
+    (".attention.head_count_kv", "head_count_kv"),
+    (".attention.key_length", "key_length"),
+)
+_gguf_probe_cache: Dict[str, Optional[Dict[str, Any]]] = {}
+
+
+def probe_gguf(path: str) -> Optional[Dict[str, Any]]:
+    """Read only a GGUF's metadata header (never the multi-GB tensor section)
+    and return what the server/loop need: native context_length, block_count,
+    KV-head count, head dim, name and architecture. None on any format
+    surprise — callers fall back to CONTEXT_SIZE."""
+    if path in _gguf_probe_cache:
+        return _gguf_probe_cache[path]
+    info: Optional[Dict[str, Any]] = None
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(4) != b"GGUF":
+                raise ValueError("not a GGUF file")
+            version = int.from_bytes(fh.read(4), "little")
+            if version not in (2, 3):
+                raise ValueError(f"unsupported GGUF version {version}")
+            fh.read(8)  # tensor_count (never read)
+            kv_count = int.from_bytes(fh.read(8), "little")
+            if kv_count > 4096:
+                raise ValueError("implausible metadata count")
+            got: Dict[str, Any] = {}
+
+            def read_string() -> str:
+                n = int.from_bytes(fh.read(8), "little")
+                if n > 64 * 1024 * 1024:
+                    raise ValueError("implausible string length")
+                return fh.read(n).decode("utf-8", errors="replace")
+
+            def skip_value(vtype: int) -> None:
+                if vtype == 8:  # string
+                    read_string()
+                    return
+                if vtype == 9:  # array (tokenizer tables etc. — skip by seek)
+                    elem = int.from_bytes(fh.read(4), "little")
+                    count = int.from_bytes(fh.read(8), "little")
+                    if elem == 8:
+                        for _ in range(count):
+                            read_string()
+                        return
+                    size = _GGUF_VALUE_SIZES.get(elem)
+                    if size is None or count > 2 ** 40:
+                        raise ValueError("bad array")
+                    fh.seek(size * count, 1)
+                    return
+                size = _GGUF_VALUE_SIZES.get(vtype)
+                if size is None:
+                    raise ValueError(f"unknown GGUF value type {vtype}")
+                fh.seek(size, 1)
+
+            for _ in range(kv_count):
+                key = read_string()
+                vtype = int.from_bytes(fh.read(4), "little")
+                if key in ("general.name", "general.architecture"):
+                    if vtype != 8:
+                        raise ValueError("bad string type")
+                    got["name" if key.endswith("name") else "architecture"] = read_string()
+                    continue
+                normalized = next((name for suffix, name in _GGUF_UINT_SUFFIXES
+                                   if key.endswith(suffix)), None)
+                if normalized is not None:
+                    size = _GGUF_VALUE_SIZES.get(vtype)
+                    unpack = _GGUF_UINT_UNPACK.get(vtype)
+                    if size is None or unpack is None:
+                        raise ValueError("unexpected width for uint key")
+                    got[normalized] = int.from_bytes(fh.read(size), "little")
+                    continue
+                skip_value(vtype)
+            info = got or None
+    except Exception as exc:
+        logger.debug("gguf metadata probe failed for %s: %s", path, exc)
+        info = None
+    _gguf_probe_cache[path] = info
+    return info
+
+
+def kv_bytes_per_token(info: Optional[Dict[str, Any]]) -> int:
+    """fp16 KV-cache bytes per context token: 2 tensors (K+V) × 2 bytes ×
+    layers × kv heads × head dim. OVERESTIMATES on hybrid SSM models (their
+    non-attention layers carry no KV) — deliberately conservative so a
+    context cap can never overshoot real memory."""
+    if not info:
+        return 0
+    block = int(info.get("block_count") or 0)
+    kv_heads = int(info.get("head_count_kv") or 0)
+    head_dim = int(info.get("key_length") or 0) or (
+        int(info.get("embedding_length") or 0) // max(1, int(info.get("head_count") or 0)))
+    if block <= 0 or kv_heads <= 0 or head_dim <= 0:
+        return 0
+    return block * 2 * kv_heads * head_dim * 2
+
+
+def ctx_cap_for(hw: "HardwareInfo", entry: Dict[str, Any],
+                info: Optional[Dict[str, Any]]) -> int:
+    """Largest context whose KV cache fits this machine, floored at 4096.
+    0 = unknown, keep the native/default value.
+
+    Two budgets (server runs --parallel 1, so one slot = one KV cache):
+    * RAM: 90% minus weights minus 256 MB runtime.
+    * VRAM, only when the weights sit fully on the GPU (gpu_full): the KV
+      then fits the leftover VRAM too — a RAM-resident KV cache turns fast
+      GPU decode into CPU-bound generation, so the window is cut to what
+      the GPU can hold instead of what RAM can hold."""
+    kv = kv_bytes_per_token(info)
+    if kv <= 0 or hw is None or hw.ram_mb <= 0:
+        return 0
+    weights_mb = int(entry["size"]) // (1024 * 1024)
+    ram_mb = hw.ram_mb * 9 // 10 - weights_mb - 256
+    caps = [max(4096, ram_mb * 1024 * 1024 // kv)] if ram_mb > 0 else [4096]
+    if hw.vram_mb > 0 and weights_mb <= hw.vram_mb * 9 // 10:
+        vram_mb = hw.vram_mb * 9 // 10 - weights_mb
+        if vram_mb > 0:
+            caps.append(max(4096, vram_mb * 1024 * 1024 // kv))
+    return min(caps)
+
+
+def entry_ctx(entry: Dict[str, Any], hw: Optional["HardwareInfo"] = None) -> int:
+    """The context size a model is served with: its native GGUF
+    context_length, capped by this machine's KV budget when hardware is
+    known, floored at 4096. Unknown metadata → CONTEXT_SIZE."""
+    info = probe_gguf(model_path(entry)) if is_installed(entry) else None
+    native = int((info or {}).get("context_length") or 0)
+    if native <= 0:
+        return CONTEXT_SIZE
+    cap = ctx_cap_for(hw, entry, info) if hw is not None else 0
+    if cap:
+        native = min(native, cap)
+    return max(4096, native)
+
+
+def context_for_config(config: "Any") -> int:
+    """The context the configured local model is (or will be) served with —
+    the agent loop clamps its request budget to this, matching the server."""
+    try:
+        entry = entry_by_id(getattr(config.llm, "model", ""))
+        if entry is not None and is_installed(entry):
+            return entry_ctx(entry, detect_hardware())
+    except Exception:
+        pass
+    return CONTEXT_SIZE
 
 
 def fit_tier(hw: HardwareInfo, entry: Dict[str, Any]) -> Optional[str]:
@@ -425,10 +735,12 @@ def download_model(entry: Dict[str, Any],
         if got:
             os.remove(part)
         raise RuntimeError(f"downloaded {got} bytes, expected {expected_size}")
-    digest = _sha256_of(part)
-    if digest != entry["sha256"]:
-        os.remove(part)
-        raise RuntimeError("sha256 mismatch — the downloaded file is corrupt")
+    if entry.get("sha256"):
+        digest = _sha256_of(part)
+        if digest != entry["sha256"]:
+            os.remove(part)
+            raise RuntimeError("sha256 mismatch — the downloaded file is corrupt")
+    # (custom entries whose tree listing carried no LFS oid verify by size only)
     os.replace(part, dest)
     if on_progress:
         try:
@@ -557,6 +869,49 @@ def is_running(timeout: float = 2.5) -> bool:
         return False
 
 
+def server_status() -> Dict[str, Any]:
+    """One lightweight probe of OUR loopback server for the on/off control:
+    {'state': 'running'} | {'state': 'loading'} | {'state': 'off'}, plus
+    'model_id' from the state file when it is up or coming up.
+
+    VERIFIED live (2026-10-21, b11727): while a model loads, /health answers
+    HTTP 503 {"error":{"message":"Loading model",...}} — NO percentage is
+    reported in this build, so callers show an indeterminate bar + phase
+    text instead of a fake number."""
+    out: Dict[str, Any] = {"state": "off"}
+    try:
+        resp = requests.get(f"http://127.0.0.1:{DEFAULT_PORT}/health", timeout=2.5)
+        if resp.status_code == 200:
+            out["state"] = "running"
+        elif resp.status_code == 503:
+            out["state"] = "loading"
+        else:
+            out["detail"] = f"HTTP {resp.status_code}"
+            return out
+    except Exception:
+        return out
+    state = _state()
+    if state.get("model_id"):
+        out["model_id"] = state["model_id"]
+    return out
+
+
+def server_manually_off() -> bool:
+    return bool(_state().get("manual_off"))
+
+
+def stop_server_manual() -> bool:
+    """The on/off control's OFF: stop the server AND pin a manual_off flag so
+    the app's lazy auto-start (ensure_running) leaves it off until the user
+    turns it back on — off must mean off, or the button is theater."""
+    stopped = stop_server()
+    try:
+        _write_state({"manual_off": True})
+    except OSError:
+        pass
+    return stopped
+
+
 def test_endpoint(base_url: str = DEFAULT_BASE_URL,
                   timeout: float = 5.0) -> Tuple[bool, str]:
     """/v1/models probe for the settings dialog's Test button."""
@@ -572,9 +927,11 @@ def test_endpoint(base_url: str = DEFAULT_BASE_URL,
 
 
 def build_server_args(gguf_path: str, model_id: str, hw: HardwareInfo,
-                      tier: str, variant: str) -> List[str]:
+                      tier: str, variant: str,
+                      ctx: Optional[int] = None) -> List[str]:
     """Pure argv builder (pinned contract from the ModelSwarm engine):
-    loopback bind, embedded alias, capped context, half the logical cores.
+    loopback bind, embedded alias, PER-MODEL context (GGUF-native, capped by
+    the machine's KV budget — see entry_ctx), half the logical cores.
     GPU layers: 'all' when the weights fit VRAM; otherwise omitted — b11727
     defaults to 'auto', which fits as many layers as VRAM allows."""
     threads = max(1, (hw.cpu_cores or 4) // 2)
@@ -584,14 +941,23 @@ def build_server_args(gguf_path: str, model_id: str, hw: HardwareInfo,
         "--port", str(DEFAULT_PORT),
         "-m", gguf_path,
         "--alias", model_id,
-        "-c", str(CONTEXT_SIZE),
+        "-c", str(ctx if ctx is not None else CONTEXT_SIZE),
         "--no-webui",
-        # Qwen3.5 thinks inline by default; this maps the thinking segment to
-        # OpenAI-style reasoning_content, which DeepSeekClient._consume_stream
-        # already captures (the GUI dims it like DeepSeek's own thinking).
-        "--reasoning-format", "deepseek",
+        # ONE slot keeps the KV-cache budget deterministic: n_ctx × parallel
+        # slots is what llama-server allocates, and ctx_cap_for's math assumes
+        # a single slot. The app sends one chat at a time; busy requests
+        # queue in the server's dispatcher.
+        "--parallel", "1",
         "-t", str(threads),
     ]
+    # Qwen3(.5) thinks inline by default; the deepseek reasoning format maps
+    # the thinking segment to OpenAI-style reasoning_content, which
+    # DeepSeekClient._consume_stream already captures (the GUI dims it like
+    # DeepSeek's own thinking). Other architectures get no flag — it would
+    # only mis-parse their output.
+    arch = ((probe_gguf(gguf_path) or {}).get("architecture") or "").lower()
+    if not arch or "qwen3" in arch:
+        args += ["--reasoning-format", "deepseek"]
     if variant == "vulkan" and tier == "gpu_full":
         args += ["-ngl", "all"]
     return args
@@ -623,6 +989,10 @@ def start_server(entry: Dict[str, Any],
         return False
     hw = hw or detect_hardware()
     tier = fit_tier(hw, entry) or "ram_only"
+    # Per-model context: the GGUF's native window, capped by this machine's
+    # KV budget — a user-downloaded 128K model gets more than the 32K
+    # ladder default, and a huge model on a small machine gets less.
+    ctx = entry_ctx(entry, hw)
 
     with _server_lock:
         state = _state()
@@ -654,9 +1024,9 @@ def start_server(entry: Dict[str, Any],
         # CPU-only when no device is present, so this is strictly safer).
         attempts: List[Tuple[str, str]] = []
         if find_server_exe("vulkan"):
-            attempts.append(("vulkan", build_server_args(gguf, entry["id"], hw, tier, "vulkan")))
+            attempts.append(("vulkan", build_server_args(gguf, entry["id"], hw, tier, "vulkan", ctx=ctx)))
         if find_server_exe("cpu"):
-            attempts.append(("cpu", build_server_args(gguf, entry["id"], hw, tier, "cpu")))
+            attempts.append(("cpu", build_server_args(gguf, entry["id"], hw, tier, "cpu", ctx=ctx)))
         if not attempts:
             logger.warning("no llama.cpp runtime extracted (run the setup step)")
             return False
@@ -849,6 +1219,10 @@ def ensure_running(config: "Any") -> bool:
     base URL)."""
     try:
         if getattr(config.llm, "provider", "") != "local":
+            return False
+        if server_manually_off():
+            # The user turned the local server OFF in the AI page — the lazy
+            # auto-start must not silently undo that (off means off).
             return False
         base = (config.llm.base_url or DEFAULT_BASE_URL).strip().rstrip("/")
         if base and base != DEFAULT_BASE_URL:

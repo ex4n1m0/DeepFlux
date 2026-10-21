@@ -4154,6 +4154,12 @@ class MainWindow(QMainWindow):
                     "type": "local_model", "success": True,
                     "message": "Local AI server was not running — started it.",
                 })
+            elif was_down and local_model.server_manually_off():
+                self._agent_signals.event.emit({
+                    "type": "local_model", "success": False,
+                    "message": "The local AI server is turned OFF — turn it "
+                               "back on in File → API Keys → AI.",
+                })
         except Exception as exc:
             logger.debug("local model startup check failed: %s", exc)
 

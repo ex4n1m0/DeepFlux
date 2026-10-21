@@ -15,7 +15,7 @@ import threading
 import time
 from typing import List, Optional, Tuple
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -705,6 +705,9 @@ class APIKeysDialog(QDialog):
     local_dl_progress = Signal(str, int, int)
     local_dl_done = Signal(str, object)
     local_action_done = Signal(str, object)
+    hf_search_done = Signal(str, object)
+    hf_files_done = Signal(str, object)
+    server_state_changed = Signal(object)
 
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None,
                  page: str = "all") -> None:
@@ -727,6 +730,9 @@ class APIKeysDialog(QDialog):
         self.local_dl_progress.connect(self._on_local_dl_progress)
         self.local_dl_done.connect(self._on_local_dl_done)
         self.local_action_done.connect(self._on_local_action_done)
+        self.hf_search_done.connect(self._on_hf_search_done)
+        self.hf_files_done.connect(self._on_hf_files_done)
+        self.server_state_changed.connect(self._on_server_state)
         self._local_cancel = threading.Event()
         self._local_hw: Optional[object] = None
         # Staged local-provider switch (applied only on OK — Cancel must not
@@ -736,6 +742,14 @@ class APIKeysDialog(QDialog):
         self._load_values()
         if self._page in ("all", "ai") and sys.platform == "win32":
             self._start_local_hw_probe()
+            self._refresh_server_state()
+            # Periodic refresh keeps the on/off control honest while the
+            # dialog stays open (the server may come up or go down behind
+            # the user's back via the app's lazy auto-start).
+            self._server_poll = QTimer(self)
+            self._server_poll.setInterval(5000)
+            self._server_poll.timeout.connect(self._refresh_server_state)
+            self._server_poll.start()
 
     # ------------------------------------------------------------------
 
@@ -811,8 +825,19 @@ class APIKeysDialog(QDialog):
         # are resumable and sha256-verified; each row carries a FIT BADGE
         # computed from this machine's GPU/RAM (fit matrix ported from the
         # ModelSwarm project) so the user can see what their hardware will
-        # actually do with the model BEFORE downloading gigabytes.
+        # actually do with the model BEFORE downloading gigabytes. On top of
+        # the ladder, users can download ANY GGUF from Hugging Face (search
+        # section below) — those land in the same rows, backed by the custom
+        # sidecar (models/custom_models.json).
         self._local_rows: dict = {}
+        self._local_entries: dict = {}        # model_id -> entry (ladder + custom)
+        self._custom_rows: set = set()
+        self._custom_dl_entries: dict = {}    # in-flight custom downloads
+        self._hf_mode = "search"
+        self._hf_repo = ""
+        self._hf_search_snapshot: list = []
+        self._server_state: dict = {}
+        self._server_transitioning = False
         from infra import local_model
         self._local_manifest = [] if sys.platform != "win32" else local_model.load_manifest()
         self._local_tiers: dict = {}          # model_id -> fit tier (or None)
@@ -828,34 +853,17 @@ class APIKeysDialog(QDialog):
             self.local_reco_label.setWordWrap(True)
             vl.addWidget(self.local_hw_label)
             vl.addWidget(self.local_reco_label)
+            # Model rows live in their own container so user-downloaded
+            # custom rows can be inserted among them at runtime.
+            self._local_rows_box = QWidget()
+            self._local_rows_layout = QVBoxLayout(self._local_rows_box)
+            self._local_rows_layout.setContentsMargins(0, 0, 0, 0)
+            self._local_rows_layout.setSpacing(4)
+            vl.addWidget(self._local_rows_box)
             for entry in self._local_manifest:
-                row = QHBoxLayout()
-                row.setSpacing(6)
-                name = QLabel(entry["label"])
-                name.setToolTip(entry["id"])
-                fit = QLabel("")
-                fit.setToolTip(tr('How this PC would run it (from the GPU/RAM scan)'))
-                status = QLabel("")
-                status.setObjectName("hint")
-                use_btn = QPushButton(tr('Use'))
-                use_btn.setToolTip(tr('Make this the agent\'s model (applies on OK)'))
-                use_btn.clicked.connect(
-                    lambda _=False, e=entry: self._local_use(e))
-                dl_btn = QPushButton(tr('Download'))
-                rm_btn = QPushButton(tr('Remove'))
-                dl_btn.clicked.connect(lambda _=False, e=entry: self._local_download(e))
-                rm_btn.clicked.connect(lambda _=False, e=entry: self._local_remove(e))
-                row.addWidget(name, 1)
-                row.addWidget(fit)
-                row.addWidget(status)
-                row.addWidget(use_btn)
-                row.addWidget(dl_btn)
-                row.addWidget(rm_btn)
-                wrap = QWidget()
-                wrap.setLayout(row)
-                vl.addWidget(wrap)
-                self._local_rows[entry["id"]] = (name, fit, status, use_btn,
-                                                 dl_btn, rm_btn)
+                self._local_entries[entry["id"]] = entry
+                self._add_local_row(entry)
+            self._sync_local_rows()  # rows for previously downloaded custom models
             self.local_progress = QProgressBar()
             self.local_progress.setTextVisible(False)
             self.local_progress.setVisible(False)
@@ -882,6 +890,66 @@ class APIKeysDialog(QDialog):
             twrap = QWidget()
             twrap.setLayout(test_row)
             vl.addWidget(twrap)
+            # --- Local server on/off + loading progress ----------------------
+            srv_row = QHBoxLayout()
+            self.server_toggle_btn = QPushButton(tr('Start server'))
+            self.server_toggle_btn.clicked.connect(self._local_server_toggle)
+            self.server_state_lbl = QLabel(tr('Checking server…'))
+            self.server_state_lbl.setObjectName("hint")
+            self.server_state_lbl.setWordWrap(True)
+            srv_row.addWidget(self.server_toggle_btn)
+            srv_row.addWidget(self.server_state_lbl, 1)
+            srv_wrap = QWidget()
+            srv_wrap.setLayout(srv_row)
+            vl.addWidget(srv_wrap)
+            # Indeterminate: b11727's /health reports no load percentage
+            # (VERIFIED live — 503 "Loading model" only), so the bar animates
+            # and the label carries the phase + elapsed seconds.
+            self.server_progress = QProgressBar()
+            self.server_progress.setTextVisible(False)
+            self.server_progress.setRange(0, 0)
+            self.server_progress.setVisible(False)
+            vl.addWidget(self.server_progress)
+            # --- Custom model from Hugging Face -----------------------------
+            hf_box = QWidget()
+            hf_vl = QVBoxLayout(hf_box)
+            hf_vl.setContentsMargins(0, 0, 0, 0)
+            hf_vl.setSpacing(4)
+            hf_title = QLabel(tr('Custom model from Hugging Face'))
+            hf_title.setStyleSheet("font-weight: 600;")
+            hf_vl.addWidget(hf_title)
+            hf_top = QHBoxLayout()
+            self.hf_search_edit = QLineEdit()
+            self.hf_search_edit.setPlaceholderText(
+                tr('Search any GGUF model, e.g. "llama 3 8b uncensored"'))
+            self.hf_search_edit.returnPressed.connect(self._hf_search)
+            self.hf_search_btn = QPushButton(tr('Search'))
+            self.hf_search_btn.clicked.connect(self._hf_search)
+            hf_top.addWidget(self.hf_search_edit, 1)
+            hf_top.addWidget(self.hf_search_btn)
+            hf_vl.addLayout(hf_top)
+            hf_nav = QHBoxLayout()
+            self.hf_back_btn = QPushButton(tr('← Back to results'))
+            self.hf_back_btn.setVisible(False)
+            self.hf_back_btn.clicked.connect(self._hf_back)
+            self.hf_download_btn = QPushButton(tr('Download selected model'))
+            self.hf_download_btn.setEnabled(False)
+            self.hf_download_btn.clicked.connect(self._hf_download)
+            hf_nav.addWidget(self.hf_back_btn)
+            hf_nav.addStretch(1)
+            hf_nav.addWidget(self.hf_download_btn)
+            hf_vl.addLayout(hf_nav)
+            self.hf_list = QListWidget()
+            self.hf_list.setMaximumHeight(150)
+            self.hf_list.itemDoubleClicked.connect(self._hf_open_selected)
+            self.hf_list.currentItemChanged.connect(self._hf_on_selection)
+            hf_vl.addWidget(self.hf_list)
+            self.hf_status = QLabel(tr('Search a repository, double-click it to '
+                                       'pick a model file, then download and use it.'))
+            self.hf_status.setObjectName("hint")
+            self.hf_status.setWordWrap(True)
+            hf_vl.addWidget(self.hf_status)
+            vl.addWidget(hf_box)
             vl.addWidget(_api_hint(
                 "Local models run entirely on this PC through the bundled llama.cpp "
                 "server (no API key, nothing sent to the cloud). The badge on each "
@@ -889,7 +957,8 @@ class APIKeysDialog(QDialog):
                 "offload (fastest), GPU+CPU = split, CPU = processor only. "
                 "Downloading a model offers to make it the agent when no cloud key "
                 "of your own is configured. Interrupted downloads resume where "
-                "they stopped."))
+                "they stopped. The Hugging Face search below installs ANY public "
+                "GGUF model the same way."))
             self._refresh_local_rows()
             layout.addWidget(local_group)
 
@@ -1170,6 +1239,59 @@ class APIKeysDialog(QDialog):
 
     # -- Local models (bundled llama.cpp) ------------------------------------
 
+    def _add_local_row(self, entry: dict) -> None:
+        """One model row (label / fit badge / status / Use / Download /
+        Remove) inside the rows container."""
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        name = QLabel(entry["label"])
+        name.setToolTip(entry.get("repo", entry["id"]))
+        fit = QLabel("")
+        fit.setToolTip(tr('How this PC would run it (from the GPU/RAM scan)'))
+        status = QLabel("")
+        status.setObjectName("hint")
+        use_btn = QPushButton(tr('Use'))
+        use_btn.setToolTip(tr('Make this the agent\'s model (applies on OK)'))
+        use_btn.clicked.connect(
+            lambda _=False, e=entry: self._local_use(e))
+        dl_btn = QPushButton(tr('Download'))
+        rm_btn = QPushButton(tr('Remove'))
+        dl_btn.clicked.connect(lambda _=False, e=entry: self._local_download(e))
+        rm_btn.clicked.connect(lambda _=False, e=entry: self._local_remove(e))
+        row.addWidget(name, 1)
+        row.addWidget(fit)
+        row.addWidget(status)
+        row.addWidget(use_btn)
+        row.addWidget(dl_btn)
+        row.addWidget(rm_btn)
+        wrap = QWidget()
+        wrap.setLayout(row)
+        self._local_rows_layout.addWidget(wrap)
+        self._local_rows[entry["id"]] = (wrap, name, fit, status, use_btn,
+                                         dl_btn, rm_btn)
+
+    def _sync_local_rows(self) -> None:
+        """Rows for user-downloaded custom models (sidecar beside the curated
+        ladder) — call after the sidecar changes so new models appear."""
+        from infra import local_model
+        if sys.platform != "win32":
+            return
+        hw = getattr(self, "_local_hw", None)
+        for entry in local_model.custom_models():
+            self._local_entries[entry["id"]] = entry
+            if hw is not None and entry["id"] not in self._local_tiers:
+                self._local_tiers[entry["id"]] = local_model.fit_tier(hw, entry)
+            if entry["id"] not in self._local_rows:
+                self._add_local_row(entry)
+                self._custom_rows.add(entry["id"])
+
+    def _remove_local_row(self, model_id: str) -> None:
+        widgets = self._local_rows.pop(model_id, None)
+        self._custom_rows.discard(model_id)
+        self._local_entries.pop(model_id, None)
+        if widgets:
+            widgets[0].deleteLater()
+
     def _start_local_hw_probe(self) -> None:
         """Hardware probe runs llama-server --list-devices (a subprocess) —
         keep it off the GUI thread; the label fills in when it lands."""
@@ -1197,8 +1319,8 @@ class APIKeysDialog(QDialog):
         entry, reason = local_model.recommend(hw, self._local_manifest)
         # Fit tiers per row drive the badges; the recommended row gets a
         # star so the choice is visible before anything is downloaded.
-        self._local_tiers = {e["id"]: local_model.fit_tier(hw, e)
-                             for e in self._local_manifest}
+        self._local_tiers = {eid: local_model.fit_tier(hw, e)
+                             for eid, e in self._local_entries.items()}
         if entry is None:
             self.local_reco_label.setText(f"{tr('Recommended')}: {reason}")
         else:
@@ -1215,11 +1337,11 @@ class APIKeysDialog(QDialog):
         staged = getattr(self, "_pending_local_entry", None)
         if staged is not None:
             active_id = staged["id"]
-        for entry in self._local_manifest:
-            widgets = self._local_rows.get(entry["id"])
-            if not widgets:
+        for entry_id, widgets in list(self._local_rows.items()):
+            entry = self._local_entries.get(entry_id)
+            if entry is None:
                 continue
-            name, fit, status, use_btn, dl_btn, rm_btn = widgets
+            wrap, name, fit, status, use_btn, dl_btn, rm_btn = widgets
             installed = local_model.is_installed(entry)
             size_gb = int(entry["size"]) / 1024 ** 3
             tier = self._local_tiers.get(entry["id"], "")
@@ -1227,7 +1349,8 @@ class APIKeysDialog(QDialog):
             fit.setText(badge)
             fit.setStyleSheet(f"color: {color}; font-weight: 600;" if color else "")
             if installed:
-                status.setText("✓ " + tr('installed') + f" · {size_gb:.1f} GiB")
+                ctx = local_model.entry_ctx(entry, getattr(self, "_local_hw", None))
+                status.setText("✓ " + tr('installed') + f" · {size_gb:.1f} GiB · {ctx // 1024}K ctx")
             else:
                 status.setText(f"{size_gb:.1f} GiB")
             dl_btn.setEnabled(not installed)
@@ -1250,12 +1373,14 @@ class APIKeysDialog(QDialog):
     def _local_download(self, entry: dict) -> None:
         from infra import local_model
         widgets = self._local_rows.get(entry["id"])
-        if not widgets or not widgets[4].isEnabled():
+        if not widgets or not widgets[5].isEnabled():
             return
         self._local_cancel.clear()
-        for _name, _fit, _status, _use_btn, dl_btn, rm_btn in self._local_rows.values():
+        for _wrap, _name, _fit, _status, _use_btn, dl_btn, rm_btn in self._local_rows.values():
             dl_btn.setEnabled(False)
             rm_btn.setEnabled(False)
+        if hasattr(self, "hf_download_btn"):
+            self.hf_download_btn.setEnabled(False)
         self.local_progress.setVisible(True)
         self.local_progress.setRange(0, 100)
         self.local_progress.setValue(0)
@@ -1293,12 +1418,28 @@ class APIKeysDialog(QDialog):
         from infra import local_model
         self.local_cancel_btn.setVisible(False)
         self.local_progress.setVisible(False)
-        self._refresh_local_rows()
+        if hasattr(self, "hf_download_btn"):
+            self.hf_download_btn.setEnabled(
+                self._hf_mode == "files" and self.hf_list.currentItem() is not None)
         if isinstance(outcome, Exception):
+            self._refresh_local_rows()
             self.local_test_result.setText(f"Download stopped: {outcome}")
             self.local_test_result.setStyleSheet("color: #ffcc00;")
             return
         entry = local_model.entry_by_id(model_id)
+        custom_entry = self._custom_dl_entries.pop(model_id, None)
+        if custom_entry is not None:
+            # A custom (Hugging Face) model: persist its sidecar record so
+            # the row, the restart logic and the server alias all survive.
+            local_model.save_custom_entry(custom_entry)
+            self._sync_local_rows()
+            entry = entry or custom_entry
+            if hasattr(self, "hf_status"):
+                self.hf_status.setText(
+                    f"{custom_entry['label']} " + tr('installed — it appears in '
+                                                     'the model list above.'))
+                self.hf_status.setStyleSheet("color: #a8edff;")
+        self._refresh_local_rows()
         if entry is None:
             return
         # Offer the freshly downloaded model as the agent when this machine
@@ -1389,11 +1530,16 @@ class APIKeysDialog(QDialog):
     def _on_local_action_done(self, action: str, outcome) -> None:
         from infra import local_model
         if action == "remove":
-            self._refresh_local_rows()
             if isinstance(outcome, Exception):
+                self._refresh_local_rows()
                 self.local_test_result.setText(f"Remove failed: {outcome}")
                 self.local_test_result.setStyleSheet("color: #ff3366;")
                 return
+            # A removed CUSTOM model's row disappears with its sidecar record
+            # (ladder rows stay — they just show "not installed" again).
+            if outcome.get("id") in self._custom_rows:
+                self._remove_local_row(outcome.get("id"))
+            self._refresh_local_rows()
             # A staged Use/download switch pointing at the removed model
             # must not resurrect it on OK.
             staged = getattr(self, "_pending_local_entry", None)
@@ -1422,6 +1568,307 @@ class APIKeysDialog(QDialog):
                    'DeepFlux once a model is installed and the endpoint is '
                    'set to Local AI.'))
             self.local_test_result.setStyleSheet("color: #ffcc00;")
+
+    # -- Local server on/off + loading progress ------------------------------
+
+    def _refresh_server_state(self) -> None:
+        """Lightweight server probe (background — /health has a 2.5 s cap)."""
+        from infra import local_model
+
+        def work() -> None:
+            try:
+                st = local_model.server_status()
+            except Exception:
+                st = {"state": "off"}
+            try:
+                self.server_state_changed.emit(st)
+            except RuntimeError:
+                pass  # dialog closed
+
+        threading.Thread(target=work, daemon=True,
+                         name="local-server-probe").start()
+
+    def _local_server_toggle(self) -> None:
+        if not self.server_toggle_btn.isEnabled():
+            return
+        state = self._server_state.get("state", "off")
+        if state in ("running", "loading"):
+            self._local_server_stop()
+        else:
+            self._local_server_start()
+
+    def _local_server_stop(self) -> None:
+        self._server_transitioning = True
+        self.server_toggle_btn.setEnabled(False)
+        self._apply_server_state_ui({"state": "loading", "stopping": True})
+
+        def work() -> None:
+            from infra import local_model
+            try:
+                local_model.stop_server_manual()
+                time.sleep(0.5)
+                st = local_model.server_status()
+            except Exception:
+                st = {"state": "off"}
+            self._server_transitioning = False
+            try:
+                self.server_state_changed.emit(st)
+            except RuntimeError:
+                pass  # dialog closed
+
+        threading.Thread(target=work, daemon=True,
+                         name="local-server-stop").start()
+
+    def _local_server_start(self) -> None:
+        self._server_transitioning = True
+        self.server_toggle_btn.setEnabled(False)
+        self.server_progress.setVisible(True)
+
+        def work() -> None:
+            from infra import local_model
+
+            def emit(st: dict) -> None:
+                try:
+                    self.server_state_changed.emit(st)
+                except RuntimeError:
+                    pass
+
+            try:
+                hw = local_model.detect_hardware()
+                entry = local_model.entry_by_id(self.config.llm.model)
+                if entry is None or not local_model.is_installed(entry):
+                    installed = local_model.installed_models()
+                    if not installed:
+                        emit({"state": "off",
+                              "error": tr('No model installed — download one first.')})
+                        return
+                    entry = installed[0]
+                if not local_model.ensure_runtime():
+                    emit({"state": "off",
+                          "error": tr('The llama.cpp runtime is missing in this build.')})
+                    return
+                if not local_model.start_server(entry, hw):
+                    emit({"state": "off", "error": tr('Could not start the server.')})
+                    return
+                started_at = time.monotonic()
+                deadline = started_at + (600 if hw.vram_mb else 240)
+                while time.monotonic() < deadline:
+                    st = local_model.server_status()
+                    st["elapsed"] = time.monotonic() - started_at
+                    emit(st)
+                    if st["state"] == "running":
+                        return
+                    time.sleep(1.0)
+                emit({"state": "off",
+                      "error": tr('Timed out waiting for the model to load. '
+                                  'Stop and try again, or pick a smaller model.')})
+            finally:
+                self._server_transitioning = False
+
+        threading.Thread(target=work, daemon=True,
+                         name="local-server-start").start()
+
+    def _on_server_state(self, st) -> None:
+        self._server_state = st
+        self._apply_server_state_ui(st)
+
+    def _apply_server_state_ui(self, st: dict) -> None:
+        from infra import local_model
+        state = st.get("state", "off")
+        # Terminal states always re-enable the toggle (a terminal emit can
+        # be processed before the worker clears its transition flag);
+        # mid-transition loading states keep it disabled.
+        if state == "loading" and getattr(self, "_server_transitioning", False):
+            self.server_toggle_btn.setEnabled(False)
+        elif state in ("running", "off") \
+                or not getattr(self, "_server_transitioning", False):
+            self.server_toggle_btn.setEnabled(True)
+        if state == "running":
+            self.server_progress.setVisible(False)
+            self.server_toggle_btn.setText(tr('Stop server'))
+            name = ""
+            model_id = st.get("model_id")
+            if model_id:
+                entry = local_model.entry_by_id(model_id)
+                name = (entry or {}).get("label") or model_id
+            self.server_state_lbl.setText(
+                "● " + tr('Running') + (f" — {name}" if name else ""))
+            self.server_state_lbl.setStyleSheet("color: #a8edff;")
+        elif state == "loading":
+            self.server_progress.setVisible(True)
+            if st.get("stopping"):
+                self.server_state_lbl.setText(tr('Stopping server…'))
+            else:
+                text = tr('Loading model…')
+                elapsed = st.get("elapsed")
+                if isinstance(elapsed, (int, float)) and elapsed > 0:
+                    text += f" {elapsed:.0f}s"
+                text += " (" + tr('GPU loads can take up to a minute') + ")"
+                self.server_state_lbl.setText("◐ " + text)
+            self.server_state_lbl.setStyleSheet("color: #ffcc00;")
+            self.server_toggle_btn.setText(tr('Cancel / stop'))
+        else:
+            self.server_progress.setVisible(False)
+            self.server_toggle_btn.setText(tr('Start server'))
+            err = st.get("error")
+            self.server_state_lbl.setText(
+                "○ " + (err or tr('Off — the local AI uses no GPU/RAM until you start it.')))
+            self.server_state_lbl.setStyleSheet("color: #888888;")
+
+    # -- Custom Hugging Face models (search -> pick file -> download) --------
+
+    def _hf_search(self) -> None:
+        from infra import local_model
+        query = self.hf_search_edit.text().strip()
+        if not query or not self.hf_search_btn.isEnabled():
+            return
+        self.hf_search_btn.setEnabled(False)
+        self.hf_list.setEnabled(False)
+        self.hf_status.setText(tr('Searching Hugging Face…'))
+        self.hf_status.setStyleSheet("color: #2a7abf;")
+
+        def work() -> None:
+            try:
+                results = local_model.hf_search(query)
+                outcome = {"ok": True, "results": results}
+            except Exception as exc:
+                outcome = exc
+            try:
+                self.hf_search_done.emit(query, outcome)
+            except RuntimeError:
+                pass  # dialog closed mid-search
+
+        threading.Thread(target=work, daemon=True, name="hf-search").start()
+
+    def _on_hf_search_done(self, query: str, outcome) -> None:
+        self.hf_search_btn.setEnabled(True)
+        self.hf_list.setEnabled(True)
+        self._hf_mode = "search"
+        self._hf_repo = ""
+        self.hf_back_btn.setVisible(False)
+        self.hf_download_btn.setEnabled(False)
+        self.hf_list.clear()
+        if isinstance(outcome, Exception):
+            self.hf_status.setText(f"{tr('Search failed')}: {outcome}")
+            self.hf_status.setStyleSheet("color: #ff3366;")
+            return
+        results = outcome.get("results") or []
+        if not results:
+            self.hf_status.setText(tr("No GGUF models found for") + f" '{query}'.")
+            self.hf_status.setStyleSheet("color: #a8edff;")
+            return
+        for r in results:
+            item = QListWidgetItem(f"{r['id']}   ·   ⬇ {r['downloads']:,}")
+            item.setData(Qt.UserRole, r)
+            self.hf_list.addItem(item)
+        self.hf_status.setText(
+            f"{len(results)} " + tr('models — double-click one to pick a file '
+                                    '(most downloaded first).'))
+        self.hf_status.setStyleSheet("color: #a8edff;")
+
+    def _hf_on_selection(self, current, _previous) -> None:
+        self.hf_download_btn.setEnabled(
+            bool(current) and self._hf_mode == "files")
+
+    def _hf_open_selected(self, item) -> None:
+        if self._hf_mode != "search":
+            return
+        data = item.data(Qt.UserRole) or {}
+        self._hf_open_repo(data.get("id") or "")
+
+    def _hf_open_repo(self, repo_id: str) -> None:
+        from infra import local_model
+        if not repo_id:
+            return
+        self._hf_repo = repo_id
+        # Snapshot the search list so Back restores it verbatim.
+        self._hf_search_snapshot = [
+            (self.hf_list.item(i).text(), self.hf_list.item(i).data(Qt.UserRole))
+            for i in range(self.hf_list.count())]
+        self.hf_list.clear()
+        self.hf_list.setEnabled(False)
+        self.hf_search_btn.setEnabled(False)
+        self.hf_download_btn.setEnabled(False)
+        self.hf_status.setText(f"{tr('Listing')} {repo_id} {tr('GGUF files…')}")
+        self.hf_status.setStyleSheet("color: #2a7abf;")
+
+        def work() -> None:
+            try:
+                files = local_model.hf_gguf_files(repo_id)
+                outcome = {"ok": True, "files": files}
+            except Exception as exc:
+                outcome = exc
+            try:
+                self.hf_files_done.emit(repo_id, outcome)
+            except RuntimeError:
+                pass  # dialog closed
+
+        threading.Thread(target=work, daemon=True, name="hf-files").start()
+
+    def _hf_restore_search_list(self) -> None:
+        self._hf_mode = "search"
+        self.hf_back_btn.setVisible(False)
+        self.hf_download_btn.setEnabled(False)
+        self.hf_list.clear()
+        for text, data in self._hf_search_snapshot:
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, data)
+            self.hf_list.addItem(item)
+
+    def _hf_back(self) -> None:
+        self._hf_restore_search_list()
+
+    def _on_hf_files_done(self, repo_id: str, outcome) -> None:
+        self.hf_list.setEnabled(True)
+        self.hf_search_btn.setEnabled(True)
+        if isinstance(outcome, Exception):
+            self.hf_status.setText(f"{tr('Could not list')} {repo_id}: {outcome}")
+            self.hf_status.setStyleSheet("color: #ff3366;")
+            self._hf_restore_search_list()
+            return
+        files = outcome.get("files") or []
+        if not files:
+            self.hf_status.setText(f"{repo_id}: " + tr('no .gguf files found.'))
+            self.hf_status.setStyleSheet("color: #ffcc00;")
+            self._hf_restore_search_list()
+            return
+        self._hf_mode = "files"
+        self.hf_back_btn.setVisible(True)
+        for f in files:
+            item = QListWidgetItem(
+                f"{f['file'].rsplit('/', 1)[-1]}   ·   {f['size'] / 1024**3:.2f} GiB")
+            item.setData(Qt.UserRole, {"repo": repo_id, **f})
+            self.hf_list.addItem(item)
+        self.hf_status.setText(
+            f"{len(files)} " + tr('files — select one and press Download.'))
+        self.hf_status.setStyleSheet("color: #a8edff;")
+
+    def _hf_download(self) -> None:
+        from infra import local_model
+        item = self.hf_list.currentItem()
+        if not item or self._hf_mode != "files":
+            return
+        data = item.data(Qt.UserRole) or {}
+        try:
+            entry = local_model.custom_entry(
+                data.get("repo") or self._hf_repo, data.get("file") or "",
+                int(data.get("size") or 0), data.get("sha256") or "")
+        except ValueError as exc:
+            self.hf_status.setText(str(exc))
+            self.hf_status.setStyleSheet("color: #ff3366;")
+            return
+        # The id derives from repo+file, so re-downloading reuses the row.
+        self._local_entries[entry["id"]] = entry
+        if entry["id"] not in self._local_rows:
+            self._add_local_row(entry)
+            self._custom_rows.add(entry["id"])
+        if getattr(self, "_local_hw", None) is not None:
+            self._local_tiers[entry["id"]] = local_model.fit_tier(self._local_hw, entry)
+        self._custom_dl_entries[entry["id"]] = entry
+        self.hf_status.setText(
+            f"{tr('Downloading')} {entry['label']} ({entry['size'] / 1024**3:.1f} GiB)…")
+        self.hf_status.setStyleSheet("color: #a8edff;")
+        self._local_download(entry)
 
     def _load_values(self) -> None:
         provider = self.config.llm.provider

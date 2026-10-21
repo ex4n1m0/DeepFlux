@@ -281,6 +281,7 @@ def test_server_args_contract():
     assert "--host 127.0.0.1" in joined and "--port 8199" in joined
     assert f"-m {gguf}" in joined and "--alias mid" in joined
     assert "-c 32768" in joined and "--no-webui" in joined
+    assert "--parallel 1" in joined  # one slot = deterministic KV budget
     assert "--reasoning-format deepseek" in joined  # thinking -> reasoning_content
     assert "-ngl all" in joined          # weights fit -> full offload
     assert "-t 8" in joined               # half the logical cores
@@ -289,6 +290,22 @@ def test_server_args_contract():
     assert "-ngl" not in args2
     args3 = local_model.build_server_args(gguf, "mid", hw, "ram_only", "cpu")
     assert "-ngl" not in args3
+    # Per-model context overrides the 32K default.
+    args4 = local_model.build_server_args(gguf, "mid", hw, "gpu_full", "vulkan", ctx=98304)
+    assert "-c 98304" in " ".join(args4)
+
+
+def test_server_args_reasoning_format_gated_by_architecture(monkeypatch):
+    """--reasoning-format deepseek parses Qwen3 thinking only — other
+    architectures get no flag so their output is never mis-parsed."""
+    hw = local_model.HardwareInfo(cpu_cores=16, ram_mb=32768,
+                                  gpu_name="RTX", vram_mb=16384)
+    monkeypatch.setattr(local_model, "probe_gguf", lambda p: {"architecture": "llama"})
+    args = local_model.build_server_args(r"C:\models\m.gguf", "mid", hw, "ram_only", "cpu")
+    assert "--reasoning-format" not in args
+    monkeypatch.setattr(local_model, "probe_gguf", lambda p: {"architecture": "qwen35"})
+    args2 = local_model.build_server_args(r"C:\models\m.gguf", "mid", hw, "ram_only", "cpu")
+    assert "--reasoning-format" in args2
 
 
 def test_start_server_adopts_stateless_healthy_server(monkeypatch, tmp_path):
@@ -750,3 +767,301 @@ def test_stop_server_force_kills_adopted_stateless_servers(monkeypatch, tmp_path
     killed.clear()
     local_model.stop_server(force=False)
     assert not killed
+
+
+# ---------------------------------------------------------------------------
+# Custom Hugging Face models (search -> download -> use as the agent model)
+# ---------------------------------------------------------------------------
+
+class _FakeHFResp:
+    def __init__(self, payload=None, status=200):
+        self._payload = payload
+        self.status_code = status
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import requests
+            raise requests.HTTPError(f"{self.status_code} error")
+
+    def json(self):
+        return self._payload
+
+
+def test_hf_search_filters_and_parses(monkeypatch):
+    monkeypatch.setattr(local_model.requests, "get", lambda *a, **k: _FakeHFResp([
+        {"id": "bartowski/Model-GGUF", "downloads": 500, "likes": 9},
+        {"id": "bad repo", "downloads": 10, "likes": 1},        # invalid id dropped
+        {"id": "owner/repo", "downloads": "12", "likes": None},  # coerced
+        "not-a-dict",
+    ]))
+    results = local_model.hf_search("model")
+    assert [r["id"] for r in results] == ["bartowski/Model-GGUF", "owner/repo"]
+    assert results[0]["downloads"] == 500
+    assert results[1]["downloads"] == 12
+
+
+def test_hf_search_surfaces_errors(monkeypatch):
+    monkeypatch.setattr(local_model.requests, "get",
+                        lambda *a, **k: _FakeHFResp({"error": "boom"}, status=503))
+    with pytest.raises(RuntimeError, match="search failed"):
+        local_model.hf_search("x")
+
+
+def test_hf_gguf_files_lists_ggufs_with_sha(monkeypatch):
+    monkeypatch.setattr(local_model.requests, "get", lambda *a, **k: _FakeHFResp([
+        {"type": "file", "path": "README.md", "size": 100},
+        {"type": "file", "path": "Model-Q4_K_M.gguf", "size": 1234,
+         "lfs": {"oid": "ab" * 32, "size": 1234}},
+        {"type": "file", "path": "Model-F16.GGUF", "size": 2345,
+         "lfs": {"oid": "cd" * 32}},
+        {"type": "directory", "path": "sub"},
+        {"type": "file", "path": "Model-Q8_0.gguf", "size": 0},  # zero size dropped
+    ]))
+    files = local_model.hf_gguf_files("owner/repo")
+    assert [f["file"] for f in files] == ["Model-Q4_K_M.gguf", "Model-F16.GGUF"]
+    assert files[0]["sha256"] == "ab" * 32
+    assert files[0]["size"] == 1234
+
+
+def test_hf_gguf_files_rejects_bad_repo_and_errors(monkeypatch):
+    with pytest.raises(RuntimeError, match="invalid"):
+        local_model.hf_gguf_files("nope")
+    monkeypatch.setattr(local_model.requests, "get",
+                        lambda *a, **k: _FakeHFResp(status=404))
+    with pytest.raises(RuntimeError, match="Could not list"):
+        local_model.hf_gguf_files("owner/repo")
+
+
+def test_custom_entry_shape_and_validation():
+    entry = local_model.custom_entry("owner/My-Model.GGUF", "My-Model-Q4_K_M.gguf",
+                                     4_924_514_918, "ab" * 32)
+    assert entry["id"].startswith("hf-")
+    assert "-q4-k-m-" in entry["id"]
+    assert entry["label"] == "My-Model.GGUF (q4-k-m)"
+    assert entry["revision"] == "main"
+    assert entry["custom"] is True
+    assert entry["size"] == 4_924_514_918
+    assert entry["sha256"] == "ab" * 32
+    # Distinct files never collide on the id.
+    other = local_model.custom_entry("owner/My-Model.GGUF", "My-Model-Q8_0.gguf",
+                                     5_000_000_000, "")
+    assert other["id"] != entry["id"]
+    for bad_repo, bad_file in [("../evil/repo", "x.gguf"), ("owner/repo", "../x.gguf"),
+                               ("owner/repo", "/abs/x.gguf"), ("owner/repo", "")]:
+        with pytest.raises(ValueError):
+            local_model.custom_entry(bad_repo, bad_file, 10, "")
+
+
+def test_custom_registry_roundtrip_and_merge():
+    # conftest redirects DF_MODELS_DIR per test — the sidecar lives there.
+    entry = local_model.custom_entry("owner/repo", "Model-Q4_0.gguf", 1000, "")
+    model_dir = os.path.join(local_model.models_root(), entry["id"])
+    os.makedirs(model_dir, exist_ok=True)
+    with open(os.path.join(model_dir, entry["file"]), "wb") as fh:
+        fh.write(b"x" * 1000)
+
+    local_model.save_custom_entry(entry)
+    assert local_model.custom_models() == [entry]
+    assert local_model.entry_by_id(entry["id"]) == entry
+    assert entry in local_model.installed_models()
+
+    local_model.remove_model(entry)
+    assert not os.path.exists(model_dir)
+    assert local_model.custom_models() == []
+    assert local_model.entry_by_id(entry["id"]) is None
+
+
+def test_download_without_sha256_verifies_size_only(tmp_path, monkeypatch):
+    """Custom entries may lack an LFS oid — size still gates the rename."""
+    payload = os.urandom(250_000)
+    entry = _entry_with(len(payload), payload)
+    entry["sha256"] = ""
+    monkeypatch.setattr(local_model.requests, "get",
+                        lambda *a, **k: _FakeResponse(payload))
+    path = local_model.download_model(entry)
+    assert os.path.getsize(path) == len(payload)
+    assert local_model.is_installed(entry)
+
+
+# ---------------------------------------------------------------------------
+# Per-model context: GGUF probe + machine KV-cache budget
+# ---------------------------------------------------------------------------
+
+def _write_gguf(path, kv_entries, version=3):
+    """Minimal GGUF writer for probe tests. kv_entries: (key, vtype, value);
+    vtype 4 = uint32, 8 = string, 9 = (elem_vtype, [strings])."""
+    import struct
+    with open(path, "wb") as fh:
+        fh.write(b"GGUF")
+        fh.write(struct.pack("<I", version))
+        fh.write(struct.pack("<Q", 0))  # tensor count
+        fh.write(struct.pack("<Q", len(kv_entries)))
+        for key, vtype, value in kv_entries:
+            raw = key.encode("utf-8")
+            fh.write(struct.pack("<Q", len(raw)))
+            fh.write(raw)
+            fh.write(struct.pack("<I", vtype))
+            if vtype == 4:
+                fh.write(struct.pack("<I", value))
+            elif vtype == 8:
+                raw = value.encode("utf-8")
+                fh.write(struct.pack("<Q", len(raw)))
+                fh.write(raw)
+            elif vtype == 9:
+                elem, items = value
+                fh.write(struct.pack("<I", elem))
+                fh.write(struct.pack("<Q", len(items)))
+                for item in items:
+                    raw = item.encode("utf-8")
+                    fh.write(struct.pack("<Q", len(raw)))
+                    fh.write(raw)
+            else:
+                raise AssertionError(f"unsupported test vtype {vtype}")
+
+
+def test_probe_gguf_reads_arch_prefixed_keys(tmp_path):
+    path = tmp_path / "model.gguf"
+    _write_gguf(path, [
+        ("general.architecture", 8, "qwen35"),
+        ("general.name", 8, "Test Model"),
+        ("qwen35.context_length", 4, 262144),
+        ("qwen35.block_count", 4, 36),
+        ("qwen35.attention.head_count_kv", 4, 8),
+        ("qwen35.attention.key_length", 4, 128),
+    ])
+    info = local_model.probe_gguf(str(path))
+    assert info["architecture"] == "qwen35"
+    assert info["name"] == "Test Model"
+    assert info["context_length"] == 262144
+    assert info["block_count"] == 36
+    assert info["head_count_kv"] == 8
+    assert info["key_length"] == 128
+
+
+def test_probe_gguf_reads_legacy_llama_prefix(tmp_path):
+    path = tmp_path / "model.gguf"
+    _write_gguf(path, [
+        ("llama.context_length", 4, 8192),
+        ("llama.block_count", 4, 32),
+        ("llama.attention.head_count_kv", 4, 8),
+        ("llama.embedding_length", 4, 4096),
+        ("llama.attention.head_count", 4, 32),
+    ])
+    info = local_model.probe_gguf(str(path))
+    assert info["context_length"] == 8192
+    assert info["block_count"] == 32
+
+
+def test_probe_gguf_skips_tokenizer_arrays_and_nones_on_garbage(tmp_path):
+    path = tmp_path / "model.gguf"
+    _write_gguf(path, [
+        ("tokenizer.ggml.tokens", 9, (8, ["<|endoftext|>", "hello", "world"])),
+        ("qwen35.context_length", 4, 4096),
+    ])
+    assert local_model.probe_gguf(str(path))["context_length"] == 4096
+    garbage = tmp_path / "garbage.gguf"
+    garbage.write_bytes(b"not a gguf at all")
+    assert local_model.probe_gguf(str(garbage)) is None
+
+
+def test_kv_bytes_and_ctx_caps():
+    hw = local_model.HardwareInfo(cpu_cores=16, ram_mb=32768,
+                                  gpu_name="RTX", vram_mb=16384)
+    info = {"block_count": 36, "head_count_kv": 8, "key_length": 128}
+    kv = 36 * 2 * 8 * 128 * 2
+    assert local_model.kv_bytes_per_token(info) == kv
+    # 8 GiB weights sit fully on the GPU -> the leftover VRAM budget binds.
+    entry = {"size": 8 * 1024 ** 3}
+    cap = local_model.ctx_cap_for(hw, entry, info)
+    vram_budget = 16384 * 9 // 10 - 8 * 1024
+    assert cap == vram_budget * 1024 * 1024 // kv
+    # No GPU -> RAM budget only.
+    hw2 = local_model.HardwareInfo(cpu_cores=8, ram_mb=16384,
+                                   gpu_name="", vram_mb=0)
+    cap2 = local_model.ctx_cap_for(hw2, entry, info)
+    ram_budget = 16384 * 9 // 10 - 8 * 1024 - 256
+    assert cap2 == max(4096, ram_budget * 1024 * 1024 // kv)
+    # Unknown metadata -> 0 (keep the default).
+    assert local_model.ctx_cap_for(hw, entry, None) == 0
+
+
+def test_entry_ctx_native_cap_and_floor(tmp_path, monkeypatch):
+    hw = local_model.HardwareInfo(cpu_cores=8, ram_mb=896,
+                                  gpu_name="", vram_mb=0)
+    entry = _entry_with(1000, b"x" * 1000)
+    # Not installed -> CONTEXT_SIZE fallback, no file probe.
+    assert local_model.entry_ctx(entry, hw) == local_model.CONTEXT_SIZE
+    path = local_model.model_path(entry)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(b"x" * 1000)
+    # Native 8K, tiny RAM budget -> floored at 4096.
+    monkeypatch.setattr(local_model, "probe_gguf",
+                        lambda p: {"context_length": 8192, "block_count": 40,
+                                   "head_count_kv": 8, "key_length": 128})
+    assert local_model.entry_ctx(entry, hw) == 4096
+
+
+def test_context_for_config_uses_installed_model_ctx(monkeypatch):
+    from config import DeeptorrentConfig
+    cfg = DeeptorrentConfig()
+    cfg.llm.model = "nonexistent"
+    assert local_model.context_for_config(cfg) == local_model.CONTEXT_SIZE
+    monkeypatch.setattr(local_model, "entry_by_id",
+                        lambda mid: {"id": mid, "file": "m.gguf", "size": 1}
+                        if mid == "some-model" else None)
+    monkeypatch.setattr(local_model, "is_installed", lambda e: True)
+    monkeypatch.setattr(local_model, "entry_ctx", lambda e, hw: 49152)
+    cfg.llm.model = "some-model"
+    assert local_model.context_for_config(cfg) == 49152
+
+
+# ---------------------------------------------------------------------------
+# Local server on/off control
+# ---------------------------------------------------------------------------
+
+class _FakeHealth:
+    def __init__(self, status, body=None):
+        self.status_code = status
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+def test_server_status_parses_running_loading_off(monkeypatch, tmp_path):
+    local_model._write_state({"model_id": "m1"})
+
+    def _refused(*a, **k):
+        raise ConnectionError("refused")
+    monkeypatch.setattr(local_model.requests, "get", _refused)
+    assert local_model.server_status() == {"state": "off"}
+
+    monkeypatch.setattr(local_model.requests, "get",
+                        lambda *a, **k: _FakeHealth(
+                            503, {"error": {"message": "Loading model"}}))
+    st = local_model.server_status()
+    assert st["state"] == "loading" and st["model_id"] == "m1"
+
+    monkeypatch.setattr(local_model.requests, "get",
+                        lambda *a, **k: _FakeHealth(200, {"status": "ok"}))
+    st = local_model.server_status()
+    assert st["state"] == "running" and st["model_id"] == "m1"
+
+
+def test_manual_off_blocks_autostart(monkeypatch):
+    from config import DeeptorrentConfig
+    local_model._write_state({"manual_off": True})
+    cfg = DeeptorrentConfig()
+    cfg.llm.provider = "local"
+    started = []
+    monkeypatch.setattr(local_model, "start_server",
+                        lambda e, hw=None: started.append(e) or True)
+    assert local_model.ensure_running(cfg) is False
+    assert started == []
+
+
+def test_stop_server_manual_pins_flag(monkeypatch):
+    monkeypatch.setattr(local_model, "stop_server", lambda force=False: True)
+    assert local_model.stop_server_manual() is True
+    assert local_model.server_manually_off() is True

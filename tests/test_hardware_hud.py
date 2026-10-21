@@ -257,7 +257,7 @@ def test_api_keys_dialog_local_ux(qapp, monkeypatch, tmp_path):
                              vram_mb=16003)
         monkeypatch.setattr(lm, "is_installed", lambda e: False)
         dlg._on_local_hw(hw)
-        name, fit, status, use_btn, dl_btn, rm_btn = \
+        _wrap, name, fit, status, use_btn, dl_btn, rm_btn = \
             dlg._local_rows["qwen35-9b-uncensored-q4km"]
         assert fit.text() == "GPU"
         assert "GiB" in status.text()
@@ -282,3 +282,45 @@ def test_fit_badge_mapping(qapp):
     assert dlg._local_fit_badge("gpu_partial")[0] == "GPU+CPU"
     assert dlg._local_fit_badge("ram_only")[0] == "CPU"
     assert "fit" in dlg._local_fit_badge(None)[0].lower()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="local models are win32")
+def test_local_server_on_off_control(qapp, monkeypatch, tmp_path):
+    """Start/Stop toggle states: off -> loading (button locked) -> running,
+    with the progress bar and labels following the server state."""
+    from config import DeeptorrentConfig
+    from gui.settings_dialog import APIKeysDialog
+    from gui.i18n import tr
+    import infra.local_model as lm
+
+    monkeypatch.setattr(lm, "detect_hardware", lambda refresh=False: None)
+    monkeypatch.setattr(lm, "server_status", lambda: {"state": "off"})
+    dlg = APIKeysDialog(DeeptorrentConfig(), None, page="ai")
+    try:
+        dlg._on_server_state({"state": "off"})
+        assert dlg.server_toggle_btn.text() == tr("Start server")
+        assert "Off" in dlg.server_state_lbl.text()
+        assert dlg.server_progress.isHidden()
+
+        # Mid-transition loading keeps the toggle locked (it is the cancel).
+        dlg._server_transitioning = True
+        dlg._on_server_state({"state": "loading", "elapsed": 7.0})
+        assert dlg.server_toggle_btn.text() == tr("Cancel / stop")
+        assert not dlg.server_toggle_btn.isEnabled()
+        assert "Loading model" in dlg.server_state_lbl.text()
+        assert not dlg.server_progress.isHidden()
+
+        # Terminal state re-enables even while the transition flag is set.
+        dlg._on_server_state({"state": "running",
+                              "model_id": "qwen35-9b-uncensored-q4km"})
+        assert dlg.server_toggle_btn.text() == tr("Stop server")
+        assert dlg.server_toggle_btn.isEnabled()
+        assert "Running" in dlg.server_state_lbl.text()
+        assert dlg.server_progress.isHidden()
+
+        # Error terminal states land back on Start.
+        dlg._on_server_state({"state": "off", "error": "No model installed — download one first."})
+        assert dlg.server_toggle_btn.text() == tr("Start server")
+        assert "No model" in dlg.server_state_lbl.text()
+    finally:
+        dlg.deleteLater()

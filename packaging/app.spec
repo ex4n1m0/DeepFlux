@@ -283,9 +283,11 @@ for _dll in _VC_DLLS:
     if not os.path.isfile(_src):
         continue
     _dest = _dll.lower()
+    # TOC entries are 3-tuples (dest, src, typecode) — b[0] is the name
+    # in the bundle, b[1] the on-disk source.
     a.binaries = [b for b in a.binaries
-                  if os.path.basename(b[1]).lower() != _dest]
-    a.binaries.append((_src, _dll))
+                  if os.path.basename(b[0]).lower() != _dest]
+    a.binaries.append((_dll, _src, "BINARY"))
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

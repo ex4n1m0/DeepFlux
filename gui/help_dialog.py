@@ -204,6 +204,17 @@ Qwen3.5 builds, so the agent answers without cloud-style refusals.</p>
     model your hardware actually handles before downloading gigabytes.
     <b>Use</b> makes an installed model the agent's model. Interrupted
     downloads resume where they stopped.</li>
+  <li><b>Turn the engine on and off:</b> the "Start server / Stop server"
+    button in the same section controls the local AI engine. Starting shows a
+    progress bar while the model loads (GPU loads can take up to a minute).
+    Stop frees the GPU and RAM immediately, and the engine then stays off —
+    it uses no resources and won't start by itself until you turn it back on
+    (the Agent page will point you here if a message needs it).</li>
+  <li><b>Any Hugging Face model:</b> the "Custom model from Hugging Face"
+    section on the same page searches all public GGUF models, lets you pick a
+    file from a repository and downloads it into the same list — then
+    <b>Use</b> makes it the agent's model. Downloads are verified against
+    Hugging Face's own checksums and resume if interrupted.</li>
   <li><b>Live hardware strip:</b> the top of the Agent page always shows
     CPU, RAM, GPU and VRAM utilization. Watch it while a local model runs —
     a GPU pegged at 100% with VRAM nearly full means a smaller model will
