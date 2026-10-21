@@ -1,8 +1,8 @@
 {
-  "version": "6.4",
-  "file": "DeepFlux6.4Setup.exe",
-  "size": 421893225,
-  "sha256": "ca130918825a2a56ad0d086aae6ef07b8224eccdd72e132eff55295fc2ad97c1",
+  "version": "6.4.1",
+  "file": "DeepFlux6.4.1Setup.exe",
+  "size": 421899512,
+  "sha256": "ecb0cf2849b16f98eaeb24f5a141c6bdd2afe2684392129211e03a18857b70d8",
   "released": "2026-10-21",
-  "notes": "DeepFlux 6.4 - the built-in DeepSeek key is now the out-of-the-box default: fresh installs get a working AI agent with no account or setup. Local uncensored AI is still there as an opt-in choice (File -> API Keys -> AI), along with the 6.3 local-AI overhaul."
+  "notes": "DeepFlux 6.4.1 - the built-in DeepSeek key now stays the default agent even when you download a local model during setup or later: downloading only installs the model, and switching to local AI is always your explicit choice."
 }
