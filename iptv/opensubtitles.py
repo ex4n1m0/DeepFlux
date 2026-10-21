@@ -23,7 +23,7 @@ import requests
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.opensubtitles.com/api/v1"
-USER_AGENT = "DeepFlux v6.2"
+USER_AGENT = "DeepFlux v6.3"
 _TIMEOUT = 20
 
 
