@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import threading
 import time
@@ -47,6 +48,16 @@ READ_ONLY_TOOLS = set(READ_ONLY_TOOL_NAMES)
 # subsequent call. The most recent results stay intact.
 TOOL_HISTORY_KEEP_FULL = 4
 TOOL_HISTORY_MAX_CHARS = 1500
+# Local-provider context management: results longer than this are archived to
+# the memory store (daily notes) with a digest left in context — the model
+# pulls the full result back with search_memory. Sized so digest + archive
+# pointer stay under _fit_context's per-tool cap and arrive uncut.
+LOCAL_ARCHIVE_MIN_CHARS = 6000
+
+
+def _archive_key(tool_call_id: str) -> str:
+    """Stable, searchable archive id derived from a tool_call_id."""
+    return re.sub(r"[^a-z0-9-]+", "-", (tool_call_id or "arch").lower()).strip("-")[:12] or "arch"
 
 SYSTEM_PROMPT = r"""You are DeepFlux, the built-in assistant of the DeepFlux desktop app — an
 all-in-one media and download center. You control the whole app through the
@@ -237,6 +248,8 @@ class AgentLoop:
         self.llm = llm or create_llm_client(config.llm)
         self._llm_signature = self._current_llm_signature()
         self.history: List[Dict[str, Any]] = []
+        self._archived_tool_ids: set = set()
+        self._archive_failed_ids: set = set()
         self.pending: List[PendingAction] = []
         self._pending_created_at = 0.0
         self._cancel_requested = threading.Event()
@@ -359,6 +372,17 @@ class AgentLoop:
         budget = max(0, int(getattr(self.config.llm, "context_budget_tokens", 64000) or 0))
         if not budget:
             return messages
+        # The LOCAL llama-server window is per-model (GGUF-native context,
+        # capped by the machine's KV budget — infra.local_model). The default
+        # 64K budget must be clamped to the SERVED context or every request
+        # past it is rejected with a 400 ("exceeds the available context
+        # size").
+        if getattr(self.config.llm, "provider", "") == "local":
+            try:
+                from infra import local_model
+                budget = min(budget, local_model.context_for_config(self.config))
+            except Exception:
+                pass
         reserve = max(0, int(getattr(self.config.llm, "response_reserve_tokens", 8000) or 0))
         max_chars = max(1000, (budget - min(reserve, budget // 2)) * 4)
         system = [dict(messages[0])] if messages and messages[0].get("role") == "system" else []
@@ -441,22 +465,82 @@ class AgentLoop:
         are capped at TOOL_HISTORY_MAX_CHARS. self.history is left untouched
         so the full data remains available for display. When the budget forces
         a cut, the window is advanced to a safe boundary so no tool message is
-        left without its assistant tool_calls message (the API rejects that)."""
+        left without its assistant tool_calls message (the API rejects that).
+
+        Local provider only: oversized tool results are ARCHIVED to the
+        memory store instead of silently lost — the context keeps a digest
+        plus a search_memory pointer, so a long search can span more pages
+        than the 32K window would otherwise hold."""
         tool_idx = [i for i, m in enumerate(self.history) if m.get("role") == "tool"]
         keep_full = set(tool_idx[-TOOL_HISTORY_KEEP_FULL:])
+        archive_enabled = (
+            getattr(self.config.llm, "provider", "") == "local"
+            and getattr(self.tools, "memory", None) is not None
+        )
+        tool_names: Dict[str, str] = {}
         pruned: List[Dict[str, Any]] = []
         for i, m in enumerate(self.history):
+            if m.get("role") == "assistant":
+                for tc in m.get("tool_calls") or []:
+                    tc_id = tc.get("id")
+                    if tc_id:
+                        tool_names[tc_id] = self._tool_call_name(tc)
             content = m.get("content")
-            if (
-                m.get("role") == "tool"
-                and i not in keep_full
-                and isinstance(content, str)
-                and len(content) > TOOL_HISTORY_MAX_CHARS
-            ):
+            if m.get("role") != "tool" or not isinstance(content, str):
+                pruned.append(m)
+                continue
+            if i in keep_full:
+                # The freshest results stay as intact as the window allows —
+                # only oversized ones are digested (fit_context would cut them
+                # at ~8K chars anyway, so the tail would be lost without an
+                # archive).
+                if archive_enabled and len(content) > LOCAL_ARCHIVE_MIN_CHARS:
+                    pruned.append(dict(m, content=self._archive_or_digest(
+                        m.get("tool_call_id", ""),
+                        tool_names.get(m.get("tool_call_id", ""), "tool"),
+                        content, LOCAL_ARCHIVE_MIN_CHARS)))
+                else:
+                    pruned.append(m)
+                continue
+            if len(content) > TOOL_HISTORY_MAX_CHARS:
+                if archive_enabled:
+                    pruned.append(dict(m, content=self._archive_or_digest(
+                        m.get("tool_call_id", ""),
+                        tool_names.get(m.get("tool_call_id", ""), "tool"),
+                        content, TOOL_HISTORY_MAX_CHARS)))
+                    continue
                 m = dict(m)
                 m["content"] = content[:TOOL_HISTORY_MAX_CHARS] + "... [truncated]"
             pruned.append(m)
         return self._trim_to_budget(pruned)
+
+    def _archive_or_digest(self, tool_call_id: str, tool_name: str, content: str, digest_chars: int) -> str:
+        """Archive an oversized tool result to the memory store once and return
+        the context copy: a leading digest plus a search_memory pointer. Falls
+        back to the plain digest when archiving is unavailable or refused."""
+        pointer = ""
+        if tool_call_id not in self._archived_tool_ids and tool_call_id not in self._archive_failed_ids:
+            try:
+                result = self.tools.memory.archive(_archive_key(tool_call_id), tool_name, content)
+            except Exception as exc:
+                logger.warning("tool-result archive failed: %s", exc)
+                result = None
+            if result and result.get("success"):
+                self._archived_tool_ids.add(tool_call_id)
+            else:
+                self._archive_failed_ids.add(tool_call_id)
+        if tool_call_id in self._archived_tool_ids:
+            key = _archive_key(tool_call_id)
+            # Pointer FIRST: _fit_context trims tool content from the tail, so
+            # a trailing pointer could be cut off — leading, it always survives
+            # (the fitter's per-tool floor is 1000 chars) and the digest
+            # degrades gracefully instead.
+            pointer = (
+                f"[This tool result was too long for the local context window — the "
+                f"FULL result was archived to memory. Retrieve it with search_memory('{key}') "
+                f"when you need its details; do not re-run the search to recover it.]\n\n"
+            )
+        return pointer + content[:digest_chars]
 
     def _trim_to_budget(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Keep the newest `history_budget` messages, cut at a safe boundary."""
@@ -874,13 +958,16 @@ class AgentLoop:
             from infra import local_model
             hw = local_model.detect_hardware()
             hw_line = f" It runs on {hw.summary()}."
+            ctx = local_model.context_for_config(self.config)
         except Exception:
             hw_line = ""
+            ctx = 0
+        ctx_line = f" It serves a {ctx} token context window." if ctx else ""
         return (
             "\nLocal model (IMPORTANT — you are running ON the user's own PC):\n"
             "- You are an UNCENSORED local model served by llama.cpp — no cloud, "
             "no rate limits, no per-token cost, nothing you say leaves this machine."
-            f"{hw_line}\n"
+            f"{hw_line}{ctx_line}\n"
             "- BECAUSE nothing is billed and the task clock is unlimited, QUALITY "
             "BEATS SPEED: take the turns you need. Never cut a search short, never "
             "declare 'not found' after one quick pass, and do not compress your "
@@ -889,6 +976,12 @@ class AgentLoop:
             "- Every 'deep' request runs the FULL sweep (see the DEEP REQUESTS "
             "rule above) — keep searching with fresh query variants until the "
             "sources are genuinely exhausted, and report what was searched.\n"
+            "- Your context window is limited (its size is stated above). Long tool "
+            "results are automatically ARCHIVED to memory when they would overflow "
+            "it (the result text gives you the archive key): pull the details back "
+            "with search_memory('<archive key>') instead of re-running the search, "
+            "and park important intermediate findings with save_memory so a "
+            "long task never loses them.\n"
         )
 
     @staticmethod

@@ -45,6 +45,28 @@ class LLMMessage:
         self.reasoning = reasoning
 
 
+def _server_error_detail(response: requests.Response) -> str:
+    """Human message from a non-2xx body (llama-server / OpenAI error JSON).
+
+    raise_for_status alone turns a rejection into an opaque "400 Bad Request"
+    — the server's body is what actually says *why* (e.g. llama-server's
+    "request exceeds the available context size")."""
+    try:
+        text = response.text
+    except Exception:
+        return ""
+    if not text:
+        return ""
+    try:
+        data = json.loads(text)
+        error = data.get("error")
+        if isinstance(error, dict) and isinstance(error.get("message"), str):
+            return " ".join(error["message"].split())[:400]
+    except Exception:
+        pass
+    return " ".join(text.split())[:400]
+
+
 class LLMClient(ABC):
     @abstractmethod
     def chat(
@@ -178,7 +200,13 @@ class DeepSeekClient(LLMClient):
                     response.close()
                     time.sleep(wait)
                     continue
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except requests.HTTPError as exc:
+                    detail = _server_error_detail(response)
+                    if detail:
+                        raise requests.HTTPError(f"{exc} — server said: {detail}") from exc
+                    raise
                 return response
             except (requests.ConnectionError, requests.Timeout) as exc:
                 last_exc = exc

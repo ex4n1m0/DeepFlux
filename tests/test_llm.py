@@ -280,3 +280,30 @@ def test_stream_error_event_raises_instead_of_empty_reply(mock_post):
     with pytest.raises(RuntimeError, match="provider overloaded"):
         _client().chat([{"role": "user", "content": "hi"}],
                        on_delta=lambda kind, text: None)
+
+
+@patch("agent.llm.requests.post")
+def test_http_error_includes_server_body(mock_post):
+    """llama-server rejects over-context requests with a 400 whose BODY is the
+    actual reason — the client must surface it, not a bare "400 Bad Request"."""
+
+    class _ErrResp:
+        status_code = 400
+        text = ('{"error": {"message": "request (40000 tokens) exceeds the available '
+                'context size (32768 tokens)", "type": "exceed_context_size_error"}}')
+
+        def raise_for_status(self):
+            raise requests.HTTPError(
+                "400 Client Error: Bad Request for url: http://127.0.0.1:8199/v1/chat/completions")
+
+        def close(self):
+            pass
+
+    mock_post.return_value = _ErrResp()
+    client = DeepSeekClient(LLMConfig(provider="local"))
+
+    with pytest.raises(requests.HTTPError) as excinfo:
+        client.chat([{"role": "user", "content": "hi"}])
+
+    assert "32768" in str(excinfo.value)
+    assert "available context size" in str(excinfo.value)

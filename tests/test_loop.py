@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.loop import AgentLoop
+from agent.loop import LOCAL_ARCHIVE_MIN_CHARS, TOOL_HISTORY_MAX_CHARS, AgentLoop
 from agent.tools import ToolRegistry
 from config import DeeptorrentConfig
 
@@ -251,6 +251,128 @@ def test_history_budget_zero_unlimited(mock_engine):
     loop = AgentLoop(mock_engine, config, tools=tools, llm=MockLLM([]))
     loop.history = [{"role": "user", "content": f"u{i}"} for i in range(100)]
     assert len(loop._pruned_history()) == 100
+
+
+def _big_tool_history(tool_id, big):
+    """One user turn whose FIRST tool message carries `big`; 4 more small
+    tool messages follow so the first one falls outside TOOL_HISTORY_KEEP_FULL."""
+    history = [{"role": "user", "content": "go"}]
+    ids = [tool_id, "c2", "c3", "c4", "c5"]
+    history.append({"role": "assistant", "content": "", "tool_calls": [_tc(i) for i in ids]})
+    for i in ids:
+        history.append({"role": "tool", "tool_call_id": i, "content": big if i == tool_id else "{}"})
+    history.append({"role": "user", "content": "next"})
+    return history
+
+
+def _first_tool_message(pruned):
+    return next(m for m in pruned if m.get("role") == "tool")
+
+
+def test_local_provider_archives_oversized_tool_results(mock_engine, tmp_path):
+    """Local provider: a result too big for the 32K window is digested in
+    context and the full copy archived to memory, retrievable by key."""
+    from agent.memory import MemoryStore
+
+    config = DeeptorrentConfig()
+    config.llm.provider = "local"
+    config.llm.memory_dir = str(tmp_path)
+    tools = ToolRegistry(mock_engine, config)
+    loop = AgentLoop(mock_engine, config, tools=tools, llm=MockLLM([]))
+    big = json.dumps({"success": True, "results": [{"title": f"item {i}"} for i in range(300)]})
+
+    loop.history = [
+        {"role": "user", "content": "find it"},
+        {"role": "assistant", "content": "", "tool_calls": [_tc("call_arch")]},
+        {"role": "tool", "tool_call_id": "call_arch", "content": big},
+        {"role": "user", "content": "more"},
+    ]
+    pruned = loop._pruned_history()
+    tool_msg = _first_tool_message(pruned)
+    content = tool_msg["content"]
+    assert content.startswith("[This tool result was too long")
+    assert content.endswith(big[:LOCAL_ARCHIVE_MIN_CHARS])
+    assert len(content) < len(big)
+    assert "search_memory('call-arch')" in content
+
+    store = MemoryStore(str(tmp_path))
+    first = store.search("call-arch")
+    assert first["success"] and first["count"] >= 1
+    # Pruning again reuses the archive instead of duplicating it.
+    loop._pruned_history()
+    assert store.search("call-arch")["count"] == first["count"]
+
+
+def test_local_provider_digests_old_tool_results(mock_engine, tmp_path):
+    """Older local tool results are digested to TOOL_HISTORY_MAX_CHARS plus an
+    archive pointer — the same window as the pre-archive truncation."""
+    config = DeeptorrentConfig()
+    config.llm.provider = "local"
+    config.llm.memory_dir = str(tmp_path)
+    tools = ToolRegistry(mock_engine, config)
+    loop = AgentLoop(mock_engine, config, tools=tools, llm=MockLLM([]))
+    big = json.dumps({"ok": True, "blob": "x" * 3000})
+
+    loop.history = _big_tool_history("call_old0", big)
+    pruned = loop._pruned_history()
+    content = _first_tool_message(pruned)["content"]
+    assert content.endswith(big[:TOOL_HISTORY_MAX_CHARS])
+    assert "search_memory('call-old0')" in content
+    assert "do not re-run the search" in content
+    assert len(content) < len(big)
+
+
+def test_local_archive_disabled_falls_back_to_truncation(mock_engine):
+    """memory_enabled=False leaves the local provider with plain truncation."""
+    config = DeeptorrentConfig()
+    config.llm.provider = "local"
+    config.llm.memory_enabled = False
+    tools = ToolRegistry(mock_engine, config)
+    loop = AgentLoop(mock_engine, config, tools=tools, llm=MockLLM([]))
+    big = json.dumps({"blob": "y" * 3000})
+
+    loop.history = _big_tool_history("call_x", big)
+    content = _first_tool_message(loop._pruned_history())["content"]
+    assert content.endswith("... [truncated]")
+    assert "search_memory" not in content
+
+
+def test_cloud_provider_tool_results_unchanged_no_archive(mock_engine, tmp_path):
+    """Cloud providers keep the old truncation and never touch the archive."""
+    config = DeeptorrentConfig()  # provider deepseek
+    config.llm.memory_dir = str(tmp_path)
+    tools = ToolRegistry(mock_engine, config)
+    loop = AgentLoop(mock_engine, config, tools=tools, llm=MockLLM([]))
+    big = json.dumps({"blob": "z" * 3000})
+
+    loop.history = _big_tool_history("call_z", big)
+    content = _first_tool_message(loop._pruned_history())["content"]
+    assert content.endswith("... [truncated]")
+    assert "search_memory" not in content
+    assert not (tmp_path / "daily").exists()
+
+
+def test_fit_context_clamps_local_provider_to_server_window(mock_engine):
+    """The 64K default budget must clamp to the local server's 32K window, or
+    llama-server 400s every request that crosses it."""
+    from infra.local_model import CONTEXT_SIZE
+
+    config = DeeptorrentConfig()
+    tools = ToolRegistry(mock_engine, config)
+    loop = AgentLoop(mock_engine, config, tools=tools, llm=MockLLM([]))
+    messages = [loop._system_message()]
+    messages += [{"role": "user", "content": "u"},
+                 {"role": "assistant", "content": "a" * 8000}] * 40
+
+    cloud = loop._fit_context(messages, [])
+    total_cloud = sum(loop._message_size(m) for m in cloud)
+    assert total_cloud > (CONTEXT_SIZE - 8000) * 4  # 64K budget keeps more
+
+    config.llm.provider = "local"
+    local = loop._fit_context(messages, [])
+    total_local = sum(loop._message_size(m) for m in local)
+    assert total_local <= (CONTEXT_SIZE - 8000) * 4
+    assert total_local < total_cloud
 
 
 def _watchdog_loop(mock_engine, debug, done_content="Nothing more to do."):

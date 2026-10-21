@@ -205,6 +205,43 @@ class MemoryStore:
                 return {"success": False, "error": str(exc)}
         return {"success": True, "id": entry_id, "scope": scope, "path": path, "duplicate": False}
 
+    def archive(self, key: str, tool_name: str, content: str, chunk_size: int = 500) -> Dict[str, Any]:
+        """Append a long tool result to today's daily note as numbered chunks.
+
+        Used by the local-LLM context manager (agent/loop.py): results too
+        long for the 32K context window are parked here instead of being cut
+        silently. Every chunk line carries the archive ``key`` and tool name,
+        so ``search_memory('<key>')`` finds the whole result in pages.
+        """
+        if not content or not content.strip():
+            return {"success": False, "error": "empty content"}
+        if _contains_secret(content):
+            return {"success": False, "error": "Memory cannot store credentials or secrets"}
+        key = re.sub(r"[^a-z0-9-]+", "-", (key or "arch").lower()).strip("-")[:24] or "arch"
+        today = datetime.date.today().isoformat()
+        chunks = [content[i:i + chunk_size] for i in range(0, len(content), chunk_size)]
+        path = self._daily_file()
+        lines = []
+        with self._lock:
+            existing = self._read(path)
+            if not existing:
+                lines.append(f"# Notes for {today}")
+            elif not existing.endswith("\n"):
+                lines.append("")
+            for index, chunk in enumerate(chunks, 1):
+                lines.append(
+                    f"- [id:{key}-{index:03d}] {today}: {key} {tool_name} result "
+                    f"({index}/{len(chunks)}): {chunk}"
+                )
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write("\n".join(lines) + "\n")
+            except OSError as exc:
+                logger.warning("memory archive failed: %s", exc)
+                return {"success": False, "error": str(exc)}
+        return {"success": True, "id": key, "scope": "note", "chunks": len(chunks), "path": path}
+
     def list_entries(self, scope: str = "", max_results: int = 200) -> Dict[str, Any]:
         if scope and scope not in SCOPES:
             return {"success": False, "error": f"Unknown scope: {scope}", "results": []}

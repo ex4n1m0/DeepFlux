@@ -159,3 +159,34 @@ def test_memory_governance_tools(tmp_path):
         "memory_id": saved["id"], "content": "Prefers scheduled downloads",
     })["success"] is True
     assert tools.call("forget_memory", {"memory_id": saved["id"]})["success"] is True
+
+
+def test_archive_chunks_are_searchable(tmp_path):
+    """archive() parks a long tool result as numbered daily-note chunks, each
+    carrying the archive key + tool name so search_memory('<key>') finds it."""
+    import datetime
+
+    store = MemoryStore(str(tmp_path))
+    content = " | ".join("row" + "x" * 200 for _ in range(20))
+    res = store.archive("call-abc123", "search_indexers", content)
+    assert res["success"] is True
+    assert res["chunks"] > 1
+
+    hits = store.search("call-abc123")
+    assert hits["success"] and hits["count"] >= 1
+
+    entries = store.list_entries(scope="note")["results"]
+    assert len(entries) == res["chunks"]
+    assert all(e["id"].startswith("call-abc123-") for e in entries)
+    assert all("search_indexers" in e["content"] for e in entries)
+
+    daily = tmp_path / "daily" / f"{datetime.date.today().isoformat()}.md"
+    assert daily.read_text(encoding="utf-8").startswith("# Notes for")
+
+
+def test_archive_refuses_secrets_and_empty_content(tmp_path):
+    store = MemoryStore(str(tmp_path))
+    assert store.archive("k1", "t", "api_key = abc123secret")["success"] is False
+    assert store.archive("k1", "t", "")["success"] is False
+    assert store.archive("k1", "t", "   ")["success"] is False
+    assert not (tmp_path / "daily").exists()
