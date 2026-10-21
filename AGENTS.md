@@ -1094,7 +1094,15 @@
   DEFAULT agent (owner decision 6.4, 2026-10-21): fresh installs boot
   straight into a working agent with no account; local models are an
   opt-in later choice (the installer's --setup-localmodel checkbox is
-  default-OFF since 6.4). `config.py` loads each `_SHARED_*_API_KEY` at import
+  default-OFF since 6.4). Since 6.4.2, `from_file` ALSO migrates any
+  provider == "local" config WITHOUT the `local_chosen` stamp back to
+  deepseek (clearing the loopback base_url and model fields, BEFORE the
+  shared-key injection) — that is how auto-updated installs whose provider
+  was auto-switched by a ≤6.4.0 build get forced onto the built-in key;
+  the GUI stamps `local_chosen` when the user explicitly saves local, and
+  that stamp is the ONLY thing that keeps a local config local. The agent
+  can never set provider=local (settings whitelist excludes it), so no
+  other writer exists. `config.py` loads each `_SHARED_*_API_KEY` at import
   time from the UNTRACKED repo-root module `_embedded_keys.py` (gitignored;
   exists only on build machines; PyInstaller bundles it like any import via
   app.spec's conditional hiddenimport); without the file every shared key is

@@ -236,10 +236,16 @@ def test_api_keys_dialog_local_ux(qapp, monkeypatch, tmp_path):
         assert "DeepSeek key stays" in dlg.local_test_result.text()
         assert dlg.llm_endpoint.currentData() == "deepseek"
 
-        # Local endpoint: key row hides, base URL locks.
+        # Local endpoint: key row hides, base URL locks; the Model field
+        # follows the endpoint (owner report 6.4.2 — never a stale id).
+        dlg.llm_model.setText("qwen35-9b-uncensored-q4km")  # stale local id
+        dlg.llm_endpoint.setCurrentIndex(dlg.llm_endpoint.findData("custom"))
+        dlg.llm_endpoint.setCurrentIndex(dlg.llm_endpoint.findData("deepseek"))
+        assert dlg.llm_model.text() == "deepseek-flash"
         dlg.llm_endpoint.setCurrentIndex(dlg.llm_endpoint.findData("local"))
         assert dlg.llm_key.isHidden()
         assert dlg.llm_base_url.isReadOnly()
+        assert dlg.llm_model.text() == "qwen35-9b-uncensored-q4km"  # local preset default
         # Custom: everything editable again.
         dlg.llm_endpoint.setCurrentIndex(dlg.llm_endpoint.findData("custom"))
         assert not dlg.llm_key.isHidden()

@@ -242,3 +242,47 @@ def test_bundle_walker_descends_into_tuple_constants():
     assert any("sk-hidden-inside-a-tuple-constant-12345" in s for s in strings)
     hit = vb._match_markers("<t>", " ".join(strings), [])
     assert hit and hit[0] == "REVIEW"
+
+
+def test_unstamped_local_migrates_to_deepseek(tmp_path, monkeypatch):
+    """6.4.2 owner rule: configs whose provider was AUTO-switched to local
+    by the pre-6.4.1 flows carry no local_chosen stamp — from_file must
+    force them back onto the built-in DeepSeek default (this is how
+    auto-updaters get the key back) and clear the loopback base URL."""
+    import config as config_module
+    monkeypatch.setattr(config_module, "_SHARED_DEEPSEEK_API_KEY", "sk-migrate-test")
+    path = str(tmp_path / "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"llm": {"provider": "local",
+                           "model": "qwen35-9b-uncensored-q4km",
+                           "fast_model": "qwen35-9b-uncensored-q4km",
+                           "base_url": "http://127.0.0.1:8199/v1",
+                           "api_key": ""}}, f)
+
+    cfg = DeeptorrentConfig.from_file(path)
+    assert cfg.llm.provider == "deepseek"
+    assert cfg.llm.model == "deepseek-flash"
+    assert cfg.llm.fast_model == "deepseek-flash"
+    assert cfg.llm.base_url == ""
+    assert cfg.llm.api_key == "sk-migrate-test"  # shared key injected
+
+    cfg.to_file(path)
+    saved = _saved(path)
+    assert saved["llm"]["provider"] == "deepseek"
+
+
+def test_stamped_local_choice_survives(tmp_path, monkeypatch):
+    """A local provider the user explicitly saved through the 6.4.1+ GUI
+    carries the local_chosen stamp — the migration must leave it alone."""
+    path = str(tmp_path / "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"llm": {"provider": "local",
+                           "model": "qwen35-9b-uncensored-q4km",
+                           "local_chosen": True,
+                           "base_url": "http://127.0.0.1:8199/v1",
+                           "api_key": ""}}, f)
+
+    cfg = DeeptorrentConfig.from_file(path)
+    assert cfg.llm.provider == "local"
+    assert cfg.llm.model == "qwen35-9b-uncensored-q4km"
+    assert cfg.llm.local_chosen is True

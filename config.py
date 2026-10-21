@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "6.4.1"
+APP_VERSION = "6.4.2"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -211,6 +211,12 @@ class LLMConfig:
     # Deliberately NOT settable by the agent itself (set_settings deny list):
     # a prompt injection must not be able to unlock its own gates.
     yolo_mode: bool = False
+    # 6.4.2 (owner 2026-10-21): stamped TRUE only when the USER explicitly
+    # saves the local provider in the GUI. from_file migrates any provider
+    # == "local" WITHOUT this stamp back to the DeepSeek default — that is
+    # how pre-6.4.1 auto-switched installs get forced onto the built-in key
+    # via auto-update, while a deliberate local choice survives.
+    local_chosen: bool = False
 
 
 @dataclass
@@ -702,6 +708,20 @@ class DeeptorrentConfig:
         # still gets the shared key AND heals back to deepseek (2026-09-19:
         # fresh installs must get the built-in key the first time they run).
         _llm = data.setdefault("llm", {})
+        # 6.4.2 migration (owner 2026-10-21): the pre-6.4.1 installer and
+        # download flows AUTO-SWITCHED the provider to "local" — those
+        # configs carry no `local_chosen` stamp. Force them back onto the
+        # built-in DeepSeek default on load (auto-updaters included), while
+        # a local provider the user explicitly saved through the new GUI
+        # (stamped) is never touched. Runs BEFORE the shared-key injection
+        # so the flipped config gets the built-in key, and clears the local
+        # base URL too — a leftover 127.0.0.1:8199 base would make the
+        # deepseek provider POST to the local server.
+        if _llm.get("provider") == "local" and not _llm.get("local_chosen"):
+            _llm["provider"] = "deepseek"
+            _llm["model"] = "deepseek-flash"
+            _llm["fast_model"] = "deepseek-flash"
+            _llm["base_url"] = ""
         if (not _llm.get("api_key")
                 and _llm.get("provider", "deepseek") in ("", "deepseek", "dummy")):
             _llm["api_key"] = (

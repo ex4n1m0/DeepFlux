@@ -1124,6 +1124,24 @@ class APIKeysDialog(QDialog):
         self.llm_reasoning_effort.setEnabled(custom)
         models = preset.get("models") or []
         self.llm_model.setPlaceholderText(models[0] if models else "provider/model-name")
+        # Keep the Model field honest per endpoint: presets show THEIR model
+        # (the field is display-only there — _save_and_accept re-applies the
+        # preset lineup), local shows the model OK would actually persist,
+        # custom keeps whatever the user typed.
+        if provider in ("deepseek", "openrouter"):
+            self.llm_model.setText(models[0] if models else "")
+        elif provider == "local":
+            from infra import local_model
+            staged = getattr(self, "_pending_local_entry", None)
+            if staged is not None:
+                self.llm_model.setText(staged["id"])
+            else:
+                installed = local_model.installed_models()
+                ids = {e["id"] for e in installed}
+                current = self.config.llm.model if self.config.llm.model in ids else ""
+                self.llm_model.setText(
+                    current or (installed[0]["id"] if installed
+                                else (models[0] if models else "")))
         # Local AI is KEYLESS: the key row (label + field + hint) hides so
         # the section stops asking for an sk-... that must stay empty.
         local = provider == "local"
@@ -1898,8 +1916,11 @@ class APIKeysDialog(QDialog):
                 # download switch wins; otherwise keep the current id when
                 # it's a manifest id AND still installed, else the first
                 # installed model, else the preset default. The base URL is
-                # fixed (our loopback server), never user-typed.
+                # fixed (our loopback server), never user-typed. Saving local
+                # here is an EXPLICIT user choice — stamp it so from_file's
+                # 6.4.2 migration never pulls this config back to DeepSeek.
                 from infra import local_model
+                self.config.llm.local_chosen = True
                 staged = self._pending_local_entry
                 if staged is not None:
                     self.config.llm.model = staged["id"]

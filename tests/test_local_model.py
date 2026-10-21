@@ -639,10 +639,13 @@ def test_keyless_local_boot_is_not_dummy():
 
 
 def test_from_file_keeps_local_provider_and_never_injects_keys(tmp_path):
+    """A STAMPED local choice (6.4.2: saved through the GUI) survives
+    from_file untouched — and never receives the DeepSeek key."""
     p = str(tmp_path / "config.json")
     _write_config(p, {"provider": "local",
                       "model": local_model.DEFAULT_MODEL_ID,
-                      "base_url": local_model.DEFAULT_BASE_URL})
+                      "base_url": local_model.DEFAULT_BASE_URL,
+                      "local_chosen": True})
     cfg = DeeptorrentConfig.from_file(p)
     assert cfg.llm.provider == "local"
     # The shared DeepSeek key is deepseek-gated; local never receives it
@@ -654,7 +657,7 @@ def test_from_file_keeps_local_provider_and_never_injects_keys(tmp_path):
 def test_from_file_clears_stale_deepseek_fast_model_for_local(tmp_path):
     p = str(tmp_path / "config.json")
     _write_config(p, {"provider": "local", "model": local_model.DEFAULT_MODEL_ID,
-                      "fast_model": "deepseek-flash"})
+                      "fast_model": "deepseek-flash", "local_chosen": True})
     cfg = DeeptorrentConfig.from_file(p)
     assert cfg.llm.fast_model == ""
 
