@@ -37,7 +37,7 @@ HELP_HTML_ZH = r"""
 </head>
 <body>
 
-<h1>DeepFlux 6.3 —— 用户指南</h1>
+<h1>DeepFlux 6.4 —— 用户指南</h1>
 
 <p>DeepFlux 是一个 AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室
 和文件管理器。AI 智能体可以搜索并下载种子、查找直链下载、管理你的媒体库 ——
@@ -158,12 +158,12 @@ Brave 和 Perplexity 在配置密钥后加入）并合并结果 —— Perplexit
 附上一段综合答案。</p>
 
 <h3>本地 AI（内置，无审查）</h3>
-<p>智能体可以运行在本地模型上，替代云端 API —— 什么都不离开你的电脑，
-也不需要密钥或账号。安装程序在最后一步提供此选项（"Set up local
-uncensored AI now"）：DeepFlux 检测你的显卡和内存，从固定的 Hugging Face
-模型清单中挑选匹配的型号，一次性下载（2-9 GB，支持断点续传）并设为默认。
-模型为无审查（uncensored）的 Qwen3.5 系列，智能体不会给出云端式的拒绝
-回答。</p>
+<p>开箱即用：智能体默认使用随安装包内置的 DeepSeek 密钥运行 —— 无需账号，
+无需任何设置。也可以改为在本地模型上运行（什么都不离开你的电脑）：本地
+AI 是可选功能，之后在 File → API Keys → AI 中开启（或在安装最后一步勾选
+可选框）。DeepFlux 会检测你的显卡和内存，从固定的 Hugging Face 模型清单
+中挑选匹配的型号，一次性下载（2-9 GB，支持断点续传）。模型为无审查
+（uncensored）的 Qwen3.5 系列，智能体不会给出云端式的拒绝回答。</p>
 <ul>
   <li><b>存放位置：</b>模型在 <code>~/.deeptorrent/models/</code>，llama.cpp
     引擎在 <code>~/.deeptorrent/llama/</code>。服务器只绑定本机
@@ -518,7 +518,7 @@ AES-128 加密的流。
 </table>
 
 <h2>版本</h2>
-<p>DeepFlux 6.3 —— AI 深度搜索</p>
+<p>DeepFlux 6.4 —— AI 深度搜索</p>
 <p>AI：内置本地模型（无审查、离线）或 DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
 
 </body>

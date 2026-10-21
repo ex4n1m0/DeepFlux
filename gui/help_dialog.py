@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 6.3 — User Guide</h1>
+<h1>DeepFlux 6.4 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -186,12 +186,14 @@ provider in parallel (DuckDuckGo always, plus Brave and Perplexity when their ke
 are set) and merges the results — a Perplexity key adds a synthesized answer.</p>
 
 <h3>Local AI (built-in, uncensored)</h3>
-<p>The agent can run on a local model instead of a cloud API — nothing leaves
-your PC and no key or account is needed. The installer offers this at the end
-of setup ("Set up local uncensored AI now"): DeepFlux detects your GPU and RAM,
-picks the matching model from a pinned Hugging Face ladder, downloads it once
-(2-9 GB, resumable) and makes it the default. The models are uncensored
-Qwen3.5 builds, so the agent answers without cloud-style refusals.</p>
+<p>Out of the box the agent runs on a built-in DeepSeek key that ships with
+the setup file — no account and no setup needed. The agent can ALSO run on a
+local model instead of a cloud API — nothing leaves your PC. Local AI is
+optional: enable it later in File → API Keys → AI (or tick the optional box
+at the end of setup), where DeepFlux detects your GPU and RAM, picks the
+matching model from a pinned Hugging Face ladder and downloads it once
+(2-9 GB, resumable). The models are uncensored Qwen3.5 builds, so the agent
+answers without cloud-style refusals.</p>
 <ul>
   <li><b>Where things live:</b> models in <code>~/.deeptorrent/models/</code>,
     the llama.cpp engine in <code>~/.deeptorrent/llama/</code>. The server binds
@@ -623,7 +625,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 6.3 — AI Deep Search</p>
+<p>DeepFlux 6.4 — AI Deep Search</p>
 <p>AI via built-in local models (uncensored, offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>

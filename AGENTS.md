@@ -840,8 +840,11 @@
   model on the user's machine through the official llama.cpp
   `llama-server` (MIT; pinned by `packaging/fetch_llama.py` — CPU + Vulkan
   Windows x64 zips, ~52 MB; llama.cpp marks EVERY release prerelease, that
-  is just their convention). Default-on installer step
-  `--setup-localmodel` (third postinstall checkbox, after FlareSolverr):
+  is just their convention). Installer step `--setup-localmodel` (third
+  postinstall checkbox, after FlareSolverr) — OPT-IN since 6.4 (owner
+  decision 2026-10-21: the shipped DeepSeek key is the out-of-the-box
+  default agent; local models are a later choice from File → API Keys →
+  AI; the CurPageChanged default-check hook no longer touches it):
   extract both runtimes into `~/.deeptorrent/llama/{cpu,vulkan}/` (frozen
   builds DELETE the zips after extraction; dev keeps them — the
   flaresolverr lesson), detect hardware, download the matched GGUF, switch
@@ -1088,7 +1091,11 @@
   moved out of git 2026-09-10) a SET of shared keys ships in the SETUP FILE
   ONLY — never in git: DeepSeek (agent), Perplexity (web search), TMDb,
   OpenSubtitles, TPDB, StashDB, OMDb, Fanart.tv. Jackett and Brave stay
-  env-only by decision. `config.py` loads each `_SHARED_*_API_KEY` at import
+  env-only by decision. The DIRECT DeepSeek key is the out-of-the-box
+  DEFAULT agent (owner decision 6.4, 2026-10-21): fresh installs boot
+  straight into a working agent with no account; local models are an
+  opt-in later choice (the installer's --setup-localmodel checkbox is
+  default-OFF since 6.4). `config.py` loads each `_SHARED_*_API_KEY` at import
   time from the UNTRACKED repo-root module `_embedded_keys.py` (gitignored;
   exists only on build machines; PyInstaller bundles it like any import via
   app.spec's conditional hiddenimport); without the file every shared key is
@@ -1136,7 +1143,11 @@
     User Guide's "Agent not responding" entry tells those users to clear
     or replace the key. A dev machine may need the stale `llm.api_key`
     cleared once by hand (done on this machine 2026-09-10, backup at
-    `config.json.bak-stalekey`).
+    `config.json.bak-stalekey`). DeepSeek key rotations to date:
+    2026-09-10, 2026-09-19, 2026-10-11 (5.5, first touching the Linux CI
+    secret), 2026-10-21 (6.4, again both the build-machine file and the
+    EMBED_SHARED_DEEPSEEK_API_KEY gh secret; new key verified live against
+    api.deepseek.com before building).
 - DeepSeek model lineup (checked against the pricing page 2026-09-10):
   `deepseek-flash` (= V4.1-Flash, DeepSeek's own current default — cheaper
   AND better than v4-pro per their page; 1M ctx) is the ONLY preset model

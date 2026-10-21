@@ -3,7 +3,7 @@
 ; Then open this script in Inno Setup and Compile.
 
 #define MyAppName "DeepFlux"
-#define MyAppVersion "6.3"
+#define MyAppVersion "6.4"
 #define MyAppPublisher "DeepFlux"
 #define MyAppExeName "DeepFlux.exe"
 ; PyInstaller onedir output, relative to this script (packaging/..\dist).
@@ -28,7 +28,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir={#BuildOutputDir}
-OutputBaseFilename=DeepFlux6.3Setup
+OutputBaseFilename=DeepFlux6.4Setup
 SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -127,8 +127,11 @@ Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-flaresolverr"; Descripti
 ; Local AI final step — after FlareSolverr, before launch. Extracts the
 ; bundled llama.cpp runtimes and downloads the uncensored model matched to
 ; this PC (2-9 GB from Hugging Face, resumable), then makes it the default
-; agent. Skips cleanly on machines too small for any local model.
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-localmodel"; Description: "Set up local uncensored AI now (recommended) — downloads a model that runs on this PC (2-9 GB, no account)"; Flags: postinstall skipifsilent
+; agent. OPT-IN since 2026-10-21 (owner decision): the shipped DeepSeek key
+; is the out-of-the-box default agent; users switch to local models later
+; from File -> API Keys -> AI if they wish. Skips cleanly on machines too
+; small for any local model.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--setup-localmodel"; Description: "Optional: set up local uncensored AI on this PC (2-9 GB download, no account — you can also do this later from the AI settings)"; Flags: postinstall skipifsilent
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
@@ -148,15 +151,15 @@ begin
   // Default-CHECK the final-step checkboxes: Inno always creates
   // postinstall checkboxes unchecked, and the whole point of the steps is
   // that a default install ships a working torrent search (user decision
-  // 2026-09-16; extended to FlareSolverr 2026-10-13 and local AI
-  // 2026-10-19). Runs when the finished page is built, after the RunList
-  // is populated.
+  // 2026-09-16; extended to FlareSolverr 2026-10-13). Local AI is NOT
+  // default-checked (owner decision 2026-10-21 — the shipped DeepSeek key
+  // is the default agent; local models are an opt-in later choice). Runs
+  // when the finished page is built, after the RunList is populated.
   if CurPageID <> wpFinished then
     Exit;
   for I := 0 to WizardForm.RunList.Items.Count - 1 do
     if (Pos('Jackett', WizardForm.RunList.ItemCaption[I]) > 0) or
-       (Pos('FlareSolverr', WizardForm.RunList.ItemCaption[I]) > 0) or
-       (Pos('local uncensored AI', WizardForm.RunList.ItemCaption[I]) > 0) then
+       (Pos('FlareSolverr', WizardForm.RunList.ItemCaption[I]) > 0) then
       WizardForm.RunList.Checked[I] := True;
 end;
 
