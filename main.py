@@ -141,7 +141,7 @@ class Repl:
                 print("\n[local AI] llama.cpp server ready on 127.0.0.1:8199.")
             else:
                 print("\n[local AI] no local model installed yet — download one "
-                      "in the app (File → API Keys → AI).")
+                      "in the app (Settings → AI & API Keys → AI Agent Key…).")
         except Exception:
             logger.debug("local model start failed", exc_info=True)
 

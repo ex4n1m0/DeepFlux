@@ -134,7 +134,7 @@ ZH_CN: dict[str, str] = {
     "API key from Jackett dashboard": "来自 Jackett 控制面板的 API 密钥",
     "API key from opensubtitles.com": "来自 opensubtitles.com 的 API 密钥",
     "API key from stashdb.org (optional)": "来自 stashdb.org 的 API 密钥（可选）",
-    "API key is managed in File → API Keys.": "API 密钥在“文件 → API 密钥”中管理。",
+    "API key is managed in Settings → AI & API Keys.": "API 密钥在“设置 → AI 与 API 密钥”中管理。",
     "API token from theporndb.net (optional)": "来自 theporndb.net 的 API 令牌（可选）",
     "Add Download URL": "添加下载链接",
     "Add Magnet": "添加磁力链接",
@@ -248,8 +248,8 @@ ZH_CN: dict[str, str] = {
     "Enter both a base URL and model name for the custom endpoint.":
         "请同时填写自定义端点的 Base URL 和模型名。",
     "Enter exactly 64 hexadecimal characters.": "请输入恰好 64 个十六进制字符。",
-    "Enter the Jackett API key above first (the URL is set in Download → Jackett Settings).":
-        "请先在上方填写 Jackett API 密钥（URL 在“下载 → Jackett 设置”中配置）。",
+    "Enter the Jackett API key above first (the URL is set in Settings → Jackett Indexer Settings…).":
+        "请先在上方填写 Jackett API 密钥（URL 在“设置 → Jackett 索引器设置…”中配置）。",
     "Exit Compact": "退出紧凑模式",
     "Expected 64-character SHA-256 checksum:": "预期的 64 位 SHA-256 校验和：",
     "Export Bookmarks": "导出书签",

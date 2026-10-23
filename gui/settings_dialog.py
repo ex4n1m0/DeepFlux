@@ -71,7 +71,7 @@ class IndexerSettingsDialog(QDialog):
     """Settings for the Jackett indexer integration.
 
     The API key and the Test Connection button live in the API Keys window
-    (File → API Keys) — this page keeps the connection/tuning fields."""
+    (Settings → AI & API Keys) — this page keeps the connection/tuning fields."""
 
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -92,7 +92,7 @@ class IndexerSettingsDialog(QDialog):
         self.idx_url.setPlaceholderText("http://localhost:9117")
         idx_layout.addRow(tr('URL:'), self.idx_url)
 
-        key_note = QLabel(tr('API key is managed in File → API Keys.'))
+        key_note = QLabel(tr('API key is managed in Settings → AI & API Keys.'))
         key_note.setObjectName("hint")
         idx_layout.addRow("", key_note)
 
@@ -134,10 +134,11 @@ class IndexerSettingsDialog(QDialog):
 
         idx_hint = QLabel(
             "Jackett runs on port 9117 — download from https://github.com/Jackett/Jackett\n"
-            "Add your torrent sites in the Jackett web UI, then set the API key in File → API Keys\n"
+            "Add your torrent sites in the Jackett web UI, then set the API key in\n"
+            "Settings → AI & API Keys → Search Keys (Jackett, Brave, Perplexity)…\n"
             "(the Test Connection button lives there too). Leave the URL blank to search your\n"
             "enabled Sources directly instead. To turn Jackett off entirely, use the\n"
-            "'Use Jackett' toggle in Download → Sources."
+            "'Use Jackett' toggle in Settings → Torrent Search Sources…."
         )
         idx_hint.setObjectName("hint")
         idx_hint.setWordWrap(True)
@@ -979,7 +980,7 @@ class APIKeysDialog(QDialog):
         fl.addRow("", _api_hint(
             "Copy from the Jackett web UI (http://localhost:9117). "
             "Jackett aggregates torrent indexer results for the agent. The URL "
-            "and Torznab path are configured in Download → Jackett Settings."))
+            "and Torznab path are configured in Settings → Jackett Indexer Settings…"))
         layout.addWidget(jkt_group)
 
         # --- Web Search ---
@@ -1167,15 +1168,15 @@ class APIKeysDialog(QDialog):
         import requests
         import xml.etree.ElementTree as ET
 
-        # The URL/path are configured in Download → Jackett Settings; the key
-        # being tested is the TYPED (not yet saved) one.
+        # The URL/path are configured in Settings → Jackett Indexer Settings…;
+        # the key being tested is the TYPED (not yet saved) one.
         url = self.config.indexer.url.strip()
         api_key = self.jkt_key.text().strip()
         torznab_path = self.config.indexer.torznab_path.strip() or "/api/v2.0/indexers/all/results/torznab"
 
         if not url or not api_key:
             self.jkt_test_result.setText(
-                tr('Enter the Jackett API key above first (the URL is set in Download → Jackett Settings).'))
+                tr('Enter the Jackett API key above first (the URL is set in Settings → Jackett Indexer Settings…).'))
             self.jkt_test_result.setStyleSheet("color: #ffcc00;")
             return
 
@@ -1213,7 +1214,7 @@ class APIKeysDialog(QDialog):
             # Fetch with the TYPED (not yet saved) key via a probe config, so
             # cancelling the dialog leaves the saved key untouched. The fetched
             # sources land in the live config either way — same as the Fetch
-            # button in Download → Sources.
+            # button in Settings → Torrent Search Sources….
             probe = copy.copy(self.config)
             probe.indexer = IndexerConfig(
                 url=url, api_key=api_key, torznab_path=torznab_path,

@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 6.4.2 — User Guide</h1>
+<h1>DeepFlux 6.4.3 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -57,11 +57,12 @@ organize files, all with your confirmation for sensitive actions.</p>
 <h2>Getting Started</h2>
 
 <ol>
-  <li><b>Add your API key:</b> Settings → AI &amp; API Keys: <i>AI Agent…</i> (pick the
+  <li><b>AI key (optional):</b> the agent works out of the box on a built-in
+      shared DeepSeek key — no account needed. To run it on your own key
+      instead, open Settings → AI &amp; API Keys: <i>AI Agent Key…</i> (pick the
       DeepSeek endpoint, or DeepSeek via OpenRouter), adjust the base URL if
-      needed, and paste your key. Without one, the agent runs in offline
-      demo mode.</li>
-  <li><b>Set up Jackett (optional but recommended):</b> Download → Jackett Settings.
+      needed, and paste your key. Your own key is independent of the shared one.</li>
+  <li><b>Set up Jackett (optional but recommended):</b> Settings → Jackett Indexer Settings….
       Jackett connects to torrent indexers and gives the agent structured search results.
       DeepFlux starts it automatically when it's not running. If you kept the
       <i>“Set up Jackett torrent search now”</i> box checked at the end of the
@@ -189,7 +190,8 @@ are set) and merges the results — a Perplexity key adds a synthesized answer.<
 <p>Out of the box the agent runs on a built-in DeepSeek key that ships with
 the setup file — no account and no setup needed. The agent can ALSO run on a
 local model instead of a cloud API — nothing leaves your PC. Local AI is
-optional: enable it later in File → API Keys → AI (or tick the optional box
+optional: enable it later in Settings → AI &amp; API Keys → <i>AI Agent Key…</i>
+(or tick the optional box
 at the end of setup), where DeepFlux detects your GPU and RAM, picks the
 matching model from a pinned Hugging Face ladder and downloads it once
 (2-9 GB, resumable). The models are uncensored Qwen3.5 builds, so the agent
@@ -198,7 +200,7 @@ answers without cloud-style refusals.</p>
   <li><b>Where things live:</b> models in <code>~/.deeptorrent/models/</code>,
     the llama.cpp engine in <code>~/.deeptorrent/llama/</code>. The server binds
     only to your own machine (127.0.0.1:8199) and starts with the app.</li>
-  <li><b>Manage models:</b> File → API Keys → AI lists every model with its
+  <li><b>Manage models:</b> Settings → AI &amp; API Keys → <i>AI Agent Key…</i> lists every model with its
     size, a fit badge and status, your detected hardware, the recommended pick
     (★), and Use / Download / Remove buttons. The badge says how THIS machine
     would run the model — <b>GPU</b> = fully in video memory (fastest),
@@ -258,7 +260,7 @@ actions (exact commands and paths) as it performs them.</p>
 
 <div class="note">
 <b>Tip:</b> Jackett gives much better results than web searches. Install it and add
-your indexers in Download → Sources → Fetch from Jackett.
+your indexers in Settings → Torrent Search Sources… → Fetch from Jackett.
 </div>
 
 <h2>Downloading</h2>
@@ -449,25 +451,30 @@ directory (Chrome → <code>chrome://extensions</code> → Developer mode → Lo
 
 <h2>Settings</h2>
 
-<p>Everything lives in the <b>File</b> menu, flat — grouped into zones, each
-opened by a separator line and a bold header (API Keys, Browser Settings,
-Download, Play) with its items slightly indented; no submenus to dig
-through. The Bookmarks folder tree is the one exception — it lives on the
-browser toolbar's Bookmarks button.</p>
+<p>Everything lives in the <b>Settings</b> menu (Ctrl+,) — grouped into
+zones, each opened by a separator line and a bold header (AI &amp; API Keys,
+Downloads &amp; Sources, Browser, Play) with its items slightly indented; no
+submenus to dig through. Download and file actions (Add Magnet, Add .torrent
+File, Save Page as PDF, settings backup/restore, file associations, Exit)
+live in the <b>File</b> menu. The Bookmarks folder tree is the one
+exception — it lives on the browser toolbar's Bookmarks button.</p>
 
 <table>
-  <tr><th>File section</th><th>What to configure</th></tr>
-  <tr><td><b>API Keys</b></td><td>One page per service (AI Agent, Torrent &amp;
+  <tr><th>Menu section</th><th>What to configure</th></tr>
+  <tr><td><b>File</b></td><td>Add Magnet Link / Add .torrent File, Save Page
+      as PDF, <b>Back Up All Settings…</b> / <b>Restore Settings from
+      Backup…</b> — a passphrase-encrypted <code>.dfc</code> backup of
+      everything (keys, sources, all settings) to keep safe or move to
+      another PC; import applies after a restart and your previous settings
+      are kept as <code>config.json.bak</code> — plus Set as Default App for
+      Magnets &amp; Media, and Exit.</td></tr>
+  <tr><td><b>AI &amp; API Keys</b></td><td>One page per service (AI Agent, Torrent &amp;
       Web Search, Movie &amp; TV Metadata, Adult Metadata, Subtitles): LLM
       endpoint, base URL and key, Jackett, Brave, Perplexity, TMDb,
-      OpenSubtitles. Plus file associations, and <b>Export/Import
-      Settings</b> — a passphrase-encrypted <code>.dfc</code> backup of
-      everything (keys, sources, all settings) to keep safe or move to
-      another PC. Import applies after a restart; your previous settings are
-      kept as <code>config.json.bak</code>.</td></tr>
-  <tr><td><b>Browser Settings</b></td><td>Homepage, privacy/data, History, Save Page as PDF, Developer Tools.</td></tr>
-  <tr><td><b>Bookmarks button</b> (browser toolbar, left of Private)</td><td><b>Import Bookmarks…</b> / <b>Export Bookmarks…</b> and your whole bookmark folder tree in one popup — bookmarks live here, not in the File menu.</td></tr>
-  <tr><td><b>Download</b></td><td>Add Magnet / Add Torrent File, <b>Jackett Settings</b> (URL; Test Connection syncs your indexer list), the Download Settings pages (Torrent Downloads, Torrent Queue, Download Manager — save paths, bandwidth limits, connections), <b>Sources</b> (which sites the agent searches), and <b>RSS Feeds</b> (subscriptions — or just ask the agent).</td></tr>
+      OpenSubtitles.</td></tr>
+  <tr><td><b>Browser Settings</b></td><td>Homepage, privacy/data, History, Developer Tools.</td></tr>
+  <tr><td><b>Bookmarks button</b> (browser toolbar, left of Private)</td><td><b>Import Bookmarks…</b> / <b>Export Bookmarks…</b> and your whole bookmark folder tree in one popup — bookmarks live here, not in the menus.</td></tr>
+  <tr><td><b>Downloads &amp; Sources</b></td><td><b>Jackett Indexer Settings</b> (URL; Test Connection syncs your indexer list), the settings pages (Torrent Downloads, Torrent Queue, Download Manager — save paths, bandwidth limits, connections), <b>Torrent Search Sources</b> (which sites the agent searches), and <b>RSS Feed Subscriptions</b> (subscriptions — or just ask the agent).</td></tr>
   <tr><td><b>Play</b></td><td>Four small pages: Playlist Sources, Metadata &amp; Cache (artwork cache, EPG), Subtitles &amp; Languages (preferred audio/subtitle language), and Playback (backend, decoding, buffer, smooth motion, SVP interpolation, throttling).</td></tr>
 </table>
 
@@ -554,7 +561,7 @@ the network when you ask it to.</p>
 <h2>Keeping DeepFlux Updated</h2>
 
 <p>DeepFlux checks for new versions automatically (once a day, Windows
-installs only — the checkbox lives in Download → Download Settings). When a
+installs only — the checkbox lives in Settings → Download Manager Settings…). When a
 new version is out, a small dialog offers <b>Update now</b>, <b>Remind me
 later</b> and <b>Skip this version</b>. You can also check any time via
 <b>Help → Check for Updates…</b></p>
@@ -568,8 +575,8 @@ click. Your sources, API keys and settings are carried over (the update
 reinstalls in place and keeps your config), and active downloads pause and
 resume automatically. The update log is at
 <code>~/.deeptorrent/logs/update.log</code> if you ever need to check what
-happened. The automatic check can be turned off in Download → Download
-Settings.</p>
+happened. The automatic check can be turned off in Settings → Download
+Manager Settings….</p>
 
 <h2>Troubleshooting</h2>
 
@@ -584,21 +591,21 @@ once enough people have installed the release.
 
 <div class="warn">
 <b>Agent not responding:</b> Check your API key in Settings → AI &amp; API Keys. The
-built-in shared AI key is rotated in every new DeepFlux release, so an
-outdated copy can lose AI access — update to the latest version
-(Help → Check for Updates…), or set your own key to be independent of the
-shared one. (The macOS and Linux builds ship without a built-in key — add
-your own under Settings → AI &amp; API Keys.)
+built-in shared AI key is rotated occasionally; a current install picks the new
+key up automatically once it updates — so if the agent stops answering, update to
+the latest version (Help → Check for Updates…), or set your own key to be
+independent of the shared one. (The macOS build ships without a built-in key —
+add your own under Settings → AI &amp; API Keys.)
 </div>
 
 <div class="warn">
 <b>No search results:</b> Make sure Jackett is running and your sources are enabled
-(Download → Sources). Without Jackett, the agent falls back to slower web searches.
+(Settings → Torrent Search Sources…). Without Jackett, the agent falls back to slower web searches.
 Indexers that keep failing are put in a cooldown automatically (skipped for a while,
 then re-tried), and sources that no longer exist in Jackett are skipped for Jackett
 searches automatically — check the Agent tab's dim event lines to see which and why.
 If many indexers report Cloudflare challenges, install FlareSolverr and set its URL in
-Download → Jackett Settings.
+Settings → Jackett Indexer Settings….
 To set everything up in one go, run DeepFlux with <code>--setup-jackett</code>
 (see Getting Started) or re-run the DeepFlux installer and keep the
 <i>“Set up Jackett torrent search now”</i> box checked.
@@ -625,7 +632,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 6.4.2 — AI Deep Search</p>
+<p>DeepFlux 6.4.3 — AI Deep Search</p>
 <p>AI via built-in local models (uncensored, offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>

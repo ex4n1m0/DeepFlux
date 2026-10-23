@@ -2051,8 +2051,8 @@ class _SubtitleSearchDialog(QDialog):
 
         if not self._config.iptv.opensubtitles_api_key:
             self.status.setText(
-                "No OpenSubtitles API key — add one in Config → IPTV Settings "
-                "(free consumer key at opensubtitles.com).")
+                "No OpenSubtitles API key — add one in Settings → AI & API Keys → "
+                "OpenSubtitles Key… (free consumer key at opensubtitles.com).")
             self.search_btn.setEnabled(False)
             self.dl_btn.setEnabled(False)
 

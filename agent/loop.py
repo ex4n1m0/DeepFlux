@@ -120,14 +120,14 @@ Web access:
 - `search_indexers` prefers private trackers: it searches them first and only falls back to public sources when private ones yield nothing usable. When results include a `source_type` field, prefer "private" results (better quality/speed, and they usually require seeding back — mention this to the user when relevant).
 - If `search_indexers` returns `source: "web_search"`, it means no Jackett indexer is configured (or it returned no results) — use the web results to find magnets or .torrent download links, then use web_fetch to read the page and extract them.
 - If `search_indexers` returns `source: "source_web_search"`, it means Jackett is not configured but the user has enabled source websites — the results are site-specific searches from those sources. Use web_fetch to read the pages and extract magnets or .torrent links.
-- The user can manage their source list via Config → Sources... in the GUI. Enabled sources are searched even without Jackett.
+- The user can manage their source list via Settings → Torrent Search Sources... in the GUI. Enabled sources are searched even without Jackett.
 - Search workflow: `search_indexers` runs a QUICK pass on the top source(s) by default — fast, and usually enough. Present those results first. If they look thin or the user asks for more options, ASK whether to search deeper ("Want me to sweep all sources?") before calling `search_indexers` again with `deep=true` — a deep sweep is slower. If the quick pass found nothing, a deep sweep already ran automatically; say so instead of offering one. When results include `deep_available: true`, mention that a deeper sweep is available.
 - DEEP REQUESTS (IMPORTANT): when the user's message contains the word "deep" — "deep search", "search deep", "deep dive", "do a deep sweep", "go deep" — they want the FULL sweep, not a quick pass. Call `search_indexers` with `deep=true` IMMEDIATELY: no quick pass first, no asking whether to go deep, no hedging. Combine it with `web_search` for query variants (year, alternate titles, release group) in the same turn when that would find more. Keep sweeping with new query variants until the sources are genuinely exhausted — a "deep" request must never end after one quick look.
 - ALWAYS mention where results came from: include a **Source** column in result tables (the tracker/indexer name from each result's `indexer` or `source_name` field), and note the tier when relevant (e.g. "from your private trackers" or "from public sites"). Users want to know which source delivered.
 - When `search_indexers` returns an `about` field, open your reply with a short **About** section BEFORE the results table: what it is, year, rating/genres (TMDb) or description (Wikipedia), and a 1–2 sentence overview — this confirms to the user that you found the right thing. Link the title when `about.url` is present. Omit the section silently when `about` is absent.
 
 RSS feeds:
-- The user may have configured RSS feed subscriptions (managed via Config → RSS Feeds... in the GUI).
+- The user may have configured RSS feed subscriptions (managed via Settings → RSS Feed Subscriptions... in the GUI).
 - Use `list_rss_feeds` to see all configured feeds and their modes.
 - Use `get_rss_feed_items` to fetch new items from a feed. Items may contain magnet_uri or torrent_url fields.
 - Use `download_from_feed` with stable `item_id` values from `get_rss_feed_items`; indices are a legacy fallback.
@@ -470,7 +470,7 @@ class AgentLoop:
         Local provider only: oversized tool results are ARCHIVED to the
         memory store instead of silently lost — the context keeps a digest
         plus a search_memory pointer, so a long search can span more pages
-        than the 32K window would otherwise hold."""
+        than the local context window would otherwise hold."""
         tool_idx = [i for i, m in enumerate(self.history) if m.get("role") == "tool"]
         keep_full = set(tool_idx[-TOOL_HISTORY_KEEP_FULL:])
         archive_enabled = (

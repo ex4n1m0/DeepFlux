@@ -137,7 +137,7 @@ _SHELL_TIMEOUT_MAX = 600
 # ---------------------------------------------------------------------------
 
 # Key/credential slots addressable by set_api_key. Path tuples index into the
-# live DeeptorrentConfig. Kept in sync with the slots File → API Keys edits.
+# live DeeptorrentConfig. Kept in sync with the slots Settings → AI & API Keys edits.
 API_KEY_SLOTS: Dict[str, Tuple[Tuple[str, ...], str]] = {
     "llm": (("llm", "api_key"), "LLM provider API key — the agent's own brain"),
     "perplexity": (("web_search", "api_key"), "Perplexity web-search API key"),
@@ -1435,7 +1435,7 @@ class ToolRegistry:
                 "schema": self._tool_schema(
                     name="iptv_add_source",
                     description="Add an IPTV playlist source to the Play tab (like the GUI's "
-                    "Settings → Playlist Sources). For m3u_url the URL is validated first — "
+                                "Settings → Play → IPTV Playlist Sources…). For m3u_url the URL is validated first — "
                     "it must serve a real #EXTM3U playlist (dead links and EPG/XML links are "
                     "rejected). The Play tab starts loading it immediately. Xtream logins need "
                     "username/password; local_folder takes a directory path.",

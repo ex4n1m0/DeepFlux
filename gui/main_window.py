@@ -4145,7 +4145,8 @@ class MainWindow(QMainWindow):
                 self._agent_signals.event.emit({
                     "type": "local_model", "success": False,
                     "message": "Local AI is selected but no model is installed "
-                               "yet — download one in File → API Keys → AI.",
+                               "yet — download one in Settings → AI & API Keys "
+                               "→ AI Agent Key….",
                 })
                 return
             was_down = not local_model.is_running()
@@ -4158,7 +4159,8 @@ class MainWindow(QMainWindow):
                 self._agent_signals.event.emit({
                     "type": "local_model", "success": False,
                     "message": "The local AI server is turned OFF — turn it "
-                               "back on in File → API Keys → AI.",
+                               "back on in Settings → AI & API Keys → "
+                               "AI Agent Key….",
                 })
         except Exception as exc:
             logger.debug("local model startup check failed: %s", exc)

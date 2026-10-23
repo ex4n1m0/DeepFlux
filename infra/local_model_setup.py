@@ -85,18 +85,20 @@ def run_setup(config_path: Optional[str] = None,
             say(f"Download did not finish ({exc}).")
             if cancel is not None and cancel.is_set():
                 say("Cancelled — the partial download resumes on the next run.")
-            say("Retry: install again, or use File → API Keys → AI in the app.")
+            say("Retry: install again, or use Settings → AI & API Keys → "
+                "AI Agent Key… in the app.")
             return result
         result["downloaded"] = True
         say("Download verified (sha256 matches the pinned manifest).")
 
     say("The model is installed. The built-in DeepSeek key REMAINS the "
         "default agent — switch to 'Local AI (built-in, uncensored)' in "
-        "File → API Keys → AI whenever you want to use it; the local server "
-        "then starts automatically.")
+        "Settings → AI & API Keys → AI Agent Key… whenever you want to use "
+        "it; the local server then starts automatically.")
 
     result["ok"] = True
     result["summary"] = (f"{'Downloaded' if result['downloaded'] else 'Reused'} "
                          f"{entry['label']} — installed and selectable in "
-                         "File → API Keys → AI (DeepSeek stays the default).")
+                         "Settings → AI & API Keys → AI Agent Key… "
+                         "(DeepSeek stays the default).")
     return result

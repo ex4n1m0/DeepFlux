@@ -213,18 +213,21 @@
   filename on a version bump and re-run it, never hand-edit the outputs.
 - Website deploy: `website/` is a Vercel-linked project (`deep-flux`,
   aliased to deepflux.space; root index.html redirects to /deepflux/).
-  WINDOWS-ONLY since 2026-09-24 (owner decision): the macOS/Linux download
-  buttons, install tabs AND the hosted dmg/AppImage were REMOVED from BOTH
-  pages (EN + /deepflux/zh/); the OS-detection and install-tab JS is gone
-  (only the checksum-copy + stats + language-dropdown scripts remain) and
-  the footer carries ONLY the Buy Me a Coffee icon. Do NOT re-add the other
-  platforms or re-host those binaries without a new owner decision — the
-  macOS/Linux paragraphs below describe the RETIRED ritual, kept for
-  history in case it is ever revived.
+  WINDOWS + LINUX (dual-platform since 5.5, 2026-10-11): both pages (EN +
+  /deepflux/zh/) carry the Windows setup exe AND the Linux AppImage with
+  install tabs (win/linux) + per-panel sha256s; macOS stays REMOVED
+  (2026-09-24 owner decision) — do NOT re-add the macOS button or re-host
+  the dmg without a new owner decision. 2026-10-21 copy redesign
+  (owner-approved "reduce the copy, stop repeating"): ONE AI-key note above
+  the tabs (was one per panel), no news badge, no version pill in the nav,
+  no closing CTA band (the sticky nav carries Download), and the "From the
+  same maker" sibling links moved from the top strip into the FOOTER next
+  to the Buy Me a Coffee icon. The macOS/Linux paragraphs below describe
+  the RETIRED ritual, kept for history in case it is ever revived.
   Publish = copy the new `DeepFlux<X>.Setup.exe` into `website/deepflux/`,
-  update index.html AND zh/index.html (download hrefs, version pill, tab
-  label, size line, sha256; there is no h1 any more — the logo is the top
-  element), delete the old setup exe,
+  update index.html AND zh/index.html (download hrefs, the hero meta line's
+  version, tab label, size line, sha256; there is no h1 any more — the logo
+  is the top element), delete the old setup exe,
   then `vercel --prod --yes` from `website/`. Only files in the dir are
   deployed — removing the old exe from the dir removes it from production.
   Landing-page IMAGES are REAL app captures (since 2026-09-25, owner call:
@@ -696,9 +699,10 @@
   `indexer.jackett_path` or standard install dirs incl. `%ProgramData%\Jackett`),
   and re-fetches the
   sources list when stale (>24h, `sources.last_jackett_fetch`) or EMPTY.
-  `maybe_auto_sync(force=True)` skips the daily gate — wired to Config →
-  Jackett Settings: OK forces an immediate sync; a successful Test
-  Connection (button lives in File → API Keys under the Jackett key) fetches
+  `maybe_auto_sync(force=True)` skips the daily gate — wired to Settings →
+  Jackett Indexer Settings…: OK forces an immediate sync; a successful Test
+  Connection (button lives in Settings → AI & API Keys, Search Keys page,
+  under the Jackett key) fetches
   with the TYPED (unsaved) key + saved URL/path via a probe config
   (`APIKeysDialog._jkt_fetch_worker`) and merges into the live config;
   a forced run that reaches Jackett but fetches nothing reports
@@ -806,7 +810,8 @@
   always-visible strip at the top of the Agent page (CPU/RAM/GPU/VRAM
   meters, custom-painted so global QSS can't restyle them, warn ≥75% /
   danger ≥90% coloring) + the local-AI status chip (🧠 model · ● running /
-  ◐ loading / ○ down / ☁ Cloud AI) that opens File → API Keys → AI on
+  ◐ loading / ○ down / ☁ Cloud AI) that opens Settings → AI & API Keys →
+  AI Agent Key… on
   click. Sampling = ONE persistent daemon thread (2 s cadence) that
   sleeps while the Agent tab isn't active (`set_active` from
   `_on_main_tab_changed`, which must getattr `_agents_tab` — it fires
@@ -844,8 +849,8 @@
   is just their convention). Installer step `--setup-localmodel` (third
   postinstall checkbox, after FlareSolverr) — OPT-IN since 6.4 (owner
   decision 2026-10-21: the shipped DeepSeek key is the out-of-the-box
-  default agent; local models are a later choice from File → API Keys →
-  AI; the CurPageChanged default-check hook no longer touches it):
+  default agent; local models are a later choice from Settings → AI &
+  API Keys → AI Agent Key…; the CurPageChanged default-check hook no longer touches it):
   extract both runtimes into `~/.deeptorrent/llama/{cpu,vulkan}/` (frozen
   builds DELETE the zips after extraction; dev keeps them — the
   flaresolverr lesson), detect hardware, download the matched GGUF, switch
@@ -941,7 +946,7 @@
   `~/.deeptorrent/models/<id>/` (shared home with the whisper model).
   MEASURED: 2.52 GiB in 19s (~140 MB/s avg). Cancel keeps the .part.
 - Custom Hugging Face models (6.3 feature, GUI-ONLY — never an agent tool):
-  File → API Keys → AI has a "Custom model from Hugging Face" section —
+  Settings → AI & API Keys → AI Agent Key… has a "Custom model from Hugging Face" section —
   `local_model.hf_search` (GET /api/models, filter=gguf, downloads-sorted,
   LIVE-VERIFIED field names) → double-click a repo →
   `local_model.hf_gguf_files` (GET /api/models/<repo>/tree/main; the LFS
@@ -979,7 +984,7 @@
   Repl.shutdown. Variant choice: vulkan when GPU detected (falls back to
   the cpu build on spawn failure). GUI: `_local_model_worker` startup
   thread + a `local_model` dim event (HTML-escaped like flaresolverr's);
-  File → API Keys → AI has the whole ladder with hardware line,
+  Settings → AI & API Keys → AI Agent Key… has the whole ladder with hardware line,
   recommendation, Download/Remove/Test.
 - Packaging: installer.iss [Files] wildcards `llama-*-bin-win-cpu-x64.zip`
   etc. into `_internal\llama` (skipifsourcedoesntexist); app.spec globs the
@@ -1002,7 +1007,7 @@
   on OpenRouter); custom endpoints omit it unless explicitly enabled. Per-call
   `model=` override: summaries use `config.llm.fast_model` + effort "low";
   planning uses `model` + `reasoning_effort` from config. The Provider combo,
-  Base URL and custom model live in File → API Keys; keyless custom endpoints
+  Base URL and custom model live in Settings → AI & API Keys; keyless custom endpoints
   are supported. DeepSeek/OpenRouter models remain preset-locked. There is NO
   separate AI Settings dialog:
   stream / memory / agent-debug are assumed always-on — `from_file` forces
@@ -1681,7 +1686,7 @@
   short-lived link → GET). 406 = daily quota (suggest account creds);
   optional username/password login → Bearer JWT raises it. Keys live in
   `config.iptv.opensubtitles_*` (env `OPENSUBTITLES_API_KEY` fills an empty
-  key), entered in Config → IPTV → Subtitles & Languages. Player CC menu →
+  key), entered in Settings → AI & API Keys → OpenSubtitles Key…. Player CC menu →
   "Find subtitles online…"
   opens `_SubtitleSearchDialog`; downloaded .srt lands next to the video
   (`stem.lang.srt`, deduped) or `~/.deeptorrent/subtitles/` for streams, and

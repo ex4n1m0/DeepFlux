@@ -10,7 +10,8 @@ this widget only renders and owns ONE persistent sampler thread that
 sleeps while the Agent tab is not active.
 
 The rightmost chip is the local-AI status: provider → model → live server
-state, and clicking it opens File → API Keys → AI (the model picker).
+state, and clicking it opens Settings → AI & API Keys → AI Agent Key…
+(the model picker).
 """
 from __future__ import annotations
 

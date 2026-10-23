@@ -379,7 +379,7 @@ class IPTVSourcesDialog(_SettingsPage):
 
 
 class IPTVMetadataDialog(_SettingsPage):
-    """Disk cache, EPG toggle. TMDb key lives in File → API Keys.
+    """Disk cache, EPG toggle. TMDb key lives in Settings → AI & API Keys.
 
     When the running IPTVManager is passed in, the page also shows the live
     disk usage and offers a "delete all" for the derived caches (artwork
@@ -555,7 +555,7 @@ class IPTVMetadataDialog(_SettingsPage):
 
 
 class IPTVSubtitlesDialog(_SettingsPage):
-    """Preferred audio/subtitle languages. OpenSubtitles keys live in File → API Keys."""
+    """Preferred audio/subtitle languages. OpenSubtitles keys live in Settings → AI & API Keys."""
 
     def __init__(self, config: DeeptorrentConfig, parent: Optional[QWidget] = None) -> None:
         super().__init__(config, "IPTV — Subtitles & Languages", parent)
@@ -790,8 +790,9 @@ class IPTVPlaybackDialog(_SettingsPage):
         super().accept()
 
 
-# (menu label, dialog class) — Config → IPTV submenu and the Play tab's gear
-# picker are both built from this list. Labels stay ENGLISH here on purpose:
+# (menu label, dialog class) — the Settings menu's Play zone and the Play
+# tab's gear picker are both built from this list. Labels stay ENGLISH here on
+# purpose:
 # this module is imported during `gui/__init__` (via main_window), long before
 # the UI language is set — consumers translate with gui.i18n.tr at render time.
 IPTV_SETTINGS_PAGES = [
