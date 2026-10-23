@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DeepFlux — AI 原生媒体与下载套件</title>
+<title>DeepFlux — 超级智能下载工具</title>
 <meta name="description" content="DeepFlux —— AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室和文件管理器。智能体驱动整个应用。">
 <meta name="theme-color" content="#050507">
 <link rel="icon" type="image/webp" href="../DeepFlux.webp">
@@ -35,7 +35,7 @@
     font-weight: 100 900;
     font-display: swap;
     src: url("../fonts/Inter-var.woff2") format("woff2");
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+20AC, U+FFFD;
   }
   @font-face {
     font-family: "Space Grotesk";
@@ -43,7 +43,7 @@
     font-weight: 100 900;
     font-display: swap;
     src: url("../fonts/SpaceGrotesk-var.woff2") format("woff2");
-    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+20AC, U+FFFD;
   }
   :root {
     --bg: #050507;
@@ -121,19 +121,14 @@
     padding: 0 24px;
   }
 
-  /* ---- Sibling-projects strip (very top, above the sticky nav) ---- */
-  .kin {
-    width: 100%;
-    border-bottom: 1px solid var(--line);
-    background: rgba(5, 5, 7, 0.55);
-  }
+  /* ---- 姊妹项目行（位于页脚） ---- */
   .kin-row {
     display: flex;
     align-items: center;
     justify-content: center;
     flex-wrap: wrap;
     gap: 6px 14px;
-    padding: 8px 0;
+    padding: 4px 0;
     font-size: 0.74rem;
     color: var(--ghost);
   }
@@ -153,7 +148,7 @@
   a.kin-link:hover, a.kin-link:focus-visible { color: var(--ink); }
   a.kin-link:hover b, a.kin-link:focus-visible b { color: var(--ink); }
 
-  /* ---- Sticky top bar ---- */
+  /* ---- 吸顶导航 ---- */
   .topbar {
     position: sticky;
     top: 0;
@@ -212,7 +207,7 @@
     white-space: nowrap;
   }
 
-  /* ---- Language switcher (top-right nav) ---- */
+  /* ---- 语言切换（右上角导航） ---- */
   details.lang { position: relative; }
   details.lang > summary {
     list-style: none;
@@ -254,7 +249,7 @@
   .lang-menu a[aria-current="true"] { color: var(--ink); font-weight: 600; }
   .lang-menu a .check { color: var(--cyan); font-size: 0.8rem; }
 
-  /* ---- Buttons ---- */
+  /* ---- 按钮 ---- */
   a.btn, button.btn {
     display: inline-flex;
     align-items: center;
@@ -297,25 +292,8 @@
   .btn-panel { padding: 12px 26px; font-size: 0.9rem; white-space: nowrap; }
   a.btn svg { flex-shrink: 0; }
 
-  /* ---- Hero ---- */
-  header.hero { text-align: center; padding: 34px 0 0; }
-  header.hero .newbadge {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 8px;
-    margin: 14px auto 0;
-    width: fit-content;
-    padding: 7px 18px;
-    font-size: 0.86rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: var(--ink);
-    background: rgba(42, 122, 191, 0.12);
-    border: 1px solid rgba(42, 122, 191, 0.55);
-    border-radius: 999px;
-  }
-  header.hero .newbadge .star { color: #2a7abf; }
+  /* ---- 首屏 ---- */
+  header.hero { text-align: center; padding: 28px 0 0; }
   header.hero .eyebrow {
     display: flex;
     justify-content: center;
@@ -341,7 +319,7 @@
     letter-spacing: 0;
     color: var(--ink);
     text-align: center;
-    margin: 34px 0 26px;
+    margin: 28px 0 22px;
   }
   header.hero .banner-glow {
     position: relative;
@@ -367,7 +345,7 @@
     display: block;
     margin: 0 auto;
   }
-  .hero-copy { margin: 14px auto 0; max-width: 760px; }
+  .hero-copy { margin: 14px auto 0; }
   .hero-copy p {
     font-size: 1.05rem;
     line-height: 1.75;
@@ -375,20 +353,10 @@
     letter-spacing: 0.01em;
   }
 
-  section.cta { text-align: center; padding: 34px 0 0; }
+  section.cta { text-align: center; padding: 30px 0 0; }
   .cta-row { display: flex; justify-content: center; gap: 14px; flex-wrap: wrap; }
-  p.also {
-    margin-top: 16px;
-    font-size: 0.86rem;
-    color: var(--faint);
-    letter-spacing: 0.02em;
-  }
-  p.also a { color: var(--muted); text-decoration: none; border-bottom: 1px solid rgba(139, 92, 246, 0.4); transition: color 0.2s; }
-  p.also a:hover, p.also a:focus-visible { color: var(--ink); }
-  p.also a[hidden] { display: none; }
-  p.also .sep { margin: 0 7px; color: var(--ghost); }
   p.meta-row {
-    margin-top: 20px;
+    margin-top: 18px;
     font-size: 0.82rem;
     letter-spacing: 0.06em;
     color: var(--faint);
@@ -404,9 +372,9 @@
     vertical-align: 1px;
   }
 
-  /* ---- Hero app window (real capture; the titlebar is decorative chrome) ---- */
+  /* ---- 首屏应用窗口（真实截图；标题栏为装饰性外框） ---- */
   .shot {
-    margin: 52px auto 0;
+    margin: 44px auto 0;
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 18px;
     background: linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.012));
@@ -427,8 +395,8 @@
   }
   .shot-capture { display: block; width: 100%; height: auto; }
 
-  /* ---- Sections ---- */
-  section.block { padding: 78px 0 0; scroll-margin-top: 84px; }
+  /* ---- 区块 ---- */
+  section.block { padding: 64px 0 0; scroll-margin-top: 84px; }
   .section-head { text-align: center; margin-bottom: 40px; }
   .section-head .kicker {
     font-size: 0.74rem;
@@ -448,14 +416,15 @@
     color: transparent;
   }
 
-  /* ---- Meet the agent ---- */
+  /* ---- 认识智能体 ---- */
   .agent-grid {
     display: grid;
     grid-template-columns: 1.02fr 1fr;
     gap: 44px;
-    align-items: start;
+    align-items: center;
   }
-  .agent-grid .lead { color: var(--muted); font-size: 1rem; margin-bottom: 18px; }
+  /* 网格内的截图不需要首屏截图的上边距 */
+  .agent-grid .shot { margin-top: 0; }
   ul.agent-points { list-style: none; display: flex; flex-direction: column; gap: 13px; }
   ul.agent-points li {
     position: relative;
@@ -473,7 +442,7 @@
   }
   ul.agent-points li b { color: var(--muted); font-weight: 600; }
 
-  /* ---- Capabilities bento ---- */
+  /* ---- 功能 bento ---- */
   .bento {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -523,7 +492,7 @@
   .tile.big h3 { font-size: 1.08rem; }
   .tile.big p { font-size: 0.88rem; }
 
-  /* ---- Install tabs ---- */
+  /* ---- 安装标签页 ---- */
   .tabs {
     border: 1px solid rgba(255, 255, 255, 0.10);
     border-radius: 18px;
@@ -623,7 +592,7 @@
   }
   .checksum .copy:hover, .checksum .copy:focus-visible { color: var(--ink); border-color: rgba(255, 255, 255, 0.3); }
 
-  /* ---- Trust pillars ---- */
+  /* ---- 信任支柱 ---- */
   .pillars {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -653,26 +622,7 @@
   }
   .pillar p { font-size: 0.82rem; line-height: 1.65; color: var(--faint); }
 
-  /* ---- Final CTA ---- */
-  .final {
-    margin-top: 90px;
-    text-align: center;
-    padding: 46px 24px 50px;
-    border: 1px solid rgba(139, 92, 246, 0.25);
-    border-radius: 22px;
-    background:
-      radial-gradient(60% 120% at 50% 0%, rgba(79, 125, 249, 0.10), transparent 70%),
-      var(--card);
-  }
-  .final h2 {
-    font-family: var(--font-display);
-    font-size: clamp(1.5rem, 3vw, 2rem);
-    font-weight: 600;
-    margin-bottom: 8px;
-  }
-  .final p { color: var(--faint); font-size: 0.92rem; margin-bottom: 24px; }
-
-  /* ---- Footer ---- */
+  /* ---- 页脚 ---- */
   footer.social {
     margin-top: 84px;
     padding: 34px 24px 56px;
@@ -712,20 +662,16 @@
     .pillars { grid-template-columns: minmax(0, 1fr); }
     .agent-grid { grid-template-columns: minmax(0, 1fr); gap: 34px; }
     .panel-head { flex-direction: column; align-items: flex-start; }
-    .shot-rail { width: 120px; }
   }
   @media (max-width: 640px) {
-    /* Taglines drop off so the sibling strip stays one slim line */
-    .kin-row { gap: 5px 8px; }
     nav.top ul li.hide-mobile { display: none; }
     nav.top ul { gap: 12px; }
-    /* "下载 Windows 版" is too wide next to the brand at 390px —
-       collapse to an icon-only pill (aria-label keeps it accessible). */
+    /* "下载 Windows 版" 在 390px 下与品牌并列太宽 ——
+       折叠为仅图标按钮（aria-label 保证可访问性）。 */
     .btn-nav .os-label { display: none; }
     .btn-nav { padding: 9px 13px; }
     .bento { grid-template-columns: minmax(0, 1fr); }
     .tile.span2 { grid-column: auto; }
-    .shot-rail { display: none; }
     .tabpanel { padding: 22px 18px; }
     .tab { font-size: 0.82rem; padding: 12px 6px 11px; }
     .cta-row .btn { width: 100%; }
@@ -742,20 +688,6 @@
   <div class="ambient" aria-hidden="true"></div>
   <div class="grid-overlay" aria-hidden="true"></div>
 
-  <!-- Sibling projects: discreet cross-links to the maker's other work -->
-  <div class="kin">
-    <div class="page kin-row">
-      <span class="kin-label">出自同一作者</span>
-      <a class="kin-link" href="https://onlyhumans.deepflux.space/" target="_blank" rel="noopener"><b>OnlyHumans</b></a>
-      <span class="kin-sep" aria-hidden="true"></span>
-      <a class="kin-link" href="https://n38worth.com/" target="_blank" rel="noopener"><b>n38worth</b></a>
-      <span class="kin-sep" aria-hidden="true"></span>
-      <a class="kin-link" href="https://remote.deepflux.space/" target="_blank" rel="noopener"><b>Remote</b></a>
-      <span class="kin-sep" aria-hidden="true"></span>
-      <a class="kin-link" href="https://modelswarm.deepflux.space/" target="_blank" rel="noopener"><b>ModelSwarm</b></a>
-    </div>
-  </div>
-
   <div class="topbar">
     <div class="page">
       <nav class="top" aria-label="主导航">
@@ -768,7 +700,6 @@
           <li class="hide-mobile"><a class="navlink" href="#install">安装</a></li>
           <li class="hide-mobile"><a class="navlink" href="#trust">隐私</a></li>
           <li class="hide-mobile"><a class="navlink" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">GitHub</a></li>
-          <li class="hide-mobile"><span class="pill">v6.4.2</span></li>
           <li>
             <details class="lang">
               <summary class="pill" aria-haspopup="menu" aria-label="切换语言">
@@ -782,7 +713,7 @@
             </details>
           </li>
           <li>
-            <a class="btn btn-primary btn-nav" data-os-primary aria-label="下载 DeepFlux" href="/api/download?f=DeepFlux6.4.2Setup.exe" download>
+            <a class="btn btn-primary btn-nav" aria-label="下载 DeepFlux" href="/api/download?f=DeepFlux6.4.3Setup.exe" download>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span class="os-label">下载</span>
             </a>
@@ -795,35 +726,29 @@
   <main id="main" class="page" tabindex="-1">
     <header class="hero">
       <div class="eyebrow"><span class="spark" aria-hidden="true"></span> 内置 AI 智能体</div>
-      <div class="newbadge"><span class="star" aria-hidden="true">&#10022;</span>Agent 页新增实时 CPU/GPU 占用显示 —— 一眼看清你的硬件能跑什么模型。</div>
       <h1>超级智能下载工具</h1>
       <div class="banner-glow">
         <img class="banner" src="../DeepFlux-rot.webp" alt="DeepFlux 徽标">
       </div>
       <div class="hero-copy">
-        <p>AI 驱动的下载管理器，内置浏览器、媒体播放器和文件管理器
-        —— 智能体替你打理这一切。</p>
+        <p>下载、媒体与文件，一个应用全包 —— 交给 AI 智能体，说句话就行。</p>
       </div>
     </header>
 
     <section class="cta" aria-label="获取 DeepFlux">
       <div class="cta-row">
-        <!-- /api/download counts the click (Upstash counter) then 302s to the
-             static file; it redirects uncounted when the counter isn't set up. -->
-        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux6.4.2Setup.exe" download>
+        <!-- /api/download 会先计数（Upstash 计数器），再 302 到静态文件；
+             计数器未配置时直接重定向、不计入。 -->
+        <a class="btn btn-primary btn-xl" href="/api/download?f=DeepFlux6.4.3Setup.exe" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">下载 Windows 版</span>
         </a>
-        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-6.4.2-Linux-x86_64.AppImage" download>
+        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-6.4.3-Linux-x86_64.AppImage" download>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span class="os-label">下载 Linux 版</span>
+          <span class="os-label">Linux（AppImage）</span>
         </a>
       </div>
-      <p class="also">
-        Windows 10 / 11 &middot; 64 位 &middot; Linux x86-64（AppImage）
-        &mdash;&nbsp;<a href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener">源代码</a>
-      </p>
-      <p class="meta-row">免费 &middot; 无需账号 &middot; 文件只保存在你的电脑上<span class="live" id="live" hidden
+      <p class="meta-row">免费 &middot; 无需账号 &middot; v6.4.3 &middot; Windows 10/11 与 Linux<span class="live" id="live" hidden
          title="在线人数为匿名统计 —— 每个安装对应一个随机 id，仅此而已。可在应用的下载设置中关闭。"></span></p>
     </section>
 
@@ -839,21 +764,16 @@
 
     <section class="block" id="agent" aria-label="认识智能体">
       <div class="section-head">
-        <div class="kicker">与众不同之处</div>
+        <div class="kicker">智能体</div>
       </div>
       <div class="agent-grid">
         <div>
-          <p class="lead">像和同事对话一样指挥你的下载。智能体会搜索、
-          获取和整理 —— 还能直接操控整个应用。</p>
           <ul class="agent-points">
-            <li><b>搜索并获取。</b>种子索引站和全网都能搜，找到即下载
+            <li><b>搜索并获取。</b>种子索引站和全网都能搜，找到就下
             —— 也可以边下边播。</li>
-            <li><b>替你操作应用。</b>浏览器标签、下载队列、播放、文件
-            整理 —— 聊一句就办妥。</li>
-            <li><b>自动完成配置。</b>FFmpeg、Jackett 搜索、源和 API
-            密钥 —— 每一步都先征求你的同意。</li>
-            <li><b>数据留在本机。</b>本地优先；未经你允许，任何数据
-            不出门。</li>
+            <li><b>替你操作应用。</b>浏览器、下载队列、播放器、文件
+            管理器 —— 聊一句就办妥。</li>
+            <li><b>先问再动。</b>安装、删除、下载，每件事都要你先点头。</li>
           </ul>
         </div>
         <div class="shot">
@@ -876,33 +796,32 @@
         <article class="tile big span2">
           <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 20l-4-4 4.5-4.5a2.12 2.12 0 0 0-3-3z"/><path d="M5.5 11.5l7 7"/></svg></div>
           <h3>种子引擎</h3>
-          <p>完整的 BitTorrent 引擎，支持边下边播 —— 下载刚开始几分钟
-          就能开看。限速、顺序下载、重新校验，一句话就能搞定。</p>
+          <p>完整的 BitTorrent 引擎 —— 边下边播，一句聊天就能控制。</p>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
           <h3>内置浏览器</h3>
-          <p>应用内嵌 Chromium —— 隐私标签页、书签，智能体还能替你操作网页。</p>
+          <p>内置 Chromium，支持隐私标签页和书签。</p>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><polygon points="9 8 16 11 9 14 9 8"/></svg></div>
           <h3>播放器</h3>
-          <p>支持杜比视界、SVP 动态补帧和在线字幕。听音乐还有 MilkDrop 可视化特效。</p>
+          <p>杜比视界、SVP 补帧、字幕、MilkDrop。</p>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="13" rx="2"/><polyline points="17 2 12 7 7 2"/></svg></div>
           <h3>IPTV 与节目单</h3>
-          <p>直播电视、电影和剧集，附带完整节目单。</p>
+          <p>直播电视、电影和剧集，附完整节目单。</p>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M4 19h16"/></svg></div>
           <h3>直接下载</h3>
-          <p>HTTP、HLS/DASH 流媒体和 YouTube —— 支持断点续传和限速。</p>
+          <p>HTTP、HLS/DASH 和 YouTube —— 断点续传。</p>
         </article>
         <article class="tile span2">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg></div>
           <h3>&hellip;还有更多</h3>
-          <p>社区聊天室、RSS 自动下载、语音输入和双栏文件管理器 —— 智能体全都能用。</p>
+          <p>社区聊天室、RSS 自动下载、语音输入、双栏文件管理器。</p>
         </article>
       </div>
       <svg width="0" height="0" aria-hidden="true"><defs>
@@ -914,10 +833,15 @@
 
     <section class="block" id="install" aria-label="安装 DeepFlux">
       <div class="section-head">
-        <div class="kicker">安装与信任</div>
+        <div class="kicker">安装</div>
+      </div>
+      <div class="note">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
+        <p>智能体开箱即用 —— 内置共享 AI 密钥，随每次发布轮换。
+        想换用自己的密钥或本地模型：<b>文件&nbsp;&rarr;&nbsp;API 密钥</b>。</p>
       </div>
       <div class="tabs">
-          <div class="tablist" role="tablist" aria-label="选择你的平台">
+        <div class="tablist" role="tablist" aria-label="选择你的平台">
           <button class="tab" type="button" role="tab" id="tab-win" aria-controls="panel-win" aria-selected="true">Windows<small>10 / 11 &middot; 64 位</small></button>
           <button class="tab" type="button" role="tab" id="tab-linux" aria-controls="panel-linux" aria-selected="false" tabindex="-1">Linux<small>x86-64 &middot; AppImage</small></button>
         </div>
@@ -925,71 +849,47 @@
           <div class="panel-head">
             <div>
               <div class="panel-title">Windows 10 / 11 &middot; 64 位</div>
-              <div class="panel-sub">v6.4.2 &middot; 402.4 MB &middot; 按用户安装、无需管理员 &middot; 应用内自动更新</div>
+              <div class="panel-sub">v6.4.3 &middot; 402.4 MB &middot; 按用户安装、无需管理员 &middot; 自动更新</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux6.4.2Setup.exe" download>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux6.4.3Setup.exe" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               下载安装程序
             </a>
           </div>
           <ol class="steps">
-            <li><b>下载</b>上方安装包并运行 —— 按用户安装、没有 UAC
-            弹窗，升级时会保留你的设置。</li>
-            <li>可以让安装程序顺便帮你<b>配好 Jackett 种子搜索</b>
-            （一个勾选，一次点击）。</li>
-            <li>v6.0 新增：安装程序还能按你的硬件<b>下载本地无审查 AI
-            模型</b> —— 智能体随后完全离线运行在你自己的显卡上，
-            不经过任何云端。</li>
-            <li>如果 Windows 提示<b>&ldquo;已保护你的电脑&rdquo;</b>：点<b>&ldquo;更多信息&rdquo;
-            &rarr; &ldquo;仍要运行&rdquo;</b>。构建未签名 —— 独立开发者证书还在计划中。
-            下方校验和可用于完整性验证。</li>
+            <li><b>运行安装程序</b> —— 按用户安装、无 UAC 弹窗，升级时
+            保留你的设置。</li>
+            <li>可选：勾选 <b>Jackett 搜索</b> 或 <b>本地 AI 模型</b>。</li>
+            <li>遇到 SmartScreen？<b>更多信息 → 仍要运行</b> —— 构建未签名。</li>
           </ol>
-          <div class="note">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
-            <p><b>内置共享 AI 密钥</b>，智能体开箱即用。密钥随每次发布
-            更换 —— 请保持 DeepFlux 更新，或在<b>&ldquo;文件&nbsp;&rarr;&nbsp;API 密钥&rdquo;</b>里
-            填入自己的密钥以完全独立。完全不想用云端？v6.0 可以让智能体
-            运行在<b>本地无审查模型</b>上 —— 什么都不离开你的电脑。</p>
-          </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
-            <code>25bc9ae8bdd618bcc6d9380dc810883b58fa1e33a252ae0187b34a9a7dc39e33</code>
-            <button class="copy" type="button" data-copy="25bc9ae8bdd618bcc6d9380dc810883b58fa1e33a252ae0187b34a9a7dc39e33">复制</button>
+            <code>8bff51a51255aba374e1c99a884be6e77046e5bdf14e68d409ad48e683387953</code>
+            <button class="copy" type="button" data-copy="8bff51a51255aba374e1c99a884be6e77046e5bdf14e68d409ad48e683387953">复制</button>
           </div>
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux" hidden>
           <div class="panel-head">
             <div>
-              <div class="panel-title">Linux x86-64 &middot; glibc 2.39+</div>
-              <div class="panel-sub">v6.4.2 &middot; 599.6 MB &middot; AppImage —— Ubuntu 24.04+、Debian 13、Fedora 40+、Arch &middot; 全功能版</div>
+              <div class="panel-title">Linux x86-64 &middot; AppImage</div>
+              <div class="panel-sub">v6.4.3 &middot; 599.6 MB &middot; Ubuntu 24.04+、Debian 13、Fedora 40+、Arch</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-6.4.2-Linux-x86_64.AppImage" download>
+            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-6.4.3-Linux-x86_64.AppImage" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               下载 AppImage
             </a>
           </div>
           <ol class="steps">
-            <li><b>下载</b> AppImage —— 单文件、免安装、也没有安全警告。
-            请放在你有写入权限的目录（推荐主目录）：应用会在原地自我更新。</li>
-            <li>添加可执行权限（只需一次）：在终端运行
-            <b>chmod +x DeepFlux-*.AppImage</b>，或在文件管理器的
-            <b>属性&nbsp;&rarr;&nbsp;权限</b>里勾选。</li>
-            <li>内置播放器会自动以 XWayland 方式运行。若视频流需要
-            FFmpeg，用系统包管理器安装即可 —— 也可以直接让智能体来装。</li>
+            <li><b>下载并 chmod +x</b> —— 单文件，原地自动更新。</li>
+            <li>某个流需要 FFmpeg？<b>让智能体去装</b>。</li>
           </ol>
-          <div class="note">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-            <p><b>内置与 Windows 版相同的共享 AI 密钥</b> —— 智能体开箱即用，
-            密钥随每次发布轮换。</p>
-          </div>
           <div class="checksum">
             <span class="lbl">sha256</span>
-            <code>15e36b53aaee7c3307c8a4842ed78b297b7da14682033fc228e9c7dcd066631e</code>
-            <button class="copy" type="button" data-copy="15e36b53aaee7c3307c8a4842ed78b297b7da14682033fc228e9c7dcd066631e">复制</button>
+            <code>624882d915b867f7a03a76436477f6fa91e44b85673cae31e8cab923bd657f66</code>
+            <button class="copy" type="button" data-copy="624882d915b867f7a03a76436477f6fa91e44b85673cae31e8cab923bd657f66">复制</button>
           </div>
         </div>
-
       </div>
     </section>
 
@@ -1001,47 +901,39 @@
         <div class="pillar">
           <div class="mark"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5bc8f5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg></div>
           <div>
-            <h3>每个操作都经你批准</h3>
-            <p>任何敏感操作之前智能体都会先问你 —— 安装、删除、下载
-            和网页交互都要先过你这一关。</p>
+            <h3>一切都要你批准</h3>
+            <p>安装、删除、下载 —— 敏感操作之前，智能体都会先问你。</p>
           </div>
         </div>
         <div class="pillar">
           <div class="mark"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5bc8f5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
           <div>
-            <h3>一切都在你的电脑上运行</h3>
-            <p>一切都存在本地 —— 你的文件、历史记录和密钥都留在你的
-            电脑上。可选的使用统计完全匿名，一键即可关闭。</p>
+            <h3>运行在你的电脑上</h3>
+            <p>文件、历史和密钥都留在本地。匿名使用统计一键关闭。</p>
           </div>
         </div>
         <div class="pillar">
           <div class="mark"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#5bc8f5" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg></div>
           <div>
             <h3>无需账号，没有锁定</h3>
-            <p>免费下载；想换 AI 服务商就带上自己的 API 密钥 —— 你的
-            配置可以导出，随时带走。</p>
+            <p>免费。设置可导出为文件，随时带走。</p>
           </div>
         </div>
-      </div>
-    </section>
-
-    <section class="final" aria-label="下载 DeepFlux">
-      <h2>准备好了就开始吧。</h2>
-      <p>免费下载 &middot; 无需账号 &middot; 你的电脑，你的文件。</p>
-      <div class="cta-row">
-        <a class="btn btn-primary btn-xl" data-os-primary href="/api/download?f=DeepFlux6.4.2Setup.exe" download>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span class="os-label">下载 Windows 版</span>
-        </a>
-        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-6.4.2-Linux-x86_64.AppImage" download>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          <span class="os-label">下载 Linux 版</span>
-        </a>
       </div>
     </section>
   </main>
 
   <footer class="social">
+    <div class="kin-row">
+      <span class="kin-label">出自同一作者</span>
+      <a class="kin-link" href="https://onlyhumans.deepflux.space/" target="_blank" rel="noopener"><b>OnlyHumans</b></a>
+      <span class="kin-sep" aria-hidden="true"></span>
+      <a class="kin-link" href="https://n38worth.com/" target="_blank" rel="noopener"><b>n38worth</b></a>
+      <span class="kin-sep" aria-hidden="true"></span>
+      <a class="kin-link" href="https://remote.deepflux.space/" target="_blank" rel="noopener"><b>Remote</b></a>
+      <span class="kin-sep" aria-hidden="true"></span>
+      <a class="kin-link" href="https://modelswarm.deepflux.space/" target="_blank" rel="noopener"><b>ModelSwarm</b></a>
+    </div>
     <div class="icons">
       <a class="icon" href="https://buymeacoffee.com/ex4n1m0" target="_blank" rel="noopener" aria-label="请我喝杯咖啡">
         <img src="../BuyMeCoffee.png" alt="请我喝杯咖啡">

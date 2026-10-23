@@ -1,8 +1,8 @@
 {
-  "version": "6.4.2",
-  "file": "DeepFlux-6.4.2-Linux-x86_64.AppImage",
-  "size": 628709880,
-  "sha256": "98c6de7bdc1446d01176ef07945ed4c4115dacbb8ea0bd213579307ac3967c85",
-  "released": "2026-10-21",
-  "notes": "DeepFlux 6.4.2 for Linux - same release as Windows: auto-updaters get the built-in DeepSeek key as the default even if an older install had switched to local AI, and the model name in the AI settings always matches the selected endpoint."
+  "version": "6.4.3",
+  "file": "DeepFlux-6.4.3-Linux-x86_64.AppImage",
+  "size": 628771320,
+  "sha256": "624882d915b867f7a03a76436477f6fa91e44b85673cae31e8cab923bd657f66",
+  "released": "2026-10-24",
+  "notes": "DeepFlux 6.4.3 for Linux - same release as Windows: refreshed YouTube engine (yt-dlp 2026.10.21), and every menu path the agent and the User Guide mention now matches the real Settings menu."
 }
