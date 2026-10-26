@@ -1,8 +1,8 @@
 {
-  "version": "6.4.3",
-  "file": "DeepFlux-6.4.3-Linux-x86_64.AppImage",
-  "size": 628771320,
-  "sha256": "624882d915b867f7a03a76436477f6fa91e44b85673cae31e8cab923bd657f66",
-  "released": "2026-10-24",
-  "notes": "DeepFlux 6.4.3 for Linux - same release as Windows: refreshed YouTube engine (yt-dlp 2026.10.21), and every menu path the agent and the User Guide mention now matches the real Settings menu."
+  "version": "6.5",
+  "file": "DeepFlux-6.5-Linux-x86_64.AppImage",
+  "size": 611568120,
+  "sha256": "e081b13c9a9530f3ec3c917aaa38b71873d99e1507e588107a9fce62d68aa8b4",
+  "released": "2026-10-26",
+  "notes": "DeepFlux 6.5 for Linux - same release as Windows: the browser tab strip now pushes the page down when you reveal it instead of covering the top of the site."
 }
