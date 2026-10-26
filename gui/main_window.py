@@ -1155,7 +1155,7 @@ class MainWindow(QMainWindow):
                 height: 0;
                 border: none;
             }
-            /* Browser tab bar is hidden — the overlay strip replaces it. */
+            /* Browser tab bar is hidden — the hover strip replaces it. */
             QTabWidget#browser_tabs::tab-bar {
                 height: 0;
                 border: none;
@@ -1163,26 +1163,28 @@ class MainWindow(QMainWindow):
             QTabWidget#browser_tabs::pane {
                 border: none;
             }
-            /* Browser overlay: bookmarks + tab name floating on web content.
-               The strip itself is transparent — only the buttons/labels are opaque. */
-            QWidget#browser_overlay {
+            /* Browser tab strip: the row above the web view that reveals on
+               hover at the top edge and pushes the page down (it never
+               covers site content). The strip's own widget stylesheet makes
+               it opaque — these rules keep inner containers transparent. */
+            QWidget#browser_strip {
                 background: transparent;
             }
-            /* Direct children (bookmarks bar container) stay transparent. */
-            QWidget#browser_overlay > QWidget {
+            /* Direct children (tab chip container) stay transparent. */
+            QWidget#browser_strip > QWidget {
                 background: transparent;
             }
-            /* Buttons inside the overlay are opaque. */
-            QWidget#browser_overlay QPushButton,
-            QWidget#browser_overlay QToolButton {
+            /* Buttons inside the strip are opaque. */
+            QWidget#browser_strip QPushButton,
+            QWidget#browser_strip QToolButton {
                 background-color: #0d1117;
                 color: #ffffff;
                 border: 3px solid #1a2a4a;
                 border-radius: 3px;
                 padding: 2px 8px;
             }
-            QWidget#browser_overlay QPushButton:hover,
-            QWidget#browser_overlay QToolButton:hover {
+            QWidget#browser_strip QPushButton:hover,
+            QWidget#browser_strip QToolButton:hover {
                 background-color: #1a2a4a;
                 border: 3px solid #2a7abf;
                 color: #2a7abf;
@@ -2024,28 +2026,28 @@ class MainWindow(QMainWindow):
         self._browser_fs_state = None
         self._browser_fs_esc = None
 
-        # Content container: web view fills it, overlay floats on top.
+        # Content column: tab strip on top (revealed on hover), web view
+        # below. The strip is a normal LAYOUT ROW, not a floating overlay:
+        # revealing it pushes the page content down so the strip never
+        # covers site content (site headers stayed hidden under the old
+        # overlay — owner change 2026-10-26).
         self._browser_content = QWidget()
         _bc_layout = QVBoxLayout(self._browser_content)
         _bc_layout.setContentsMargins(0, 0, 0, 0)
         _bc_layout.setSpacing(0)
-        _bc_layout.addWidget(self.browser_tabs)
 
-        # Overlay strip: tab chips, opaque, on top. Opaque (not translucent)
-        # because a WA_TranslucentBackground widget floating over the web view
-        # forces the compositor to alpha-blend on every frame — visible as a
-        # flash during video playback (YouTube etc.). An opaque background
-        # eliminates the per-frame blend. The overlay auto-hides when the
-        # cursor leaves the top edge so it only covers content briefly.
-        self._browser_overlay = QWidget(self._browser_content)
-        self._browser_overlay.setObjectName("browser_overlay")
-        self._browser_overlay.setAttribute(Qt.WA_AlwaysStackOnTop)
-        self._browser_overlay.setStyleSheet("background: #0d1117;")
-        _ov = QVBoxLayout(self._browser_overlay)
+        # Tab strip: one chip per open tab, opaque row above the web view.
+        # Opaque (not translucent) because a translucent widget forces the
+        # compositor to alpha-blend on every frame — visible as a flash
+        # during video playback (YouTube etc.).
+        self._browser_strip = QWidget()
+        self._browser_strip.setObjectName("browser_strip")
+        self._browser_strip.setStyleSheet("background: #0d1117;")
+        _ov = QVBoxLayout(self._browser_strip)
         _ov.setContentsMargins(0, 0, 0, 0)
         _ov.setSpacing(0)
 
-        # Tab strip: one chip per open tab, floats over web content.
+        # Tab strip content: one chip per open tab.
         self._tab_strip_container = QWidget()
         self._tab_strip_container.setStyleSheet("background: transparent;")
         self._tab_strip_layout = QHBoxLayout(self._tab_strip_container)
@@ -2054,34 +2056,29 @@ class MainWindow(QMainWindow):
         self._tab_strip_layout.addStretch()
         _ov.addWidget(self._tab_strip_container)
 
-        self._browser_overlay.raise_()
+        _bc_layout.addWidget(self._browser_strip, 0)
+        _bc_layout.addWidget(self.browser_tabs, 1)
         browser_tab_layout.addWidget(self._browser_content)
-        # Reposition the overlay whenever the content area resizes.
-        self._browser_content.installEventFilter(self)
         # Ctrl+scroll zoom needs an APP-level filter: QWebEngineView wheel
         # events target its internal render widget, so filters installed on
-        # the view or its ancestors never see them (same reason the overlay
+        # the view or its ancestors never see them (same reason the strip
         # hover tracking uses a poll timer instead of mouse events).
         QApplication.instance().installEventFilter(self)
 
-        # Auto-hide: the overlay shows when the cursor enters the top edge
-        # zone and hides (after a short delay) when it leaves. This is
-        # event-driven (mouse-move on the content widget) — no polling
-        # timer, so no per-frame overhead on top of the web view.
-        self._overlay_hide_timer = QTimer(self)
-        self._overlay_hide_timer.setSingleShot(True)
-        self._overlay_hide_timer.timeout.connect(self._hide_browser_overlay)
-        # Event-driven hover detection: a 120ms poll checks the cursor
-        # position. QWebEngineView consumes mouse events (separate Chromium
-        # compositor), so we can't use event-filter-based mouse tracking —
-        # the poll is the only reliable way. 120ms is light enough that it
-        # doesn't cause per-frame overhead, and the overlay is now opaque
-        # (no alpha blending) so there's no flash even when it's visible.
-        self._overlay_poll = QTimer(self)
-        self._overlay_poll.timeout.connect(self._poll_overlay_hover)
-        self._overlay_poll.start(120)
-        # Start with the overlay hidden — it only appears on mouse hover.
-        self._browser_overlay.hide()
+        # Auto-hide: the strip shows when the cursor enters the top edge
+        # zone and hides (after a short delay) when it leaves. Hover
+        # detection is a 120ms cursor poll — QWebEngineView consumes mouse
+        # events (separate Chromium compositor), so event-filter tracking
+        # doesn't work; the poll is the only reliable way.
+        self._strip_hide_timer = QTimer(self)
+        self._strip_hide_timer.setSingleShot(True)
+        self._strip_hide_timer.timeout.connect(self._hide_browser_strip)
+        self._strip_poll = QTimer(self)
+        self._strip_poll.timeout.connect(self._poll_strip_hover)
+        self._strip_poll.start(120)
+        # Start with the strip hidden — it only appears on mouse hover, and
+        # showing it pushes the page down (never covers content).
+        self._browser_strip.hide()
 
         # Restore persistent tabs after the overlay exists; private tabs never persist.
         restore_urls = self.config.browser.open_tabs if self.config.browser.restore_tabs else []
@@ -2690,44 +2687,46 @@ class MainWindow(QMainWindow):
             if view in self._browser_devtools_windows else None)
         devtools.show()
 
-    def _poll_overlay_hover(self) -> None:
-        """Check cursor position and show/hide the browser overlay.
+    def _poll_strip_hover(self) -> None:
+        """Check cursor position and show/hide the browser tab strip.
 
         Called by a 120ms timer (QWebEngineView consumes mouse events so
-        event-filter tracking doesn't work). The overlay is opaque, so
-        even when visible it doesn't cause alpha-blending flashes over
-        video content."""
+        event-filter tracking doesn't work). Showing the strip pushes the
+        page content down; hiding it lets the page fill the space again —
+        the strip never covers site content."""
         from PySide6.QtGui import QCursor
         # Skip when the Browse tab isn't active — no point polling.
         if self.main_tabs.currentWidget() is not self._browser_tab:
-            if self._browser_overlay.isVisible():
-                self._browser_overlay.hide()
+            if self._browser_strip.isVisible():
+                self._browser_strip.hide()
             return
-        # Skip during DOM fullscreen — the view is detached and the
-        # overlay isn't shown over the fullscreen window.
+        # Skip during DOM fullscreen — the view is detached to its own
+        # window and the strip must not linger at the top of the empty
+        # content area.
         if self._browser_fs_state is not None:
+            if self._browser_strip.isVisible():
+                self._browser_strip.hide()
             return
         pos = self._browser_content.mapFromGlobal(QCursor.pos())
-        self._check_overlay_hover(pos)
+        self._check_strip_hover(pos)
 
-    def _check_overlay_hover(self, pos) -> None:
-        """Show/hide the browser overlay based on cursor position."""
-        overlay_h = self._browser_overlay.sizeHint().height()
+    def _check_strip_hover(self, pos) -> None:
+        """Show/hide the browser tab strip based on cursor position."""
+        strip_h = self._browser_strip.sizeHint().height()
         in_zone = (0 <= pos.x() <= self._browser_content.width()
-                   and pos.y() < overlay_h + 6)
+                   and pos.y() < strip_h + 6)
         if in_zone:
-            self._overlay_hide_timer.stop()
-            if not self._browser_overlay.isVisible():
-                self._browser_overlay.show()
-                self._browser_overlay.raise_()
-        elif self._browser_overlay.isVisible() and not self._browser_overlay.underMouse():
-            if not self._overlay_hide_timer.isActive():
-                self._overlay_hide_timer.start(400)
+            self._strip_hide_timer.stop()
+            if not self._browser_strip.isVisible():
+                self._browser_strip.show()
+        elif self._browser_strip.isVisible() and not self._browser_strip.underMouse():
+            if not self._strip_hide_timer.isActive():
+                self._strip_hide_timer.start(400)
 
-    def _hide_browser_overlay(self) -> None:
-        """Hide the browser overlay (fired by the hide timer)."""
-        if not self._browser_overlay.underMouse():
-            self._browser_overlay.hide()
+    def _hide_browser_strip(self) -> None:
+        """Hide the browser tab strip (fired by the hide timer)."""
+        if not self._browser_strip.underMouse():
+            self._browser_strip.hide()
 
     def _setup_input_history(self) -> None:
         """Terminal-style Up/Down recall for the merged Agents input."""
@@ -2747,15 +2746,6 @@ class MainWindow(QMainWindow):
             event.ignore()
             obj.page().triggerAction(QWebEnginePage.ExitFullScreen)
             return True
-        # Browser overlay: keep it pinned to the top of the content area
-        # and re-raise it above the native web-view window. (Mouse tracking
-        # is handled by the 120ms poll timer — QWebEngineView consumes
-        # mouse events so event-filter tracking doesn't work here.)
-        if obj is self._browser_content and event.type() == QEvent.Resize:
-            self._browser_overlay.setGeometry(
-                0, 0, self._browser_content.width(),
-                self._browser_overlay.sizeHint().height())
-            self._browser_overlay.raise_()
         # Ctrl+scroll over a browser view → zoom. QtWebEngine doesn't wire up
         # Chromium's browser-layer ctrl+wheel zoom, so deliver it ourselves
         # (must be seen app-level — wheel events go to the view's internal
@@ -3470,7 +3460,7 @@ class MainWindow(QMainWindow):
             self._hover_label.setText(msg)
 
     def _rebuild_browser_tab_strip(self) -> None:
-        """Rebuild the floating tab chips — one per open browser tab."""
+        """Rebuild the tab chips — one per open browser tab."""
         layout = self._tab_strip_layout
         while layout.count():
             item = layout.takeAt(0)
@@ -3505,7 +3495,6 @@ class MainWindow(QMainWindow):
                 cl.addWidget(x)
             layout.addWidget(chip)
         layout.addStretch()
-        self._browser_overlay.raise_()
 
     def _schedule_browser_session_save(self) -> None:
         if hasattr(self, "_browser_session_timer"):

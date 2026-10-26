@@ -2116,7 +2116,10 @@
   The wheel interception MUST be an app-level event filter
   (`MainWindow.eventFilter` → `_browser_view_for_widget` parent-walk): wheel
   events target QWebEngineView's internal render widget, so per-widget /
-  ancestor filters never fire (same reason overlay hover uses a poll timer).
+  ancestor filters never fire (same reason the tab-strip hover reveal uses
+  a poll timer — the strip is a layout row above the web view that pushes
+  the page down when revealed, never covering site content; owner change
+  2026-10-26, retired the old floating overlay).
   Detached fullscreen views are matched via `_browser_fs_state` and zoom
   without touching the badge (it tracks the active tab only).
 - Address bar editing (`tests/test_browser_url_bar.py`): Qt sends the focus
