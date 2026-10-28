@@ -1,8 +1,8 @@
 {
-  "version": "6.5",
-  "file": "DeepFlux-6.5-Linux-x86_64.AppImage",
+  "version": "6.6",
+  "file": "DeepFlux-6.6-Linux-x86_64.AppImage",
   "size": 611568120,
-  "sha256": "e081b13c9a9530f3ec3c917aaa38b71873d99e1507e588107a9fce62d68aa8b4",
-  "released": "2026-10-26",
-  "notes": "DeepFlux 6.5 for Linux - same release as Windows: the browser tab strip now pushes the page down when you reveal it instead of covering the top of the site."
+  "sha256": "5f584150f2110fb4773a759d8711174f02bedf814f518927e34fcf60e4426d77",
+  "released": "2026-10-28",
+  "notes": "DeepFlux 6.6 for Linux - same release as Windows: full-window browsing with the address bar, tab strip and left rail hidden until you touch the top or left edge; link right-clicks put Open in new tab first."
 }

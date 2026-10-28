@@ -1,8 +1,8 @@
 {
-  "version": "6.5",
-  "file": "DeepFlux6.5Setup.exe",
-  "size": 421907772,
-  "sha256": "5094b298c9b9c37888ebd5bee991f740ed45181284468eacb9e9955565a240c0",
-  "released": "2026-10-26",
-  "notes": "DeepFlux 6.5 - the browser tab strip now pushes the page down when you reveal it instead of covering the top of the site, so nothing on the page hides behind your tabs anymore."
+  "version": "6.6",
+  "file": "DeepFlux6.6Setup.exe",
+  "size": 421886282,
+  "sha256": "63b8846f4303abcef63e5bd3904daab70507f06ba678cfaa5d4a207cd79ee6a7",
+  "released": "2026-10-28",
+  "notes": "DeepFlux 6.6 - full-window browsing: the address bar, tab strip and left rail hide while you read and come back when you touch the top or left edge of the window; right-clicking a link now puts Open in new tab on the first row."
 }
