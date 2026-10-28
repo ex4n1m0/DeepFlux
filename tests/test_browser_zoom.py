@@ -41,7 +41,6 @@ def _make_host(tabs: QTabWidget):
     host = _HostBase()
     host.browser_tabs = tabs
     host._browser_fs_state = None
-    host._browser_content = None
     host.chat_input = None
     host.browser_url_bar = None
     host.browser_zoom_label = QLabel("100%")

@@ -741,6 +741,39 @@ class _BrowserPage(QWebEnginePage):
             return "JavaScript"
 
 
+def promote_open_link_action(menu: QMenu, action) -> bool:
+    """Move `action` ("Open link in new tab") to the TOP of `menu`.
+
+    Returns True when the menu was reordered. Only acts when the action is
+    part of the standard menu and marked visible (QtWebEngine only adds
+    link actions for link contexts, so plain right-clicks keep the normal
+    menu). Separators exposed at the top by the move are dropped — a QMenu
+    must never open on a separator row."""
+    if action is None or not action.isVisible():
+        return False
+    if action not in menu.actions():
+        return False
+    menu.removeAction(action)
+    acts = menu.actions()
+    while acts and acts[0].isSeparator():
+        menu.removeAction(acts.pop(0))
+    menu.insertAction(menu.actions()[0] if menu.actions() else None, action)
+    return True
+
+
+class _BrowserView(QWebEngineView):
+    """QWebEngineView whose link context menu puts "Open link in new tab"
+    FIRST — the most-used right-click action in a browser (owner request
+    2026-10-28). Everything else keeps QtWebEngine's standard order."""
+
+    def contextMenuEvent(self, event) -> None:  # noqa: N102
+        menu = self.createStandardContextMenu()
+        promote_open_link_action(
+            menu, self.page().action(QWebEnginePage.WebAction.OpenLinkInNewTab))
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+
+
 # Small text indent that marks a File-menu row as belonging to a zone
 # (headers sit flush left, items are pushed in — see _file_zone/_file_item).
 _FILE_ITEM_INDENT = "    "
@@ -775,6 +808,9 @@ class MainWindow(QMainWindow):
     # Merged Agents-tab input: Enter/Agent = conversational torrent agent,
     # Ctrl+Enter/Search = instant web sweep.
     _INPUT_PLACEHOLDER = "AI Deep Search ... (Enter = agent, Ctrl+Enter = web)"
+    # Browser auto-hide: how close to a window edge the cursor must come
+    # (px) to reveal the hidden chrome (top) / activity rail (left).
+    _EDGE_REVEAL_PX = 10
 
     def __init__(self, config_path: Optional[str] = None) -> None:
         super().__init__()
@@ -1977,7 +2013,20 @@ class MainWindow(QMainWindow):
         ):
             widget.setAccessibleName(name)
 
-        browser_tab_layout.addLayout(nav_layout)
+        # Auto-hide chrome container: the address bar AND the tab strip form
+        # ONE row block above the web view that reveals on hover at the top
+        # edge and pushes the page down (owner change 2026-10-28, extending
+        # the 6.5 tab-strip logic to the whole top bar). Opaque background —
+        # a translucent widget would force per-frame alpha blending over
+        # video playback (YouTube etc.). The load-progress bar and the find
+        # bar stay OUTSIDE it so both remain usable while chrome is hidden.
+        self._browser_chrome = QWidget()
+        self._browser_chrome.setObjectName("browser_chrome")
+        self._browser_chrome.setStyleSheet("background: #0d1117;")
+        _chrome_layout = QVBoxLayout(self._browser_chrome)
+        _chrome_layout.setContentsMargins(0, 0, 0, 0)
+        _chrome_layout.setSpacing(0)
+        _chrome_layout.addLayout(nav_layout)
 
         self.browser_progress = QProgressBar()
         self.browser_progress.setRange(0, 100)
@@ -2019,27 +2068,15 @@ class MainWindow(QMainWindow):
         self.browser_tabs.setTabsClosable(True)
         self.browser_tabs.tabCloseRequested.connect(self._browser_close_tab)
         self.browser_tabs.currentChanged.connect(self._browser_tab_changed)
-        # Hide the built-in tab bar — the overlay strip replaces it.
+        # Hide the built-in tab bar — the hover chrome's strip replaces it.
         self.browser_tabs.tabBar().hide()
         # DOM fullscreen state: (view, tab index, title, tooltip) while a web
         # view owns the screen, plus its ESC shortcut.
         self._browser_fs_state = None
         self._browser_fs_esc = None
 
-        # Content column: tab strip on top (revealed on hover), web view
-        # below. The strip is a normal LAYOUT ROW, not a floating overlay:
-        # revealing it pushes the page content down so the strip never
-        # covers site content (site headers stayed hidden under the old
-        # overlay — owner change 2026-10-26).
-        self._browser_content = QWidget()
-        _bc_layout = QVBoxLayout(self._browser_content)
-        _bc_layout.setContentsMargins(0, 0, 0, 0)
-        _bc_layout.setSpacing(0)
-
-        # Tab strip: one chip per open tab, opaque row above the web view.
-        # Opaque (not translucent) because a translucent widget forces the
-        # compositor to alpha-blend on every frame — visible as a flash
-        # during video playback (YouTube etc.).
+        # Tab strip: one chip per open tab, row directly under the address
+        # bar inside the chrome container (they reveal together).
         self._browser_strip = QWidget()
         self._browser_strip.setObjectName("browser_strip")
         self._browser_strip.setStyleSheet("background: #0d1117;")
@@ -2056,31 +2093,43 @@ class MainWindow(QMainWindow):
         self._tab_strip_layout.addStretch()
         _ov.addWidget(self._tab_strip_container)
 
-        _bc_layout.addWidget(self._browser_strip, 0)
-        _bc_layout.addWidget(self.browser_tabs, 1)
-        browser_tab_layout.addWidget(self._browser_content)
+        _chrome_layout.addWidget(self._browser_strip)
+        # insertWidget(0): the chrome must be the FIRST row (above the
+        # progress/find bars) — the nav layout moved into the chrome at the
+        # top of this method, but addWidget would append after them.
+        browser_tab_layout.insertWidget(0, self._browser_chrome, 0)
+        browser_tab_layout.addWidget(self.browser_tabs, 1)
         # Ctrl+scroll zoom needs an APP-level filter: QWebEngineView wheel
         # events target its internal render widget, so filters installed on
-        # the view or its ancestors never see them (same reason the strip
+        # the view or its ancestors never see them (same reason the chrome
         # hover tracking uses a poll timer instead of mouse events).
         QApplication.instance().installEventFilter(self)
 
-        # Auto-hide: the strip shows when the cursor enters the top edge
-        # zone and hides (after a short delay) when it leaves. Hover
-        # detection is a 120ms cursor poll — QWebEngineView consumes mouse
-        # events (separate Chromium compositor), so event-filter tracking
-        # doesn't work; the poll is the only reliable way.
-        self._strip_hide_timer = QTimer(self)
-        self._strip_hide_timer.setSingleShot(True)
-        self._strip_hide_timer.timeout.connect(self._hide_browser_strip)
+        # Auto-hide: the chrome (address bar + tab strip) shows when the
+        # cursor enters the top edge zone and hides (after a short delay)
+        # when it leaves; the activity rail gets the same treatment on the
+        # LEFT edge while the Browse tab is active. Hover detection is a
+        # 120ms cursor poll — QWebEngineView consumes mouse events
+        # (separate Chromium compositor), so event-filter tracking doesn't
+        # work; the poll is the only reliable way. Visibility is tracked in
+        # flags (_chrome_hidden, _rail_hidden_for_browser) so the logic
+        # works even while the tab page itself is hidden.
+        self._chrome_hidden = True
+        self._rail_hidden_for_browser = False
+        self._chrome_hide_timer = QTimer(self)
+        self._chrome_hide_timer.setSingleShot(True)
+        self._chrome_hide_timer.timeout.connect(self._hide_browser_chrome)
+        self._rail_hide_timer = QTimer(self)
+        self._rail_hide_timer.setSingleShot(True)
+        self._rail_hide_timer.timeout.connect(self._hide_browser_rail)
         self._strip_poll = QTimer(self)
-        self._strip_poll.timeout.connect(self._poll_strip_hover)
+        self._strip_poll.timeout.connect(self._poll_browser_hover)
         self._strip_poll.start(120)
-        # Start with the strip hidden — it only appears on mouse hover, and
+        # Start with the chrome hidden — it only appears on mouse hover, and
         # showing it pushes the page down (never covers content).
-        self._browser_strip.hide()
+        self._browser_chrome.hide()
 
-        # Restore persistent tabs after the overlay exists; private tabs never persist.
+        # Restore persistent tabs after the chrome exists; private tabs never persist.
         restore_urls = self.config.browser.open_tabs if self.config.browser.restore_tabs else []
         restore_urls = [
             url for url in restore_urls[:20]
@@ -2635,6 +2684,9 @@ class MainWindow(QMainWindow):
 
     def _browser_focus_url(self) -> None:
         self.main_tabs.setCurrentWidget(self._browser_tab)
+        # The chrome (address bar) may be hover-hidden — reveal it, or the
+        # focus lands on an invisible widget.
+        self._show_browser_chrome()
         self.browser_url_bar.setFocus()
         self.browser_url_bar.selectAll()
 
@@ -2687,46 +2739,103 @@ class MainWindow(QMainWindow):
             if view in self._browser_devtools_windows else None)
         devtools.show()
 
-    def _poll_strip_hover(self) -> None:
-        """Check cursor position and show/hide the browser tab strip.
+    def _poll_browser_hover(self) -> None:
+        """Check cursor position and show/hide the browser chrome (address
+        bar + tab strip) and the activity rail.
 
         Called by a 120ms timer (QWebEngineView consumes mouse events so
-        event-filter tracking doesn't work). Showing the strip pushes the
+        event-filter tracking doesn't work). Showing the chrome pushes the
         page content down; hiding it lets the page fill the space again —
-        the strip never covers site content."""
+        chrome never covers site content. The rail hides while the Browse
+        tab is active (more room for the site) and is restored on every
+        other tab — but only when THIS auto-hide hid it, so pure video
+        fullscreen (which hides the rail itself) is never fought."""
         from PySide6.QtGui import QCursor
-        # Skip when the Browse tab isn't active — no point polling.
+        # Off the Browse tab: chrome hidden, rail restored if we hid it.
         if self.main_tabs.currentWidget() is not self._browser_tab:
-            if self._browser_strip.isVisible():
-                self._browser_strip.hide()
+            self._hide_browser_chrome(force=True)
+            if self._rail_hidden_for_browser:
+                self._rail_hidden_for_browser = False
+                self.activity_rail.show()
             return
         # Skip during DOM fullscreen — the view is detached to its own
-        # window and the strip must not linger at the top of the empty
-        # content area.
+        # window and chrome/rail must not linger over the empty content
+        # area.
         if self._browser_fs_state is not None:
-            if self._browser_strip.isVisible():
-                self._browser_strip.hide()
+            self._hide_browser_chrome(force=True)
+            if not self._rail_hidden_for_browser and self.activity_rail.isVisibleTo(self):
+                self._rail_hidden_for_browser = True
+                self.activity_rail.hide()
             return
-        pos = self._browser_content.mapFromGlobal(QCursor.pos())
-        self._check_strip_hover(pos)
+        cursor = QCursor.pos()
+        self._check_chrome_hover(self._browser_tab.mapFromGlobal(cursor))
+        self._check_rail_hover(self.main_tabs.mapFromGlobal(cursor))
 
-    def _check_strip_hover(self, pos) -> None:
-        """Show/hide the browser tab strip based on cursor position."""
-        strip_h = self._browser_strip.sizeHint().height()
-        in_zone = (0 <= pos.x() <= self._browser_content.width()
-                   and pos.y() < strip_h + 6)
+    def _check_chrome_hover(self, pos) -> None:
+        """Show/hide the browser chrome based on cursor position."""
+        # Reveal zone: a thin strip at the top edge while the chrome is
+        # hidden (a full-chrome-height zone would pop the bar while the
+        # user aims at site headers); once visible, the zone extends a few
+        # px past the chrome so it doesn't flicker-hide at the boundary.
+        if self._chrome_hidden:
+            zone_h = self._EDGE_REVEAL_PX
+        else:
+            zone_h = self._browser_chrome.height() + 6
+        in_zone = (0 <= pos.x() <= self._browser_tab.width()
+                   and pos.y() < zone_h)
         if in_zone:
-            self._strip_hide_timer.stop()
-            if not self._browser_strip.isVisible():
-                self._browser_strip.show()
-        elif self._browser_strip.isVisible() and not self._browser_strip.underMouse():
-            if not self._strip_hide_timer.isActive():
-                self._strip_hide_timer.start(400)
+            self._chrome_hide_timer.stop()
+            self._show_browser_chrome()
+        elif not self._chrome_hidden and not self._browser_chrome.underMouse():
+            if not self._chrome_hide_timer.isActive():
+                self._chrome_hide_timer.start(400)
 
-    def _hide_browser_strip(self) -> None:
-        """Hide the browser tab strip (fired by the hide timer)."""
-        if not self._browser_strip.underMouse():
-            self._browser_strip.hide()
+    def _show_browser_chrome(self) -> None:
+        """Reveal the browser chrome (address bar + tab strip).
+
+        Also called by paths that programmatically focus the address bar
+        (Ctrl+L etc.) — focusing a hidden bar would look like a no-op."""
+        if self._chrome_hidden:
+            self._chrome_hidden = False
+            self._browser_chrome.show()
+
+    def _hide_browser_chrome(self, force: bool = False) -> None:
+        """Hide the browser chrome (fired by the hide timer / tab switch).
+
+        force skips the underMouse guard — used from the poll's early-exit
+        branches where the chrome must go away regardless of the cursor."""
+        if force or not self._browser_chrome.underMouse():
+            self._chrome_hide_timer.stop()
+            self._chrome_hidden = True
+            self._browser_chrome.hide()
+
+    def _check_rail_hover(self, pos) -> None:
+        """Show/hide the activity rail based on cursor position (left edge).
+
+        pos is in main_tabs coordinates: negative x = over the rail (it
+        sits left of main_tabs), 0..edge = the reveal strip at the left
+        edge of the content area."""
+        if self._rail_hidden_for_browser:
+            in_zone = -6 <= pos.x() < self._EDGE_REVEAL_PX
+        else:
+            in_zone = -self.activity_rail.width() - 6 <= pos.x() <= 6
+        in_zone = in_zone and 0 <= pos.y() <= self.main_tabs.height()
+        if in_zone:
+            self._rail_hide_timer.stop()
+            if self._rail_hidden_for_browser:
+                self._rail_hidden_for_browser = False
+                self.activity_rail.show()
+        elif (not self._rail_hidden_for_browser
+              and not self.activity_rail.underMouse()):
+            if not self._rail_hide_timer.isActive():
+                self._rail_hide_timer.start(400)
+
+    def _hide_browser_rail(self) -> None:
+        """Hide the activity rail (fired by the hide timer)."""
+        if not self.activity_rail.underMouse():
+            self._rail_hidden_for_browser = True
+            self._rail_hide_timer.stop()
+            self.activity_rail.hide()
 
     def _setup_input_history(self) -> None:
         """Terminal-style Up/Down recall for the merged Agents input."""
@@ -3195,7 +3304,9 @@ class MainWindow(QMainWindow):
 
     def _browser_new_tab(self, url: Optional[QUrl] = None, private: bool = False) -> QWebEngineView:
         """Create a new browser tab and load the given URL (or homepage)."""
-        view = QWebEngineView()
+        # _BrowserView (not plain QWebEngineView): reorders the link context
+        # menu so "Open link in new tab" is the first row.
+        view = _BrowserView()
         if private:
             profile = QWebEngineProfile(view)
             from dlmgr.adblock import AdBlockInterceptor

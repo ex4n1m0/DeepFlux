@@ -2116,12 +2116,44 @@
   The wheel interception MUST be an app-level event filter
   (`MainWindow.eventFilter` → `_browser_view_for_widget` parent-walk): wheel
   events target QWebEngineView's internal render widget, so per-widget /
-  ancestor filters never fire (same reason the tab-strip hover reveal uses
-  a poll timer — the strip is a layout row above the web view that pushes
-  the page down when revealed, never covering site content; owner change
-  2026-10-26, retired the old floating overlay).
+  ancestor filters never fire (same reason the chrome hover reveal uses
+  a poll timer — the address bar + tab strip form ONE layout row block
+  above the web view (`_browser_chrome`) that pushes the page down when
+  revealed, never covering site content; owner change 2026-10-26 retired
+  the old floating overlay, 2026-10-28 folded the address bar into the
+  auto-hide and added the left-edge rail reveal — see the next bullet).
   Detached fullscreen views are matched via `_browser_fs_state` and zoom
   without touching the badge (it tracks the active tab only).
+- Browser auto-hide chrome + rail (2026-10-28, `tests/test_browser_chrome.py`):
+  while the Browse tab is active the WHOLE top bar (address bar + tab
+  strip, `_browser_chrome`) and the activity rail are hover-hidden — the
+  site gets the full window. The 120ms `_strip_poll` cursor poll drives
+  everything (`_poll_browser_hover` → `_check_chrome_hover` on
+  `_browser_tab` coords / `_check_rail_hover` on `main_tabs` coords,
+  negative x = over the rail). Rules, do not regress:
+  * Reveal zones are a THIN edge (10px, `_EDGE_REVEAL_PX`) while hidden;
+    once visible the zone widens (chrome height + 6 / rail width + 6) so
+    the bar doesn't flicker-hide at its own boundary. A full-height reveal
+    zone would pop the bar while the user aims at site headers.
+  * Visibility is tracked in FLAGS (`_chrome_hidden`,
+    `_rail_hidden_for_browser`), not isVisible() — the poll must keep
+    working while the tab page itself is hidden (offscreen tests rely on
+    this too).
+  * The rail hides ONLY on the Browse tab; the poll's non-browser branch
+    restores it — but only when the `_rail_hidden_for_browser` flag says
+    WE hid it, so pure video fullscreen (`set_video_pure_chrome`, which
+    hides the rail itself) is never fought.
+  * DOM fullscreen (`_browser_fs_state`) force-hides chrome + rail.
+  * Progress bar + find bar stay OUTSIDE `_browser_chrome` (visible
+    during loads / Ctrl+F with chrome hidden); `_browser_focus_url`
+    (Ctrl+L) calls `_show_browser_chrome()` so focus never lands on an
+    invisible bar.
+  * Link context menu: `_BrowserView.contextMenuEvent` rebuilds Qt's
+    standard menu with `promote_open_link_action()` — "Open link in new
+    tab" moved to the FIRST row (most-used right-click action, owner
+    request). Non-link right-clicks are untouched (QtWebEngine only adds
+    link actions for link contexts). DevTools views stay plain
+    QWebEngineView.
 - Address bar editing (`tests/test_browser_url_bar.py`): Qt sends the focus
   widget `FocusIn(PopupFocusReason)` whenever a Qt::Popup closes — including
   the history QCompleter's popup hiding mid-typing when the prefix stops

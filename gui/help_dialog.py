@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 6.5 — User Guide</h1>
+<h1>DeepFlux 6.6 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -138,6 +138,15 @@ Play page, section chips jump straight to Live TV / Movies / Series /
 Favorites / Recent. All commands live under the three real menus:
 <b>File</b> (actions), <b>Settings</b> (hub + labeled zones) and
 <b>Help</b>.</p>
+
+<p><b>Browsing full-screen:</b> while the Browse page is active, the site
+gets the whole window — the left rail and the address/tab bar hide and
+push the page instead of covering it. Move the mouse to the very top edge
+to bring the address bar and tab strip back, or to the left edge to bring
+the rail back; they hide again shortly after the mouse leaves. Load
+progress, the find bar (<code>Ctrl+F</code>) and <code>Ctrl+L</code> work
+as usual. Right-clicking a link puts <b>Open link in new tab</b> on the
+first row.</p>
 
 <h2>Using the Agent</h2>
 
@@ -632,7 +641,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 6.5 — AI Deep Search</p>
+<p>DeepFlux 6.6 — AI Deep Search</p>
 <p>AI via built-in local models (uncensored, offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
