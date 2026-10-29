@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 6.6 — User Guide</h1>
+<h1>DeepFlux 6.7 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -119,7 +119,7 @@ equivalent) and DeepFlux finds it on PATH. To make DeepFlux the default for
   <tr><td><b>Agent</b></td><td>AI chat with voice input (🎤). The agent greets you automatically on every start. <code>Enter</code> = agent search; <code>Ctrl+Enter</code> = quick web search.</td><td>—</td></tr>
   <tr><td><b>Download</b></td><td>Torrents on top, download manager below. Auto-focused whenever a transfer is added.</td><td>Full queue control: list, pause, resume, retry, cancel</td></tr>
   <tr><td><b>Play</b></td><td>IPTV and media player — live TV, movies, series, and your own local media folders.</td><td>Search playlist, play, pause, stop, volume, EPG</td></tr>
-  <tr><td><b>Command</b></td><td>Dual-pane file manager (Double Commander style).</td><td>Browse, copy, move, rename, delete, new folder</td></tr>
+  <tr><td><b>Command</b></td><td>Dual-pane file manager (Double Commander style).</td><td>Browse, copy, move, batch rename, delete — folder tabs, favorites, breadcrumbs, wildcard selection</td></tr>
   <tr><td><b>Room</b></td><td>DeepFlux Room — the embedded OnlyHumans community chat (every word is a room; opens on the “deepflux” room).</td><td>—</td></tr>
 </table>
 
@@ -310,6 +310,47 @@ tab comes into focus. The browser's session cookies are carried over, so downloa
 behind logins keep working. <code>.torrent</code> files are the exception: they use the
 browser's own download (private trackers need the full session) and are added to
 the torrent engine on completion.</p>
+
+<h2>Command Tab (File Manager)</h2>
+
+<p>A dual-pane file manager in the orthodox style. Each pane holds its own
+folder tabs: <code>Ctrl+T</code> opens a new tab (it duplicates the current
+folder), <code>Ctrl+W</code> closes one, <code>Ctrl+Tab</code> switches
+between them, and every tab remembers its folder between sessions. The
+function keys do the work: <code>F5</code> copy, <code>F6</code> move,
+<code>F7</code> new folder, <code>Shift+F4</code> new text file,
+<code>F8</code> move to the Recycle Bin, <code>Shift+Delete</code> permanent
+delete (you must type the exact paths to confirm), <code>F2</code> rename.</p>
+
+<p>Selection works like the classic commanders: <code>Insert</code> toggles
+the row under the cursor and steps down, <code>+</code> / <code>-</code>
+select or deselect a wildcard group (e.g. <code>*.log;*.tmp</code>),
+<code>Ctrl+I</code> inverts the selection, and the right-click menu can
+select everything with the same extension. Typing letters in the file list
+jumps to the first matching name — wildcards work too, and the prefix you
+have typed shows in the pane's status line.</p>
+
+<p>Each pane has a breadcrumb bar: click any path segment to jump straight
+there. When the window is narrow the leading segments collapse into a
+<code>⋯</code> button; press <code>✎</code> to swap in a plain path box.
+Star a folder to keep it in favorites — <code>Ctrl+1</code> through
+<code>Ctrl+9</code> jump to the first nine. <code>Ctrl+C</code>,
+<code>Ctrl+X</code> and <code>Ctrl+V</code> copy, cut and paste between
+panes; pasting runs through the exact same safety controller as F5/F6
+(one serialized operation at a time, per-item conflict choices, staged
+transactional copies) — which is also why plain drag &amp; drop stays
+deliberately disabled.</p>
+
+<p><code>Ctrl+R</code> opens Batch Rename over the selection: find &amp;
+replace (plain text or regular expressions), letter-case changes, numbering
+patterns (<code>photo ###</code> becomes photo 001, 002…), or paste a
+complete list of new names. Nothing is renamed until the preview table is
+valid, and a failed batch rolls back every rename it already applied.</p>
+
+<p>The AI agent can drive these panes: ask in plain language — “move all
+the .log files from the left pane to the right one” — and it reads the
+panes, selects the files, and transfers exactly the ones it names, after
+your confirmation.</p>
 
 <h2>Play Tab (IPTV &amp; Media Library)</h2>
 
@@ -563,7 +604,9 @@ the network when you ask it to.</p>
   <tr><td><code>Space</code> / <code>M</code> / <code>F</code></td><td>Player: pause / mute / fullscreen</td></tr>
   <tr><td><code>Shift+F</code></td><td>Player: pure fullscreen (all controls hidden — video only)</td></tr>
   <tr><td><code>A</code> / <code>J</code> / <code>#</code></td><td>Player: aspect ratio / subtitles / audio track</td></tr>
-  <tr><td><code>F5</code> <code>F6</code> <code>F7</code> <code>F8</code> <code>F2</code></td><td>Command: copy, move, new folder, delete, rename</td></tr>
+  <tr><td><code>F5</code> <code>F6</code> <code>F7</code> <code>F8</code> <code>F2</code> <code>Shift+F4</code> <code>Ctrl+R</code></td><td>Command: copy, move, new folder, delete, rename, new text file, batch rename</td></tr>
+  <tr><td><code>Insert</code> <code>+</code> <code>-</code> <code>Ctrl+I</code></td><td>Command pane selection: toggle row, group select / deselect, invert</td></tr>
+  <tr><td><code>Ctrl+T</code> <code>Ctrl+W</code> <code>Ctrl+1</code>–<code>Ctrl+9</code></td><td>Command pane: new / close folder tab, jump to a favorite</td></tr>
   <tr><td><code>Ctrl+Q</code></td><td>Quit</td></tr>
 </table>
 
@@ -641,7 +684,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 6.6 — AI Deep Search</p>
+<p>DeepFlux 6.7 — AI Deep Search</p>
 <p>AI via built-in local models (uncensored, offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>

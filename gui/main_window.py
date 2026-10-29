@@ -92,6 +92,7 @@ from gui.downloads_tab import DownloadsTab
 from gui.column_sizing import AutoColumnSizer
 from gui.responsive import OverflowRow, ResponsiveRow
 from gui.commander_tab import CommanderTab
+from gui.commander_bridge import CommanderBridge
 from gui.activity_rail import ActivityRail
 from gui.settings_hub import SettingsHub
 from gui.agent_panel import AgentPanel
@@ -2177,6 +2178,9 @@ class MainWindow(QMainWindow):
         # --- Commander tab (dual-pane file manager) ---
         self.commander_tab = CommanderTab(self.config, self)
         self.main_tabs.addTab(self.commander_tab, tr("Command"))
+        # Agent bridge: the commander_* tools drive these panes (thread-safe).
+        self._commander_bridge = CommanderBridge(self.commander_tab, self)
+        self.tools.set_commander_bridge(self._commander_bridge)
 
         # --- Room tab (DeepFlux Room — the embedded OnlyHumans portal) ---
         self.room_tab = RoomTab(self.config, self)
@@ -4510,6 +4514,10 @@ class MainWindow(QMainWindow):
         "add_torrent_source": ("🗂", "Adding search source"),
         "remove_torrent_source": ("🗂", "Removing search source"),
         "run_shell": ("💻", "Running command"),
+        "commander_state": ("🗂", "Reading Commander panes"),
+        "commander_navigate": ("🗂", "Navigating a Commander pane"),
+        "commander_select": ("🗂", "Selecting files in Commander"),
+        "commander_transfer": ("🗂", "Transferring files in Commander"),
     }
 
     def _format_tool_args(self, tool: str, args: dict) -> str:
@@ -6482,6 +6490,8 @@ class MainWindow(QMainWindow):
             self.tools.set_iptv_bridge(self._iptv_bridge)
         if getattr(self, "_browser_bridge", None) is not None:
             self.tools.set_browser_bridge(self._browser_bridge)
+        if getattr(self, "_commander_bridge", None) is not None:
+            self.tools.set_commander_bridge(self._commander_bridge)
         self.agent = AgentLoop(
             self.engine, self.config, tools=self.tools,
             on_event=lambda evt: self._agent_signals.event.emit(evt),

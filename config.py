@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "6.6"
+APP_VERSION = "6.7"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -653,6 +653,12 @@ class DeeptorrentConfig:
     # Commander locations are paths, not splitter integers/state. Keeping this
     # separate also lets invalid or unavailable folders fail closed on restore.
     ui_commander_paths: Dict[str, str] = field(default_factory=dict)
+    # Commander favorite folders (star button / Ctrl+1..9) — abs paths kept
+    # as-is; a favorite may point at removable media that is offline today.
+    ui_commander_favorites: List[str] = field(default_factory=list)
+    # Commander folder tabs per side ("left"/"right" -> list of abs paths);
+    # ui_commander_paths keeps the CURRENT tab of each side.
+    ui_commander_tabs: Dict[str, List[str]] = field(default_factory=dict)
     # Agent debug mode: raw tool args/results, full reasoning, watchdog activity in chat.
     ui_agent_debug: bool = True
     # v5: the agent quick-ask side panel is open (restored on launch).
@@ -1022,6 +1028,16 @@ class DeeptorrentConfig:
                 key: value for key, value in data.get("ui_commander_paths", {}).items()
                 if key in ("left", "right") and isinstance(value, str)
             } if isinstance(data.get("ui_commander_paths"), dict) else {},
+            ui_commander_favorites=[
+                item for item in data.get("ui_commander_favorites", [])
+                if isinstance(item, str) and item and "\x00" not in item and len(item) < 400
+            ][:100] if isinstance(data.get("ui_commander_favorites"), list) else [],
+            ui_commander_tabs={
+                side: [item for item in values
+                       if isinstance(item, str) and item and "\x00" not in item and len(item) < 400]
+                for side, values in data.get("ui_commander_tabs", {}).items()
+                if side in ("left", "right") and isinstance(values, list)
+            } if isinstance(data.get("ui_commander_tabs"), dict) else {},
             ui_agent_debug=True,  # assumed always-on (no UI toggle anymore)
             ui_language=(data.get("ui_language") or "en")
             if (data.get("ui_language") or "en") in ("en", "zh")

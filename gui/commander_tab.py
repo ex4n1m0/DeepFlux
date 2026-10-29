@@ -12,6 +12,7 @@ the *active* pane into the *other* pane's current directory:
 from __future__ import annotations
 
 import errno
+import fnmatch
 import hashlib
 import logging
 import os
@@ -27,13 +28,17 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Dict, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QDir, QEvent, QModelIndex, QTimer, Qt, Signal
+from PySide6.QtCore import (
+    QDir, QEvent, QModelIndex, QPoint, QTimer, Qt,
+    QItemSelectionModel, Signal,
+)
 from PySide6.QtGui import QImage, QImageReader, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
     QCompleter,
+    QDialog,
     QFileDialog,
     QFileSystemModel,
     QHBoxLayout,
@@ -47,6 +52,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QTabWidget,
+    QToolButton,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -111,6 +118,7 @@ class _OperationState:
     item_count: int = 0
     options: Dict[str, object] = field(default_factory=dict)
     result: object = None
+    quiet: bool = False  # agent-driven run: no dialogs, failures go to the caller
 
 
 class _CancellableReader:
@@ -127,13 +135,292 @@ class _CancellableReader:
         return data
 
 
+class _PaneView(QTreeView):
+    """File list with orthodox-commander keys and incremental search.
+
+    The selection keys are handled here instead of tab-level QShortcuts on
+    purpose: a plain-character shortcut with WidgetWithChildren context
+    fires even while a QLineEdit child has focus, so "+" or "-" shortcuts
+    would hijack typing in the path/filter boxes. Key handling on the view
+    itself only ever runs when the file list has focus.
+    """
+
+    group_select_requested = Signal(bool)   # True = select, False = deselect
+    invert_selection_requested = Signal()
+    clipboard_requested = Signal(str)       # "copy" | "cut" | "paste"
+    copy_path_requested = Signal()
+    search_echo_changed = Signal(str)
+
+    _SEARCH_TIMEOUT_MS = 1500
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._search = ""
+        self._echo_timer = QTimer(self)
+        self._echo_timer.setSingleShot(True)
+        self._echo_timer.setInterval(self._SEARCH_TIMEOUT_MS)
+        self._echo_timer.timeout.connect(self._clear_search)
+
+    # -- incremental search -----------------------------------------------------
+    def _clear_search(self) -> None:
+        if self._search:
+            self._search = ""
+            self.search_echo_changed.emit("")
+
+    def _echo(self) -> None:
+        self.search_echo_changed.emit(self._search)
+        self._echo_timer.start()
+
+    def jump_to_prefix(self, prefix: str) -> bool:
+        """Move the cursor (never the selection) to the first matching name."""
+        if not prefix:
+            return False
+        model = self.model()
+        root = self.rootIndex()
+        rows = model.rowCount(root)
+        if rows == 0:
+            return False
+        start = self.currentIndex().row() + 1 if self.currentIndex().isValid() else 0
+        ordered = list(range(start, rows)) + list(range(0, min(start, rows)))
+        wildcard = "*" in prefix or "?" in prefix
+        lowered = prefix.lower()
+        for row in ordered:
+            index = model.index(row, 0, root)
+            name = os.path.basename(model.filePath(index))
+            if fnmatch.fnmatch(name.lower(), lowered) if wildcard else name.lower().startswith(lowered):
+                self.selectionModel().setCurrentIndex(
+                    index, QItemSelectionModel.SelectionFlag.NoUpdate)
+                self.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+                return True
+        return False
+
+    # -- commander selection keys -------------------------------------------------
+    def toggle_current_and_advance(self) -> None:
+        """Insert key: flip the row under the cursor, then step down one row."""
+        index = self.currentIndex()
+        if not index.isValid():
+            index = self.model().index(0, 0, self.rootIndex())
+            if not index.isValid():
+                return
+        selection = self.selectionModel()
+        if selection.isSelected(index):
+            command = QItemSelectionModel.SelectionFlag.Deselect | QItemSelectionModel.SelectionFlag.Rows
+        else:
+            command = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+        selection.select(index, command)
+        below = self.model().index(index.row() + 1, 0, self.rootIndex())
+        selection.setCurrentIndex(
+            below if below.isValid() else index,
+            QItemSelectionModel.SelectionFlag.NoUpdate)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        if self.state() != QAbstractItemView.State.EditingState:
+            key = event.key()
+            text = event.text()
+            modifiers = event.modifiers()
+            ctrl_only = modifiers == Qt.KeyboardModifier.ControlModifier
+            plain = not modifiers & (Qt.KeyboardModifier.ControlModifier
+                                     | Qt.KeyboardModifier.AltModifier
+                                     | Qt.KeyboardModifier.MetaModifier)
+            if plain and key == Qt.Key.Key_Insert:
+                self.toggle_current_and_advance()
+                return
+            if plain and text == "+":
+                self.group_select_requested.emit(True)
+                return
+            if plain and text in ("-", "_"):
+                self.group_select_requested.emit(False)
+                return
+            if ctrl_only and key == Qt.Key.Key_I:
+                self.invert_selection_requested.emit()
+                return
+            if (modifiers == (Qt.KeyboardModifier.ControlModifier
+                              | Qt.KeyboardModifier.ShiftModifier)
+                    and key == Qt.Key.Key_C):
+                self.copy_path_requested.emit()
+                return
+            if ctrl_only and key in (Qt.Key.Key_C, Qt.Key.Key_X, Qt.Key.Key_V):
+                self.clipboard_requested.emit(
+                    {Qt.Key.Key_C: "copy", Qt.Key.Key_X: "cut", Qt.Key.Key_V: "paste"}[key])
+                return
+            if plain and text and text.isprintable():
+                candidate = self._search + text
+                if self.jump_to_prefix(candidate):
+                    self._search = candidate
+                    self._echo()
+                return
+            if plain and key == Qt.Key.Key_Backspace and self._search:
+                self._search = self._search[:-1]
+                if self._search:
+                    self.jump_to_prefix(self._search)
+                self._echo()
+                return
+            if plain and key == Qt.Key.Key_Escape and self._search:
+                self._search = ""
+                self.search_echo_changed.emit("")
+                return
+        super().keyPressEvent(event)
+
+
+class _PathBar(QWidget):
+    """Breadcrumb navigation with the plain path edit one click away.
+
+    Shows one flat QToolButton per path segment; when the row is too
+    narrow the LEADING segments collapse into a "⋯" button that jumps to
+    the deepest hidden ancestor, so the current folder never falls off
+    the bar. The trailing "✎" button (or double-click) swaps in the
+    classic QLineEdit; Enter navigates and returns to the crumbs, Esc or
+    focus loss goes back without navigating.
+    """
+
+    navigate_requested = Signal(str)
+
+    # Deep paths would otherwise set the whole pane's layout minimum via the
+    # breadcrumb size hints (the responsive-window cap depends on it).
+    _MIN_WIDTH = 40
+
+    def __init__(self, path_edit: QLineEdit, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._path_edit = path_edit
+        self._buttons: List[QToolButton] = []
+        self._segments: List[str] = []
+        self._ellipsis_target = ""
+        self.setMinimumWidth(self._MIN_WIDTH)
+
+        self._stack = QStackedWidget(self)
+        self._crumbs = QWidget(self)
+        row = QHBoxLayout(self._crumbs)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(0)
+        self._ellipsis = QToolButton(self._crumbs)
+        self._ellipsis.setText("⋯")
+        self._ellipsis.setAccessibleName("Hidden parent folders")
+        self._ellipsis.setToolTip(tr('Jump to a hidden parent folder'))
+        self._ellipsis.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._ellipsis.setMinimumWidth(0)
+        self._ellipsis.setVisible(False)
+        self._ellipsis.clicked.connect(self._jump_ellipsis)
+        row.addWidget(self._ellipsis)
+        row.addStretch(1)
+        self._edit_btn = QToolButton(self._crumbs)
+        self._edit_btn.setText("✎")
+        self._edit_btn.setAccessibleName("Edit path")
+        self._edit_btn.setToolTip(tr('Type a path instead (press Enter to navigate)'))
+        self._edit_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._edit_btn.clicked.connect(self.show_edit)
+        row.addWidget(self._edit_btn)
+        self._stack.addWidget(self._crumbs)
+        self._stack.addWidget(self._path_edit)
+        self._stack.setCurrentWidget(self._crumbs)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._stack)
+
+        self._path_edit.installEventFilter(self)
+
+    # -- crumbs ---------------------------------------------------------------
+    def set_path(self, path: str) -> None:
+        for button in self._buttons:
+            row = self._crumbs.layout()
+            if row is not None:
+                row.removeWidget(button)
+            button.deleteLater()
+        self._buttons = []
+        self._segments = []
+        if os.name == "nt" and path.startswith("\\\\"):
+            # UNC crumbs would rebuild relative paths ("server") that don't
+            # navigate back to the share — offer the plain editor instead.
+            self._ellipsis.setVisible(False)
+            self._ellipsis_target = ""
+            self.show_edit()
+            return
+        parts = [part for part in path.split(os.sep) if part]
+        cumulative = os.sep if os.sep == "/" else ""
+        for part in parts:
+            cumulative = os.path.join(cumulative, part) if cumulative else (
+                part + os.sep if os.name == "nt" and part.endswith((":")) else part)
+            self._segments.append(cumulative)
+        if not self._segments:
+            self._segments = [os.sep]
+        for index, target in enumerate(self._segments):
+            label = os.path.basename(target.rstrip(os.sep)) or target
+            button = QToolButton(self._crumbs)
+            button.setText(label)
+            button.setAccessibleName(f"Path segment {label}")
+            button.setToolTip(QDir.toNativeSeparators(target))
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            # zero layout minimum: deep paths must not widen the window floor
+            button.setMinimumWidth(0)
+            button.clicked.connect(lambda _checked=False, p=target: self.navigate_requested.emit(p))
+            insert = self._crumbs.layout().count() - 2  # before stretch + edit button
+            self._crumbs.layout().insertWidget(insert, button)
+            self._buttons.append(button)
+        self._relayout()
+
+    def _jump_ellipsis(self) -> None:
+        if self._ellipsis_target:
+            self.navigate_requested.emit(self._ellipsis_target)
+
+    def _relayout(self) -> None:
+        """Hide leading segments while the row cannot fit them at full width."""
+        available = max(0, self.width() - self._edit_btn.sizeHint().width() - 24)
+        hidden = 0
+        while hidden < len(self._buttons) - 1:
+            needed = self._ellipsis.sizeHint().width() + sum(
+                button.sizeHint().width() for button in self._buttons[hidden:])
+            if needed <= available:
+                break
+            hidden += 1
+        for index, button in enumerate(self._buttons):
+            button.setVisible(index >= hidden)
+        self._ellipsis.setVisible(hidden > 0)
+        self._ellipsis_target = self._segments[hidden - 1] if hidden else ""
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._relayout()
+
+    # -- editor ---------------------------------------------------------------
+    def show_edit(self) -> None:
+        self._stack.setCurrentWidget(self._path_edit)
+        self._path_edit.setFocus()
+        self._path_edit.selectAll()
+
+    def show_crumbs(self) -> None:
+        if self._stack.currentWidget() is not self._crumbs:
+            self._stack.setCurrentWidget(self._crumbs)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802
+        if obj is self._path_edit:
+            if (event.type() == QEvent.Type.KeyPress
+                    and event.key() == Qt.Key.Key_Escape):
+                self.show_crumbs()
+                return True
+            if event.type() == QEvent.Type.FocusOut:
+                self.show_crumbs()
+        return super().eventFilter(obj, event)
+
+    # -- test/inspection helpers -------------------------------------------------
+    def segment_paths(self) -> List[str]:
+        return list(self._segments)
+
+    def visible_segment_count(self) -> int:
+        # isHidden() (explicit setVisible(False)), not isVisible(): the whole
+        # pane may legitimately be unshown (tests, background tab).
+        return sum(1 for button in self._buttons if not button.isHidden())
+
+
 class FilePane(QWidget):
-    """One side of the commander: drive bar + path edit + file tree."""
+    """One side of the commander: drive bar + path bar + file tree."""
 
     activated_pane = Signal(object)    # emitted with self when the pane gains focus
     op_requested = Signal(str)         # commander-routed filesystem mutation
     selection_changed = Signal(object) # selected paths, for asynchronous preview
     status_message = Signal(str)
+    path_changed = Signal(str)         # final navigation target, for tab titles
+    favorite_clicked = Signal()        # star button: the tab owns the favorites list
+    file_clipboard_request = Signal(str)  # "copy" | "cut" | "paste" (commander clipboard)
 
     def __init__(self, start_path: str, parent: Optional[QWidget] = None,
                  pane_name: str = "File pane") -> None:
@@ -143,6 +430,12 @@ class FilePane(QWidget):
         self._back_history: List[str] = []
         self._forward_history: List[str] = []
         self._show_hidden_system = False
+        self._search_echo = ""
+        self._last_group_pattern = "*.txt"
+        self._favorites_provider = None
+        self._path_retries = 0
+        self._show_token = 0
+        self._shown_path = ""
         self._model = QFileSystemModel(self)
         self._model.setReadOnly(False)
         self._model.setRootPath("")
@@ -181,13 +474,23 @@ class FilePane(QWidget):
         comp_model.setRootPath("")
         completer.setModel(comp_model)
         self._path_edit.setCompleter(completer)
-        self._path_edit.returnPressed.connect(
-            lambda: self.navigate(self._path_edit.text()))
-        bar.addWidget(self._path_edit, 1)
+        self._path_edit.returnPressed.connect(lambda: (
+            self.navigate(self._path_edit.text()),
+            self._path_bar.show_crumbs(),
+        ))
+        self._path_bar = _PathBar(self._path_edit)
+        self._path_bar.setAccessibleName(f"{pane_name} breadcrumb path")
+        self._path_bar.setToolTip(tr('Clickable path segments; press ✎ to type a path'))
+        self._path_bar.navigate_requested.connect(self.navigate)
+        bar.addWidget(self._path_bar, 1)
         self._refresh_btn = self._nav_button(
             "⟳", "Refresh", "Refresh current folder",
             lambda: self.navigate(self.current_path(), record_history=False))
         bar.addWidget(self._refresh_btn)
+        self._fav_btn = self._nav_button(
+            "☆", "favorites", tr('Favorites (Ctrl+1..9 jumps to the first nine)'),
+            lambda: self.favorite_clicked.emit())
+        bar.addWidget(self._fav_btn)
         layout.addLayout(bar)
 
         tools = QHBoxLayout()
@@ -210,7 +513,7 @@ class FilePane(QWidget):
         tools.addWidget(self._hidden_btn)
         layout.addLayout(tools)
 
-        self._view = QTreeView(self)
+        self._view = _PaneView(self)
         self._view.setAccessibleName(f"{pane_name} files")
         self._view.setToolTip(tr('Files and folders; native drag and drop is disabled for safety'))
         self._view.setModel(self._model)
@@ -259,6 +562,18 @@ class FilePane(QWidget):
         self._path_edit.installEventFilter(self)
         self._filter_edit.installEventFilter(self)
         self._view.selectionModel().selectionChanged.connect(self._report_selection)
+        # Commander keys live on the view itself (see _PaneView) so typing in
+        # the path/filter edits can never trigger them.
+        self._view.group_select_requested.connect(self._select_group)
+        self._view.invert_selection_requested.connect(self._invert_selection)
+        self._view.clipboard_requested.connect(self.file_clipboard_request.emit)
+        self._view.copy_path_requested.connect(self._copy_paths_to_clipboard)
+        self._view.search_echo_changed.connect(self._set_search_echo)
+        # Navigating into a folder whose PARENT listing is still in flight can
+        # hand the view a node the model later re-creates while reconciling
+        # that listing (rowsRemoved kills the view's root). Re-resolve by path.
+        self._model.rowsRemoved.connect(lambda *_: self._heal_root_index())
+        self._model.modelReset.connect(lambda *_: self._heal_root_index())
 
         start = start_path if os.path.isdir(start_path) else str(Path.home())
         self.navigate(start, record_history=False)
@@ -295,12 +610,15 @@ class FilePane(QWidget):
         self._show_path(path)
 
     def _show_path(self, path: str) -> None:
-        self._view.setRootIndex(self._model.index(path))
-        # Columns sized for the new folder right away (header hints), then
-        # again as the async listing lands rows via _fit_timer.
-        self._column_sizer.auto_fit()
-        self._fit_timer.start()
+        self._show_token += 1
+        self._show_path_now(path, self._show_token)
+
+    def _show_path_now(self, path: str, token: int) -> None:
+        self._shown_path = path
+        self.path_changed.emit(path)
         self._path_edit.setText(QDir.toNativeSeparators(path))
+        self._path_bar.set_path(path)
+        self._update_favorite_star()
         if sys.platform == "win32":
             drive = os.path.splitdrive(path)[0] + "\\"
             i = self._drives.findText(drive, Qt.MatchFlag.MatchStartsWith)
@@ -309,6 +627,52 @@ class FilePane(QWidget):
         self._update_navigation_buttons()
         self._update_pane_status()
         self.status_message.emit(path)
+        index = self._model.index(path)
+        if not index.isValid():
+            if self._path_retries < 25:
+                # A just-created folder races the model's watcher: index()
+                # stays invalid until the queued rowsInserted is processed,
+                # and setting an invalid root silently shows the drive list.
+                # Retry on later event-loop turns instead. (Do NOT force the
+                # model here via setRootPath(path): swapping the model root
+                # re-fetches and can prune the node the view already holds.)
+                self._path_retries += 1
+                QTimer.singleShot(40, lambda: self._retry_show_path(path, token))
+                return
+            index = QModelIndex()  # gave up: legacy behavior (drive list)
+        self._path_retries = 0
+        self._view.setRootIndex(index)
+        # A QTreeView root change does NOT clear the selection model: an old
+        # folder's selection would survive invisibly and the next F5/F6 (or
+        # an agent transfer) would act on paths the pane no longer shows.
+        if self._view.selectionModel() is not None:
+            self._view.selectionModel().clear()
+        # QFileSystemModel fetches lazily; a shown view triggers the fetch in
+        # its layout pass, but a hidden/background pane (tests, background
+        # tab) never lays out — request the listing explicitly so navigation
+        # always populates.
+        if self._model.canFetchMore(index):
+            self._model.fetchMore(index)
+        # Columns sized for the new folder right away (header hints), then
+        # again as the async listing lands rows via _fit_timer.
+        self._column_sizer.auto_fit()
+        self._fit_timer.start()
+
+    def _retry_show_path(self, path: str, token: int) -> None:
+        if token != self._show_token:
+            return  # a newer navigation superseded this retry
+        self._show_path_now(path, token)
+
+    def _heal_root_index(self) -> None:
+        """Re-resolve the view root by path after model churn killed it."""
+        if self._view.rootIndex().isValid() or not self._shown_path:
+            return
+        index = self._model.index(self._shown_path)
+        if index.isValid():
+            self._view.setRootIndex(index)
+            if self._model.canFetchMore(index):
+                self._model.fetchMore(index)
+            self._fit_timer.start()
 
     @staticmethod
     def _same_location(first: str, second: str) -> bool:
@@ -343,7 +707,10 @@ class FilePane(QWidget):
         self._forward_btn.setEnabled(bool(self._forward_history))
 
     def current_path(self) -> str:
-        return self._model.filePath(self._view.rootIndex())
+        # The intended folder wins over the model's root index: while a
+        # just-created folder is being retried (see _show_path_now), the view
+        # still holds the previous root and the model would answer stale.
+        return self._shown_path or self._model.filePath(self._view.rootIndex())
 
     def selected_paths(self) -> List[str]:
         return [self._model.filePath(i)
@@ -361,6 +728,102 @@ class FilePane(QWidget):
             return
         if not QDir(self.current_path()).mkdir(name):
             QMessageBox.warning(self, tr('New Folder'), f"Could not create '{name}'.")
+
+    # -- selection ---------------------------------------------------------------
+    def select_pattern(self, pattern: str, include: bool = True) -> int:
+        """Select (or deselect) top-level rows matching ';' separated wildcards.
+
+        Returns how many rows actually CHANGED — matching an already-selected
+        row in select mode is not a change (the count feeds the agent).
+        """
+        patterns = [part.strip().lower() for part in pattern.split(";") if part.strip()]
+        if not patterns:
+            return 0
+        model = self._model
+        root = self._view.rootIndex()
+        selection = self._view.selectionModel()
+        flags = (QItemSelectionModel.SelectionFlag.Select if include
+                 else QItemSelectionModel.SelectionFlag.Deselect) | QItemSelectionModel.SelectionFlag.Rows
+        changed = 0
+        for row in range(model.rowCount(root)):
+            index = model.index(row, 0, root)
+            name = os.path.basename(model.filePath(index))
+            if any(fnmatch.fnmatch(name.lower(), p) for p in patterns):
+                if selection.isSelected(index) != include:
+                    selection.select(index, flags)
+                    changed += 1
+        return changed
+
+    def _select_group(self, include: bool) -> None:
+        title = tr('Select Group') if include else tr('Deselect Group')
+        pattern, ok = QInputDialog.getText(
+            self, title, tr('Pattern (wildcards; ";" separates several):'),
+            text=self._last_group_pattern)
+        if not ok:
+            return
+        pattern = pattern.strip()
+        self._last_group_pattern = pattern
+        if not pattern:
+            return
+        count = self.select_pattern(pattern, include)
+        verb = tr('selected') if include else tr('deselected')
+        self.status_message.emit(f"{count} {verb} — {pattern}")
+
+    def _invert_selection(self) -> None:
+        model = self._model
+        root = self._view.rootIndex()
+        selection = self._view.selectionModel()
+        for row in range(model.rowCount(root)):
+            index = model.index(row, 0, root)
+            if selection.isSelected(index):
+                command = QItemSelectionModel.SelectionFlag.Deselect | QItemSelectionModel.SelectionFlag.Rows
+            else:
+                command = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+            selection.select(index, command)
+
+    def select_same_extension(self) -> None:
+        """Select every top-level item sharing the first selection's extension."""
+        paths = self.selected_paths()
+        if not paths:
+            self.status_message.emit(tr('Nothing selected'))
+            return
+        extension = os.path.splitext(paths[0])[1].lower()
+        if extension:
+            count = self.select_pattern("*" + extension, True)
+        else:
+            model = self._model
+            root = self._view.rootIndex()
+            selection = self._view.selectionModel()
+            flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+            count = 0
+            for row in range(model.rowCount(root)):
+                index = model.index(row, 0, root)
+                if "." not in os.path.basename(model.filePath(index)):
+                    selection.select(index, flags)
+                    count += 1
+        self.status_message.emit(f"{count} {tr('selected')} — *{extension}")
+
+    # -- favorites + clipboard ------------------------------------------------------
+    def set_favorites_provider(self, provider) -> None:
+        """Give the pane read access to the tab's favorites for the star state."""
+        self._favorites_provider = provider
+        self._update_favorite_star()
+
+    def _update_favorite_star(self) -> None:
+        favorites = self._favorites_provider() if self._favorites_provider else []
+        current = os.path.normcase(os.path.abspath(self.current_path()))
+        marked = any(os.path.normcase(os.path.abspath(path)) == current
+                     for path in favorites if isinstance(path, str))
+        self._fav_btn.setText("★" if marked else "☆")
+
+    def _copy_paths_to_clipboard(self) -> None:
+        paths = self.selected_paths()
+        if not paths:
+            self.status_message.emit(tr('Nothing selected'))
+            return
+        text = "\n".join(QDir.toNativeSeparators(os.path.abspath(p)) for p in paths)
+        QApplication.clipboard().setText(text)
+        self.status_message.emit(f"{len(paths)} {tr('path(s) copied')}")
 
     # -- active-pane visuals ---------------------------------------------------
     def set_active(self, on: bool) -> None:
@@ -400,6 +863,11 @@ class FilePane(QWidget):
             filt |= QDir.Filter.Hidden | QDir.Filter.System
         self._model.setFilter(filt)
 
+    def _set_search_echo(self, text: str) -> None:
+        """Show the live incremental-search prefix in the pane status line."""
+        self._search_echo = text
+        self._update_pane_status()
+
     def _update_pane_status(self) -> None:
         path = self.current_path()
         count = len(self.selected_paths()) if self._view.selectionModel() else 0
@@ -410,7 +878,8 @@ class FilePane(QWidget):
             space = "Free space unavailable"
         filter_text = self.filename_filter() if hasattr(self, "_filter_edit") else ""
         filtered = f" | filter: {filter_text}" if filter_text else ""
-        self._pane_status.setText(f"{count} selected | {space}{filtered}")
+        search = f"{tr('search')}: {self._search_echo} | " if self._search_echo else ""
+        self._pane_status.setText(f"{search}{count} selected | {space}{filtered}")
 
     # -- internals -------------------------------------------------------------
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
@@ -446,6 +915,7 @@ class FilePane(QWidget):
             folder = paths[0] if os.path.isdir(paths[0]) else os.path.dirname(paths[0])
             label = "Show in Explorer" if sys.platform == "win32" else "Show in File Manager"
             menu.addAction(label, lambda: _open_native(folder))
+            menu.addAction(tr('Copy path\tCtrl+Shift+C'), self._copy_paths_to_clipboard)
             menu.addSeparator()
             menu.addAction(tr('Copy to other pane\tF5'), lambda: self.op_requested.emit("copy"))
             menu.addAction(tr('Move to other pane\tF6'), lambda: self.op_requested.emit("move"))
@@ -459,11 +929,22 @@ class FilePane(QWidget):
             menu.addAction(tr('Create archive…'), lambda: self.op_requested.emit("archive"))
             menu.addSeparator()
             menu.addAction(tr('Rename…\tF2'), lambda: self.op_requested.emit("rename"))
+            menu.addAction(tr('Batch Rename…\tCtrl+R'),
+                           lambda: self.op_requested.emit("batch_rename"))
             menu.addAction(tr('Move to Recycle Bin\tF8'), lambda: self.op_requested.emit("recycle"))
             menu.addAction(tr('Permanently Delete…\tShift+Delete'),
                            lambda: self.op_requested.emit("permanent_delete"))
             menu.addSeparator()
+        menu.addAction(tr('Select Group… (+)'), lambda: self._select_group(True))
+        menu.addAction(tr('Deselect Group… (-)'), lambda: self._select_group(False))
+        menu.addAction(tr('Invert Selection\tCtrl+I'), self._invert_selection)
+        if paths:
+            menu.addAction(tr('Select All with Same Extension'), self.select_same_extension)
+        menu.addAction(tr('Paste from Commander Clipboard\tCtrl+V'),
+                       lambda: self.file_clipboard_request.emit("paste"))
+        menu.addSeparator()
         menu.addAction(tr('New Folder…\tF7'), lambda: self.op_requested.emit("mkdir"))
+        menu.addAction(tr('New Text File…\tShift+F4'), lambda: self.op_requested.emit("new_file"))
         menu.addAction(tr('Refresh'), lambda: self.navigate(
             self.current_path(), record_history=False))
         menu.exec(self._view.viewport().mapToGlobal(pos))
@@ -475,6 +956,8 @@ class CommanderTab(QWidget):
     op_progress = Signal(int, int, str)   # done KiB/items, total, current item
     op_finished = Signal(object, bool, str)  # operation, ok, message
     preview_ready = Signal(str, object)    # request token, bounded preview result
+    active_pane_changed = Signal(str)      # "left"/"right" — for the agent bridge
+    pane_added = Signal(object, str)       # FilePane, side — for the agent bridge
 
     def __init__(self, config, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -485,6 +968,15 @@ class CommanderTab(QWidget):
         self._operation_outcomes: List[Dict[str, object]] = []
         self._preview_token = ""
         self._preview_path = ""
+        # Commander file clipboard ("copy"/"cut", paths). App-internal on
+        # purpose: pasting routes through the same safety controller as
+        # F5/F6, which the OS clipboard could not promise.
+        self._file_clipboard: Optional[Tuple[str, List[str]]] = None
+        raw_favorites = getattr(self._config, "ui_commander_favorites", [])
+        self._favorites: List[str] = [
+            item for item in raw_favorites
+            if isinstance(item, str) and item and "\x00" not in item and len(item) < 400
+        ][:100]
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
@@ -501,10 +993,48 @@ class CommanderTab(QWidget):
         # malformed values, and stale removable-media paths use safe defaults.
         left_start = self._restorable_directory(saved_paths.get("left"), left_default)
         right_start = self._restorable_directory(saved_paths.get("right"), root)
-        self.left_pane = FilePane(left_start, pane_name="Left pane")
-        self.right_pane = FilePane(right_start, pane_name="Right pane")
-        self.splitter.addWidget(self.left_pane)
-        self.splitter.addWidget(self.right_pane)
+        # Each SIDE is a closable/movable folder-tab strip; every tab holds a
+        # full FilePane (own model so per-tab filter/sort state is kept).
+        # Left/right "pane" is the side's CURRENT tab — see the properties.
+        self._sides: Dict[str, QTabWidget] = {}
+        saved_tabs = getattr(self._config, "ui_commander_tabs", {})
+        if not isinstance(saved_tabs, dict):
+            saved_tabs = {}
+        for side, fallback in (("left", left_start), ("right", right_start)):
+            tabs = QTabWidget()
+            tabs.setAccessibleName(f"{side.title()} folder tabs")
+            tabs.setToolTip(tr('Folder tabs (Ctrl+T new, Ctrl+W close, Ctrl+Tab switch)'))
+            tabs.setTabsClosable(True)
+            tabs.setMovable(True)
+            tabs.setUsesScrollButtons(True)
+            add_btn = QPushButton("+")
+            add_btn.setAccessibleName(f"{side.title()} new folder tab")
+            add_btn.setToolTip(tr('Open a new folder tab (Ctrl+T)'))
+            add_btn.setFixedWidth(30)
+            add_btn.clicked.connect(lambda _checked=False, s=side: self._new_tab(s))
+            tabs.setCornerWidget(add_btn)
+            tabs.tabCloseRequested.connect(
+                lambda index, s=side: self._close_tab(s, index))
+            tabs.currentChanged.connect(
+                lambda _index, s=side: self._on_side_tab_changed(s))
+            self._sides[side] = tabs
+            self.splitter.addWidget(tabs)
+            paths = [
+                self._restorable_directory(item, fallback)
+                for item in (saved_tabs.get(side) or [])[: self._TAB_LIMIT]
+                if isinstance(item, str)
+            ]
+            if not paths:
+                paths = [fallback]
+            for path in paths:
+                self._add_tab(side, path)
+            # restore the recorded CURRENT tab of this side
+            wanted = saved_paths.get(side)
+            if wanted:
+                for index in range(tabs.count()):
+                    if self._same_path(tabs.widget(index).current_path(), wanted):
+                        tabs.setCurrentIndex(index)
+                        break
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([1000, 1000])
@@ -586,14 +1116,10 @@ class CommanderTab(QWidget):
         layout.addWidget(self._outcome_status)
 
         self._active: FilePane = self.left_pane
-        for pane in (self.left_pane, self.right_pane):
-            pane.activated_pane.connect(self._set_active)
-            pane.op_requested.connect(self._on_op_requested)
-            pane.selection_changed.connect(
-                lambda paths, source=pane: self._on_selection_changed(source, paths))
-            pane.status_message.connect(self._status.setText)
-        self.left_pane.set_active(True)
-        self.right_pane.set_active(False)
+        for side in ("left", "right"):
+            for index in range(self._sides[side].count()):
+                self._wire_pane(self._sides[side].widget(index), side)
+        self._apply_active_highlights()
 
         ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
         for key, slot in (
@@ -604,6 +1130,10 @@ class CommanderTab(QWidget):
             ("Delete", self._start_delete),
             ("Shift+Delete", self._start_permanent_delete),
             ("F2", self._rename),
+            ("Shift+F4", self._new_file),
+            ("Ctrl+R", self._start_batch_rename_dialog),
+            ("Ctrl+T", lambda: self._new_tab(self._side_of(self._active))),
+            ("Ctrl+W", self._close_current_tab),
             ("Backspace", lambda: self._active.go_up()),
             ("Alt+Left", lambda: self._active.go_back()),
             ("Alt+Right", lambda: self._active.go_forward()),
@@ -612,10 +1142,110 @@ class CommanderTab(QWidget):
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(ctx)
             sc.activated.connect(slot)
+        # Ctrl+1..9 jump to the first nine favorites in the ACTIVE pane.
+        for number in range(1, 10):
+            sc = QShortcut(QKeySequence(f"Ctrl+{number}"), self)
+            sc.setContext(ctx)
+            sc.activated.connect(lambda n=number: self._jump_favorite(n - 1))
 
         self.op_progress.connect(self._on_op_progress)
         self.op_finished.connect(self._on_op_finished)
         self.preview_ready.connect(self._apply_preview)
+
+    # -- folder tabs ------------------------------------------------------------
+    _TAB_LIMIT = 12  # every tab carries its own QFileSystemModel
+
+    @property
+    def left_pane(self) -> FilePane:
+        pane = self._sides["left"].currentWidget()
+        return pane if pane is not None else self._sides["left"].widget(0)
+
+    @property
+    def right_pane(self) -> FilePane:
+        pane = self._sides["right"].currentWidget()
+        return pane if pane is not None else self._sides["right"].widget(0)
+
+    def _wire_pane(self, pane: FilePane, side: str) -> None:
+        pane.activated_pane.connect(self._set_active)
+        pane.op_requested.connect(self._on_op_requested)
+        pane.selection_changed.connect(
+            lambda paths, source=pane: self._on_selection_changed(source, paths))
+        pane.status_message.connect(self._status.setText)
+        pane.favorite_clicked.connect(
+            lambda source=pane: self._show_favorites_menu(source))
+        pane.file_clipboard_request.connect(
+            lambda mode, source=pane: self._on_file_clipboard(source, mode))
+        pane.path_changed.connect(
+            lambda path, source=pane: self._sync_tab_title(source, path))
+        pane.set_favorites_provider(self.commander_favorites)
+
+    def _add_tab(self, side: str, path: str) -> FilePane:
+        pane = FilePane(path, pane_name=f"{side.title()} pane")
+        tabs = self._sides[side]
+        tabs.addTab(pane, os.path.basename(os.path.normpath(path)) or path)
+        tabs.setTabToolTip(tabs.indexOf(pane), QDir.toNativeSeparators(path))
+        if hasattr(self, "_active"):  # panes created after construction
+            self._wire_pane(pane, side)
+        self.pane_added.emit(pane, side)
+        return pane
+
+    def _new_tab(self, side: str) -> None:
+        tabs = self._sides[side]
+        if tabs.count() >= self._TAB_LIMIT:
+            self._status.setText(tr('Folder tab limit reached'))
+            return
+        # Classic commander behavior: the new tab duplicates the current one.
+        pane = self._add_tab(side, tabs.currentWidget().current_path())
+        tabs.setCurrentWidget(pane)
+        self._set_active(pane)
+
+    def _close_tab(self, side: str, index: int) -> None:
+        tabs = self._sides[side]
+        if tabs.count() <= 1:
+            self._status.setText(tr('The last folder tab cannot be closed'))
+            return
+        pane = tabs.widget(index)
+        tabs.removeTab(index)
+        if pane is not None:
+            pane.deleteLater()
+
+    def _close_current_tab(self) -> None:
+        side = self._side_of(self._active)
+        self._close_tab(side, self._sides[side].currentIndex())
+
+    def _on_side_tab_changed(self, side: str) -> None:
+        pane = self._sides[side].currentWidget()
+        if pane is None or not hasattr(self, "_active"):
+            return
+        self._apply_active_highlights()
+        # Only a USER-driven tab switch (the strip has focus) moves the
+        # active-pane highlight; programmatic tab changes keep the user's
+        # active side. _new_tab activates its pane explicitly.
+        if self._sides[side].hasFocus():
+            self._set_active(pane)
+
+    def _side_of(self, pane: FilePane) -> str:
+        for side, tabs in self._sides.items():
+            if tabs.indexOf(pane) >= 0:
+                return side
+        return "left"
+
+    def _sync_tab_title(self, pane: FilePane, path: str) -> None:
+        for tabs in self._sides.values():
+            index = tabs.indexOf(pane)
+            if index >= 0:
+                tabs.setTabText(
+                    index, os.path.basename(os.path.normpath(path)) or path)
+                tabs.setTabToolTip(index, QDir.toNativeSeparators(path))
+                break
+
+    def commander_tabs(self) -> Dict[str, List[str]]:
+        """Every side's tab folders (current tab first is NOT guaranteed)."""
+        return {
+            side: [self._sides[side].widget(index).current_path()
+                   for index in range(self._sides[side].count())]
+            for side in ("left", "right")
+        }
 
     # -- pane coordination -----------------------------------------------------
     @staticmethod
@@ -647,23 +1277,147 @@ class CommanderTab(QWidget):
         return str(Path.home()) if Path.home().is_dir() else CommanderTab._fs_root()
 
     def persist_pane_paths(self) -> Dict[str, str]:
-        """Copy validated pane locations into their dedicated config field."""
+        """Copy validated pane locations (and every folder tab) into config."""
         left, right = self.pane_paths()
         paths = {
             "left": self._restorable_directory(left, self._fs_root()),
             "right": self._restorable_directory(right, self._fs_root()),
         }
         self._config.ui_commander_paths = paths
+        tabs_state: Dict[str, List[str]] = {}
+        for side in ("left", "right"):
+            tabs_state[side] = [
+                self._restorable_directory(
+                    self._sides[side].widget(index).current_path(), self._fs_root())
+                for index in range(self._sides[side].count())
+            ]
+        self._config.ui_commander_tabs = tabs_state
         return dict(paths)
 
+    # -- favorites ---------------------------------------------------------------
+    def commander_favorites(self) -> List[str]:
+        """Current favorites (paths); the star buttons and jumps read this."""
+        return list(self._favorites)
+
+    def _is_favorite(self, path: str) -> bool:
+        target = os.path.normcase(os.path.abspath(path))
+        return any(os.path.normcase(os.path.abspath(item)) == target
+                   for item in self._favorites)
+
+    def _set_favorites(self, favorites: List[str]) -> None:
+        self._favorites = favorites[:100]
+        self._config.ui_commander_favorites = list(self._favorites)
+        for pane in (self.left_pane, self.right_pane):
+            pane._update_favorite_star()
+
+    def add_favorite(self, path: str) -> None:
+        path = os.path.abspath(path)
+        if not self._is_favorite(path):
+            self._set_favorites([path] + self._favorites)
+
+    def remove_favorite(self, path: str) -> None:
+        target = os.path.normcase(os.path.abspath(path))
+        kept = [item for item in self._favorites
+                if os.path.normcase(os.path.abspath(item)) != target]
+        if len(kept) != len(self._favorites):
+            self._set_favorites(kept)
+
+    def _show_favorites_menu(self, pane: FilePane) -> None:
+        menu = QMenu(self)
+        menu.setStyleSheet(_MENU_STYLE)
+        current = pane.current_path()
+        if self._is_favorite(current):
+            menu.addAction(tr('Remove current folder from favorites'),
+                           lambda: self.remove_favorite(current))
+        else:
+            menu.addAction(tr('Add current folder to favorites'),
+                           lambda: self.add_favorite(current))
+        menu.addSeparator()
+        if not self._favorites:
+            menu.addAction(tr('No favorites yet')).setEnabled(False)
+        else:
+            for favorite in self._favorites[:20]:
+                menu.addAction(QDir.toNativeSeparators(favorite),
+                               lambda path=favorite: pane.navigate(path))
+        menu.exec(pane._fav_btn.mapToGlobal(QPoint(0, pane._fav_btn.height())))
+
+    def _jump_favorite(self, index: int) -> None:
+        if 0 <= index < len(self._favorites):
+            self._active.navigate(self._favorites[index])
+        else:
+            self._status.setText(tr('No favorite is stored on this number'))
+
+    # -- commander file clipboard -----------------------------------------------------
+    def file_clipboard_state(self) -> Optional[Tuple[str, List[str]]]:
+        return (self._file_clipboard[0], list(self._file_clipboard[1])) if self._file_clipboard else None
+
+    def _on_file_clipboard(self, pane: FilePane, mode: str) -> None:
+        if mode == "paste":
+            self._paste_into(pane)
+            return
+        paths = pane.selected_paths()
+        if not paths:
+            self._status.setText(tr('Nothing selected'))
+            return
+        self._file_clipboard = (mode, paths)
+        verb = tr('Cut') if mode == "cut" else tr('Copied')
+        action = tr('move') if mode == "cut" else tr('copy')
+        self._status.setText(f"{verb} {len(paths)} — {tr('press Ctrl+V in a pane to')} {action}")
+
+    def _paste_into(self, pane: FilePane) -> None:
+        if not self._file_clipboard:
+            self._status.setText(tr('Commander clipboard is empty'))
+            return
+        clip_mode, paths = self._file_clipboard
+        self._plan_and_launch("move" if clip_mode == "cut" else "copy",
+                              list(paths), pane.current_path())
+
+    # -- new file ---------------------------------------------------------------
+    def _new_file(self) -> None:
+        if self._operation_running():
+            self._status.setText(tr('Another file operation is already running'))
+            return
+        name, ok = QInputDialog.getText(self, tr('New Text File'), tr('File name:'))
+        name = name.strip()
+        if not ok or not name:
+            return
+        if (name in (".", "..") or "/" in name or "\\" in name or "\x00" in name):
+            QMessageBox.warning(
+                self, tr('New Text File'),
+                tr('Enter a simple file name without path separators.'))
+            return
+        target = os.path.join(self._active.current_path(), name)
+        try:
+            descriptor = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(descriptor)
+        except OSError as exc:
+            QMessageBox.warning(self, tr('New Text File'),
+                                tr('Could not create the file:') + f"\n{exc}")
+            return
+        self._status.setText(f"Created {name}")
+
     def _set_active(self, pane: FilePane) -> None:
+        side = self._side_of(pane)
+        if pane is self._active and getattr(self, "_active_side_emitted", "") == side:
+            return
         self._active = pane
-        self.left_pane.set_active(pane is self.left_pane)
-        self.right_pane.set_active(pane is self.right_pane)
+        self._active_side_emitted = side
+        self._apply_active_highlights()
         self._request_preview(pane.selected_paths())
+        self.active_pane_changed.emit(side)
+
+    def _apply_active_highlights(self) -> None:
+        active_side = self._side_of(self._active)
+        for side, tabs in self._sides.items():
+            current = tabs.currentWidget()
+            if current is not None:
+                current.set_active(side == active_side)
 
     def _other(self, pane: FilePane) -> FilePane:
-        return self.right_pane if pane is self.left_pane else self.left_pane
+        side = self._side_of(pane)
+        other_tabs = self._sides["right" if side == "left" else "left"]
+        pane = other_tabs.currentWidget()
+        return pane if pane is not None else other_tabs.widget(0)
 
     def pane_paths(self) -> Tuple[str, str]:
         """Return pane locations for callers that choose to persist them."""
@@ -793,8 +1547,12 @@ class CommanderTab(QWidget):
             self._start_permanent_delete()
         elif mode == "mkdir":
             self._new_folder()
+        elif mode == "new_file":
+            self._new_file()
         elif mode == "rename":
             self._rename()
+        elif mode == "batch_rename":
+            self._start_batch_rename_dialog()
         elif mode == "preview":
             self._preview_selected()
         elif mode == "checksum":
@@ -820,12 +1578,8 @@ class CommanderTab(QWidget):
             return
         self._active.rename_selected()
 
-    # -- file operations ---------------------------------------------------------
-    def _operation_running(self) -> bool:
-        with self._operation_guard:
-            return self._active_operation is not None
-
-    def _start_transfer(self, mode: str) -> None:
+    # -- batch rename --------------------------------------------------------------
+    def _start_batch_rename_dialog(self) -> None:
         if self._operation_running():
             self._status.setText(tr('Another file operation is already running'))
             return
@@ -833,21 +1587,84 @@ class CommanderTab(QWidget):
         if not paths:
             self._status.setText(tr('Nothing selected'))
             return
-        dst_dir = self._other(self._active).current_path()
-        if mode == "move" and self._same_path(dst_dir, self._active.current_path()):
-            self._status.setText(tr('Source and destination are the same'))
-            return
+        from gui.commander_rename import BatchRenameDialog
+        dialog = BatchRenameDialog(self, paths)
+        if (dialog.exec() == QDialog.DialogCode.Accepted and dialog.plans):
+            self._start_batch_rename(dialog.plans)
 
+    def _start_batch_rename(self, plans) -> None:
+        """Launch one serialized, rollback-journaled rename operation."""
+        if self._operation_running():
+            self._status.setText(tr('Another file operation is already running'))
+            return
+        pairs = [(item.source, item.target) for item in plans
+                 if item.target and os.path.abspath(item.source) != os.path.abspath(item.target)]
+        if not pairs:
+            self._status.setText(tr('Nothing selected'))
+            return
+        self._launch_worker("batch_rename", [src for src, _dst in pairs], "", False,
+                            options={"plans": pairs})
+
+    # -- file operations ---------------------------------------------------------
+    def _operation_running(self) -> bool:
+        with self._operation_guard:
+            return self._active_operation is not None
+
+    def _start_transfer(self, mode: str) -> None:
+        paths = self._active.selected_paths()
+        if not paths:
+            self._status.setText(tr('Nothing selected'))
+            return
+        self._plan_and_launch(mode, paths, self._other(self._active).current_path())
+
+    def _plan_and_launch(self, mode: str, paths: List[str], dst_dir: str,
+                         conflict_policy: str = "ask") -> None:
+        """Resolve per-item conflicts, then launch one serialized operation.
+
+        conflict_policy is "ask" (interactive prompt per item) or a fixed
+        answer for headless callers: "skip" | "overwrite" | "keep_both".
+        """
+        if self._operation_running():
+            self._status.setText(tr('Another file operation is already running'))
+            return
+        if not paths:
+            self._status.setText(tr('Nothing selected'))
+            return
+        if mode == "move":
+            same_dir = [path for path in paths
+                        if self._same_path(os.path.dirname(path), dst_dir)]
+            if len(same_dir) == len(paths):
+                self._status.setText(tr('Source and destination are the same'))
+                return
+            paths = [path for path in paths if path not in same_dir]
+
+        target_plan = self._plan_conflicts(paths, dst_dir, conflict_policy)
+        if target_plan is None:
+            return  # the user cancelled the batch mid-dialog
+        work_paths = list(target_plan)
+        if not work_paths:
+            self._status.setText(tr('All conflicting items were skipped'))
+            return
+        self._launch_worker(mode, work_paths, dst_dir, False, target_plan)
+
+    def _plan_conflicts(self, paths: List[str], dst_dir: str,
+                        conflict_policy: str) -> Optional[Dict[str, Tuple[str, bool]]]:
+        """Resolve per-item conflicts into a target plan.
+
+        conflict_policy is "ask" (interactive prompt per item; None return
+        means the user cancelled the whole batch) or a fixed answer used by
+        headless callers: "skip" | "overwrite" | "keep_both".
+        """
         target_plan: Dict[str, Tuple[str, bool]] = {}
-        work_paths: List[str] = []
         reserved: Set[str] = set()
         for src in paths:
             dst = os.path.join(dst_dir, os.path.basename(src))
             overwrite = False
             if os.path.lexists(dst):
-                choice = self._prompt_conflict(src, dst)
+                choice = (self._prompt_conflict(src, dst) if conflict_policy == "ask"
+                          else conflict_policy)
                 if choice == "cancel":
-                    return
+                    return None
                 if choice == "skip":
                     continue
                 if choice == "keep_both":
@@ -855,12 +1672,58 @@ class CommanderTab(QWidget):
                 else:
                     overwrite = True
             target_plan[src] = (dst, overwrite)
-            work_paths.append(src)
             reserved.add(os.path.normcase(os.path.abspath(dst)))
-        if not work_paths:
-            self._status.setText(tr('All conflicting items were skipped'))
-            return
-        self._launch_worker(mode, work_paths, dst_dir, False, target_plan)
+        return target_plan
+
+    def run_headless_transfer(self, mode: str, paths: List[str], dst_dir: str,
+                              conflict_policy: str) -> Dict[str, object]:
+        """Agent-driven copy/move: same serialized controller, no dialogs.
+
+        Runs the operation on the CALLING thread (an agent worker); the guard
+        is released synchronously in `finally` so a follow-up call in the
+        same approved batch can never see a phantom "already running", and
+        the outcome is recorded inline. The queued op_finished signal only
+        updates the GUI (status line, progress reset) — by the time the GUI
+        processes it the operation is no longer the active one, which
+        _on_op_finished tolerates by design.
+        """
+        if conflict_policy not in ("skip", "overwrite", "keep_both"):
+            return {"ok": False, "error": "conflict_policy must be skip, overwrite, or keep_both"}
+        if mode == "move" and all(
+                self._same_path(os.path.dirname(path), dst_dir) for path in paths):
+            return {"ok": False, "error": "source and destination are the same"}
+        operation = _OperationState(mode, item_count=len(paths), quiet=True)
+        with self._operation_guard:
+            if self._active_operation is not None:
+                return {"ok": False, "error": "another file operation is already running"}
+            self._active_operation = operation
+        ok = False
+        message = ""
+        work_paths: List[str] = []
+        try:
+            target_plan = self._plan_conflicts(paths, dst_dir, conflict_policy)
+            work_paths = list(target_plan or {})
+            if not work_paths:
+                message = "all conflicting items were skipped"
+                ok = True
+            else:
+                message = self._execute_operation(
+                    operation, work_paths, dst_dir, False, target_plan)
+                ok = True
+        except Exception as exc:  # noqa: BLE001 — reported verbatim to the agent
+            logger.warning("headless %s failed: %s", mode, exc)
+            message = str(exc)
+            ok = False
+        finally:
+            with self._operation_guard:
+                if self._active_operation is operation:
+                    self._active_operation = None
+            self._append_outcome(operation, ok, message)
+            try:
+                self.op_finished.emit(operation, ok, message)
+            except RuntimeError:
+                pass  # tab torn down during shutdown
+        return {"ok": ok, "message": message, "items": len(work_paths)}
 
     def _prompt_conflict(self, src: str, dst: str) -> str:
         """Ask for a safe decision for one conflict, never a whole batch."""
@@ -1045,6 +1908,7 @@ class CommanderTab(QWidget):
             "delete": "Permanently Deleting", "checksum": "Calculating SHA-256",
             "verify_checksum": "Verifying SHA-256", "archive_create": "Creating Archive",
             "archive_extract": "Extracting Archive", "compare": "Comparing Folders",
+            "batch_rename": "Renaming Items",
         }.get(mode, "File Operation"))
         self._progress_dlg.setMinimumDuration(400)
         self._progress_dlg.setAutoClose(True)
@@ -1095,6 +1959,11 @@ class CommanderTab(QWidget):
             summary = self._compare_folders(paths[0], paths[1], operation)
             operation.result = summary
             return str(summary["summary"])
+        if mode == "batch_rename":
+            plans = [tuple(pair) for pair in operation.options.get("plans", [])]
+            renamed = self._batch_rename(plans, operation)
+            operation.result = renamed
+            return f"Batch rename complete ({renamed} items)"
         if mode in ("delete", "recycle"):
             # Deletion progress is item based. Walking every directory merely to
             # calculate bytes doubles the traversal and delays deletion/cancel.
@@ -1423,6 +2292,46 @@ class CommanderTab(QWidget):
                     self.op_progress.emit(len(manifest), _ARCHIVE_MAX_ENTRIES, rel)
         return manifest
 
+    def _batch_rename(self, plans: List[Tuple[str, str]],
+                      operation: _OperationState) -> int:
+        """Apply a validated rename plan with a rollback journal.
+
+        Re-validates every target at execution time (the plan was computed
+        before the worker started; the disk may have changed since). A
+        failure or cancellation rolls every completed rename back in
+        reverse order — a half-applied batch is never left behind.
+        """
+        journal: List[Tuple[str, str]] = []
+        total = max(1, len(plans))
+        try:
+            for index, (src, dst) in enumerate(plans):
+                self._check_cancel(operation)
+                self.op_progress.emit(index, total, src)
+                if not os.path.lexists(src):
+                    raise OSError(f"Source disappeared: {src}")
+                if os.path.lexists(dst) and not self._same_path(src, dst):
+                    raise OSError(f"Destination already exists: {dst}")
+                # exact (case-sensitive) comparison: a case-only rename IS a
+                # change and must run; normcase would silently skip it
+                if os.path.abspath(src) != os.path.abspath(dst):
+                    os.rename(src, dst)
+                    journal.append((src, dst))
+                self.op_progress.emit(index + 1, total, dst)
+        except BaseException:
+            stuck: List[str] = []
+            for prev_src, prev_dst in reversed(journal):
+                try:
+                    os.rename(prev_dst, prev_src)
+                except OSError as exc:
+                    logger.warning("rollback stuck for %s: %s", prev_dst, exc)
+                    stuck.append(f"'{prev_dst}' (was '{prev_src}')")
+            if stuck:
+                raise OSError(
+                    "Batch rename failed and could not fully roll back; still "
+                    "renamed: " + "; ".join(stuck))
+            raise
+        return len(journal)
+
     def _compare_folders(self, left: str, right: str,
                          operation: _OperationState) -> Dict[str, object]:
         left_items = self._folder_manifest(left, operation)
@@ -1744,21 +2653,56 @@ class CommanderTab(QWidget):
 
     # -- progress reporting (GUI thread) -----------------------------------------
     def _on_op_progress(self, done_kb: int, total_kb: int, name: str) -> None:
-        if self._progress_dlg is not None:
-            self._progress_dlg.setMaximum(total_kb)
-            self._progress_dlg.setValue(min(done_kb, total_kb))
-            self._progress_dlg.setLabelText(os.path.basename(name))
+        if self._progress_dlg is None:
+            # Headless (agent-driven) operations never pre-create the dialog;
+            # spawn it on first progress so they are visible AND cancellable.
+            operation = self._active_operation
+            if operation is None:
+                return
+            self._progress_dlg = QProgressDialog("Preparing…", "Cancel", 0, 100, self)
+            self._progress_dlg.setAccessibleName("File operation progress")
+            self._progress_dlg.setWindowTitle({
+                "copy": "Copying", "move": "Moving", "recycle": "Recycling",
+                "delete": "Permanently Deleting", "checksum": "Calculating SHA-256",
+                "verify_checksum": "Verifying SHA-256", "archive_create": "Creating Archive",
+                "archive_extract": "Extracting Archive", "compare": "Comparing Folders",
+                "batch_rename": "Renaming Items",
+            }.get(operation.mode, "File Operation"))
+            self._progress_dlg.setMinimumDuration(400)
+            self._progress_dlg.setAutoClose(True)
+            self._progress_dlg.canceled.connect(operation.cancel.set)
+        self._progress_dlg.setMaximum(total_kb)
+        self._progress_dlg.setValue(min(done_kb, total_kb))
+        self._progress_dlg.setLabelText(os.path.basename(name))
+
+    def _append_outcome(self, operation: _OperationState, ok: bool, message: str) -> None:
+        """Record into the bounded outcome history (safe from worker threads)."""
+        self._operation_outcomes.append({
+            "mode": operation.mode,
+            "ok": ok,
+            "message": message,
+            "items": operation.item_count,
+        })
+        del self._operation_outcomes[:-20]
 
     def _on_op_finished(self, operation: _OperationState,
                         ok: bool, message: str) -> None:
         with self._operation_guard:
-            if operation is not self._active_operation:
-                return
-            self._active_operation = None
+            is_current = operation is self._active_operation
+            if is_current:
+                self._active_operation = None
         if self._progress_dlg is not None:
             self._progress_dlg.reset()
             self._progress_dlg = None
+        if not is_current:
+            # Headless operations release the guard and record their outcome
+            # on their own thread; this signal is GUI cosmetics only.
+            return
         self._status.setText(message)
+        if (ok and operation.mode == "move" and self._file_clipboard
+                and self._file_clipboard[0] == "cut"):
+            # A completed cut-paste consumed the clipboard; copies stay pastable.
+            self._file_clipboard = None
         if operation.mode in ("checksum", "verify_checksum") and isinstance(operation.result, str):
             self._checksum_result.setText(operation.result)
         if operation.mode == "compare" and ok and isinstance(operation.result, dict):
@@ -1775,19 +2719,13 @@ class CommanderTab(QWidget):
         if ok and operation.mode in ("archive_create", "archive_extract"):
             self.left_pane.navigate(self.left_pane.current_path(), record_history=False)
             self.right_pane.navigate(self.right_pane.current_path(), record_history=False)
-        outcome = {
-            "mode": operation.mode,
-            "ok": ok,
-            "message": message,
-            "items": operation.item_count,
-        }
-        self._operation_outcomes.append(outcome)
-        del self._operation_outcomes[:-20]
+        self._append_outcome(operation, ok, message)
         label = {
             "copy": "Copy", "move": "Move", "recycle": "Recycle",
             "delete": "Permanent delete", "checksum": "SHA-256",
             "verify_checksum": "SHA-256 verification", "archive_create": "Archive creation",
             "archive_extract": "Archive extraction", "compare": "Folder comparison",
+            "batch_rename": "Batch rename",
         }.get(operation.mode, operation.mode.title())
         state = "completed" if ok else ("cancelled" if message == "Cancelled" else "failed")
         summary = f"Last operation: {label} {state} — {message}"
@@ -1798,5 +2736,5 @@ class CommanderTab(QWidget):
             item_state = "OK" if item["ok"] else "Failed"
             recent.append(f"{item_label}: {item_state} — {item['message']}")
         self._outcome_status.setToolTip("Recent operations:\n" + "\n".join(recent))
-        if not ok and message != "Cancelled":
+        if not ok and message != "Cancelled" and not operation.quiet:
             QMessageBox.warning(self, tr('File Operation'), message)

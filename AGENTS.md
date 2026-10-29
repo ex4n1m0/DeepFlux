@@ -2237,3 +2237,68 @@
     `-proprietary-codecs`); the app works around it by handing stream URLs
     to the embedded mpv (full FFmpeg codec support) via the extension's
     "Play in DeepFlux" action. Do NOT try to fix this in code.
+
+## Commander tab (dual-pane file manager — 2026-10-29 XYplorer-inspired overhaul)
+All shipped same day (UNCOMMITTED until release): gui/commander_tab.py,
+gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regress:
+- SELECTION KEYS live in `_PaneView.keyPressEvent` (Insert toggle+advance, "+"/"-"
+  group select/deselect, Ctrl+I invert, Ctrl+C/X/V commander clipboard,
+  Ctrl+Shift+C copy path, printable-char incremental search with a status echo).
+  They are deliberately NOT tab-level QShortcuts: a plain-character
+  WidgetWithChildren shortcut fires while a QLineEdit child has focus and would
+  hijack typing "+" into the path/filter boxes.
+- QFileSystemModel race rules (all three verified live, all three were latent
+  pre-existing bugs): (1) `index(path)` can return invalid for a just-created
+  folder whose watcher event hasn't run — `_show_path_now` retries on a 40ms
+  QTimer with a token guard (never `setRootPath(path)` to force it: swapping the
+  model root re-fetches and can prune the node the view holds); (2) a hidden pane
+  never lays out, so nothing calls fetchMore — `_show_path_now` calls
+  `model.fetchMore(index)` explicitly; (3) navigating into a folder whose PARENT
+  listing is in flight hands the view a node the model re-creates during
+  reconciliation — `rowsRemoved`/`modelReset` are wired to `_heal_root_index`,
+  which re-resolves by `_shown_path` (also the source of `current_path()`, so it
+  reads the INTENDED folder during retries).
+- A QTreeView root change does NOT clear the selection model: `_show_path_now`
+  clears it explicitly. Without that, an old folder's selection survives
+  invisibly and the next F5/F6 (or agent transfer) acts on paths the pane no
+  longer shows (proven in review 2026-10-29).
+- Folder tabs: each side is a QTabWidget of full FilePane widgets (one
+  QFileSystemModel per tab — name/dir filters are model state), capped at 12,
+  persisted in `ui_commander_tabs` (+ `ui_commander_paths` keeps the CURRENT
+  tab of each side; the constructor re-selects it). Ctrl+T duplicates the
+  current folder (classic behavior), Ctrl+W refuses the last tab, the "+"
+  corner button adds. Only USER-driven tab switches (strip hasFocus) move the
+  active-pane highlight; `_new_tab` activates its pane explicitly.
+- Batch rename (Ctrl+R — NOT Ctrl+M, that's the global add-magnet shortcut,
+  ambiguous-QShortcut hazard): `gui/commander_rename.py::plan_renames` is PURE
+  (paths in, validated plan out — regex/case/numbering "###"/pasted-list
+  modes); the dialog never enables Apply with a red row; the worker
+  (`_batch_rename`) re-validates at execution time and rolls back completed
+  renames in reverse on failure, naming EVERY stuck entry. Case-only renames
+  are legitimate: planning skips them via normcase, but the worker compares
+  abspath (case-sensitive) so they actually execute on Windows.
+- Agent tools (the "scripting" answer to XYplorer): commander_state
+  (READ_ONLY + UNTRUSTED_RESULT_TOOLS — filenames are external text),
+  commander_navigate / commander_select (plain), commander_transfer
+  (CONFIRMATION-gated). `gui/commander_bridge.py` keeps a plain-data snapshot
+  (rebuilt on GUI signals, swapped atomically) and marshals GUI-thread calls
+  via a queued signal + Event (15s). Review-driven invariants (2026-10-29,
+  both reviewers PASS-WITH-FIXES → fixed):
+  * commander_transfer REQUIRES an explicit `paths` array — the confirmation
+    preview IS the real operand list — and re-validates every path: parent ==
+    source pane's current folder, path exists, ≤500 items. Fail closed.
+  * bridge.navigate is SYNCHRONOUS (_call_on_gui) and records no back/forward
+    history: a fire-and-forget navigation raced a following transfer into the
+    OLD destination (empirically proven).
+  * `run_headless_transfer` releases `_operation_guard` synchronously in
+    finally and records the outcome inline; the queued op_finished is GUI
+    cosmetics only (the guard check in `_on_op_finished` tolerates that).
+    Two transfers in one approved batch must both run.
+  * `_OperationState.quiet=True` suppresses only the failure QMessageBox;
+    agent ops DO get a lazily-created progress dialog in `_on_op_progress`
+    (visibility + Cancel, wired to operation.cancel).
+- i18n gotcha (zh catalog): menu labels with tab mnemonics must be written with
+  a single-backslash `\t` ESCAPE in the catalog source. Writing entries via
+  `repr()` produced double-backslash keys that never match the runtime (real
+  tab) strings — tr() silently fell back to English. Diff tool: extract tr()
+  literals with ast.literal_eval, compare against imported ZH_CN.

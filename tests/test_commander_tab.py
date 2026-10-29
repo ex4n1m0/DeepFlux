@@ -715,3 +715,514 @@ def test_archive_creation_cancellation_removes_partial_output(tab, tmp_path, mon
 
     assert not target.exists()
     assert artifacts(tmp_path) == []
+
+
+# -- tier-1 commander upgrades: selection keys, incremental search, breadcrumbs,
+#    favorites, commander clipboard, new file ------------------------------------
+
+def _populate(tab, tmp_path, names):
+    for name in names:
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    tab.left_pane.navigate(str(tmp_path), record_history=False)
+    commander.QApplication.processEvents()
+    return tab.left_pane
+
+
+def _wait_for_rows(pane, folder, expected: int, timeout_ms: int = 5000) -> bool:
+    """QFileSystemModel populates asynchronously; poll until the pane really
+    shows `folder` (never the drive list — an unfetched folder races the
+    model's initial scan) with at least `expected` rows visible."""
+    import time
+    target = os.path.normcase(os.path.abspath(str(folder)))
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        QApplication.processEvents()
+        current = os.path.normcase(os.path.abspath(pane.current_path()))
+        if (current == target
+                and pane._model.rowCount(pane._view.rootIndex()) >= expected):
+            QApplication.processEvents()
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def test_select_and_deselect_group_by_wildcard(tab, tmp_path, monkeypatch):
+    pane = _populate(tab, tmp_path, ["alpha.txt", "beta.log", "gamma.txt", "notes.md"])
+    assert _wait_for_rows(pane, tmp_path, 4)
+
+    monkeypatch.setattr(commander.QInputDialog, "getText", lambda *_a, **_k: ("*.txt", True))
+    pane._select_group(True)
+    assert len(pane.selected_paths()) == 2
+
+    monkeypatch.setattr(commander.QInputDialog, "getText", lambda *_a, **_k: ("*.txt;*.md", True))
+    pane._select_group(False)
+    assert pane.selected_paths() == []
+
+    assert pane.select_pattern("*.log") == 1
+    assert len(pane.selected_paths()) == 1
+
+
+def test_insert_key_toggles_row_and_advances(tab, tmp_path):
+    pane = _populate(tab, tmp_path, ["one.txt", "two.txt", "three.txt"])
+    assert _wait_for_rows(pane, tmp_path, 3)
+
+    model = pane._model
+    root = pane._view.rootIndex()
+    pane._view.selectionModel().clear()
+    pane._view.selectionModel().setCurrentIndex(
+        model.index(0, 0, root),
+        commander.QItemSelectionModel.SelectionFlag.NoUpdate)
+
+    pane._view.toggle_current_and_advance()
+    assert len(pane.selected_paths()) == 1
+    assert pane._view.currentIndex().row() == 1
+
+    pane._view.toggle_current_and_advance()
+    pane._view.toggle_current_and_advance()
+    pane._view.toggle_current_and_advance()  # row 2 stays (no row below)
+    assert len(pane.selected_paths()) == 2
+
+
+def test_invert_selection_and_same_extension(tab, tmp_path):
+    pane = _populate(tab, tmp_path, ["a.txt", "b.log", "c.txt"])
+    assert _wait_for_rows(pane, tmp_path, 3)
+
+    pane.select_pattern("*.txt")
+    assert len(pane.selected_paths()) == 2
+    pane._invert_selection()
+    assert len(pane.selected_paths()) == 1
+    assert os.path.basename(pane.selected_paths()[0]) == "b.log"
+
+    pane._invert_selection()
+    pane.select_same_extension()
+    assert len(pane.selected_paths()) == 2
+
+
+def test_incremental_search_moves_cursor_not_selection(tab, tmp_path):
+    pane = _populate(tab, tmp_path, ["aaa.txt", "bee.log", "cee.txt"])
+    assert _wait_for_rows(pane, tmp_path, 3)
+
+    pane.select_pattern("*.log")
+    selected = pane.selected_paths()
+    assert len(selected) == 1
+
+    assert pane._view.jump_to_prefix("c")
+    current = pane._view.currentIndex()
+    assert os.path.basename(pane._model.filePath(current)) == "cee.txt"
+    # the cursor moved but the .log selection survived
+    assert pane.selected_paths() == selected
+
+    assert not pane._view.jump_to_prefix("zz")
+    # wildcard search works too
+    assert pane._view.jump_to_prefix("b*")
+
+
+def test_breadcrumb_segments_and_collapse(tab, tmp_path):
+    pane = tab.left_pane
+    deep = tmp_path / "one" / "two" / "three"
+    deep.mkdir(parents=True)
+    pane.navigate(str(deep), record_history=False)
+
+    segments = pane._path_bar.segment_paths()
+    assert len(segments) == len(str(deep).split(os.sep))
+    assert os.path.normcase(segments[-1]) == os.path.normcase(str(deep))
+    # every prefix is itself a navigable directory
+    for segment in segments:
+        assert os.path.isdir(segment)
+
+    # a very narrow bar hides leading segments but never the current one
+    pane._path_bar.resize(80, pane._path_bar.height())
+    QApplication.processEvents()
+    assert pane._path_bar.visible_segment_count() < len(segments)
+    assert pane._path_bar.visible_segment_count() >= 1
+    assert not pane._path_bar._ellipsis.isHidden()
+
+    pane._path_bar.show_edit()
+    assert pane._path_bar._stack.currentWidget() is pane._path_edit
+    pane._path_bar.show_crumbs()
+    assert pane._path_bar._stack.currentWidget() is not pane._path_edit
+
+
+def test_favorites_add_remove_jump_and_persist(qapp, tmp_path):
+    config = DeeptorrentConfig(default_save_path=str(tmp_path))
+    config_path = tmp_path / "config.json"
+    widget = CommanderTab(config)
+    try:
+        left = tmp_path / "fav-left"
+        right = tmp_path / "fav-right"
+        left.mkdir()
+        right.mkdir()
+        widget.set_pane_paths(str(left), str(right))
+
+        widget.add_favorite(str(left))
+        widget.add_favorite(str(right))
+        assert len(widget.commander_favorites()) == 2
+        # most-recently-added first, duplicates collapse
+        widget.add_favorite(str(left))
+        assert len(widget.commander_favorites()) == 2
+
+        widget._jump_favorite(0)
+        assert os.path.samefile(widget._active.current_path(), right)
+        widget._jump_favorite(1)
+        assert os.path.samefile(widget._active.current_path(), left)
+        widget._jump_favorite(99)  # out of range is a safe status message
+
+        widget.remove_favorite(str(left))
+        assert len(widget.commander_favorites()) == 1
+        assert widget._is_favorite(str(right))
+        assert not widget._is_favorite(str(left))
+
+        widget.add_favorite(str(left))
+        config.to_file(str(config_path))
+    finally:
+        widget.close()
+
+    restored = DeeptorrentConfig.from_file(str(config_path))
+    assert restored.ui_commander_favorites == widget.commander_favorites()
+    # malformed values are dropped, not crashed on
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"ui_commander_favorites": ["ok", 5, null, "x\\u0000y"]}', encoding="utf-8")
+    assert DeeptorrentConfig.from_file(str(bad)).ui_commander_favorites == ["ok"]
+
+
+def test_favorite_star_reflects_current_folder(tab, tmp_path):
+    folder = tmp_path / "starred"
+    folder.mkdir()
+    tab.add_favorite(str(folder))
+    tab.left_pane.navigate(str(folder), record_history=False)
+    assert tab.left_pane._fav_btn.text() == "★"
+    tab.remove_favorite(str(folder))
+    assert tab.left_pane._fav_btn.text() == "☆"
+
+
+def test_copy_path_puts_selection_on_os_clipboard(tab, tmp_path):
+    pane = _populate(tab, tmp_path, ["one.txt", "two.txt"])
+    assert _wait_for_rows(pane, tmp_path, 2)
+    pane.select_pattern("*.txt")
+    pane._copy_paths_to_clipboard()
+    text = QApplication.clipboard().text()
+    lines = text.splitlines()
+    assert len(lines) == 2
+    assert all(os.path.isabs(line.replace("\\", os.sep).replace("/", os.sep)) for line in lines)
+
+
+def test_commander_clipboard_copy_cut_and_paste(tab, tmp_path, monkeypatch):
+    source_dir = tmp_path / "clip-source"
+    target_dir = tmp_path / "clip-target"
+    source_dir.mkdir()
+    target_dir.mkdir()
+    (source_dir / "file.txt").write_text("payload", encoding="utf-8")
+    tab.set_pane_paths(str(source_dir), str(target_dir))
+    assert _wait_for_rows(tab.left_pane, source_dir, 1)
+    tab.left_pane.select_pattern("*.txt")
+    assert len(tab.left_pane.selected_paths()) == 1
+
+    tab._on_file_clipboard(tab.left_pane, "copy")
+    state = tab.file_clipboard_state()
+    assert state is not None and state[0] == "copy" and len(state[1]) == 1
+
+    launches = []
+    monkeypatch.setattr(tab, "_plan_and_launch",
+                        lambda mode, paths, dst, policy="ask": launches.append((mode, paths, dst, policy)))
+    tab._on_file_clipboard(tab.right_pane, "paste")
+    assert launches == [("copy", state[1], str(target_dir), "ask")]
+
+    # cut-paste must plan a move; empty clipboard must not launch anything
+    tab._on_file_clipboard(tab.left_pane, "cut")
+    launches.clear()
+    tab._on_file_clipboard(tab.right_pane, "paste")
+    assert launches == [("move", tab.file_clipboard_state()[1], str(target_dir), "ask")]
+
+    tab._file_clipboard = None
+    launches.clear()
+    tab._on_file_clipboard(tab.right_pane, "paste")
+    assert launches == []
+    assert "empty" in tab._status.text().lower()
+
+
+def test_cut_clipboard_clears_after_successful_move(tab, monkeypatch):
+    operation = _OperationState("move", item_count=1)
+    tab._active_operation = operation
+    tab._file_clipboard = ("cut", ["/some/path.txt"])
+    tab._on_op_finished(operation, True, "Move complete")
+    assert tab._file_clipboard is None
+
+    operation = _OperationState("copy", item_count=1)
+    tab._active_operation = operation
+    tab._file_clipboard = ("copy", ["/some/path.txt"])
+    tab._on_op_finished(operation, True, "Copy complete")
+    assert tab._file_clipboard is not None  # copies stay pastable
+
+
+def test_paste_into_source_folder_refuses_move(tab, tmp_path, monkeypatch):
+    source_dir = tmp_path / "same-dir"
+    source_dir.mkdir()
+    (source_dir / "file.txt").write_text("x", encoding="utf-8")
+    tab._file_clipboard = ("cut", [str(source_dir / "file.txt")])
+    launches = []
+    monkeypatch.setattr(tab, "_launch_worker",
+                        lambda *args, **kwargs: launches.append(args) or True)
+    tab.left_pane.navigate(str(source_dir), record_history=False)
+    tab._paste_into(tab.left_pane)
+    assert launches == []
+    assert "same" in tab._status.text().lower()
+
+
+def test_new_text_file_creates_and_rejects_separators(tab, tmp_path, monkeypatch):
+    folder = tmp_path / "newfile"
+    folder.mkdir()
+    tab.left_pane.navigate(str(folder), record_history=False)
+
+    monkeypatch.setattr(commander.QInputDialog, "getText", lambda *_a, **_k: ("note.txt", True))
+    tab._new_file()
+    assert (folder / "note.txt").exists()
+
+    warnings = []
+    monkeypatch.setattr(commander.QMessageBox, "warning",
+                        lambda _p, _t, text: warnings.append(text))
+    monkeypatch.setattr(commander.QInputDialog, "getText",
+                        lambda *_a, **_k: ("../escape.txt", True))
+    tab._new_file()
+    assert warnings and not (tmp_path / "escape.txt").exists()
+
+    # an existing name is never overwritten
+    monkeypatch.setattr(commander.QInputDialog, "getText", lambda *_a, **_k: ("note.txt", True))
+    (folder / "note.txt").write_text("keep", encoding="utf-8")
+    tab._new_file()
+    assert (folder / "note.txt").read_text(encoding="utf-8") == "keep"
+
+
+def test_headless_conflict_policy_plans_without_prompting(tab, tmp_path, monkeypatch):
+    source_dir = tmp_path / "headless"
+    target_dir = tmp_path / "headless-dst"
+    source_dir.mkdir()
+    target_dir.mkdir()
+    (source_dir / "dupe.txt").write_text("new", encoding="utf-8")
+    (target_dir / "dupe.txt").write_text("old", encoding="utf-8")
+
+    def prompt_must_not_run(*_args):
+        pytest.fail("headless policy must not open a dialog")
+
+    monkeypatch.setattr(tab, "_prompt_conflict", prompt_must_not_run)
+    launches = []
+    monkeypatch.setattr(tab, "_launch_worker",
+                        lambda *args, **kwargs: launches.append(args) or True)
+    tab._plan_and_launch("copy", [str(source_dir / "dupe.txt")],
+                         str(target_dir), conflict_policy="keep_both")
+    plan = launches[0][4]
+    planned_dst, overwrite = plan[str(source_dir / "dupe.txt")]
+    assert os.path.normpath(planned_dst) == os.path.normpath(str(target_dir / "dupe (copy).txt"))
+    assert not overwrite
+
+
+# -- tier-2: folder tabs ---------------------------------------------------------------
+
+def test_folder_tabs_new_close_and_active_pane_tracking(tab, tmp_path):
+    first = tmp_path / "tabs-first"
+    second = tmp_path / "tabs-second"
+    first.mkdir()
+    second.mkdir()
+    tab.set_pane_paths(str(first), str(second))
+    assert tab._sides["left"].count() == 1
+    assert tab.left_pane is tab._sides["left"].widget(0)
+
+    tab._new_tab("left")
+    assert tab._sides["left"].count() == 2
+    # new tab duplicates the current folder and becomes current
+    assert os.path.samefile(tab.left_pane.current_path(), first)
+    tab.left_pane.navigate(str(second), record_history=False)
+    assert os.path.samefile(tab.left_pane.current_path(), second)
+    assert tab._sides["left"].tabText(1).lower().startswith("tabs-second")
+
+    # closing the current tab falls back to the remaining one
+    tab._close_current_tab()
+    assert tab._sides["left"].count() == 1
+    assert os.path.samefile(tab.left_pane.current_path(), first)
+
+    # the last tab is never closable
+    tab._close_tab("left", 0)
+    assert tab._sides["left"].count() == 1
+    assert "cannot be closed" in tab._status.text().lower()
+
+
+def test_folder_tabs_persist_and_restore(qapp, tmp_path):
+    left_a = tmp_path / "left-a"
+    left_b = tmp_path / "left-b"
+    right_a = tmp_path / "right-a"
+    for folder in (left_a, left_b, right_a):
+        folder.mkdir()
+    config = DeeptorrentConfig(default_save_path=str(tmp_path))
+    config_path = tmp_path / "config.json"
+    widget = CommanderTab(config)
+    try:
+        widget.set_pane_paths(str(left_a), str(right_a))
+        widget._new_tab("left")
+        widget.left_pane.navigate(str(left_b), record_history=False)
+        assert widget.persist_pane_paths() == {"left": str(left_b), "right": str(right_a)}
+        config.to_file(str(config_path))
+    finally:
+        widget.close()
+
+    restored = DeeptorrentConfig.from_file(str(config_path))
+    assert restored.ui_commander_tabs["left"] == [str(left_a), str(left_b)]
+    assert restored.ui_commander_tabs["right"] == [str(right_a)]
+    widget2 = CommanderTab(restored)
+    try:
+        assert widget2._sides["left"].count() == 2
+        # the CURRENT tab (recorded in ui_commander_paths) is the last active one
+        assert os.path.samefile(widget2.left_pane.current_path(), left_b)
+        assert widget2._sides["right"].count() == 1
+    finally:
+        widget2.close()
+
+
+# -- tier-2: batch rename ---------------------------------------------------------------
+
+def _make_names(tmp_path, names):
+    for name in names:
+        (tmp_path / name).write_text(name, encoding="utf-8")
+    return [str(tmp_path / name) for name in names]
+
+
+def test_plan_renames_find_replace_case_and_numbering(tmp_path):
+    from gui.commander_rename import plan_renames
+    paths = _make_names(tmp_path, ["holiday 01.jpg", "holiday 02.jpg", "notes.txt"])
+
+    plan = plan_renames(paths, find="holiday", replace="trip")
+    assert [os.path.basename(item.target) for item in plan] == [
+        "trip 01.jpg", "trip 02.jpg", "notes.txt"]
+    assert not any(item.error for item in plan)
+
+    plan = plan_renames(paths[:2], find="holiday ", replace="", number_pattern="photo ###")
+    assert [os.path.basename(item.target) for item in plan] == ["photo 001.jpg", "photo 002.jpg"]
+
+    plan = plan_renames(paths[:1], case="upper")
+    assert os.path.basename(plan[0].target) == "HOLIDAY 01.JPG"
+
+    plan = plan_renames(paths[:2], find=r"holiday (\d+)", replace=r"day-\1", use_regex=True)
+    assert [os.path.basename(item.target) for item in plan] == ["day-01.jpg", "day-02.jpg"]
+
+
+def test_plan_renames_flags_collisions_and_invalid_names(tmp_path):
+    from gui.commander_rename import plan_renames
+    paths = _make_names(tmp_path, ["a.txt", "b.txt"])
+    (tmp_path / "c.txt").write_text("existing", encoding="utf-8")
+
+    # a target that already exists on disk is refused
+    plan = plan_renames([paths[0]], new_names=["c.txt"])
+    assert plan[0].error and "exists" in plan[0].error.lower()
+
+    # two sources mapping to one target: the later one is flagged
+    plan = plan_renames(paths, new_names=["x.txt", "x.txt"])
+    assert not plan[0].error and plan[1].error
+
+    # invalid characters / wrong list length surface as per-item errors
+    plan = plan_renames([paths[0]], new_names=["bad|name.txt"])
+    assert plan[0].error
+    plan = plan_renames(paths, new_names=["only-one.txt"])
+    assert all(item.error for item in plan)
+
+    # invalid regex marks every item instead of raising
+    plan = plan_renames(paths, find="(", replace="x", use_regex=True)
+    assert all(item.error for item in plan)
+
+    # a case-only change is legitimate (no "destination exists" error)
+    plan = plan_renames([paths[0]], new_names=["A.txt"])
+    assert not plan[0].error
+
+
+def test_batch_rename_execution_and_rollback(tab, tmp_path, monkeypatch):
+    paths = _make_names(tmp_path, ["one.txt", "two.txt", "three.txt"])
+    plans = [(paths[0], str(tmp_path / "1.txt")),
+             (paths[1], str(tmp_path / "2.txt")),
+             (paths[2], str(tmp_path / "3.txt"))]
+    result = tab._execute_operation(
+        _OperationState("batch_rename", options={"plans": plans}), paths, "", False)
+    assert "3 items" in result
+    assert all((tmp_path / f"{i}.txt").exists() for i in (1, 2, 3))
+    assert not any((tmp_path / name).exists() for name in ("one.txt", "two.txt", "three.txt"))
+
+    # a mid-batch failure rolls every completed rename back
+    paths2 = _make_names(tmp_path, ["four.txt", "five.txt", "six.txt"])
+    plans2 = [(paths2[0], str(tmp_path / "4.txt")),
+              (paths2[1], str(tmp_path / "5.txt")),
+              (paths2[2], str(tmp_path / "6.txt"))]
+    real_rename = os.rename
+    calls = {"n": 0}
+
+    def failing_rename(src, dst):
+        calls["n"] += 1
+        if calls["n"] == 2:  # the second forward rename fails
+            raise OSError("simulated mid-batch failure")
+        return real_rename(src, dst)
+
+    monkeypatch.setattr(commander.os, "rename", failing_rename)
+    with pytest.raises(OSError, match="simulated"):
+        tab._execute_operation(
+            _OperationState("batch_rename", options={"plans": plans2}), paths2, "", False)
+
+    assert not (tmp_path / "4.txt").exists()
+    assert (tmp_path / "four.txt").exists()          # rolled back
+    assert (tmp_path / "five.txt").exists()
+    assert (tmp_path / "six.txt").exists()
+
+
+def test_batch_rename_case_only_and_worker_launch(tab, tmp_path, monkeypatch):
+    paths = _make_names(tmp_path, ["case.txt"])
+    operation = _OperationState(
+        "batch_rename",
+        options={"plans": [(paths[0], str(tmp_path / "CASE.txt"))]})
+    result = tab._execute_operation(operation, paths, "", False)
+    assert "1 items" in result
+    # on Windows both spellings stat the same file — the DIRECTORY LISTING
+    # is the honest witness of the stored case
+    listed = [entry.name for entry in tmp_path.iterdir()]
+    assert "CASE.txt" in listed
+    assert "case.txt" not in listed
+
+    from gui.commander_rename import RenamePlanItem
+    launches = []
+    monkeypatch.setattr(tab, "_launch_worker",
+                        lambda *args, **kwargs: launches.append((args, kwargs)) or True)
+    tab._start_batch_rename([
+        RenamePlanItem(paths[0], str(tmp_path / "CASE.txt")),
+        RenamePlanItem(str(tmp_path / "CASE.txt"), str(tmp_path / "CASE.txt")),  # no-op dropped
+    ])
+    assert len(launches) == 1
+    assert launches[0][0][0] == "batch_rename"
+    assert len(launches[0][1]["options"]["plans"]) == 1  # the no-op row is filtered out
+
+
+def test_batch_rename_dialog_preview_and_paste_mode(tab, tmp_path, qapp):
+    from gui.commander_rename import BatchRenameDialog
+    paths = _make_names(tmp_path, ["old-one.txt", "old-two.txt"])
+    dialog = BatchRenameDialog(tab, paths)
+    try:
+        dialog._find_edit.setText("old")
+        dialog._replace_edit.setText("new")
+        assert [os.path.basename(item.target) for item in dialog.plans] == [
+            "new-one.txt", "new-two.txt"]
+        assert dialog._ok_button.isEnabled()
+
+        # invalid target disables Apply and flags the row
+        dialog._replace_edit.setText("bad|name")
+        assert not dialog._ok_button.isEnabled()
+        assert dialog.plans[0].error
+
+        # paste-list mode with a mismatched count flags everything
+        dialog._tabs.setCurrentIndex(1)
+        dialog._names_edit.setPlainText("single.txt")
+        assert all(item.error for item in dialog.plans)
+        assert not dialog._ok_button.isEnabled()
+
+        dialog._names_edit.setPlainText("first.txt\nsecond.txt")
+        assert not any(item.error for item in dialog.plans)
+        assert dialog._ok_button.isEnabled()
+        dialog._accept_plan()
+        assert [os.path.basename(item.target) for item in dialog.plans] == [
+            "first.txt", "second.txt"]
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        qapp.processEvents()
+

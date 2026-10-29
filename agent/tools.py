@@ -72,6 +72,7 @@ READ_ONLY_TOOL_NAMES = frozenset({
     "browser_wait", "browser_list_bookmarks", "list_downloads", "propose_rename_and_category",
     "analyze_organization", "list_memories", "agent_diagnostics",
     "iptv_list_sources", "list_api_keys", "list_settings", "list_torrent_sources",
+    "commander_state",
 })
 
 CONFIRMATION_TOOL_NAMES = frozenset({
@@ -90,6 +91,8 @@ CONFIRMATION_TOOL_NAMES = frozenset({
     # Shell/execution (user decision 2026-09-14: the agent may download and
     # run installers for missing components — every call needs approval).
     "run_shell",
+    # GUI commander transfers mutate the filesystem through the Command tab.
+    "commander_transfer",
 })
 
 WATCHDOG_AUTO_HEAL_TOOL_NAMES = frozenset({
@@ -113,6 +116,7 @@ UNTRUSTED_RESULT_TOOLS = frozenset({
     "find_alt_release", "get_rss_feed_items", "refresh_tracker_list",
     "browser_get_content", "browser_snapshot", "browser_wait",
     "run_shell",  # command output can echo arbitrary external text
+    "commander_state",  # local filenames routinely originate from web downloads
 })
 
 
@@ -497,7 +501,8 @@ class ToolRegistry:
     def __init__(self, engine: TorrentEngine, config: DeeptorrentConfig,
                  on_progress: Optional[Callable[[str], None]] = None,
                  dl_engine=None, iptv_bridge=None,
-                 browser_bridge=None, enable_iptv_tools: bool = True) -> None:
+                 browser_bridge=None, enable_iptv_tools: bool = True,
+                 commander_bridge=None) -> None:
         self.engine = engine
         self.config = config
         self.on_progress = on_progress  # sub-step reporter, wired up by AgentLoop
@@ -516,6 +521,9 @@ class ToolRegistry:
         # Browser bridge (gui.browser_bridge.BrowserBridge) — injected by the
         # GUI; browser_* tools report unavailability without it (CLI).
         self._browser_bridge = browser_bridge
+        # Commander bridge (gui.commander_bridge.CommanderBridge) — injected by
+        # the GUI; commander_* tools report unavailability without it (CLI).
+        self._commander_bridge = commander_bridge
         # macOS build: no Play tab -> no iptv_* tools (the playback bridge
         # never exists and IPTV sources would have nothing to consume them).
         self._tools = self._build_tools()
@@ -1211,6 +1219,85 @@ class ToolRegistry:
                     required=["memory_id"],
                 ),
                 "handler": self._forget_memory_tool,
+            },
+            # --- Commander (GUI dual-pane file manager — the Command tab) ---
+            # Unlike the generic filesystem tools below, these drive the
+            # VISIBLE panes the user is looking at, under the same serialized
+            # safety controller as their own clicks.
+            "commander_state": {
+                "schema": self._tool_schema(
+                    name="commander_state",
+                    description="Read the dual-pane file manager's current state: both panes' "
+                    "folders, folder tabs, and the current selection (up to 200 paths). "
+                    "Start here before commander_select / commander_transfer.",
+                    properties={},
+                    required=[],
+                ),
+                "handler": self._commander_state,
+            },
+            "commander_navigate": {
+                "schema": self._tool_schema(
+                    name="commander_navigate",
+                    description="Show an existing folder in one pane of the dual-pane file manager.",
+                    properties={
+                        "side": {"type": "string", "enum": ["left", "right"],
+                                 "description": "Which pane to navigate."},
+                        "path": {"type": "string",
+                                 "description": "Existing folder path to show."},
+                    },
+                    required=["side", "path"],
+                ),
+                "handler": self._commander_navigate,
+            },
+            "commander_select": {
+                "schema": self._tool_schema(
+                    name="commander_select",
+                    description="Change a pane's selection by wildcard pattern, e.g. '*.txt' or "
+                                "'*.log;*.tmp'. Selection drives commander_transfer.",
+                    properties={
+                        "side": {"type": "string", "enum": ["left", "right"],
+                                 "description": "Which pane to select in."},
+                        "pattern": {"type": "string",
+                                    "description": "Semicolon-separated wildcard patterns."},
+                        "mode": {"type": "string", "enum": ["select", "deselect"],
+                                 "description": "Add to the selection or remove from it.",
+                                 "default": "select"},
+                    },
+                    required=["side", "pattern"],
+                ),
+                "handler": self._commander_select,
+            },
+            "commander_transfer": {
+                "schema": self._tool_schema(
+                    name="commander_transfer",
+                    description="Copy or move EXACTLY the given paths (taken from "
+                    "commander_state's selected list) into the other pane's current "
+                    "folder, through the same safety controller (transactional, "
+                    "serialized, cancellable). Requires confirmation. Every path must "
+                    "sit in the source pane's current folder.",
+                    properties={
+                        "mode": {"type": "string", "enum": ["copy", "move"],
+                                 "description": "Transfer mode."},
+                        "paths": {"type": "array", "items": {"type": "string"},
+                                  "description": "Exact absolute paths to transfer, "
+                                                  "copied from commander_state.",
+                                  "maxItems": 500},
+                        "source": {"type": "string", "enum": ["", "left", "right"],
+                                   "description": "Pane the paths must live in "
+                                                  "(default: the active pane).",
+                                   "default": ""},
+                        "destination": {"type": "string", "enum": ["", "left", "right"],
+                                        "description": "Destination pane (default: the other pane).",
+                                        "default": ""},
+                        "conflict_policy": {
+                            "type": "string", "enum": ["skip", "overwrite", "keep_both"],
+                            "description": "What to do when the destination already exists "
+                                           "(no dialog is shown).",
+                            "default": "skip"},
+                    },
+                    required=["mode", "paths"],
+                ),
+                "handler": self._commander_transfer,
             },
             # --- Filesystem (the Command tab's domain — agent-level file ops) ---
             "list_directory": {
@@ -3361,6 +3448,106 @@ class ToolRegistry:
 
     # ------------------------------------------------------------------
     # ------------------------------------------------------------------
+    # Commander handlers (GUI dual-pane file manager — bridge-injected)
+    # ------------------------------------------------------------------
+
+    def _commander_unavailable(self) -> Dict[str, Any]:
+        return {"success": False,
+                "error": "Commander tools require the GUI (the Command tab)."}
+
+    def _commander_state(self) -> Dict[str, Any]:
+        bridge = self._commander_bridge
+        if bridge is None:
+            return self._commander_unavailable()
+        snapshot = bridge.state()
+        panes = snapshot.get("panes", {})
+        return {
+            "success": True,
+            "active_pane": snapshot.get("active"),
+            "panes": panes,
+            "hint": "selected items are transferred with commander_transfer; "
+                    "change them with commander_select",
+        }
+
+    def _commander_navigate(self, side: str, path: str) -> Dict[str, Any]:
+        bridge = self._commander_bridge
+        if bridge is None:
+            return self._commander_unavailable()
+        result = bridge.navigate(side, path)
+        if not result.get("ok"):
+            return {"success": False, "error": str(result.get("error", "navigation failed"))}
+        return {"success": True, "side": side, "path": result.get("path")}
+
+    def _commander_select(self, side: str, pattern: str,
+                          mode: str = "select") -> Dict[str, Any]:
+        bridge = self._commander_bridge
+        if bridge is None:
+            return self._commander_unavailable()
+        result = bridge.select(side, pattern, mode != "deselect")
+        if not result.get("ok"):
+            return {"success": False, "error": str(result.get("error", "selection failed"))}
+        return {"success": True, "side": side, "pattern": pattern, "mode": mode,
+                "count": result.get("count", 0)}
+
+    def _commander_transfer(self, mode: str, paths: List[str],
+                            source: str = "", destination: str = "",
+                            conflict_policy: str = "skip") -> Dict[str, Any]:
+        """Transfer EXACTLY the given paths — the operands are pinned in the
+        arguments, so the confirmation preview IS the real action. Every
+        path is re-validated against the source pane's current folder: a
+        stale list (the pane moved, a file vanished) fails closed."""
+        bridge = self._commander_bridge
+        if bridge is None:
+            return self._commander_unavailable()
+        if mode not in ("copy", "move"):
+            return {"success": False, "error": "mode must be 'copy' or 'move'"}
+        if not paths or not isinstance(paths, list):
+            return {"success": False,
+                    "error": "paths is required — copy the exact list from commander_state"}
+        if len(paths) > 500:
+            return {"success": False,
+                    "error": f"{len(paths)} paths exceed the 500-item transfer cap; "
+                             f"split the transfer into batches"}
+        snapshot = bridge.state()
+        panes = snapshot.get("panes", {})
+        source_side = source or str(snapshot.get("active") or "left")
+        if source_side not in ("left", "right"):
+            return {"success": False, "error": "source must be 'left' or 'right'"}
+        src_dir = str((panes.get(source_side) or {}).get("path") or "")
+        if not src_dir or not os.path.isdir(src_dir):
+            return {"success": False,
+                    "error": f"the {source_side} pane is not showing a valid folder"}
+        wanted = os.path.normcase(os.path.abspath(src_dir))
+        for path in paths:
+            if not isinstance(path, str) or not path:
+                return {"success": False, "error": "paths must be non-empty strings"}
+            if not os.path.lexists(path):
+                return {"success": False, "error": f"path no longer exists: {path}"}
+            if os.path.normcase(os.path.abspath(os.path.dirname(path))) != wanted:
+                return {"success": False,
+                        "error": f"path is not in the {source_side} pane's folder "
+                                 f"({src_dir}): {path} — re-read commander_state"}
+        if destination:
+            if destination not in ("left", "right"):
+                return {"success": False, "error": "destination must be 'left' or 'right'"}
+            dst_side = destination
+        else:
+            dst_side = "right" if source_side == "left" else "left"
+        dst_dir = str((panes.get(dst_side) or {}).get("path") or "")
+        if not dst_dir or not os.path.isdir(dst_dir):
+            return {"success": False,
+                    "error": f"the {dst_side} pane is not showing a valid folder"}
+        result = bridge.transfer(mode, [os.path.abspath(p) for p in paths],
+                                 dst_dir, conflict_policy)
+        if not result.get("ok"):
+            return {"success": False,
+                    "error": str(result.get("error") or result.get("message") or "transfer failed")}
+        return {"success": True, "mode": mode, "source": src_dir,
+                "destination": dst_dir, "items": result.get("items", 0),
+                "message": result.get("message", "")}
+
+    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Filesystem handlers (agent-level file ops — the Command tab's domain)
     # ------------------------------------------------------------------
 
@@ -4145,6 +4332,10 @@ class ToolRegistry:
     def set_browser_bridge(self, bridge) -> None:
         """Inject the GUI's browser bridge (called once the Browse tab exists)."""
         self._browser_bridge = bridge
+
+    def set_commander_bridge(self, bridge) -> None:
+        """Inject the GUI's commander bridge (called once the Command tab exists)."""
+        self._commander_bridge = bridge
 
     def _browser_call(self, op: str, **params) -> Dict[str, Any]:
         if self._browser_bridge is None:

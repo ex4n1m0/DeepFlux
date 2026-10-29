@@ -37,7 +37,7 @@ HELP_HTML_ZH = r"""
 </head>
 <body>
 
-<h1>DeepFlux 6.6 —— 用户指南</h1>
+<h1>DeepFlux 6.7 —— 用户指南</h1>
 
 <p>DeepFlux 是一个 AI 驱动的下载管理器，内置浏览器、媒体播放器、社区聊天室
 和文件管理器。AI 智能体可以搜索并下载种子、查找直链下载、管理你的媒体库 ——
@@ -101,7 +101,7 @@ FFmpeg（用于海报、字幕和录制）不随包附带 —— 请用系统包
   <tr><td><b>智能体</b></td><td>带语音输入 (🎤) 的 AI 对话。每次启动智能体都会自动问候。<code>Enter</code> = 智能体搜索；<code>Ctrl+Enter</code> = 快速网页搜索。</td><td>—</td></tr>
   <tr><td><b>下载</b></td><td>上方种子、下方下载管理器。添加任何传输任务时自动聚焦。</td><td>完整队列控制：列表、暂停、恢复、重试、取消</td></tr>
   <tr><td><b>播放</b></td><td>IPTV 与媒体播放器 —— 直播电视、电影、剧集，以及你自己的本地媒体文件夹。</td><td>搜索播放列表、播放、暂停、停止、音量、节目单</td></tr>
-  <tr><td><b>文件管理</b></td><td>双栏文件管理器（Double Commander 风格）。</td><td>浏览、复制、移动、重命名、删除、新建文件夹</td></tr>
+  <tr><td><b>文件管理</b></td><td>双栏文件管理器（Double Commander 风格）。</td><td>浏览、复制、移动、批量重命名、删除 —— 文件夹标签页、收藏夹、面包屑、通配符选择</td></tr>
   <tr><td><b>聊天室</b></td><td>DeepFlux Room —— 内嵌的 OnlyHumans 社区聊天（每个词都是一个房间；默认打开 “deepflux” 房间）。</td><td>—</td></tr>
 </table>
 
@@ -258,6 +258,37 @@ AI 是可选功能，之后在 设置 → AI 与 API 密钥 → <i>AI 智能体�
 自动聚焦。浏览器的会话 Cookie 会带过去，登录才能下载的文件照常工作。
 <code>.torrent</code> 文件是例外：它们走浏览器自己的下载（私有种子站需要完整
 会话），完成后加入种子引擎。</p>
+
+<h2>文件管理页（Command 标签）</h2>
+
+<p>经典双栏 Orthodox 风格的文件管理器。每个窗格都有自己的文件夹标签页：
+<code>Ctrl+T</code> 新建标签（复制当前文件夹），<code>Ctrl+W</code> 关闭，
+<code>Ctrl+Tab</code> 切换；所有标签页的文件夹在重启后都会恢复。功能键负责
+操作：<code>F5</code> 复制、<code>F6</code> 移动、<code>F7</code> 新建文件夹、
+<code>Shift+F4</code> 新建文本文件、<code>F8</code> 移入回收站、
+<code>Shift+Delete</code> 永久删除（必须逐字输入确切路径确认）、
+<code>F2</code> 重命名。</p>
+
+<p>选择方式延续经典：<code>Insert</code> 选中光标所在行并下移一行，
+<code>+</code> / <code>-</code> 按通配符成组选择或取消（如
+<code>*.log;*.tmp</code>），<code>Ctrl+I</code> 反选，右键菜单可以选中相同
+扩展名的全部文件。在文件列表里直接输入字母会跳到第一个匹配的名称 —— 也支持
+通配符，已输入的前缀显示在窗格状态行里。</p>
+
+<p>每个窗格都有面包屑路径栏：点击任意路径分段即可直达。窗口较窄时，靠前的
+分段会折叠成 <code>⋯</code> 按钮；按 <code>✎</code> 切换为手动输入路径框。
+给文件夹点星收藏后，<code>Ctrl+1</code> 到 <code>Ctrl+9</code> 可直达前九个
+收藏。<code>Ctrl+C</code>、<code>Ctrl+X</code>、<code>Ctrl+V</code> 在两个
+窗格之间复制、剪切、粘贴；粘贴与 F5/F6 走同一个安全控制器（一次只执行一个
+操作、逐项处理冲突、分阶段事务性复制）—— 这也是刻意禁用普通拖放的原因。</p>
+
+<p><code>Ctrl+R</code> 打开批量重命名：查找替换（纯文本或正则）、大小写
+转换、编号模板（<code>photo ###</code> 变成 photo 001、002……），或整列粘贴
+新名称。预览表校验通过之前不会执行任何重命名；中途失败会回滚已完成的全部
+重命名。</p>
+
+<p>AI 智能体也能操控这两个窗格：直接用大白话说 —— “把左窗格里所有 .log 文件
+移到右边” —— 它会读取窗格、选中文件，并在你确认后精确转移它点名的文件。</p>
 
 <h2>播放页（IPTV 与媒体库）</h2>
 
@@ -464,7 +495,9 @@ onlyhumans.deepflux.space/join 上同一个房间应用 —— 所以 DeepFlux �
   <tr><td><code>空格</code> / <code>M</code> / <code>F</code></td><td>播放器：暂停 / 静音 / 全屏</td></tr>
   <tr><td><code>Shift+F</code></td><td>播放器：纯净全屏（隐藏所有控制，只看视频）</td></tr>
   <tr><td><code>A</code> / <code>J</code> / <code>#</code></td><td>播放器：画面比例 / 字幕 / 音轨</td></tr>
-  <tr><td><code>F5</code> <code>F6</code> <code>F7</code> <code>F8</code> <code>F2</code></td><td>文件管理：复制、移动、新建文件夹、删除、重命名</td></tr>
+  <tr><td><code>F5</code> <code>F6</code> <code>F7</code> <code>F8</code> <code>F2</code> <code>Shift+F4</code> <code>Ctrl+R</code></td><td>文件管理：复制、移动、新建文件夹、删除、重命名、新建文本文件、批量重命名</td></tr>
+  <tr><td><code>Insert</code> <code>+</code> <code>-</code> <code>Ctrl+I</code></td><td>文件管理选择：切换选中行、成组选择 / 取消、反选</td></tr>
+  <tr><td><code>Ctrl+T</code> <code>Ctrl+W</code> <code>Ctrl+1</code>–<code>Ctrl+9</code></td><td>文件管理窗格：新建 / 关闭文件夹标签页、跳转收藏</td></tr>
   <tr><td><code>Ctrl+Q</code></td><td>退出</td></tr>
 </table>
 
@@ -530,7 +563,7 @@ AES-128 加密的流。
 </table>
 
 <h2>版本</h2>
-<p>DeepFlux 6.6 —— AI 深度搜索</p>
+<p>DeepFlux 6.7 —— AI 深度搜索</p>
 <p>AI：内置本地模型（无审查、离线）或 DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
 
 </body>
