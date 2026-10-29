@@ -1,8 +1,8 @@
 {
-  "version": "6.6",
-  "file": "DeepFlux6.6Setup.exe",
-  "size": 421886282,
-  "sha256": "63b8846f4303abcef63e5bd3904daab70507f06ba678cfaa5d4a207cd79ee6a7",
-  "released": "2026-10-28",
-  "notes": "DeepFlux 6.6 - full-window browsing: the address bar, tab strip and left rail hide while you read and come back when you touch the top or left edge of the window; right-clicking a link now puts Open in new tab on the first row."
+  "version": "6.7",
+  "file": "DeepFlux6.7Setup.exe",
+  "size": 421997239,
+  "sha256": "83e5da6506728245ee064b7187e42c6af64dd04b9b3ceb8677881d10c682d69a",
+  "released": "2026-10-30",
+  "notes": "DeepFlux 6.7 - Commander overhaul: folder tabs in both file panes, classic selection keys (Insert, +/-, Ctrl+I), find-as-you-type, breadcrumb bars, favorites, copy/cut/paste between panes, and batch rename with a live preview; the AI agent can now organize files across the two panes on your behalf."
 }
