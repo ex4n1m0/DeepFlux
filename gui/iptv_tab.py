@@ -190,6 +190,7 @@ class PlayerWidget(QWidget):
     sig_playback_started = Signal()  # real playback detected (not just loadfile)
     sig_recording_status = Signal(str, str)  # worker-safe recorder status
     sig_compact = Signal(bool)  # compact always-on-top host; never reparents surface
+    sig_streams_closed = Signal()  # force-stop released every provider stream
 
     # Seconds the rewind/forward buttons (and ←/→ keys) jump.
     SKIP_SECONDS = 10
@@ -391,6 +392,17 @@ class PlayerWidget(QWidget):
         self.sleep_btn.clicked.connect(self._show_sleep_menu)
         tools.addWidget(self.sleep_btn)
 
+        # Emergency control for provider connection caps: stop() idles the
+        # backend but a stale socket can still be counted against the limit
+        # — this closes every playback connection at once (see the method).
+        self.force_stop_btn = QPushButton(tr('⛔ Stop All'))
+        self.force_stop_btn.setToolTip(tr(
+            'Close every stream connection to your IPTV providers at once '
+            '(player, grid tile, recording). Use this when the provider '
+            'says you have reached the maximum number of streams.'))
+        self.force_stop_btn.clicked.connect(self.force_stop_all_streams)
+        tools.addWidget(self.force_stop_btn)
+
         self.compact_btn = QPushButton(tr('Compact'))
         self.compact_btn.setToolTip(
             tr('Compact always-on-top host mode (keeps the native player surface in place)'))
@@ -472,7 +484,27 @@ class PlayerWidget(QWidget):
             "QPushButton:hover { background-color: #e67e22; }"
         )
         self.retry_btn.clicked.connect(self._retry)
-        el.addWidget(self.retry_btn, 0, Qt.AlignCenter)
+        # Shown only for stream-LIMIT errors (_show_error classifies) — the
+        # fix for a "maximum streams" rejection is closing stale connections,
+        # and the button that does it belongs right next to Retry.
+        self.err_stop_all_btn = QPushButton(tr('⛔ Close All Streams'))
+        self.err_stop_all_btn.setToolTip(tr(
+            'Close every stream connection to your IPTV providers, then '
+            'pick the channel again'))
+        self.err_stop_all_btn.setStyleSheet(
+            "QPushButton { background-color: #8a3e3e; color: white; "
+            "border: none; border-radius: 6px; padding: 8px 24px; "
+            "font-size: 21px; font-weight: bold; }\n"
+            "QPushButton:hover { background-color: #e67e22; }"
+        )
+        self.err_stop_all_btn.clicked.connect(self.force_stop_all_streams)
+        self.err_stop_all_btn.hide()
+        err_buttons = QHBoxLayout()
+        err_buttons.addStretch(1)
+        err_buttons.addWidget(self.retry_btn)
+        err_buttons.addWidget(self.err_stop_all_btn)
+        err_buttons.addStretch(1)
+        el.addLayout(err_buttons)
         self.error_overlay.hide()
 
         # Loading / buffering overlay (shown until the first frame is ready).
@@ -967,6 +999,46 @@ class PlayerWidget(QWidget):
         self.ff_btn.setEnabled(False)
         self.time_lbl.setText(tr('00:00 / 00:00'))
 
+    def force_stop_all_streams(self) -> None:
+        """Emergency stop: close EVERY IPTV provider connection now.
+
+        ``stop`` only idles the backend core — a wedged demuxer or the SVP
+        out-of-process mpv.exe child can keep the provider socket open, and
+        providers that cap concurrent streams keep counting it. This mirrors
+        what ``shutdown`` does: stop the recorder, tear the multiview grid
+        down, then STOP + DESTROY the media backend (killing the SVP child
+        and its sockets). ``_ensure_backend`` rebuilds it on the next play.
+        Deliberately never touches download-manager VOD jobs.
+        """
+        self._checkpoint_current()
+        self._stop_recording()
+        self._playback_active = False
+        self._cancel_sleep_timer()
+        self._playback_generation += 1  # invalidate queued errors/retries
+        self._retry_scheduled_for = None
+        self._error_retry_pending = False
+        self._retry_count = 0
+        self._current_item = None
+        if self._multiview_grid is not None:
+            self._set_multiview(False, force=True)
+        if self._backend is not None and self._backend is not self._media_backend:
+            try:
+                self._backend.stop()  # e.g. the local MilkDrop visualizer
+            except Exception:
+                logger.debug("stopping non-media backend failed", exc_info=True)
+        self._teardown_media_backend()
+        self._reset_stall_state()
+        self.buffer_badge.hide()
+        self._hide_loading()
+        self.error_overlay.hide()
+        self._restore_torrent_rates()
+        self.play_btn.setText(tr('▶'))
+        self.seek.setValue(0)
+        self.rw_btn.setEnabled(False)
+        self.ff_btn.setEnabled(False)
+        self.time_lbl.setText(tr('00:00 / 00:00'))
+        self.sig_streams_closed.emit()
+
     def _checkpoint_current(self) -> None:
         item = self._current_item
         if item is None:
@@ -1099,8 +1171,8 @@ class PlayerWidget(QWidget):
         secondary = (
             self.rw_btn, self.ff_btn, self.vol, self.aspect_btn,
             self.audio_btn, self.subs_btn, self.preset_btn, self.record_btn,
-            self.record_status_lbl, self.sleep_btn, self.fs_btn,
-            self.pure_btn,
+            self.record_status_lbl, self.sleep_btn, self.force_stop_btn,
+            self.fs_btn, self.pure_btn,
         )
         if on:
             self._compact_control_visibility = {
@@ -1649,6 +1721,14 @@ class PlayerWidget(QWidget):
         self._error_retry_pending = False
         if self._current_item is None or self._backend is None:
             return
+        # Close the failed attempt's connection before opening the next one:
+        # loadfile-replace alone lets a half-open socket linger, and providers
+        # count it toward the concurrent-stream limit (same reason play()
+        # stops first — see the comment there).
+        try:
+            self._backend.stop()
+        except Exception:
+            logger.debug("stop before retry failed", exc_info=True)
         self._show_loading()
         self._start_playback(generation)
 
@@ -1662,7 +1742,20 @@ class PlayerWidget(QWidget):
         self._hide_loading()
         # Classify the error so the overlay can show a helpful hint.
         msg_lower = (msg or "").lower()
-        if any(k in msg_lower for k in ("timeout", "timed out", "not responding")):
+        # Stream-limit errors get their own class (and the Close All Streams
+        # button) — checked FIRST because "connection limit" would otherwise
+        # fall into the generic Network Error branch below.
+        limit_hit = any(k in msg_lower for k in (
+            "maximum streams", "max streams", "stream limit",
+            "connection limit", "maximum connections", "too many clients",
+            "too many sessions", "too many streams", "limit reached",
+            "maximum concurrent"))
+        if limit_hit:
+            title, hint = "Stream Limit Reached", \
+                "Your provider is still counting old stream connections. " \
+                "Close all streams, wait a few seconds, then pick the " \
+                "channel again."
+        elif any(k in msg_lower for k in ("timeout", "timed out", "not responding")):
             title, hint = "Server Not Responding", \
                 "The stream didn't respond in time. The server may be overloaded or down. Try again in a moment."
         elif any(k in msg_lower for k in ("404", "not found", "no such")):
@@ -1680,6 +1773,7 @@ class PlayerWidget(QWidget):
         else:
             title, hint = "Playback Error", \
                 msg or "The stream could not be opened. Try again or pick another item."
+        self.err_stop_all_btn.setVisible(limit_hit)
         self.error_title.setText(title)
         self.error_lbl.setText(hint)
         item_name = getattr(self._current_item, "name", "") or \
@@ -3785,6 +3879,7 @@ class IPTVTab(QWidget):
         self._player.sig_state.connect(self._on_player_state)
         self._player.sig_error.connect(self._on_player_error)
         self._player.sig_playback_started.connect(self._on_playback_started)
+        self._player.sig_streams_closed.connect(self._on_streams_closed)
         pl_layout.addWidget(self._player)
         splitter.addWidget(player_col)
 
@@ -4051,6 +4146,15 @@ class IPTVTab(QWidget):
     def _on_player_error(self, msg: str) -> None:
         self._set_status(f"Player error: {msg}")
         self._grid.set_loading_item(None)
+
+    def _on_streams_closed(self) -> None:
+        """Force-stop finished: every provider playback connection is closed
+        (main player backend destroyed, grid tiles torn down, recorder
+        stopped) and the player is fully idle."""
+        self._set_status(tr("All provider streams closed — playback "
+                            "connections released."))
+        self._grid.set_loading_item(None)
+        self._grid.set_playing_item(None)
 
     def sync_fullscreen_chrome(self, on: bool) -> None:
         """Force the chrome to match the window's real fullscreen state.

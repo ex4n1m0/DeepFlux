@@ -512,3 +512,36 @@ def test_play_exits_multiview_and_promotion_uses_main_player(qapp, fake_backends
     for b in made:
         assert ("destroy",) in b.calls
     assert player.mv_btn.isChecked() is False
+
+
+def test_force_stop_all_streams_shuts_down_grid_and_player(qapp, fake_backends):
+    """The ⛔ Stop All force-stop tears the multiview grid down (every tile
+    backend stopped AND destroyed — providers count lingering sockets) and
+    leaves the main player fully idle."""
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+    from iptv.models import Channel
+
+    made, _ = fake_backends
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig())
+    grid = player._ensure_multiview()
+    player.mv_btn.setChecked(True)
+    assert player.video_stack.currentWidget() is grid
+    stream = Channel(id="s", name="Live", url="http://x/live.m3u8")
+    assert grid.assign_stream(grid.tiles[0], stream) is True
+    assert grid.stream_tile is grid.tiles[0]
+
+    player.force_stop_all_streams()
+
+    assert player.video_stack.currentWidget() is player.surface
+    assert player.mv_btn.isChecked() is False
+    assert grid.stream_tile is None
+    for tile in grid.tiles:
+        assert tile.channel is None
+    for backend in made:
+        assert ("stop",) in backend.calls
+        assert ("destroy",) in backend.calls
+    assert player._current_item is None
+    assert player._playback_active is False

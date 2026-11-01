@@ -435,6 +435,17 @@ the grid; unmute the ones you want with the 🔇 in the tile's strip.</p>
 </ul>
 
 <ul>
+  <li><b>⛔ Stop All — close every provider stream:</b> many IPTV providers
+      allow only a couple of simultaneous streams and keep counting
+      connections for a while after you switch channels, so a rapid
+      channel-surf can end with a "maximum streams" rejection even though
+      you're watching nothing. The <b>⛔ Stop All</b> button on the player's
+      tool row slams every playback connection shut at once — the main
+      player, the multiview stream tile and any live recording — and fully
+      rebuilds the player on the next play. When the player itself reports a
+      stream-limit error, the same action appears on the error overlay as
+      <b>⛔ Close All Streams</b> next to Retry. VOD downloads are not
+      affected (pause those on the Download page).</li>
   <li><b>Dolby Vision &amp; HDR:</b> Dolby Vision (profiles 5/7/8) and HDR10 play
       with correct colors and dynamic tone mapping out of the box (mpv backend).
       The VLC backend is available in Play → Playback for compatibility.</li>

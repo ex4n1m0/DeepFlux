@@ -4613,6 +4613,111 @@ def test_stop_cancels_pending_error_retry():
     assert player._error_retry_pending is False
 
 
+def test_force_stop_all_streams_destroys_backend_and_kills_retries():
+    """force_stop_all_streams goes beyond stop(): the backend is DESTROYED
+    (provider sockets closed, SVP child killed) and every pending auto-retry
+    is invalidated so nothing re-opens a connection."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from unittest.mock import MagicMock, patch
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    app = QApplication.instance() or QApplication([])
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig())
+    player._current_item = MagicMock(url="http://example.com/stream.m3u8")
+    backend = MagicMock()
+    player._backend = backend
+    player._media_backend = backend
+    player._playback_active = True
+    recorder = MagicMock()
+    recorder.stop.return_value = True
+    player._recorder = recorder
+
+    with patch("gui.iptv_tab.QTimer.singleShot"):
+        player._on_error("connection refused")
+        assert player._error_retry_pending is True
+    generation = player._playback_generation
+    closed = []
+    player.sig_streams_closed.connect(lambda: closed.append(True))
+
+    player.force_stop_btn.click()  # the ⛔ Stop All button drives the method
+
+    backend.stop.assert_called_once()
+    backend.destroy.assert_called_once()
+    recorder.stop.assert_called_once()
+    assert player._backend is None
+    assert player._media_backend is None
+    assert player._current_item is None
+    assert player._playback_active is False
+    assert player._playback_generation == generation + 1
+    assert player._error_retry_pending is False
+    assert closed == [True]
+    # A retry scheduled before the force-stop must never re-open the
+    # connection, even with its old generation/attempt token.
+    player._run_scheduled_retry(generation, player._attempt_id)
+    backend.play.assert_not_called()
+
+
+def test_stream_limit_error_classified_with_close_all_button():
+    """A provider stream-limit rejection gets its own error class and shows
+    the ⛔ Close All Streams button on the error overlay; every other error
+    hides it again."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    app = QApplication.instance() or QApplication([])
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig())
+
+    # "Forbidden"/"403" proves the limit branch wins over the later
+    # access-denied / network branches.
+    player._show_error("403 Forbidden: Maximum streams reached for this user")
+    assert player.error_title.text() == "Stream Limit Reached"
+    assert player.err_stop_all_btn.isHidden() is False
+    assert player.error_overlay.isHidden() is False
+
+    player._show_error("connection reset by peer")
+    assert player.error_title.text() == "Network Error"
+    assert player.err_stop_all_btn.isHidden() is True
+
+
+def test_retry_closes_previous_connection_before_reopening():
+    """The auto-retry path must stop the failed attempt's connection before
+    loadfile-replacing it — stacked half-open sockets are exactly what
+    providers count against the concurrent-stream cap (see play()'s
+    stop-first comment)."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from unittest.mock import MagicMock
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    app = QApplication.instance() or QApplication([])
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig())
+    player._current_item = MagicMock(url="http://example.com/stream.m3u8")
+    backend = MagicMock()
+    player._backend = backend
+    player._media_backend = backend
+
+    player._start_playback()  # attempt 1 opens the connection
+    generation, attempt = player._playback_generation, player._attempt_id
+
+    # delay=0 runs the retry inline — no timer involved.
+    assert player._schedule_retry(generation, attempt, "backend error",
+                                  0.0, "boom") is True
+
+    names = [c[0] for c in backend.mock_calls]
+    assert names == ["play", "stop", "play"]
+
+
 @pytest.mark.parametrize(
     ("kind", "needle"),
     [

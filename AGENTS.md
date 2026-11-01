@@ -1256,10 +1256,22 @@
   `engine.set_stream_window` piece deadlines (top priority, 2s) for the 64MB
   after the playhead. Cap lifts on completion / when the player moves on.
 - Player track switching: PlayerWidget has 🎧/CC menu buttons (+ J/# cycle
-  keys) over `backend.audio_tracks/subtitle_tracks`. mpv `aid`/`sid` take
-  the track **id** (not track-list index); VLC normalizes
+  keys) over `backend.audio_tracks/subtitle_tracks`. mpv `aid`/`sid` take the
+  track **id** (not track-list index); VLC normalizes
   `audio_get_track_description`/`video_get_spu_description` tuples and
   disables subs with -1.
+- Force-stop all provider streams (2026-11-01, providers cap concurrent
+  streams): `PlayerWidget.force_stop_all_streams` ("⛔ Stop All" tools-row
+  button + "⛔ Close All Streams" on stream-LIMIT errors in `_show_error`)
+  = stop() bookkeeping (generation bump kills pending retries) + multiview
+  `_set_multiview(False, force=True)` + `_teardown_media_backend()` (STOP +
+  DESTROY — kills the SVP mpv.exe child; `stop()` alone idles the core and a
+  wedged demuxer can hold the socket counted). `_ensure_backend` rebuilds on
+  the next play; download jobs are NEVER touched. The auto-retry path
+  (`_run_scheduled_retry`) also stops the backend before re-opening (same
+  stale-connection reason `play()` stops first).
+- Player Compact mode is Windows-only pseudo-PiP: it keeps the native video
+  surface in place, makes the top-level host topmost, hides surrounding and
 - Player Compact mode is Windows-only pseudo-PiP: it keeps the native video
   surface in place, makes the top-level host topmost, hides surrounding and
   secondary player controls, temporarily lowers the host minimum size, and

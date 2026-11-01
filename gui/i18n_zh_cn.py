@@ -143,6 +143,8 @@ ZH_CN: dict[str, str] = {
     "Add a torrent from a .torrent file": "从 .torrent 文件添加种子",
     "Add a torrent from a magnet link": "从磁力链接添加种子",
     "All conflicting items were skipped": "所有冲突项均已跳过",
+    "All provider streams closed — playback connections released.":
+        "已关闭全部来源商流——播放连接已全部释放。",
     "All statuses": "全部状态",
     "Allow complete YouTube playlists": "允许下载完整的 YouTube 播放列表",
     "Another file operation is already running": "已有另一个文件操作正在进行",
@@ -191,6 +193,14 @@ ZH_CN: dict[str, str] = {
     "Clear the history (also resets the agent's memory of this conversation)":
         "清除历史（同时重置智能体对本次对话的记忆）",
     "Clear tile": "清空此格",
+    "Close every stream connection to your IPTV providers at once (player, "
+    "grid tile, recording). Use this when the provider says you have "
+    "reached the maximum number of streams.":
+        "立即关闭与 IPTV 来源商的全部流连接（播放器、网格格子、录制）。"
+        "当来源商提示已达最大流数量时使用。",
+    "Close every stream connection to your IPTV providers, then pick the "
+    "channel again":
+        "关闭与 IPTV 来源商的全部流连接，然后重新选择频道",
     "Compact always-on-top host mode (keeps the native player surface in place)":
         "紧凑置顶模式（原生播放表面保持原位）",
     "Confirm passphrase:": "确认口令：",
@@ -531,6 +541,8 @@ ZH_CN: dict[str, str] = {
     "🗂 Tree": "🗂 分类树",
     "🖼 Content": "🖼 内容",
     "↻ Retry": "↻ 重试",
+    "⛔ Stop All": "⛔ 全部停止",
+    "⛔ Close All Streams": "⛔ 关闭全部流",
 
     # --- runtime status text (f-string templates, wrapped by hand) ---
     "Torrents": "种子",
