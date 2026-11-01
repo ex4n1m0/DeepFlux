@@ -1,8 +1,8 @@
 {
-  "version": "6.7",
-  "file": "DeepFlux-6.7-Linux-x86_64.AppImage",
-  "size": 611707384,
-  "sha256": "a48b9b7af56dc52364259c63daedf9f2c0037164ee8f97bc5c46f09b0fc44576",
-  "released": "2026-10-30",
-  "notes": "DeepFlux 6.7 for Linux - same release as Windows: the Commander file manager gains folder tabs, classic selection keys, breadcrumbs, favorites, copy/cut/paste between panes and batch rename; the AI agent can organize files across the two panes on your behalf."
+  "version": "6.8",
+  "file": "DeepFlux-6.8-Linux-x86_64.AppImage",
+  "size": 611777016,
+  "sha256": "769370e93fa5adda109beb6cdd5086be376b60c5c6e86e6151b5a2d7244a890e",
+  "released": "2026-11-01",
+  "notes": "DeepFlux 6.8 for Linux - same release as Windows: a Stop All button on the player closes every IPTV provider stream connection at once, stream-limit errors offer a one-click Close All Streams fix, and channel-switch retries no longer leave stale connections counted against your provider's limit."
 }
