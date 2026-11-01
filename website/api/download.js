@@ -16,8 +16,21 @@ const TOTAL_KEY = 'df:dl:total';
 const REST_URL = () => process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const REST_TOKEN = () => process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 
+// The REST URL is operator config, but pin it to real Upstash hosts anyway
+// (every Upstash REST endpoint is https://<hash>.upstash.io) so a poisoned
+// env var can never turn this function into an arbitrary request proxy.
+// Anything else degrades to the documented not-configured path.
+function redisUrl() {
+  const u = REST_URL();
+  try {
+    const p = new URL(u);
+    if (p.protocol === 'https:' && p.hostname.endsWith('.upstash.io')) return u;
+  } catch (e) { /* fallthrough */ }
+  return '';
+}
+
 function creds() {
-  return REST_URL() && REST_TOKEN();
+  return redisUrl() && REST_TOKEN();
 }
 
 module.exports = async (req, res) => {
@@ -27,7 +40,7 @@ module.exports = async (req, res) => {
 
   if (creds()) {
     try {
-      await fetch(`${REST_URL()}/pipeline`, {
+      await fetch(`${redisUrl()}/pipeline`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${REST_TOKEN()}`,
