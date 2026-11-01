@@ -1,8 +1,8 @@
 {
-  "version": "6.7",
-  "file": "DeepFlux6.7Setup.exe",
-  "size": 421997239,
-  "sha256": "83e5da6506728245ee064b7187e42c6af64dd04b9b3ceb8677881d10c682d69a",
-  "released": "2026-10-30",
-  "notes": "DeepFlux 6.7 - Commander overhaul: folder tabs in both file panes, classic selection keys (Insert, +/-, Ctrl+I), find-as-you-type, breadcrumb bars, favorites, copy/cut/paste between panes, and batch rename with a live preview; the AI agent can now organize files across the two panes on your behalf."
+  "version": "6.8",
+  "file": "DeepFlux6.8Setup.exe",
+  "size": 422018418,
+  "sha256": "49ca6c1e280fea27dc98c76138479827fa38d1969ccba3e368da9e815ebb46d7",
+  "released": "2026-11-01",
+  "notes": "DeepFlux 6.8 - IPTV stream force-stop: a Stop All button on the player closes every provider stream connection at once (player, multiview tile, recording) for providers that cap simultaneous streams, stream-limit errors now offer a one-click Close All Streams fix, and channel-switch retries no longer leave stale connections counted against your limit."
 }
