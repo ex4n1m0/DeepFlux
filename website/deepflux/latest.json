@@ -1,8 +1,8 @@
 {
-  "version": "6.8",
-  "file": "DeepFlux6.8Setup.exe",
-  "size": 422018418,
-  "sha256": "49ca6c1e280fea27dc98c76138479827fa38d1969ccba3e368da9e815ebb46d7",
-  "released": "2026-11-01",
-  "notes": "DeepFlux 6.8 - IPTV stream force-stop: a Stop All button on the player closes every provider stream connection at once (player, multiview tile, recording) for providers that cap simultaneous streams, stream-limit errors now offer a one-click Close All Streams fix, and channel-switch retries no longer leave stale connections counted against your limit."
+  "version": "6.9",
+  "file": "DeepFlux6.9Setup.exe",
+  "size": 483077295,
+  "sha256": "936e5c11d639ac6b1a35086d62feed032f03e9cf436a942bfe3acd3232f8800f",
+  "released": "2026-11-02",
+  "notes": "DeepFlux 6.9 - Now-playing title: the Play tab names what you are watching in a strip right under the video (file name, channel with current programme, movie with year) and mirrors it in the window title so the taskbar and Alt-Tab show it too; hover the strip for the full file name and path."
 }
