@@ -46,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 6.8 — User Guide</h1>
+<h1>DeepFlux 6.9 — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -400,6 +400,14 @@ your confirmation.</p>
 
 <h2>Media Player</h2>
 
+<ul>
+  <li><b>Now-playing title:</b> whatever is playing — a local file, a live
+      channel, a movie — is named in the strip directly under the video
+      (above the transport buttons), and the same title appears in the
+      window title so the taskbar and Alt-Tab show it too. Hover the strip
+      for the full file name and path when a long title is shortened.</li>
+</ul>
+
 <h3>Multiview — 4×4 grid</h3>
 <p>The <b>▦ 4×4</b> button on the player's tool row replaces the video area
 with a 4×4 grid of independent tiles. Each tile plays its own clip with its
@@ -695,7 +703,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 6.8 — AI Deep Search</p>
+<p>DeepFlux 6.9 — AI Deep Search</p>
 <p>AI via built-in local models (uncensored, offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>

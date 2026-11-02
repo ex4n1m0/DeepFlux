@@ -1,8 +1,8 @@
-llama.cpp b11729 — https://github.com/ggml-org/llama.cpp
+llama.cpp b12040 — https://github.com/ggml-org/llama.cpp
 Bundled unmodified (official release archives, sha256 per variant in
 PINNED.json). llama.cpp is licensed under the MIT License; source for
-this exact release: https://github.com/ggml-org/llama.cpp/tree/b11729
-Retrieved 2026-10-19.
+this exact release: https://github.com/ggml-org/llama.cpp/tree/b12040
+Retrieved 2026-11-02.
 ----------------------------------------------------------------------
 
 MIT License
