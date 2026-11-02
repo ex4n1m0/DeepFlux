@@ -1,8 +1,8 @@
 {
-  "version": "6.8",
-  "file": "DeepFlux-6.8-Linux-x86_64.AppImage",
-  "size": 611777016,
-  "sha256": "769370e93fa5adda109beb6cdd5086be376b60c5c6e86e6151b5a2d7244a890e",
-  "released": "2026-11-01",
-  "notes": "DeepFlux 6.8 for Linux - same release as Windows: a Stop All button on the player closes every IPTV provider stream connection at once, stream-limit errors offer a one-click Close All Streams fix, and channel-switch retries no longer leave stale connections counted against your provider's limit."
+  "version": "6.9",
+  "file": "DeepFlux-6.9-Linux-x86_64.AppImage",
+  "size": 611781112,
+  "sha256": "c498da10e387c5c3539312040c44075e7f75054b49b440408c70e7d840e0b69d",
+  "released": "2026-11-02",
+  "notes": "DeepFlux 6.9 for Linux - same release as Windows: the Play tab now names what you are watching in a strip right under the video (file name, channel with current programme, movie with year) and mirrors it in the window title so the taskbar and Alt-Tab show it too."
 }
