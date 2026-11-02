@@ -69,7 +69,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from config import DeeptorrentConfig, IPTVSourceConfig
+from config import APP_VERSION, DeeptorrentConfig, IPTVSourceConfig
 from iptv.artwork import PRIORITY_PREFETCH, PRIORITY_VISIBLE
 from iptv.manager import YEAR_OTHERS, IPTVManager
 from iptv.metadata import clean_title, extract_year, metadata_key
@@ -222,6 +222,10 @@ class PlayerWidget(QWidget):
         self._backend_recreate_on_play = False  # SVP toggle pending (see apply_config)
         self._milkdrop: Optional[Any] = None            # Butterchurn (audio)
         self._current_item: Any = None
+        # Now-playing strip state (title + dim secondary segment + full-text
+        # tooltip); empty title hides the row — see _set_now_playing.
+        self._np_title = ""
+        self._np_sub = ""
         # A generation identifies a user play/stop lifecycle; attempt_id
         # identifies each backend.play within it.  At most one retry may claim
         # an attempt, whether the claimant is the loading watchdog or the
@@ -301,6 +305,26 @@ class PlayerWidget(QWidget):
         controls_layout = QVBoxLayout(self.controls)
         controls_layout.setContentsMargins(8, 4, 8, 4)
         controls_layout.setSpacing(3)
+        # Now-playing strip — FIRST row of the control panel, directly under
+        # the video: title (white, semibold) + a dim secondary segment (file
+        # name / EPG now-line / year). Riding the existing panel buys the
+        # styling, the fullscreen auto-hide reveal and the pure-mode collapse
+        # for free; compact PiP hides it via _set_compact_controls. Hidden
+        # while idle so the panel carries no empty strip. QLabel does not
+        # elide — _elide_now_playing re-fits the text on every resize.
+        np_row = QHBoxLayout()
+        np_row.setSpacing(10)
+        self.np_title_lbl = QLabel("")
+        self.np_title_lbl.setStyleSheet(
+            "color: #ffffff; font-size: 19px; font-weight: 600;")
+        np_row.addWidget(self.np_title_lbl)
+        self.np_sub_lbl = QLabel("")
+        self.np_sub_lbl.setStyleSheet("color: #8a9ab0; font-size: 17px;")
+        np_row.addWidget(self.np_sub_lbl)
+        np_row.addStretch(1)
+        self.np_title_lbl.hide()
+        self.np_sub_lbl.hide()
+        controls_layout.addLayout(np_row)
         ctrl = QHBoxLayout()
         tools = QHBoxLayout()
         controls_layout.addLayout(ctrl)
@@ -928,6 +952,9 @@ class PlayerWidget(QWidget):
         self._playback_active = True
         self._langs_applied_url = ""  # new file — re-apply preferred languages
         self._reset_stall_state()
+        # Now-playing strip + OS window title: set BEFORE the milkdrop
+        # early-return so audio-only files (visualizer path) get it too.
+        self._set_now_playing(*self._now_playing_for(item))
         self.error_overlay.hide()
         if allow_milkdrop and self._play_with_milkdrop(item):
             return
@@ -948,6 +975,101 @@ class PlayerWidget(QWidget):
         self.play_btn.setText(tr('⏸'))
         # VLC has no track-list observer — poll once shortly after load.
         QTimer.singleShot(2500, self._apply_preferred_languages)
+
+    # -- now-playing strip ----------------------------------------------------
+    def _now_playing_for(self, item: Any) -> tuple[str, str, str]:
+        """(title, secondary, tooltip) for the now-playing strip.
+
+        The title is the human name; the dim secondary segment carries what
+        disambiguates it — the EPG "now" line for live channels, the year for
+        movies whose metadata resolved, the raw file name when it differs
+        from the display name (folder libraries clean titles). The tooltip
+        keeps the full untruncated text (and the full path for local files)
+        so elision never hides information for good."""
+        if item is None:
+            return "", "", ""
+        name = getattr(item, "display_name", "") or getattr(item, "name", "") or ""
+        url = getattr(item, "url", "") or ""
+        extra = getattr(item, "extra", None) or {}
+        sub = ""
+        tooltip = name
+        is_local = bool(extra.get("local_file")) or bool(
+            url and "://" not in url and os.path.exists(url))
+        if hasattr(item, "tvg_id") and not is_local:
+            try:
+                now = _fmt_now_title(self._manager.epg_now_next_for(
+                    getattr(item, "tvg_id", ""), name))
+            except Exception:
+                now = ""  # defensive: mocked/broken managers in tests
+            if now:
+                sub = now
+        if not sub:
+            year = str(getattr(item, "year", "") or "").strip()
+            if year:
+                sub = f"({year})"
+        if not sub:
+            ep_title = getattr(item, "title", "")
+            if ep_title and ep_title != name:
+                sub = ep_title
+        if is_local and url:
+            base = os.path.basename(url)
+            if base and base != name:
+                sub = f"{sub} · {base}" if sub else base
+            tooltip = url
+        return name, sub, tooltip
+
+    def _set_now_playing(self, title: str, sub: str = "",
+                         tooltip: str = "") -> None:
+        """Update the strip; an empty title hides the row entirely."""
+        self._np_title = (title or "").strip()
+        self._np_sub = (sub or "").strip()
+        has = bool(self._np_title)
+        # Compact PiP keeps its minimal chrome — never re-show the row there.
+        visible = has and not self._compact
+        tip = (tooltip or "").strip() or self._np_title
+        self.np_title_lbl.setVisible(visible)
+        self.np_sub_lbl.setVisible(visible and bool(self._np_sub))
+        if has:
+            self.np_title_lbl.setToolTip(tip)
+            self.np_sub_lbl.setToolTip(tip)
+            self._elide_now_playing()
+        self._set_window_media_title(self._np_title)
+
+    def _elide_now_playing(self) -> None:
+        """Re-elide both labels to the control panel's width.
+
+        The panel is a ResponsiveRow with a 580px floor — the labels must
+        live strictly inside it and never widen the window."""
+        if not self._np_title:
+            return
+        width = max(160, self.controls.width() - 28)
+        fm_sub = self.np_sub_lbl.fontMetrics()
+        if self._np_sub:
+            sub_w = min(fm_sub.horizontalAdvance(self._np_sub), int(width * 0.4))
+            self.np_sub_lbl.setText(fm_sub.elidedText(
+                self._np_sub, Qt.ElideRight, max(40, sub_w)))
+        else:
+            sub_w = 0
+            self.np_sub_lbl.setText("")
+        fm_title = self.np_title_lbl.fontMetrics()
+        avail = max(60, width - sub_w - (12 if sub_w else 0))
+        self.np_title_lbl.setText(fm_title.elidedText(
+            self._np_title, Qt.ElideRight, avail))
+
+    def _set_window_media_title(self, text: str) -> None:
+        """Mirror the playing title into the OS window title.
+
+        The only placement that works outside the window: taskbar hover,
+        alt-tab and taskbar thumbnails show what's playing even while the
+        app is minimized. Empty text restores the static branding title."""
+        win = self.window()
+        if win is None:
+            return
+        try:
+            base = f"DeepFlux {APP_VERSION} - {tr('AI Deep Search')}"
+            win.setWindowTitle(f"{base} — {text}" if text else base)
+        except Exception:
+            logger.debug("window title update failed", exc_info=True)
 
     def _playback_headers(self, item: Any) -> Dict[str, str]:
         return build_playback_headers(item, self._manager.active_source())
@@ -998,6 +1120,7 @@ class PlayerWidget(QWidget):
         self.rw_btn.setEnabled(False)
         self.ff_btn.setEnabled(False)
         self.time_lbl.setText(tr('00:00 / 00:00'))
+        self._set_now_playing("", "")  # strip row + window title back to idle
 
     def force_stop_all_streams(self) -> None:
         """Emergency stop: close EVERY IPTV provider connection now.
@@ -1037,6 +1160,7 @@ class PlayerWidget(QWidget):
         self.rw_btn.setEnabled(False)
         self.ff_btn.setEnabled(False)
         self.time_lbl.setText(tr('00:00 / 00:00'))
+        self._set_now_playing("", "")  # strip row + window title back to idle
         self.sig_streams_closed.emit()
 
     def _checkpoint_current(self) -> None:
@@ -1173,6 +1297,7 @@ class PlayerWidget(QWidget):
             self.audio_btn, self.subs_btn, self.preset_btn, self.record_btn,
             self.record_status_lbl, self.sleep_btn, self.force_stop_btn,
             self.fs_btn, self.pure_btn,
+            self.np_title_lbl, self.np_sub_lbl,
         )
         if on:
             self._compact_control_visibility = {
@@ -1184,6 +1309,10 @@ class PlayerWidget(QWidget):
             for widget, visible in self._compact_control_visibility.items():
                 widget.setVisible(visible)
             self._compact_control_visibility.clear()
+            # A different item may have started while compact kept the strip
+            # hidden — re-derive its visibility from the current state.
+            self.np_title_lbl.setVisible(bool(self._np_title))
+            self.np_sub_lbl.setVisible(bool(self._np_title and self._np_sub))
 
     # -- narrow-window compaction --------------------------------------------
     # The transport row's buttons carry the app-wide 18px font + padding, so
@@ -1986,6 +2115,7 @@ class PlayerWidget(QWidget):
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         self._refit_controls()
+        self._elide_now_playing()
         # Keep the overlays covering the video surface after resizes, and on
         # top of the native mpv/VLC window (raise_ — native HWND z-order).
         if self.error_overlay.isVisible():
@@ -2054,6 +2184,7 @@ class PlayerWidget(QWidget):
             self._backend.destroy()
             self._backend = None
         self._playback_active = False
+        self._set_window_media_title("")  # restore the static branding title
 
 
 # ---------------------------------------------------------------------------

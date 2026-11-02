@@ -5441,3 +5441,157 @@ def test_pure_chrome_hides_rail_and_agent_panel(tmp_path):
     MainWindow.set_video_pure_chrome(win, False)
     assert not rail.isHidden() and not panel.isHidden()
 
+
+# ---------------------------------------------------------------------------
+# Now-playing strip (title of the current file/channel in windowed mode)
+# ---------------------------------------------------------------------------
+
+def _np_player():
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+
+    QApplication.instance() or QApplication([])
+    return PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                        DeeptorrentConfig())
+
+
+def test_now_playing_texts_for_item_kinds(tmp_path):
+    """Local file → file name segment + path tooltip; live channel → EPG
+    now-line; movie → year segment."""
+    from unittest.mock import MagicMock
+    player = _np_player()
+
+    # Local file (folder library): display name differs from the file name.
+    f = tmp_path / "Some Show S01E02.mkv"
+    f.write_bytes(b"x")
+    ch = Channel(id=str(f), name="Some Show S01E02", url=str(f),
+                 section=SECTION_SERIES, extra={"local_file": "1"})
+    title, sub, tip = player._now_playing_for(ch)
+    assert title == "Some Show S01E02"
+    assert sub == "Some Show S01E02.mkv"
+    assert tip == str(f)
+
+    # Local file whose name IS the basename (play_file path): no duplicate.
+    ch2 = Channel(id=str(f), name="Some Show S01E02.mkv", url=str(f),
+                  section=SECTION_MOVIES)
+    title2, sub2, tip2 = player._now_playing_for(ch2)
+    assert title2 == "Some Show S01E02.mkv"
+    assert sub2 == ""  # basename == name, nothing to disambiguate
+    assert tip2 == str(f)
+
+    # Live channel: the EPG now-line becomes the segment.
+    ch3 = Channel(id="cnn", name="CNN International", tvg_id="cnn.tv",
+                  url="http://example.com/cnn.m3u8", section=SECTION_LIVE)
+    player._manager = MagicMock()
+    player._manager.epg_now_next_for.return_value = {
+        "now": "News Hour", "now_start": 60, "now_end": 3600}
+    title3, sub3, _ = player._now_playing_for(ch3)
+    assert title3 == "CNN International"
+    assert "News Hour" in sub3
+
+    # Movie with resolved metadata: the year becomes the segment.
+    mv = Movie(id="m", name="The Batman", url="http://example.com/batman",
+               year="2022")
+    title4, sub4, _ = player._now_playing_for(mv)
+    assert title4 == "The Batman"
+    assert sub4 == "(2022)"
+
+    assert player._now_playing_for(None) == ("", "", "")
+
+
+def test_now_playing_strip_lifecycle_and_window_title():
+    from config import APP_VERSION
+    player = _np_player()
+    base = f"DeepFlux {APP_VERSION} - AI Deep Search"
+
+    # Idle: the row stays hidden (no empty strip); the app window carries
+    # the static branding title until the player first clears it.
+    assert player.np_title_lbl.isHidden()
+    player._set_window_media_title("")
+    assert player.windowTitle() == base
+
+    player._set_now_playing("The Batman", "(2022)", "C:\\movies\\batman.mkv")
+    assert not player.np_title_lbl.isHidden()
+    assert not player.np_sub_lbl.isHidden()
+    assert player.np_title_lbl.text() == "The Batman"
+    assert player.np_sub_lbl.text() == "(2022)"
+    assert player.np_title_lbl.toolTip() == "C:\\movies\\batman.mkv"
+    assert player.windowTitle() == f"{base} — The Batman"
+
+    # stop() clears the strip and restores the static window title.
+    player.stop()
+    assert player.np_title_lbl.isHidden()
+    assert player.np_sub_lbl.isHidden()
+    assert player.windowTitle() == base
+
+    # force_stop (emergency path) clears it too.
+    player._set_now_playing("CNN", "News Hour")
+    player.force_stop_all_streams()
+    assert player.np_title_lbl.isHidden()
+    assert player.windowTitle() == base
+
+
+def test_now_playing_elides_long_titles():
+    player = _np_player()
+    long_title = "A Very Long Movie Title That Cannot Possibly Fit " * 6
+    player._set_now_playing(long_title, "some.secondary.segment.mkv")
+    assert "…" in player.np_title_lbl.text()
+    assert len(player.np_title_lbl.text()) < len(long_title)
+    # The tooltip keeps the full untruncated text (leading/trailing spaces
+    # are trimmed by the strip, everything else is preserved).
+    assert player.np_title_lbl.toolTip() == long_title.strip()
+
+
+def test_play_populates_now_playing(tmp_path):
+    """play() drives the strip even when playback internals are mocked —
+    the strip is set before any early return (incl. the milkdrop path)."""
+    from unittest.mock import MagicMock, patch
+    player = _np_player()
+    f = tmp_path / "movie.mkv"
+    f.write_bytes(b"x")
+    ch = Channel(id=str(f), name="My Local Movie", url=str(f),
+                 section=SECTION_MOVIES)
+
+    player._media_backend = MagicMock()
+    # Pretend the mock backend already matches the SVP choice for this item,
+    # or play() tears it down via _backend_recreate_on_play.
+    player._media_backend_svp = True
+    with patch.object(player, "_ensure_backend", return_value=True), \
+         patch.object(player, "_play_with_milkdrop", return_value=False), \
+         patch.object(player, "_start_playback"), \
+         patch.object(player, "_show_loading"), \
+         patch.object(player, "_throttle_torrents"):
+        player.play(ch)
+    assert not player.np_title_lbl.isHidden()
+    assert player.np_title_lbl.text() == "My Local Movie"
+    assert player.np_sub_lbl.text() == "movie.mkv"
+    assert "My Local Movie" in player.windowTitle()
+
+
+def test_now_playing_hidden_in_compact_mode():
+    player = _np_player()
+    player._set_now_playing("Some Movie", "(2026)")
+    assert not player.np_title_lbl.isHidden()
+
+    # Entering compact hides the strip along with the other secondary
+    # controls; leaving compact re-derives it from CURRENT state. (_compact
+    # is normally set by _toggle_compact around _set_compact_controls.)
+    player._compact = True
+    player._set_compact_controls(True)
+    assert player.np_title_lbl.isHidden()
+    player._compact = False
+    player._set_compact_controls(False)
+    assert not player.np_title_lbl.isHidden()
+    assert player.np_title_lbl.text() == "Some Movie"
+
+    # A title arriving WHILE compact stays hidden until compact exits.
+    player._compact = True
+    player._set_compact_controls(True)
+    player._set_now_playing("Another Movie")
+    assert player.np_title_lbl.isHidden()
+    player._compact = False
+    player._set_compact_controls(False)
+    assert not player.np_title_lbl.isHidden()
+    assert player.np_title_lbl.text() == "Another Movie"
+
