@@ -1,8 +1,8 @@
 {
-  "version": "6.9",
-  "file": "DeepFlux-6.9-Linux-x86_64.AppImage",
-  "size": 611781112,
-  "sha256": "c498da10e387c5c3539312040c44075e7f75054b49b440408c70e7d840e0b69d",
-  "released": "2026-11-02",
-  "notes": "DeepFlux 6.9 for Linux - same release as Windows: the Play tab now names what you are watching in a strip right under the video (file name, channel with current programme, movie with year) and mirrors it in the window title so the taskbar and Alt-Tab show it too."
+  "version": "7.0",
+  "file": "DeepFlux-7.0-Linux-x86_64.AppImage",
+  "size": 611928568,
+  "sha256": "94b4faa872f0b79940dd33399ed84f2d25d813584a06ff8dab1ae855a9ffdf2d",
+  "released": "2026-11-03",
+  "notes": "DeepFlux 7.0 - Appearance refresh (Font Size setting, 1px outlines, pure-white text) and Play tab tree folders that show everything inside them at any depth."
 }
