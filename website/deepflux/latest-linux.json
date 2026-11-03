@@ -1,8 +1,8 @@
 {
-  "version": "7.0",
-  "file": "DeepFlux-7.0-Linux-x86_64.AppImage",
-  "size": 611928568,
-  "sha256": "94b4faa872f0b79940dd33399ed84f2d25d813584a06ff8dab1ae855a9ffdf2d",
-  "released": "2026-11-03",
-  "notes": "DeepFlux 7.0 - Appearance refresh (Font Size setting, 1px outlines, pure-white text) and Play tab tree folders that show everything inside them at any depth."
+  "version": "7.1",
+  "file": "DeepFlux-7.1-Linux-x86_64.AppImage",
+  "size": 611949048,
+  "sha256": "2947b829796ee2e030e4daecdbc2d400b3cddea41c0803bd24bf17f5a2c69d4d",
+  "released": "2026-11-04",
+  "notes": "DeepFlux 7.1 - New Text Color setting (Settings - Text Color: White / Light Blue / Blue / Dark Blue) that recolors every menu, list, chat and dialog, on a darker near-black background that keeps all four color themes easy to read. Error, warning and download-status colors stay unchanged."
 }
