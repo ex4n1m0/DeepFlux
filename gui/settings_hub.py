@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from gui.window_sizing import roomy
 from gui.i18n import tr
+from gui.fonts import scale_qss
 
 
 class SettingsHub(QDialog):
@@ -52,7 +53,7 @@ class SettingsHub(QDialog):
         bottom = QHBoxLayout()
         self._desc = QLabel("")
         self._desc.setWordWrap(True)
-        self._desc.setStyleSheet("color: #8a9ab0; font-size: 15px;")
+        self._desc.setStyleSheet(scale_qss("color: #ffffff; font-size: 15px;"))
         bottom.addWidget(self._desc, 1)
         open_btn = QPushButton(tr('Open…'))
         open_btn.setObjectName("btn_accent")

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from config import APP_VERSION
 from gui.window_sizing import roomy
 from gui.i18n import tr
+from gui.fonts import scale_qss
 
 
 HELP_HTML = r"""
@@ -30,18 +31,18 @@ HELP_HTML = r"""
     line-height: 1.6;
     padding: 8px;
   }
-  h1 { color: #2a7abf; font-size: 30px; border-bottom: 3px solid #1a2a4a; padding-bottom: 6px; }
-  h2 { color: #2a7abf; font-size: 24px; margin-top: 20px; }
-  h3 { color: #80f0ff; font-size: 20px; margin-top: 12px; }
+  h1 { color: #ffffff; font-size: 30px; border-bottom: 1px solid #1a2a4a; padding-bottom: 6px; }
+  h2 { color: #ffffff; font-size: 24px; margin-top: 20px; }
+  h3 { color: #ffffff; font-size: 20px; margin-top: 12px; }
   p { margin: 4px 0; }
   ul { margin: 4px 0; padding-left: 20px; }
   li { margin: 2px 0; }
-  code { color: #a8edff; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
+  code { color: #ffffff; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
   table { border-collapse: collapse; width: 100%; margin: 6px 0; }
-  th { color: #2a7abf; text-align: left; border-bottom: 3px solid #1a2a4a; padding: 4px 6px; }
-  td { border-bottom: 3px solid #111827; padding: 4px 6px; }
-  .note { background-color: #0d1117; border-left: 3px solid #2a7abf; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
-  .warn { background-color: #0d1117; border-left: 3px solid #ffcc00; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  th { color: #ffffff; text-align: left; border-bottom: 1px solid #1a2a4a; padding: 4px 6px; }
+  td { border-bottom: 1px solid #111827; padding: 4px 6px; }
+  .note { background-color: #0d1117; border-left: 1px solid #2a7abf; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  .warn { background-color: #0d1117; border-left: 1px solid #ffcc00; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
 </style>
 </head>
 <body>
@@ -138,6 +139,11 @@ Play page, section chips jump straight to Live TV / Movies / Series /
 Favorites / Recent. All commands live under the three real menus:
 <b>File</b> (actions), <b>Settings</b> (hub + labeled zones) and
 <b>Help</b>.</p>
+
+<p><b>Text too big or too small?</b> Settings → <b>Font Size</b> picks
+Small / Medium / Large for the whole interface (menus, lists, chat,
+dialogs). Like the Language setting above it, it applies the next time
+DeepFlux starts.</p>
 
 <p><b>Browsing full-screen:</b> while the Browse page is active, the site
 gets the whole window — the left rail and the address/tab bar hide and
@@ -549,7 +555,7 @@ exception — it lives on the browser toolbar's Bookmarks button.</p>
 
 <h2>DeepFlux Room — Community Chat</h2>
 
-<p>The <b>Room</b> page is the <span style="color:#a8edff">DeepFlux Room</span>,
+<p>The <b>Room</b> page is the <span style="color:#ffffff">DeepFlux Room</span>,
 the app's community chat. It embeds the <b>OnlyHumans</b> portal — the same
 room app served at onlyhumans.deepflux.space/join — so the room inside
 DeepFlux is always the latest version of the chat. It opens with the shared
@@ -729,7 +735,7 @@ class HelpDialog(QDialog):
         # (gui/help_dialog_zh.py mirrors this file section for section).
         from gui.help_dialog_zh import HELP_HTML_ZH
         from gui.i18n import active_language
-        browser.setHtml(HELP_HTML_ZH if active_language() == "zh" else HELP_HTML)
+        browser.setHtml(scale_qss(HELP_HTML_ZH if active_language() == "zh" else HELP_HTML))
         browser.setOpenExternalLinks(True)
         browser.setStyleSheet("""
             QTextBrowser {
@@ -742,21 +748,21 @@ class HelpDialog(QDialog):
 
         close_btn = QPushButton(tr('Close'))
         close_btn.clicked.connect(self.accept)
-        close_btn.setStyleSheet("""
+        close_btn.setStyleSheet(scale_qss("""
             QPushButton {
                 background-color: #111827;
                 color: #ffffff;
-                border: 3px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 padding: 2px 16px;
                 border-radius: 6px;
                 font-size: 20px;
             }
             QPushButton:hover {
                 background-color: #1a2a4a;
-                border: 3px solid #2a7abf;
-                color: #2a7abf;
+                border: 1px solid #2a7abf;
+                color: #ffffff;
             }
-        """)
+        """))
         layout.addWidget(close_btn)
 
 
@@ -773,11 +779,11 @@ class AboutDialog(QDialog):
 
         from PySide6.QtWidgets import QLabel
         title = QLabel(tr('DeepFlux'))
-        title.setStyleSheet("color: #2a7abf; font-size: 36px; font-weight: 700;")
+        title.setStyleSheet(scale_qss("color: #ffffff; font-size: 36px; font-weight: 700;"))
         layout.addWidget(title)
 
         version = QLabel(f"{APP_VERSION} — {tr('AI Deep Search')}")
-        version.setStyleSheet("color: #ffffff; font-size: 21px;")
+        version.setStyleSheet(scale_qss("color: #ffffff; font-size: 21px;"))
         layout.addWidget(version)
 
         desc = QLabel(
@@ -785,7 +791,7 @@ class AboutDialog(QDialog):
                "AI via DeepSeek / OpenRouter / custom\n"
                "Web search via DuckDuckGo, Brave, Perplexity (parallel)")
         )
-        desc.setStyleSheet("color: #8a9ab0; font-size: 18px;")
+        desc.setStyleSheet(scale_qss("color: #ffffff; font-size: 18px;"))
         layout.addWidget(desc)
 
         close_btn = QPushButton(tr('Close'))
@@ -794,15 +800,15 @@ class AboutDialog(QDialog):
             QPushButton {
                 background-color: #111827;
                 color: #ffffff;
-                border: 3px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 padding: 2px 16px;
                 border-radius: 6px;
                 margin-top: 12px;
             }
             QPushButton:hover {
                 background-color: #1a2a4a;
-                border: 3px solid #2a7abf;
-                color: #2a7abf;
+                border: 1px solid #2a7abf;
+                color: #ffffff;
             }
         """)
         layout.addWidget(close_btn)

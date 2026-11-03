@@ -10,6 +10,7 @@ the quick-ask surface.
 """
 from __future__ import annotations
 from gui.i18n import tr
+from gui.fonts import scale_qss
 
 import html
 
@@ -21,12 +22,12 @@ from PySide6.QtWidgets import (
 )
 
 _PANEL_CSS = (
-    "body { color: #e8eefc; font-family: 'Inter','Segoe UI',sans-serif;"
+    "body { color: #ffffff; font-family: 'Inter','Segoe UI',sans-serif;"
     " font-size: 13px; }"
-    ".u { color: #a8edff; font-weight: 600; }"
+    ".u { color: #ffffff; font-weight: 600; }"
     ".a { color: #ffffff; }"
     ".e { color: #f0b490; }"
-    ".w { color: #8a9ab0; font-size: 12px; }"
+    ".w { color: #ffffff; font-size: 12px; }"
 )
 
 _MAX_BLOCKS = 60          # hard cap on mirrored blocks (the panel is a tail view)
@@ -74,11 +75,11 @@ class AgentPanel(QFrame):
 
         self._view = QTextBrowser()
         self._view.setOpenLinks(False)
-        self._view.document().setDefaultStyleSheet(_PANEL_CSS)
-        self._view.setStyleSheet(
+        self._view.document().setDefaultStyleSheet(scale_qss(_PANEL_CSS))
+        self._view.setStyleSheet(scale_qss(
             "QTextBrowser { background-color: #0a0a0f; color: #ffffff;"
-            " border: 2px solid #1a2a4a; border-radius: 4px; padding: 4px;"
-            " font-size: 14px; }"
+            " border: 1px solid #1a2a4a; border-radius: 4px; padding: 4px;"
+            " font-size: 14px; }")
         )
         vbox.addWidget(self._view, 1)
 

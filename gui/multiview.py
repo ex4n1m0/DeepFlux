@@ -41,6 +41,7 @@ from iptv.models import Channel, SECTION_LIVE, SECTION_MOVIES
 from iptv.player import create_backend
 from gui.window_sizing import roomy
 from gui.i18n import tr
+from gui.fonts import scale_qss
 
 logger = logging.getLogger(__name__)
 
@@ -131,8 +132,8 @@ class GridTile(QWidget):
 
         self._empty_lbl = QLabel(tr('＋'))
         self._empty_lbl.setAlignment(Qt.AlignCenter)
-        self._empty_lbl.setStyleSheet(
-            "color: #3a465a; font-size: 42px; background-color: #0b0e14;")
+        self._empty_lbl.setStyleSheet(scale_qss(
+            "color: #ffffff; font-size: 42px; background-color: #0b0e14;"))
         self._empty_lbl.setParent(self.surface)
 
         strip = QWidget()
@@ -141,7 +142,7 @@ class GridTile(QWidget):
         row.setContentsMargins(4, 1, 4, 1)
         row.setSpacing(4)
         self.name_lbl = QLabel(tr('—'))
-        self.name_lbl.setStyleSheet("color: #ffffff; font-size: 17px;")
+        self.name_lbl.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px;"))
         # A QLabel's minimumSizeHint is its full text width, so a long scene
         # filename here would inflate the tile's (and thus the whole 4-column
         # grid's) minimum size — the grid blew up past the viewport the first

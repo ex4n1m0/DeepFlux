@@ -94,7 +94,7 @@ class RoomTab(QWidget):
         # browser tab).
         bar = QHBoxLayout()
         title = QLabel("DeepFlux Room")
-        title.setStyleSheet("color:#a8edff;font-weight:600")
+        title.setStyleSheet("color:#ffffff;font-weight:600")
         bar.addWidget(title)
         bar.addStretch(1)
         reload_btn = QPushButton("↻ Reload")
@@ -111,7 +111,7 @@ class RoomTab(QWidget):
         if _room_disabled_here():
             note = QLabel("Room is disabled in this environment "
                           "(DF_NO_ROOM is set).")
-            note.setStyleSheet("color:#5b6b7c")
+            note.setStyleSheet("color:#ffffff")
             note.setWordWrap(True)
             root.addWidget(note, 1)
             return

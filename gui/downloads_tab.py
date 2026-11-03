@@ -49,6 +49,7 @@ from dlmgr.job import JobStatus, SegmentStatus
 from gui.column_sizing import AutoColumnSizer
 from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 from gui.i18n import tr
+from gui.fonts import scale_qss
 
 logger = logging.getLogger(__name__)
 
@@ -510,7 +511,7 @@ class DownloadsTab(QWidget):
 
         def _dot() -> QLabel:
             lbl = QLabel(tr('·'))
-            lbl.setStyleSheet("color: #8a9ab0; border: none;")
+            lbl.setStyleSheet("color: #ffffff; border: none;")
             return lbl
 
         stats_row = ResponsiveRow()
@@ -569,16 +570,16 @@ class DownloadsTab(QWidget):
         empty_layout.addStretch(1)
         empty_glyph = QLabel(tr('⬇'))
         empty_glyph.setAlignment(Qt.AlignCenter)
-        empty_glyph.setStyleSheet("color: #3d5a80; font-size: 44px; border: none; background: transparent;")
+        empty_glyph.setStyleSheet(scale_qss("color: #ffffff; font-size: 44px; border: none; background: transparent;"))
         empty_layout.addWidget(empty_glyph)
         empty_title = QLabel(tr('No downloads yet'))
         empty_title.setAlignment(Qt.AlignCenter)
-        empty_title.setStyleSheet("color: #ffffff; font-size: 21px; font-weight: 600; border: none; background: transparent;")
+        empty_title.setStyleSheet(scale_qss("color: #ffffff; font-size: 21px; font-weight: 600; border: none; background: transparent;"))
         shrink_label(empty_title)  # QLabel minimums are full text width
         empty_layout.addWidget(empty_title)
         empty_text = QLabel(tr('Add a file, stream or YouTube link to start downloading.'))
         empty_text.setAlignment(Qt.AlignCenter)
-        empty_text.setStyleSheet("color: #8a9ab0; font-size: 17px; border: none; background: transparent;")
+        empty_text.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px; border: none; background: transparent;"))
         shrink_label(empty_text)
         empty_layout.addWidget(empty_text)
         self._empty_add_btn = QPushButton(tr('+ Add URL'))
@@ -604,7 +605,7 @@ class DownloadsTab(QWidget):
         details_layout.setContentsMargins(6, 2, 6, 4)
         details_layout.setSpacing(2)
         self.details_label = QLabel(tr('Select a download to see segment details.'))
-        self.details_label.setStyleSheet("color: #8a9ab0; font-size: 17px;")
+        self.details_label.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px;"))
         details_layout.addWidget(self.details_label)
 
         self.segment_table = QTableWidget()
@@ -666,7 +667,7 @@ class DownloadsTab(QWidget):
     @staticmethod
     def _stat_html(caption: str, value: str, accent: bool = False) -> str:
         color = "#a8edff" if accent else "#ffffff"
-        return (f'<span style="color:#8a9ab0;">{caption}</span> '
+        return (f'<span style="color:#ffffff;">{caption}</span> '
                 f'<b style="color:{color};">{value}</b>')
 
     def _update_summary(self, jobs) -> None:
@@ -680,7 +681,7 @@ class DownloadsTab(QWidget):
         self._stat_speed.setText(
             self._stat_html(tr("Speed"), _format_speed(speed), accent=speed > 0))
         self._stat_showing.setText(
-            f'<span style="color:#8a9ab0;">{tr("Showing")}: {showing}/{len(jobs)}</span>'
+            f'<span style="color:#ffffff;">{tr("Showing")}: {showing}/{len(jobs)}</span>'
             if showing != len(jobs) else "")
         self._summary_plain = (
             f"{tr('Active')}: {active} | {tr('Queued')}: {queued} | "

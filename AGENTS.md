@@ -594,6 +594,31 @@
 - Qt QSS does not support `text-transform`/`letter-spacing` — use
   `QFont.setCapitalization/setLetterSpacing` instead (see neon tab bar in
   `gui/main_window.py`).
+- Font size setting (2026-11-03): Settings → Font Size (Small/Medium/Large,
+  config `ui_font_size`, top-level like `ui_language` so the agent can NEVER
+  set it) scales the whole UI. Engine = `gui/fonts.py`: `set_font_scale()`
+  must run BEFORE `load_app_fonts()` at boot (`run_gui` loads the config
+  first for exactly this reason), and EVERY `setStyleSheet`/`setHtml`/
+  `setDefaultStyleSheet` string that contains `font-size:` must be wrapped
+  in `scale_qss(...)` — QSS px sizes do NOT follow the app font
+  (tests/test_font_scale.py pins the wrap coverage). Painted QFont sizes
+  fitted to geometry (channel-number tiles, HUD strip) deliberately do NOT
+  scale. Restart-to-apply, same convention as Language.
+- Outlines are 1px (owner decision 2026-11-03): QSS border widths are 1px
+  everywhere — do NOT re-introduce 2px/3px borders (`border-radius` values
+  are corner ROUNDING and stay as-is). Pinned by
+  tests/test_font_scale.py::test_no_thick_qss_borders.
+- Text is PURE WHITE (owner decision 2026-11-03): every QSS
+  `color:`/`selection-color:` literal is `#ffffff`, exempting only semantic
+  status colors (error reds, warning oranges, queued yellow, quiet-ok green
+  — see SEMANTIC_TEXT_COLORS in tests/test_font_scale.py, which pins it).
+  The old dim greys (#8a9ab0 family), off-whites, translucent chat text and
+  accent blue/cyan TEXT (#2a7abf/#a8edff as `color:`) are gone; accent blue
+  survives only in BACKGROUNDS/borders (buttons, selection highlights, HUD
+  bar fills). Python-side status palettes (downloads _STATUS_COLORS,
+  record-state colours) are data, not QSS, and keep their own colors. The
+  HUD's painted captions/values are white (warn/danger values keep color).
+
 - Splitter `setSizes()` before window show is overridden by size hints —
   enforce default ratios in `MainWindow.showEvent`.
 - Player fullscreen is TWO layers (5.4): regular fullscreen (F/⛶/double-click
@@ -1472,6 +1497,28 @@
   `items_for` / `categories_for` / `favorites` / `recent` all take an
   optional `source_id` (None = active source, so `agent/tools.py` and older
   callers are unaffected).
+- Category matching is SUBTREE-based everywhere (owner rule 2026-11-03, fix
+  for "clicking a tree folder only shows some posters"): groups are
+  hierarchies — provider group-titles like `VOD|Movies|Action` and local
+  disk paths like `MOVIES\Comedy` — so `items_for(section, category)`
+  returns the category AND every descendant (`_group_at_or_under`: equal or
+  prefix + a separator char `| / \ >`; `:` is punctuation, NOT a separator;
+  "MOVIES" never matches "MOVIES 2"). `_rebuild_categories` and
+  `years_by_category` synthesize ANCESTOR categories with subtree counts via
+  `_group_path_parts`, so every folder level appears in the sidebar (even
+  with zero direct items) and its count + year labels match what a click
+  shows. The sidebar itself stays FLAT (full-path labels as siblings) —
+  nesting the tree visually is a separate, not-requested change.
+  GROUPLESS items (local files loose in the library root, provider entries
+  without group-title) are the "Uncategorized" folder — `items_for`
+  normalizes `group or "Uncategorized"` to match (the old `group or ""`
+  compared against a name no item ever had, so that node — and its year
+  children — showed NOTHING while the section above showed everything;
+  owner report 2026-11-03).
+  Tests: tests/test_iptv.py test_items_for_category_matches_whole_subtree /
+  test_categories_synthesize_ancestors_with_subtree_counts /
+  test_years_by_category_credits_ancestors /
+  test_uncategorized_folder_shows_ungrouped_items.
   Loading must NOT claim "active": every assignment is
   `self._active_source_id = self._active_source_id or source.id`, otherwise
   the last source to finish yanks the user's selection mid-browse.

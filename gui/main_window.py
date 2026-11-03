@@ -116,6 +116,7 @@ if _PLAY_TAB_SUPPORTED:
     from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog
 from gui.room_tab import RoomTab
 from gui.voice_input import MIN_SECONDS, SAMPLE_RATE as VOICE_SAMPLE_RATE, VoiceRecorder, VoiceTranscriber, pcm_to_whisper_audio
+from gui.fonts import scale_qss
 from dlmgr.engine import DownloadEngine
 from dlmgr.control_api import ControlAPI
 from gui.window_sizing import roomy
@@ -234,49 +235,49 @@ CHAT_CSS = """
 body { font-family: 'Inter', 'Segoe UI', sans-serif; font-size: 18px; color: #ffffff; background-color: transparent; }
 p { padding: 2px 4px; }
 .msg-user {
-    border-left: 3px solid #2a7abf;
+    border-left: 1px solid #2a7abf;
     padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 .msg-agent {
-    border-left: 3px solid #a8edff;
+    border-left: 1px solid #a8edff;
     padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 .msg-event {
-    border-left: 3px solid #1a2a4a;
+    border-left: 1px solid #1a2a4a;
     padding: 4px 10px; margin: 3px 0; border-radius: 4px;
-    color: #4a6a8a; font-size: 18px;
+    color: #ffffff; font-size: 18px;
 }
 .msg-debug {
-    border-left: 3px solid #2a2a3a;
+    border-left: 1px solid #2a2a3a;
     padding: 4px 10px; margin: 3px 0; border-radius: 4px;
     color: #5a7a6a; font-size: 17px;
     font-family: 'JetBrains Mono', 'Cascadia Mono', 'Consolas', monospace;
     white-space: pre-wrap;
 }
 .msg-error {
-    border-left: 3px solid #ff3366;
+    border-left: 1px solid #ff3366;
     padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ff8080;
 }
 .msg-pending {
-    border-left: 3px solid #ffcc00;
+    border-left: 1px solid #ffcc00;
     padding: 4px 8px; margin: 3px 0; border-radius: 4px; color: #ffffff;
 }
 table { border-collapse: collapse; width: 100%; margin: 8px 0; border-radius: 6px; overflow: hidden; }
-th { color: #2a7abf; padding: 2px 8px; text-align: left; font-size: 18px; font-weight: 600; border-bottom: 3px solid #1a2a4a; }
-td { border: none; border-bottom: 3px solid #1a2a4a; padding: 2px 8px; font-size: 18px; color: #ffffff; }
-h2 { color: #2a7abf; font-size: 21px; margin: 12px 0 6px 0; font-weight: 700; }
-h3 { color: #2a7abf; font-size: 20px; margin: 10px 0 4px 0; font-weight: 600; }
-h4 { color: #8a9ab0; font-size: 18px; margin: 8px 0 4px 0; }
-code { background-color: #000000; padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: 18px; color: #2a7abf; }
-hr { border: none; border-top: 3px solid #1a2a4a; margin: 12px 0; }
-a { color: #2a7abf; text-decoration: none; }
-a:hover { color: #80f0ff; }
+th { color: #ffffff; padding: 2px 8px; text-align: left; font-size: 18px; font-weight: 600; border-bottom: 1px solid #1a2a4a; }
+td { border: none; border-bottom: 1px solid #1a2a4a; padding: 2px 8px; font-size: 18px; color: #ffffff; }
+h2 { color: #ffffff; font-size: 21px; margin: 12px 0 6px 0; font-weight: 700; }
+h3 { color: #ffffff; font-size: 20px; margin: 10px 0 4px 0; font-weight: 600; }
+h4 { color: #ffffff; font-size: 18px; margin: 8px 0 4px 0; }
+code { background-color: #000000; padding: 2px 6px; border-radius: 4px; font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace; font-size: 18px; color: #ffffff; }
+hr { border: none; border-top: 1px solid #1a2a4a; margin: 12px 0; }
+a { color: #ffffff; text-decoration: none; }
+a:hover { color: #ffffff; }
 ul { margin: 4px 0 4px 20px; }
 ol { margin: 4px 0 4px 20px; }
 li { margin: 2px 0; color: #ffffff; }
-b { color: #e8f0f8; }
-i { color: #8a9ab0; }
-blockquote { border-left: 3px solid #1a2a4a; margin: 6px 0; padding: 4px 12px; color: #4a6a8a; }
+b { color: #ffffff; }
+i { color: #ffffff; }
+blockquote { border-left: 1px solid #1a2a4a; margin: 6px 0; padding: 4px 12px; color: #ffffff; }
 """
 
 
@@ -545,7 +546,7 @@ class _DeepFluxSchemeHandler(QWebEngineUrlSchemeHandler):  # noqa: N801
         else:
             import html
             safe_path = html.escape(path)
-            body = (f"<html><body style='background:#000;color:#8a9ab0;font-family:sans-serif;"
+            body = (f"<html><body style='background:#000;color:#ffffff;font-family:sans-serif;"
                     f"display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
                     f"<h2>404 — deepflux://{safe_path} not found</h2></body></html>")
             mime = "text/html; charset=utf-8"
@@ -965,7 +966,7 @@ class MainWindow(QMainWindow):
                     pass
 
         # Dark cyberpunk theme for the whole window.
-        self.setStyleSheet("""
+        self.setStyleSheet(scale_qss("""
             /* === Global === */
             QMainWindow, QWidget {
                 background-color: #0a0a0f;
@@ -980,14 +981,14 @@ class MainWindow(QMainWindow):
             QMenuBar {
                 background-color: #0d1117;
                 color: #ffffff;
-                border-bottom: 3px solid #1a2a4a;
+                border-bottom: 1px solid #1a2a4a;
                 padding: 0px;
             }
             QMenuBar::item { padding: 2px 10px; }
             QMenuBar::item:selected { background-color: #1a2a4a; border-radius: 4px; }
 
             /* === Activity rail (v5 navigation) === */
-            #activity_rail { background-color: #0d1117; border-right: 3px solid #1a2a4a; }
+            #activity_rail { background-color: #0d1117; border-right: 1px solid #1a2a4a; }
             QFrame[railBtn="true"] {
                 background: transparent;
                 border: 1px solid transparent;
@@ -1007,9 +1008,9 @@ class MainWindow(QMainWindow):
             }
             QLabel[railText="true"] {
                 background: transparent; border: none;
-                font-size: 11px; color: #8a9ab0;
+                font-size: 11px; color: #ffffff;
             }
-            QFrame[railBtn="true"][active="true"] QLabel[railText="true"] { color: #a8edff; }
+            QFrame[railBtn="true"][active="true"] QLabel[railText="true"] { color: #ffffff; }
             QLabel[railBadge="true"] {
                 background-color: #2a7abf; color: #ffffff;
                 border-radius: 7px; font-size: 11px; font-weight: 700;
@@ -1017,14 +1018,14 @@ class MainWindow(QMainWindow):
             }
 
             /* === Agent quick-ask panel (v5) === */
-            #agent_panel { background-color: #0d1117; border-left: 3px solid #1a2a4a; }
+            #agent_panel { background-color: #0d1117; border-left: 1px solid #1a2a4a; }
             #agent_panel QLabel#panel_title { font-size: 16px; font-weight: 700; }
 
             /* === Agent first-run setup cards (v5.1) === */
             QPushButton#setup_card {
                 background-color: #111827;
                 color: #ffffff;
-                border: 2px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 border-radius: 8px;
                 padding: 10px 16px;
                 font-size: 16px;
@@ -1033,13 +1034,13 @@ class MainWindow(QMainWindow):
             }
             QPushButton#setup_card:hover {
                 background-color: #1a2a4a;
-                border: 2px solid #2a7abf;
+                border: 1px solid #2a7abf;
             }
 
             /* === Play section chips (v5.1) === */
             QPushButton#chip_btn {
                 background: transparent;
-                color: #8a9ab0;
+                color: #ffffff;
                 border: 1px solid #1a2a4a;
                 border-radius: 999px;
                 padding: 2px 14px;
@@ -1048,14 +1049,14 @@ class MainWindow(QMainWindow):
             QPushButton#chip_btn:hover { color: #ffffff; border-color: #2a7abf; }
             QPushButton#chip_btn[on="true"] {
                 background-color: #1a2a4a;
-                color: #a8edff;
+                color: #ffffff;
                 border: 1px solid #2a7abf;
             }
 
             /* === Status-bar chips + bell (v5) === */
             QPushButton#status_chip {
                 background: transparent;
-                color: #8a9ab0;
+                color: #ffffff;
                 border: 1px solid transparent;
                 border-radius: 4px;
                 padding: 1px 8px;
@@ -1069,32 +1070,32 @@ class MainWindow(QMainWindow):
             QMenu {
                 background-color: #111827;
                 color: #ffffff;
-                border: 3px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 border-radius: 6px;
                 padding: 4px;
             }
             QMenu::item { padding: 3px 20px; border-radius: 4px; }
-            QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }
+            QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }
 
             /* === Tables === */
             QTableWidget {
                 background-color: #0d1117;
                 color: #ffffff;
                 gridline-color: #1a2a4a;
-                border: 3px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 border-radius: 6px;
                 selection-background-color: #1a2a4a;
-                selection-color: #2a7abf;
+                selection-color: #ffffff;
                 alternate-background-color: #0f1520;
                 font-size: 18px;
             }
             QTableWidget::item { padding: 1px 4px; }
-            QTableWidget::item:selected { background-color: #1a2a4a; color: #2a7abf; }
+            QTableWidget::item:selected { background-color: #1a2a4a; color: #ffffff; }
             QHeaderView::section {
                 background-color: #111827;
-                color: #2a7abf;
+                color: #ffffff;
                 border: none;
-                border-bottom: 3px solid #1a2a4a;
+                border-bottom: 1px solid #1a2a4a;
                 padding: 2px 4px;
                 font-weight: 600;
                 font-size: 17px;
@@ -1104,7 +1105,7 @@ class MainWindow(QMainWindow):
             QPushButton {
                 background-color: #111827;
                 color: #ffffff;
-                border: 3px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 border-radius: 3px;
                 padding: 2px 10px;
                 font-size: 18px;
@@ -1112,34 +1113,34 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover {
                 background-color: #1a2a4a;
-                border: 3px solid #2a7abf;
-                color: #2a7abf;
+                border: 1px solid #2a7abf;
+                color: #ffffff;
             }
             QPushButton:pressed {
                 background-color: #0a1a2a;
             }
             QPushButton:disabled {
                 background-color: #0d1117;
-                color: #3a4a5a;
+                color: #ffffff;
                 border-color: #1a2a4a;
             }
 
             /* === Primary action buttons (accent) === */
             QPushButton#btn_accent {
                 background-color: #0a1a2e;
-                border: 3px solid #2a7abf;
-                color: #2a7abf;
+                border: 1px solid #2a7abf;
+                color: #ffffff;
             }
             QPushButton#btn_accent:hover {
                 background-color: #2a7abf;
-                color: #0a0a0f;
+                color: #ffffff;
             }
 
             /* === Secondary buttons (subtle) === */
             QPushButton#btn_secondary {
                 background-color: #111827;
-                border: 3px solid #1a2a4a;
-                color: #8a9ab0;
+                border: 1px solid #1a2a4a;
+                color: #ffffff;
             }
             QPushButton#btn_secondary:hover {
                 background-color: #1a2a4a;
@@ -1150,17 +1151,17 @@ class MainWindow(QMainWindow):
             QLineEdit {
                 background-color: #0d1117;
                 color: #ffffff;
-                border: 3px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 border-radius: 3px;
                 padding: 2px 8px;
                 font-size: 18px;
                 selection-background-color: #1a2a4a;
             }
             QLineEdit:focus {
-                border: 3px solid #2a7abf;
+                border: 1px solid #2a7abf;
             }
             QLineEdit::placeholder {
-                color: #3a4a5a;
+                color: #ffffff;
             }
             /* Large hero inputs: Agent chat + Browser web search. */
             QLineEdit#big_input {
@@ -1180,7 +1181,7 @@ class MainWindow(QMainWindow):
 
             /* === Tabs === */
             QTabWidget::pane {
-                border: 3px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 background-color: #000000;
             }
             /* Main tab bar is hidden — navigation lives in the menus. */
@@ -1216,29 +1217,29 @@ class MainWindow(QMainWindow):
             QWidget#browser_strip QToolButton {
                 background-color: #0d1117;
                 color: #ffffff;
-                border: 3px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 border-radius: 3px;
                 padding: 2px 8px;
             }
             QWidget#browser_strip QPushButton:hover,
             QWidget#browser_strip QToolButton:hover {
                 background-color: #1a2a4a;
-                border: 3px solid #2a7abf;
-                color: #2a7abf;
+                border: 1px solid #2a7abf;
+                color: #ffffff;
             }
             QTabBar::tab {
                 background-color: #0d1117;
-                color: #8a9ab0;
+                color: #ffffff;
                 padding: 2px 12px;
                 margin-right: 2px;
-                border: 3px solid #1a2a4a;
+                border: 1px solid #1a2a4a;
                 border-bottom: none;
                 border-top-left-radius: 6px;
                 border-top-right-radius: 6px;
             }
             QTabBar::tab:selected {
                 background-color: #0a0a0f;
-                color: #2a7abf;
+                color: #ffffff;
                 border-color: #2a7abf;
             }
             QTabBar::tab:hover:!selected {
@@ -1276,12 +1277,12 @@ class MainWindow(QMainWindow):
 
             /* === Section labels === */
             QLabel#section_label {
-                color: #2a7abf;
+                color: #ffffff;
                 font-size: 17px;
                 font-weight: 600;
                 padding: 0px;
             }
-        """)
+        """))
 
         self._build_ui()
         self._start_refresh_timer()
@@ -1526,8 +1527,8 @@ class MainWindow(QMainWindow):
         # (most visible on the 20-row web-sweep results table).
         self.chat_history.setViewportMargins(0, 0, 0, 28)
         self.chat_history.anchorClicked.connect(self._on_chat_link_clicked)
-        self.chat_history.document().setDefaultStyleSheet(CHAT_CSS)
-        self.chat_history.setStyleSheet("QTextBrowser { background-color: transparent; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 3px; padding: 2px; }")
+        self.chat_history.document().setDefaultStyleSheet(scale_qss(CHAT_CSS))
+        self.chat_history.setStyleSheet("QTextBrowser { background-color: transparent; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 3px; padding: 2px; }")
         agents_tab_layout.addWidget(self.chat_history)
 
         # First-run setup cards (v5.1): visible while the chat is fresh, so a
@@ -2253,6 +2254,22 @@ class MainWindow(QMainWindow):
                 lambda _checked=False, code=_code: self._set_ui_language(code))
         settings_menu.addSeparator()
 
+        # Font size: same restart-to-apply convention as Language. Display
+        # scaling differs per machine — one click either way covers the
+        # "font too big here / too small there" reports.
+        _file_zone(settings_menu, tr("Font Size"))
+        size_group = QActionGroup(settings_menu)
+        for _size, _size_label in (("small", tr("Small")),
+                                   ("medium", tr("Medium")),
+                                   ("large", tr("Large"))):
+            _size_act = settings_menu.addAction(_size_label)
+            _size_act.setCheckable(True)
+            _size_act.setChecked(getattr(self.config, "ui_font_size", "medium") == _size)
+            size_group.addAction(_size_act)
+            _size_act.triggered.connect(
+                lambda _checked=False, size=_size: self._set_ui_font_size(size))
+        settings_menu.addSeparator()
+
         _file_zone(settings_menu, tr("AI & API Keys"))
         for label, page in API_KEY_PAGES:
             action = _file_item(settings_menu, tr(label))
@@ -2363,10 +2380,10 @@ class MainWindow(QMainWindow):
         page and jump to their page on click; the bell keeps a persistent log
         of events that previously lived only in the Agent transcript or a
         six-second tray balloon."""
-        self.statusBar().setStyleSheet("QStatusBar { background: #0d1117; border-top: 3px solid #1a2a4a; }")
+        self.statusBar().setStyleSheet("QStatusBar { background: #0d1117; border-top: 1px solid #1a2a4a; }")
         # Left: hovered link URL (browser linkHovered).
         self._hover_label = QLabel("")
-        self._hover_label.setStyleSheet("color: #8a9ab0; font-size: 17px; padding: 2px 8px;")
+        self._hover_label.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px; padding: 2px 8px;"))
         self.statusBar().addWidget(self._hover_label, 1)
 
         # Center-right chips: downloads + agent. Flat buttons styled by QSS.
@@ -2392,7 +2409,7 @@ class MainWindow(QMainWindow):
 
         # Right: permanent transfer summary.
         self._status_label = QLabel(tr("Ready"))
-        self._status_label.setStyleSheet("color: #8a9ab0; font-size: 17px; padding: 2px 8px;")
+        self._status_label.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px; padding: 2px 8px;"))
         self._status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.statusBar().addPermanentWidget(self._status_label)
 
@@ -2626,6 +2643,18 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, tr("Language"),
             tr("The new language applies after DeepFlux restarts."))
+
+    def _set_ui_font_size(self, size: str) -> None:
+        """Settings-menu font-size picker (gui/fonts): persist + inform. The
+        scale applies on the next launch — stylesheets bake their font
+        sizes at setStyleSheet time, same restart convention as Language."""
+        if getattr(self.config, "ui_font_size", "medium") == size:
+            return
+        self.config.ui_font_size = size
+        self.config.to_file(self.config_path)
+        QMessageBox.information(
+            self, tr("Font Size"),
+            tr("The new font size applies after DeepFlux restarts."))
 
     def _popup_settings_menu(self) -> None:
         """Ctrl+,,: open the Settings menu pinned under its menu-bar title."""
@@ -3588,14 +3617,14 @@ class MainWindow(QMainWindow):
             is_active = i == current
             chip.setStyleSheet(
                 f"background: {'#1a2a4a' if is_active else '#0d1117'};"
-                f" border: 3px solid {'#2a7abf' if is_active else '#1a2a4a'};"
+                f" border: 1px solid {'#2a7abf' if is_active else '#1a2a4a'};"
                 " border-radius: 3px;")
             cl = QHBoxLayout(chip)
             cl.setContentsMargins(6, 1, 2, 1)
             cl.setSpacing(2)
             lbl = QLabel(self.browser_tabs.tabText(i))
-            lbl.setStyleSheet(
-                f"background: transparent; color: {'#2a7abf' if is_active else '#8a9ab0'}; font-size: 17px;")
+            lbl.setStyleSheet(scale_qss(
+                f"background: transparent; color: {'#2a7abf' if is_active else '#8a9ab0'}; font-size: 17px;"))
             lbl.setCursor(Qt.PointingHandCursor)
             lbl.mousePressEvent = lambda _e, idx=i: self.browser_tabs.setCurrentIndex(idx)
             cl.addWidget(lbl)
@@ -3603,9 +3632,9 @@ class MainWindow(QMainWindow):
                 x = QPushButton(tr('×'))
                 x.setFixedSize(14, 14)
                 x.setAttribute(Qt.WA_StyledBackground)
-                x.setStyleSheet(
+                x.setStyleSheet(scale_qss(
                     "QPushButton { background: transparent; color: #ff6666; border: none; font-size: 18px; font-weight: 700; }"
-                    "QPushButton:hover { color: #ff3366; background: #3a1a2a; border-radius: 3px; }")
+                    "QPushButton:hover { color: #ff3366; background: #3a1a2a; border-radius: 3px; }"))
                 x.clicked.connect(lambda _c, idx=i: self._browser_close_tab(idx))
                 cl.addWidget(x)
             layout.addWidget(chip)
@@ -3825,8 +3854,8 @@ class MainWindow(QMainWindow):
             "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'\">"
             "<style>"
             "#df-clock { position:fixed; top:10px; left:10px; "
-            "background:linear-gradient(135deg, #011d3e, #001431); color:#2a7abf; "
-            "border:3px solid #2a7abf; border-radius:5px; padding:4px 7px; "
+            "background:linear-gradient(135deg, #011d3e, #001431); color:#ffffff; "
+            "border: 1px solid #2a7abf; border-radius:5px; padding:4px 7px; "
             "font-family:'Segoe UI', Arial, sans-serif; font-size:11px; font-weight:600; "
             "box-shadow:0 2px 6px rgba(42, 122, 191, 0.3); user-select:none; "
             "display:flex; align-items:center; gap:4px; }"
@@ -4766,12 +4795,12 @@ class MainWindow(QMainWindow):
             safe = safe[lead_m.end():]
         if kind == "reasoning":
             if not self._stream_reasoning_started:
-                self._stream_append('<span style="color:#8a7aaa; font-size:18px">🧠 ')
+                self._stream_append('<span style="color:#ffffff; font-size:18px">🧠 ')
                 self._stream_reasoning_started = True
             if lead:
                 self._stream_insert_text(lead)
             if safe:
-                self._stream_append(f'<span style="color:#8a7aaa; font-size:18px">{safe}</span>')
+                self._stream_append(f'<span style="color:#ffffff; font-size:18px">{safe}</span>')
             return
         if self._stream_reasoning_started and self._stream_content_start is None:
             self._stream_append("<br><br>")  # separate thinking from the answer
@@ -5698,7 +5727,7 @@ class MainWindow(QMainWindow):
         if not info_hash:
             return
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
+        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }")
 
         act_remove = menu.addAction(tr('Remove from list (keep files)'))
         act_delete = menu.addAction(tr('Remove and delete files'))
@@ -6106,7 +6135,7 @@ class MainWindow(QMainWindow):
         self._tray = QSystemTrayIcon(icon, self)
         self._tray.setToolTip(tr('DeepFlux'))
         menu = QMenu()
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
+        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }")
         menu.addAction(tr('Show DeepFlux'), self._tray_restore)
         menu.addAction(tr('Quit'), self._tray_quit)
         self._tray.setContextMenu(menu)
@@ -6422,7 +6451,7 @@ class MainWindow(QMainWindow):
         """Play-tab gear button: IPTV settings are split into focused pages —
         show a picker menu at the cursor."""
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }")
+        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }")
         chosen: Dict[str, Any] = {}
         for label, cls in IPTV_SETTINGS_PAGES:
             menu.addAction(tr(label), lambda _c=False, page_cls=cls: chosen.update(cls=page_cls))
@@ -6886,15 +6915,18 @@ def run_gui(config_path: Optional[str] = None, open_targets: Optional[List[str]]
     register_deepflux_scheme()
     app = QApplication(sys.argv)
     app.setApplicationName("Deeptorrent")
-    from gui.fonts import load_app_fonts
-    load_app_fonts(app)  # bundled fonts → identical text metrics on every machine
-    # UI language is fixed for the whole process BEFORE any widget builds its
-    # labels (restart-to-apply; gui/i18n contract).
+    # UI language AND font size are fixed for the whole process BEFORE any
+    # widget builds its labels / any stylesheet is applied (restart-to-apply;
+    # gui/i18n + gui/fonts contracts) — so the config loads first, then the
+    # bundled fonts (identical text metrics on every machine, scaled).
     from gui.i18n import set_language
     from config import DeeptorrentConfig as _Cfg
     _cfg_path = config_path or _Cfg.default_config_path()
     _cfg_existed = os.path.isfile(_cfg_path)
     _cfg = _Cfg.from_file(_cfg_path)
+    from gui.fonts import load_app_fonts, set_font_scale
+    set_font_scale(_cfg.ui_font_size)
+    load_app_fonts(app)
     # Fresh frozen-Linux installs have no installer to seed the sample
     # playlist — apply the same seed the Inno postinstall step writes.
     try:

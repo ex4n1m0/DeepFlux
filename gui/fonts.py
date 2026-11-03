@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -49,6 +50,60 @@ _FONT_FILES = ("Inter.ttf", "JetBrainsMono.ttf")
 # font — menus included — renders at 13pt.
 _UI_POINT_SIZE = 13
 
+# UI font size setting (Settings → Font Size): one multiplier for the app
+# font point size AND every stylesheet font-size (via scale_qss). Display
+# scaling differs per machine, so what reads fine on one screen is too
+# big/small on another; small/large are ±~15%. "medium" is scale 1.0 —
+# byte-identical to the pre-setting look.
+FONT_SCALES = {"small": 0.85, "medium": 1.0, "large": 1.15}
+_font_scale = 1.0
+
+_FONT_SIZE_RE = re.compile(r"font-size:\s*(\d+(?:\.\d+)?)\s*(px|pt)")
+
+
+def set_font_scale(mode: str) -> None:
+    """Set the process-wide font scale from the config's ui_font_size.
+
+    Called ONCE at boot (gui.main_window.run_gui) BEFORE load_app_fonts —
+    QSS font sizes are baked at setStyleSheet time, so a later change can
+    only take effect next launch. Unknown values fail closed to medium.
+    """
+    global _font_scale
+    _font_scale = FONT_SCALES.get((mode or "").strip().lower(), 1.0)
+
+
+def font_scale() -> float:
+    return _font_scale
+
+
+def ui_point_size() -> int:
+    """The application font's point size at the current scale (11/13/15pt)."""
+    return max(9, round(_UI_POINT_SIZE * _font_scale))
+
+
+def scale_qss(css: str) -> str:
+    """Scale every `font-size: Npx`/`Npt` in a QSS/HTML-CSS string to the
+    current font scale. Stylesheets pin absolute sizes that would otherwise
+    NOT follow the app font — every setStyleSheet/setHtml string that sets
+    font-size must go through this. Border widths, paddings and radii are
+    untouched.
+    """
+    if _font_scale == 1.0:
+        return css
+
+    def _scaled(m: "re.Match[str]") -> str:
+        value = float(m.group(1)) * _font_scale
+        unit = m.group(2)
+        if unit == "px":
+            value = max(1.0, round(value))
+            text = f"{value:.0f}"
+        else:
+            value = max(1.0, round(value, 1))
+            text = f"{value:.1f}".rstrip("0").rstrip(".")
+        return f"font-size: {text}{unit}"
+
+    return _FONT_SIZE_RE.sub(_scaled, css)
+
 
 def _fonts_dir() -> Path:
     """packaging/fonts — works frozen (PyInstaller onedir) and from source."""
@@ -80,8 +135,8 @@ def load_app_fonts(app) -> bool:
         logger.warning("Bundled UI font %r unavailable — keeping system default font", UI_FONT)
         return False
 
-    app_font = QFont(UI_FONT, _UI_POINT_SIZE)
+    app_font = QFont(UI_FONT, ui_point_size())
     app_font.setFamilies(list(UI_FALLBACK_FAMILIES))
     app.setFont(app_font)
-    logger.info("UI font: %s %dpt (registered families: %s)", UI_FONT, _UI_POINT_SIZE, ", ".join(loaded))
+    logger.info("UI font: %s %dpt (registered families: %s)", UI_FONT, ui_point_size(), ", ".join(loaded))
     return True

@@ -21,18 +21,18 @@ HELP_HTML_ZH = r"""
     line-height: 1.7;
     padding: 8px;
   }
-  h1 { color: #2a7abf; font-size: 30px; border-bottom: 3px solid #1a2a4a; padding-bottom: 6px; }
-  h2 { color: #2a7abf; font-size: 24px; margin-top: 20px; }
-  h3 { color: #80f0ff; font-size: 20px; margin-top: 12px; }
+  h1 { color: #ffffff; font-size: 30px; border-bottom: 1px solid #1a2a4a; padding-bottom: 6px; }
+  h2 { color: #ffffff; font-size: 24px; margin-top: 20px; }
+  h3 { color: #ffffff; font-size: 20px; margin-top: 12px; }
   p { margin: 4px 0; }
   ul { margin: 4px 0; padding-left: 20px; }
   li { margin: 2px 0; }
-  code { color: #a8edff; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
+  code { color: #ffffff; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
   table { border-collapse: collapse; width: 100%; margin: 6px 0; }
-  th { color: #2a7abf; text-align: left; border-bottom: 3px solid #1a2a4a; padding: 4px 6px; }
-  td { border-bottom: 3px solid #111827; padding: 4px 6px; }
-  .note { background-color: #0d1117; border-left: 3px solid #2a7abf; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
-  .warn { background-color: #0d1117; border-left: 3px solid #ffcc00; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  th { color: #ffffff; text-align: left; border-bottom: 1px solid #1a2a4a; padding: 4px 6px; }
+  td { border-bottom: 1px solid #111827; padding: 4px 6px; }
+  .note { background-color: #0d1117; border-left: 1px solid #2a7abf; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  .warn { background-color: #0d1117; border-left: 1px solid #ffcc00; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
 </style>
 </head>
 <body>
@@ -115,6 +115,10 @@ FFmpeg（用于海报、字幕和录制）不随包附带 —— 请用系统包
 在下载页，视图标签（<b>两者 / 种子 / 下载</b>）让任一列表独占全宽；在播放页，
 分区标签直达直播 / 电影 / 剧集 / 收藏 / 最近播放。所有命令都在三个真正的
 菜单里：<b>文件</b>（操作）、<b>设置</b>（中心 + 分区）和<b>帮助</b>。</p>
+
+<p><b>字体太大或太小？</b>设置 → <b>字体大小</b> 可为整个界面（菜单、列表、
+聊天、对话框）选择 小 / 中 / 大；与上方的语言设置一样，重启 DeepFlux 后
+生效。</p>
 
 <p><b>全屏浏览：</b>浏览页激活时，网站独占整个窗口 —— 左侧活动栏和地址/标签栏
 都会隐藏，页面被推开而不是被遮挡。把鼠标移到最顶边缘即可唤出地址栏和标签栏，
@@ -446,7 +450,7 @@ AI 是可选功能，之后在 设置 → AI 与 API 密钥 → <i>AI 智能体�
 
 <h2>DeepFlux Room —— 社区聊天</h2>
 
-<p><b>聊天室</b>页面就是 <span style="color:#a8edff">DeepFlux Room</span>，
+<p><b>聊天室</b>页面就是 <span style="color:#ffffff">DeepFlux Room</span>，
 本应用的社区聊天。它内嵌 <b>OnlyHumans</b> 门户 —— 与
 onlyhumans.deepflux.space/join 上同一个房间应用 —— 所以 DeepFlux 里的房间
 永远是聊天程序的最新版本。打开时已预填共享社区房间词 <b>“deepflux”</b>，

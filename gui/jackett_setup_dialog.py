@@ -13,6 +13,7 @@ cancel offer instead (partial downloads resume on the next run).
 """
 from __future__ import annotations
 from gui.i18n import tr
+from gui.fonts import scale_qss
 
 import sys
 import threading
@@ -43,24 +44,24 @@ QLabel#heading {
     font-size: 15pt;
     font-weight: 600;
 }
-QLabel#subline { color: #8a9ab0; font-size: 13px; }
+QLabel#subline { color: #ffffff; font-size: 13px; }
 QPlainTextEdit {
     background-color: #0d1117;
-    color: #d7e3f4;
-    border: 3px solid #1a2a4a;
+    color: #ffffff;
+    border: 1px solid #1a2a4a;
     border-radius: 6px;
     font-size: 13px;
 }
 QPushButton {
     background-color: #111827;
     color: #ffffff;
-    border: 3px solid #1a2a4a;
+    border: 1px solid #1a2a4a;
     border-radius: 3px;
     padding: 6px 22px;
     font-size: 14px;
 }
 QPushButton:hover:enabled { border-color: #a8edff; }
-QPushButton:disabled { color: #5a6a80; }
+QPushButton:disabled { color: #ffffff; }
 """
 
 
@@ -169,7 +170,7 @@ class JackettSetupDialog(QDialog):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(root)
-        self.setStyleSheet(_STYLE)
+        self.setStyleSheet(scale_qss(_STYLE))
         self.resize(640, 460)
 
         self._worker = _SetupWorker(config_path, mode=self._mode, parent=self)
@@ -276,7 +277,13 @@ def run_setup_jackett_dialog(config_path: Optional[str] = None,
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Deeptorrent")
     try:
-        from gui.fonts import load_app_fonts
+        from gui.fonts import load_app_fonts, set_font_scale
+        # Match the main app's boot order: the saved font scale must be set
+        # BEFORE the app font is applied (gui/fonts contract).
+        from config import DeeptorrentConfig
+        _cfg = DeeptorrentConfig.from_file(
+            config_path or DeeptorrentConfig.default_config_path())
+        set_font_scale(_cfg.ui_font_size)
         load_app_fonts(app)
     except Exception:
         pass

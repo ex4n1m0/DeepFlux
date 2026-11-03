@@ -2996,6 +2996,117 @@ def test_items_for_year_filter(tmp_path):
     mgr.shutdown()
 
 
+def _tree_manager(tmp_path):
+    """Manager with HIERARCHICAL groups: provider pipes + local disk paths.
+
+    The tree click path must show a folder's whole subtree regardless of
+    nesting depth (owner report 2026-11-03)."""
+    a = PlaylistSource(id="a", name="A", kind="m3u_url", url="http://a/p.m3u")
+    mgr = IPTVManager(sources=[a], data_dir=str(tmp_path))
+    pl = Playlist(source_id="a")
+    for i, (name, group, year) in enumerate((
+            ("Direct VOD", "VOD", "2024"),
+            ("Nested Action", "VOD|Movies|Action", "2023"),
+            ("Local Comedy", "MOVIES\\Comedy", "2022"),
+            ("Local Deep", "MOVIES\\Comedy\\Drama", "2021"),
+            ("Lookalike", "MOVIES 2", "2020"))):
+        pl.movies.append(Movie(id=make_id("a", f"m{i}"), name=name,
+                               url=f"http://a/{i}.mkv", section=SECTION_MOVIES,
+                               year=year, group=group))
+    mgr._playlists["a"] = pl
+    mgr._active_source_id = "a"
+    return mgr
+
+
+def test_items_for_category_matches_whole_subtree(tmp_path):
+    """Clicking a folder shows EVERYTHING beneath it, at any depth — for
+    pipe-separated provider groups AND local disk-path groups."""
+    mgr = _tree_manager(tmp_path)
+    got = [i.name for i in mgr.items_for(SECTION_MOVIES, "VOD")]
+    assert got == ["Direct VOD", "Nested Action"]
+    # Intermediate levels too, and multi-level local paths under one click.
+    got = [i.name for i in mgr.items_for(SECTION_MOVIES, "VOD|Movies")]
+    assert got == ["Nested Action"]
+    got = sorted(i.name for i in mgr.items_for(SECTION_MOVIES, "MOVIES"))
+    assert got == ["Local Comedy", "Local Deep"]
+    # Subtree + year combine (the year filter applies to the whole subtree).
+    assert [i.name for i in mgr.items_for(
+        SECTION_MOVIES, "MOVIES", year="2021")] == ["Local Deep"]
+    # A similar prefix is NOT a descendant: "MOVIES" must not match "MOVIES 2".
+    assert [i.name for i in mgr.items_for(SECTION_MOVIES, "MOVIES 2")] == ["Lookalike"]
+    assert mgr.items_for(SECTION_MOVIES, "MOVIESX") == []
+    # Non-matching groups stay out, and the deepest node still works alone.
+    assert [i.name for i in mgr.items_for(
+        SECTION_MOVIES, "MOVIES\\Comedy\\Drama")] == ["Local Deep"]
+    mgr.shutdown()
+
+
+def test_categories_synthesize_ancestors_with_subtree_counts(tmp_path):
+    """Ancestor folders appear in the sidebar even with no DIRECT items,
+    and their counts match what clicking them (the subtree) returns."""
+    from iptv.manager import _rebuild_categories
+    mgr = _tree_manager(tmp_path)
+    pl = mgr._playlists["a"]
+    _rebuild_categories(pl)
+    counts = {c.name: c.count for c in mgr.categories_for(SECTION_MOVIES)}
+    assert counts["MOVIES"] == 2          # subtree, not direct-only
+    assert counts["MOVIES\\Comedy"] == 2  # nested parent is also a node
+    assert counts["MOVIES\\Comedy\\Drama"] == 1
+    assert counts["MOVIES 2"] == 1        # lookalike stays its own folder
+    assert counts["VOD"] == 2
+    assert counts["VOD|Movies"] == 1
+    assert counts["VOD|Movies|Action"] == 1
+    mgr.shutdown()
+
+
+def test_years_by_category_credits_ancestors(tmp_path):
+    """Year labels under a synthesized parent match its subtree contents."""
+    mgr = _tree_manager(tmp_path)
+    by_cat = mgr.years_by_category(SECTION_MOVIES)
+    # "MOVIES" year buckets cover the whole subtree, newest first.
+    assert [(c.name, c.count) for c in by_cat["MOVIES"]] == [
+        ("2022", 1), ("2021", 1)]
+    assert [(c.name, c.count) for c in by_cat["VOD"]] == [
+        ("2024", 1), ("2023", 1)]
+    # Same numbers as the per-category API (which goes through items_for).
+    assert [(c.name, c.count) for c in by_cat["MOVIES"]] == [
+        (c.name, c.count) for c in mgr.years_for(SECTION_MOVIES, category="MOVIES")]
+    mgr.shutdown()
+
+
+def test_uncategorized_folder_shows_ungrouped_items(tmp_path):
+    """Files with NO folder land in the sidebar's "Uncategorized" node —
+    clicking it (or a year node under it) must show them. The pre-subtree
+    code compared against the raw empty group and showed NOTHING (owner
+    report 2026-11-03: a folder reads empty while one level up shows)."""
+    a = PlaylistSource(id="a", name="A", kind="m3u_url", url="http://a/p.m3u")
+    mgr = IPTVManager(sources=[a], data_dir=str(tmp_path))
+    pl = Playlist(source_id="a")
+    for i, (name, group, year) in enumerate((
+            ("Loose 2026", "", "2026"),
+            ("Loose Yearless", None, ""),
+            ("Foldered", "MOVIES", "2026"))):
+        pl.movies.append(Movie(id=make_id("a", f"m{i}"), name=name,
+                               url=f"http://a/{i}.mkv", section=SECTION_MOVIES,
+                               year=year, group=group))
+    mgr._playlists["a"] = pl
+    mgr._active_source_id = "a"
+    from iptv.manager import _rebuild_categories
+    _rebuild_categories(pl)
+    counts = {c.name: c.count for c in mgr.categories_for(SECTION_MOVIES)}
+    assert counts["Uncategorized"] == 2
+    got = sorted(i.name for i in mgr.items_for(SECTION_MOVIES, "Uncategorized"))
+    assert got == ["Loose 2026", "Loose Yearless"]
+    # Year node under "Uncategorized" (year mode) works too.
+    assert [i.name for i in mgr.items_for(
+        SECTION_MOVIES, "Uncategorized", year="2026")] == ["Loose 2026"]
+    assert [i.name for i in mgr.items_for(
+        SECTION_MOVIES, "Uncategorized", year=YEAR_OTHERS)] == ["Loose Yearless"]
+    # Groupless items must NOT leak into real folders.
+    assert [i.name for i in mgr.items_for(SECTION_MOVIES, "MOVIES")] == ["Foldered"]
+    mgr.shutdown()
+
+
 def test_playlist_cache_backfills_years(tmp_path):
     """Playlists cached before years existed get them from names on load."""
     from iptv.manager import _playlist_from_cache
@@ -4218,7 +4329,9 @@ def test_local_folder_categories_collapse_release_dirs(tmp_path):
     _plex_like_tree(tmp_path)
     pl = _scan(tmp_path)
     cats = {(c.section, c.name): c.count for c in pl.categories}
-    assert cats[(SECTION_MOVIES, "MOVIES")] == 3     # incl. renamed Toy Story dir
+    # Subtree counts (2026-11-03): "MOVIES" includes its direct movies AND
+    # everything in MOVIES\Comedy — a click on the parent shows the subtree.
+    assert cats[(SECTION_MOVIES, "MOVIES")] == 4     # 3 direct + Comedy subdir
     assert cats[(SECTION_MOVIES, os.path.join("MOVIES", "Comedy"))] == 1
     assert cats[(SECTION_SERIES, "MOVIES")] == 1     # Lanterns sits under MOVIES
     assert cats[(SECTION_SERIES, "TV SERIES")] == 1  # Henry Danger grouped
@@ -4314,12 +4427,15 @@ def test_local_folder_shows_in_the_sidebar_tree(tmp_path):
     assert top.text(0) == "Plex (6)"
     movies = _child_by_key(top, ("loc", SECTION_MOVIES, ""))
     series = _child_by_key(top, ("loc", SECTION_SERIES, ""))
-    assert _child_by_key(movies, ("loc", SECTION_MOVIES, "MOVIES")).text(0) == "MOVIES (3)"
+    assert _child_by_key(movies, ("loc", SECTION_MOVIES, "MOVIES")).text(0) == "MOVIES (4)"
     assert _child_by_key(series, ("loc", SECTION_SERIES, "TV SERIES")).text(0) == "TV SERIES (1)"
 
-    # Clicking a category shows its items.
+    # Clicking a category shows its items — the WHOLE subtree (2026-11-03):
+    # "MOVIES" includes the Comedy subfolder's movie too.
     tab._show_section(SECTION_SERIES, "TV SERIES", "loc")
     assert [s.name for s in tab._current_items] == ["henry danger"]
+    tab._show_section(SECTION_MOVIES, "MOVIES", "loc")
+    assert len(tab._current_items) == 4
     _close_tab(tab)
 
 

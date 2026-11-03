@@ -33,8 +33,10 @@ HEALTH_TIMEOUT = 0.8            # sub-second so one slow probe can't stack
 _ACCENT = QColor("#2a7abf")
 _WARN = QColor("#d29922")
 _DANGER = QColor("#f85149")
-_TEXT_DIM = QColor("#8a9ab0")
-_TEXT = QColor("#e8eefc")
+# Text is PURE WHITE everywhere (owner decision 2026-11-03) — _TEXT_DIM kept
+# as a name for the caption slot only; warn/danger VALUE colors stay semantic.
+_TEXT_DIM = QColor("#ffffff")
+_TEXT = QColor("#ffffff")
 _OK = QColor("#3fb950")
 _BAR_BACK = QColor("#111827")
 _BAR_EDGE = QColor("#1a2a4a")
@@ -90,7 +92,10 @@ class HudMeter(QFrame):
         painter.drawText(2, 2, w - 4, metrics.height(), Qt.AlignLeft, self._caption)
 
         color = _level_color(self._percent)
-        painter.setPen(QPen(color))
+        # Value TEXT is pure white in the normal state; warn/danger keep
+        # their semantic color (the BAR below always uses the level color).
+        text_color = _TEXT if color is _ACCENT else color
+        painter.setPen(QPen(text_color))
         painter.drawText(2, 2, w - 4, metrics.height(), Qt.AlignRight, self._value)
 
         if self._percent is None:
@@ -121,7 +126,7 @@ class HardwareHud(QFrame):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(
             "#hw_hud { background-color: #0a0a0f; border: none;"
-            " border-bottom: 2px solid #1a2a4a; }")
+            " border-bottom: 1px solid #1a2a4a; }")
 
         self._config = config
         # Sampling is OFF until MainWindow activates the HUD after the UI is

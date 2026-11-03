@@ -547,7 +547,13 @@ class IPTVManager:
 
         ``source_id`` selects a specific loaded playlist; the active one is
         used when it is None. ``year`` filters Movies/Series by release year;
-        pass ``YEAR_OTHERS`` for entries whose year is unknown."""
+        pass ``YEAR_OTHERS`` for entries whose year is unknown.
+
+        ``category`` matches the WHOLE SUBTREE, not the exact string: groups
+        are hierarchies (provider titles like "VOD|Movies|Action", local
+        disk paths like "MOVIES\\Comedy"), so a click on a parent folder
+        shows everything nested beneath it (owner rule 2026-11-03 — the old
+        exact match hid sub-folder content and its posters)."""
         pl = self.playlist_for(source_id) if source_id else self.current_playlist()
         if pl is None:
             return []
@@ -560,7 +566,13 @@ class IPTVManager:
         else:
             items = []
         if category:
-            items = [i for i in items if (i.group or "") == category]
+            # Normalize like the sidebar does: groupless items live in the
+            # "Uncategorized" folder, so clicking that node must find them
+            # (the old `(i.group or "") == category` compared against a name
+            # no item ever had — the folder showed nothing; owner report
+            # 2026-11-03).
+            items = [i for i in items
+                     if _group_at_or_under(i.group or "Uncategorized", category)]
         if year:
             items = [i for i in items
                      if (getattr(i, "year", "") or YEAR_OTHERS) == year]
@@ -594,10 +606,12 @@ class IPTVManager:
             return {}
         per_cat: Dict[str, Dict[str, int]] = {}
         for it in self.items_for(section, source_id=source_id):
-            g = getattr(it, "group", "") or "Uncategorized"
             y = getattr(it, "year", "") or YEAR_OTHERS
-            counts = per_cat.setdefault(g, {})
-            counts[y] = counts.get(y, 0) + 1
+            # Credit every ancestor too, so a synthesized parent category's
+            # year labels match what clicking it (subtree + year) returns.
+            for g in _group_path_parts(getattr(it, "group", "") or "Uncategorized"):
+                counts = per_cat.setdefault(g, {})
+                counts[y] = counts.get(y, 0) + 1
         return {g: _year_counts_to_categories(c, section)
                 for g, c in per_cat.items()}
 
@@ -1098,7 +1112,12 @@ def _year_counts_to_categories(counts: Dict[str, int], section: str) -> List[Cat
 
 
 def _rebuild_categories(pl: Playlist) -> None:
-    """Recompute the Category list (with counts) from the classified items."""
+    """Recompute the Category list (with counts) from the classified items.
+
+    Hierarchical groups synthesize their ANCESTOR categories ("A|B|C" also
+    creates "A" and "A|B"), each with SUBTREE counts — so every folder level
+    appears in the sidebar and its count matches what clicking it shows
+    (items_for's subtree match)."""
     cats: Dict[tuple, Category] = {}
     for section, items in (
         (SECTION_LIVE, pl.channels),
@@ -1106,11 +1125,44 @@ def _rebuild_categories(pl: Playlist) -> None:
         (SECTION_SERIES, pl.series),
     ):
         for it in items:
-            g = it.group or "Uncategorized"
-            key = (section, g)
-            c = cats.get(key)
-            if c is None:
-                c = Category(name=g, section=section)
-                cats[key] = c
-            c.count += 1
+            for name in _group_path_parts(it.group or "Uncategorized"):
+                key = (section, name)
+                c = cats.get(key)
+                if c is None:
+                    c = Category(name=name, section=section)
+                    cats[key] = c
+                c.count += 1
     pl.categories = list(cats.values())
+
+
+# Group hierarchies: provider group-titles ("VOD|Movies|Action") and local
+# disk paths ("MOVIES\Comedy" — local_folder joins with os.sep). A tree click
+# on a parent must show everything beneath it, so category matching is
+# SUBTREE-based everywhere (items_for, counts, year buckets). A separator
+# must follow the prefix: "MOVIES" never matches "MOVIES 2". ":" is
+# deliberately NOT a separator (providers use it as punctuation).
+_GROUP_SEPARATORS = ("|", "/", "\\", ">")
+
+
+def _group_at_or_under(group: str, category: str) -> bool:
+    """True when ``group`` IS ``category`` or a descendant of it."""
+    if group == category:
+        return True
+    return (len(group) > len(category)
+            and group.startswith(category)
+            and group[len(category)] in _GROUP_SEPARATORS)
+
+
+def _group_path_parts(group: str) -> List[str]:
+    """"A|B|C" -> ["A", "A|B", "A|B|C"] — ancestors first, deduped.
+
+    Empty heads (leading/doubled separators) are skipped."""
+    parts: List[str] = []
+    for idx, ch in enumerate(group):
+        if ch in _GROUP_SEPARATORS:
+            head = group[:idx]
+            if head and head not in parts:
+                parts.append(head)
+    if group and group not in parts:
+        parts.append(group)
+    return parts

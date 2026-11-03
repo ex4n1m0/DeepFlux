@@ -55,6 +55,11 @@ ZH_CN: dict[str, str] = {
     "Browser History...": "浏览器历史...",
     "Browser Developer Tools": "浏览器开发者工具",
     "The new language applies after DeepFlux restarts.": "新语言将在 DeepFlux 重启后生效。",
+    "Font Size": "字体大小",
+    "Small": "小",
+    "Medium": "中",
+    "Large": "大",
+    "The new font size applies after DeepFlux restarts.": "新字号将在 DeepFlux 重启后生效。",
 
     # --- settings page titles (menu + Settings Hub + Play gear share these) ---
     "Torrent Download Settings…": "种子下载设置…",

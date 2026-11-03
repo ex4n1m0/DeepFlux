@@ -669,6 +669,11 @@ class DeeptorrentConfig:
     # whitelist only iterates section dataclasses, so the UI language stays
     # user-controlled like the rest of the ui_* state fields.
     ui_language: str = "en"
+    # UI font size ("small" | "medium" | "large") — scales the app font and
+    # every stylesheet font-size (gui/fonts.set_font_scale/scale_qss);
+    # applied once at startup, takes effect next launch. Top-level for the
+    # same reason as ui_language: stays user-controlled, agent cannot set it.
+    ui_font_size: str = "medium"
 
     @classmethod
     def from_file(cls, path: str) -> "DeeptorrentConfig":
@@ -1042,6 +1047,9 @@ class DeeptorrentConfig:
             ui_language=(data.get("ui_language") or "en")
             if (data.get("ui_language") or "en") in ("en", "zh")
             else "en",
+            ui_font_size=(data.get("ui_font_size") or "medium")
+            if (data.get("ui_font_size") or "medium") in ("small", "medium", "large")
+            else "medium",
         )
 
     def sanitized_dict(self) -> Dict[str, Any]:

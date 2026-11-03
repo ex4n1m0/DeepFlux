@@ -45,6 +45,7 @@ from config import DeeptorrentConfig, IPTVSourceConfig
 from gui.milkdrop import list_presets, preset_name
 from gui.window_sizing import roomy
 from gui.i18n import tr
+from gui.fonts import scale_qss
 
 logger = logging.getLogger(__name__)
 
@@ -108,18 +109,18 @@ def _set_lang_combo(combo: QComboBox, code: str) -> None:
 _SHARED_STYLE = """
     QDialog { background-color: #0a0a0f; color: #ffffff; }
     QLabel { color: #ffffff; }
-    QGroupBox { color: #ffffff; border: 3px solid #1a2a4a; border-radius: 6px; margin-top: 12px; padding-top: 12px; }
-    QGroupBox::title { color: #2a7abf; subcontrol-origin: margin; left: 10px; padding: 0 5px; font-weight: 600; }
-    QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background-color: #0d1117; color: #ffffff; border: 3px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
-    QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border: 3px solid #2a7abf; }
+    QGroupBox { color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; margin-top: 12px; padding-top: 12px; }
+    QGroupBox::title { color: #ffffff; subcontrol-origin: margin; left: 10px; padding: 0 5px; font-weight: 600; }
+    QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
+    QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border: 1px solid #2a7abf; }
     QCheckBox { color: #ffffff; }
-    QCheckBox::indicator { border: 3px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
+    QCheckBox::indicator { border: 1px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
     QCheckBox::indicator:checked { background-color: #2a7abf; border-color: #2a7abf; }
-    QPushButton { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
-    QPushButton:hover { background-color: #1a2a4a; border: 3px solid #2a7abf; color: #2a7abf; }
-    QTableWidget { background-color: #0d1117; color: #ffffff; gridline-color: #1a2a4a; border: 3px solid #1a2a4a; border-radius: 6px; }
+    QPushButton { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
+    QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #ffffff; }
+    QTableWidget { background-color: #0d1117; color: #ffffff; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; }
     QScrollArea { background-color: transparent; border: none; }
-    QLabel#hint { color: #4a6a8a; font-size: 17px; }
+    QLabel#hint { color: #ffffff; font-size: 17px; }
 """
 
 
@@ -143,7 +144,7 @@ class _SettingsPage(QDialog):
         self.setWindowTitle(title)
         self.setMinimumWidth(480)
         roomy(self)
-        self.setStyleSheet(_SHARED_STYLE)
+        self.setStyleSheet(scale_qss(_SHARED_STYLE))
 
         outer = QVBoxLayout(self)
         scroll = QScrollArea()
@@ -166,7 +167,7 @@ class _SourceEditDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Edit IPTV Source" if source else "Add IPTV Source")
         self.setMinimumWidth(520)
-        self.setStyleSheet(_SHARED_STYLE)
+        self.setStyleSheet(scale_qss(_SHARED_STYLE))
         self._build_ui()
         if source:
             self._load(source)

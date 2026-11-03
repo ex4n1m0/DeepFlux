@@ -62,6 +62,7 @@ from PySide6.QtWidgets import (
 from gui.column_sizing import AutoColumnSizer
 from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 from gui.i18n import tr
+from gui.fonts import scale_qss
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +85,10 @@ _MEDIA_EXTENSIONS = {
 }
 
 _MENU_STYLE = (
-    "QMenu { background-color: #111827; color: #ffffff; border: 3px solid #1a2a4a;"
+    "QMenu { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a;"
     " border-radius: 6px; padding: 4px; }"
     " QMenu::item { padding: 3px 20px; border-radius: 4px; }"
-    " QMenu::item:selected { background-color: #1a2a4a; color: #2a7abf; }"
+    " QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }"
 )
 
 
@@ -551,7 +552,7 @@ class FilePane(QWidget):
         self._pane_status = QLabel("")
         self._pane_status.setAccessibleName(f"{pane_name} free space and selection status")
         self._pane_status.setToolTip(tr('Selection count and free disk space'))
-        self._pane_status.setStyleSheet("color: #8a9ab0; font-size: 17px;")
+        self._pane_status.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px;"))
         # Live selection/free-space text: word-wrap or a long status sets the
         # whole window's minimum width (measured 612px from one pane).
         shrink_label(self._pane_status)
@@ -828,7 +829,7 @@ class FilePane(QWidget):
     # -- active-pane visuals ---------------------------------------------------
     def set_active(self, on: bool) -> None:
         color = "#2a7abf" if on else "#1a2a4a"
-        self._view.setStyleSheet(f"QTreeView {{ border: 3px solid {color}; }}")
+        self._view.setStyleSheet(f"QTreeView {{ border: 1px solid {color}; }}")
 
     # -- filtering and status --------------------------------------------------
     def set_filename_filter(self, text: str) -> None:
@@ -1101,7 +1102,7 @@ class CommanderTab(QWidget):
         self._status = QLabel("")
         self._status.setAccessibleName("Commander status")
         self._status.setToolTip(tr('Current Commander status'))
-        self._status.setStyleSheet("color: #8a9ab0; font-size: 17px;")
+        self._status.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px;"))
         shrink_label(self._status)  # live text must not grow the window min
         keys.addWidget(self._status)
         layout.addWidget(keys_row)
@@ -1111,7 +1112,7 @@ class CommanderTab(QWidget):
         self._outcome_status = QLabel(tr('No file operations yet'))
         self._outcome_status.setAccessibleName("File operation history summary")
         self._outcome_status.setToolTip(tr('Recent file operation outcomes'))
-        self._outcome_status.setStyleSheet("color: #8a9ab0; font-size: 17px;")
+        self._outcome_status.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px;"))
         shrink_label(self._outcome_status)  # live text must not grow the window min
         layout.addWidget(self._outcome_status)
 
