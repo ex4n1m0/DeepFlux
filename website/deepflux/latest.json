@@ -1,8 +1,8 @@
 {
-  "version": "6.9",
-  "file": "DeepFlux6.9Setup.exe",
-  "size": 483077295,
-  "sha256": "936e5c11d639ac6b1a35086d62feed032f03e9cf436a942bfe3acd3232f8800f",
-  "released": "2026-11-02",
-  "notes": "DeepFlux 6.9 - Now-playing title: the Play tab names what you are watching in a strip right under the video (file name, channel with current programme, movie with year) and mirrors it in the window title so the taskbar and Alt-Tab show it too; hover the strip for the full file name and path."
+  "version": "7.0",
+  "file": "DeepFlux7.0Setup.exe",
+  "size": 544221331,
+  "sha256": "4d624a9ee37187572619a80dd8d543c5e65868b73f5a511dae54bf524f3c0a5b",
+  "released": "2026-11-03",
+  "notes": "DeepFlux 7.0 - Appearance refresh: new Font Size setting (Settings - Font Size: Small / Medium / Large) plus thinner 1px outlines and pure-white text across the whole interface; the Play tab tree now shows everything inside a folder at any depth (local files and IPTV sources alike), and folders that previously came up empty now list their content."
 }
