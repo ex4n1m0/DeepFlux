@@ -1,8 +1,8 @@
 {
-  "version": "7.0",
-  "file": "DeepFlux7.0Setup.exe",
-  "size": 544221331,
-  "sha256": "4d624a9ee37187572619a80dd8d543c5e65868b73f5a511dae54bf524f3c0a5b",
-  "released": "2026-11-03",
-  "notes": "DeepFlux 7.0 - Appearance refresh: new Font Size setting (Settings - Font Size: Small / Medium / Large) plus thinner 1px outlines and pure-white text across the whole interface; the Play tab tree now shows everything inside a folder at any depth (local files and IPTV sources alike), and folders that previously came up empty now list their content."
+  "version": "7.1",
+  "file": "DeepFlux7.1Setup.exe",
+  "size": 544251770,
+  "sha256": "50625abed714d089e44ac3ec81442c6ead415cfd53bc2269b372e395a6401a71",
+  "released": "2026-11-04",
+  "notes": "DeepFlux 7.1 - New Text Color setting (Settings - Text Color: White / Light Blue / Blue / Dark Blue) that recolors every menu, list, chat and dialog, on a darker near-black background that keeps all four color themes easy to read. Error, warning and download-status colors stay unchanged."
 }
