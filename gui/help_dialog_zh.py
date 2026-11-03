@@ -16,7 +16,7 @@ HELP_HTML_ZH = r"""
   body {
     font-family: 'Inter', 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
     color: #ffffff;
-    background-color: #0a0a0f;
+    background-color: #05070c;
     font-size: 20px;
     line-height: 1.7;
     padding: 8px;
@@ -27,12 +27,12 @@ HELP_HTML_ZH = r"""
   p { margin: 4px 0; }
   ul { margin: 4px 0; padding-left: 20px; }
   li { margin: 2px 0; }
-  code { color: #ffffff; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
+  code { color: #ffffff; background-color: #080b12; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
   table { border-collapse: collapse; width: 100%; margin: 6px 0; }
   th { color: #ffffff; text-align: left; border-bottom: 1px solid #1a2a4a; padding: 4px 6px; }
-  td { border-bottom: 1px solid #111827; padding: 4px 6px; }
-  .note { background-color: #0d1117; border-left: 1px solid #2a7abf; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
-  .warn { background-color: #0d1117; border-left: 1px solid #ffcc00; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  td { border-bottom: 1px solid #0b1120; padding: 4px 6px; }
+  .note { background-color: #080b12; border-left: 1px solid #2a7abf; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  .warn { background-color: #080b12; border-left: 1px solid #ffcc00; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
 </style>
 </head>
 <body>
@@ -119,6 +119,10 @@ FFmpeg（用于海报、字幕和录制）不随包附带 —— 请用系统包
 <p><b>字体太大或太小？</b>设置 → <b>字体大小</b> 可为整个界面（菜单、列表、
 聊天、对话框）选择 小 / 中 / 大；与上方的语言设置一样，重启 DeepFlux 后
 生效。</p>
+
+<p><b>想让文字带点颜色？</b>设置 → <b>文字颜色</b> 可将全部界面文字切换为
+白色（默认）、浅蓝、蓝色或深蓝，衬托在近乎纯黑的背景上。状态色（错误、
+警告、下载状态）始终保持原色；与字体大小一样，重启 DeepFlux 后生效。</p>
 
 <p><b>全屏浏览：</b>浏览页激活时，网站独占整个窗口 —— 左侧活动栏和地址/标签栏
 都会隐藏，页面被推开而不是被遮挡。把鼠标移到最顶边缘即可唤出地址栏和标签栏，

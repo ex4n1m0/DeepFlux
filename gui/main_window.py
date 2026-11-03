@@ -546,9 +546,9 @@ class _DeepFluxSchemeHandler(QWebEngineUrlSchemeHandler):  # noqa: N801
         else:
             import html
             safe_path = html.escape(path)
-            body = (f"<html><body style='background:#000;color:#ffffff;font-family:sans-serif;"
-                    f"display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
-                    f"<h2>404 — deepflux://{safe_path} not found</h2></body></html>")
+            body = scale_qss(f"<html><body style='background:#000;color:#ffffff;font-family:sans-serif;"
+                             f"display:flex;align-items:center;justify-content:center;height:100vh;margin:0'>"
+                             f"<h2>404 — deepflux://{safe_path} not found</h2></body></html>")
             mime = "text/html; charset=utf-8"
         buf = QBuffer(self)
         buf.setData(body.encode("utf-8"))
@@ -969,7 +969,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(scale_qss("""
             /* === Global === */
             QMainWindow, QWidget {
-                background-color: #0a0a0f;
+                background-color: #05070c;
                 color: #ffffff;
                 font-family: "Inter", "Segoe UI", "Helvetica Neue", sans-serif;
             }
@@ -979,23 +979,23 @@ class MainWindow(QMainWindow):
 
             /* === Menu bar === */
             QMenuBar {
-                background-color: #0d1117;
+                background-color: #080b12;
                 color: #ffffff;
                 border-bottom: 1px solid #1a2a4a;
                 padding: 0px;
             }
             QMenuBar::item { padding: 2px 10px; }
-            QMenuBar::item:selected { background-color: #1a2a4a; border-radius: 4px; }
+            QMenuBar::item:selected { background-color: #1a2a4a; color: #ffffff; border-radius: 4px; }
 
             /* === Activity rail (v5 navigation) === */
-            #activity_rail { background-color: #0d1117; border-right: 1px solid #1a2a4a; }
+            #activity_rail { background-color: #080b12; border-right: 1px solid #1a2a4a; }
             QFrame[railBtn="true"] {
                 background: transparent;
                 border: 1px solid transparent;
                 border-radius: 6px;
             }
             QFrame[railBtn="true"]:hover {
-                background-color: #111827;
+                background-color: #0b1120;
                 border: 1px solid #1a2a4a;
             }
             QFrame[railBtn="true"][active="true"] {
@@ -1010,6 +1010,7 @@ class MainWindow(QMainWindow):
                 background: transparent; border: none;
                 font-size: 11px; color: #ffffff;
             }
+            /* keep-white: this label rides the active rail button's #1a2a4a fill */
             QFrame[railBtn="true"][active="true"] QLabel[railText="true"] { color: #ffffff; }
             QLabel[railBadge="true"] {
                 background-color: #2a7abf; color: #ffffff;
@@ -1018,12 +1019,12 @@ class MainWindow(QMainWindow):
             }
 
             /* === Agent quick-ask panel (v5) === */
-            #agent_panel { background-color: #0d1117; border-left: 1px solid #1a2a4a; }
+            #agent_panel { background-color: #080b12; border-left: 1px solid #1a2a4a; }
             #agent_panel QLabel#panel_title { font-size: 16px; font-weight: 700; }
 
             /* === Agent first-run setup cards (v5.1) === */
             QPushButton#setup_card {
-                background-color: #111827;
+                background-color: #0b1120;
                 color: #ffffff;
                 border: 1px solid #1a2a4a;
                 border-radius: 8px;
@@ -1034,6 +1035,7 @@ class MainWindow(QMainWindow):
             }
             QPushButton#setup_card:hover {
                 background-color: #1a2a4a;
+                color: #ffffff;
                 border: 1px solid #2a7abf;
             }
 
@@ -1063,12 +1065,12 @@ class MainWindow(QMainWindow):
                 font-size: 15px;
             }
             QPushButton#status_chip:hover {
-                background-color: #111827;
+                background-color: #0b1120;
                 color: #ffffff;
                 border: 1px solid #1a2a4a;
             }
             QMenu {
-                background-color: #111827;
+                background-color: #0b1120;
                 color: #ffffff;
                 border: 1px solid #1a2a4a;
                 border-radius: 6px;
@@ -1079,20 +1081,20 @@ class MainWindow(QMainWindow):
 
             /* === Tables === */
             QTableWidget {
-                background-color: #0d1117;
+                background-color: #080b12;
                 color: #ffffff;
                 gridline-color: #1a2a4a;
                 border: 1px solid #1a2a4a;
                 border-radius: 6px;
                 selection-background-color: #1a2a4a;
                 selection-color: #ffffff;
-                alternate-background-color: #0f1520;
+                alternate-background-color: #0a0e16;
                 font-size: 18px;
             }
             QTableWidget::item { padding: 1px 4px; }
             QTableWidget::item:selected { background-color: #1a2a4a; color: #ffffff; }
             QHeaderView::section {
-                background-color: #111827;
+                background-color: #0b1120;
                 color: #ffffff;
                 border: none;
                 border-bottom: 1px solid #1a2a4a;
@@ -1103,7 +1105,7 @@ class MainWindow(QMainWindow):
 
             /* === Buttons === */
             QPushButton {
-                background-color: #111827;
+                background-color: #0b1120;
                 color: #ffffff;
                 border: 1px solid #1a2a4a;
                 border-radius: 3px;
@@ -1120,7 +1122,7 @@ class MainWindow(QMainWindow):
                 background-color: #0a1a2a;
             }
             QPushButton:disabled {
-                background-color: #0d1117;
+                background-color: #080b12;
                 color: #ffffff;
                 border-color: #1a2a4a;
             }
@@ -1138,7 +1140,7 @@ class MainWindow(QMainWindow):
 
             /* === Secondary buttons (subtle) === */
             QPushButton#btn_secondary {
-                background-color: #111827;
+                background-color: #0b1120;
                 border: 1px solid #1a2a4a;
                 color: #ffffff;
             }
@@ -1149,7 +1151,7 @@ class MainWindow(QMainWindow):
 
             /* === Inputs === */
             QLineEdit {
-                background-color: #0d1117;
+                background-color: #080b12;
                 color: #ffffff;
                 border: 1px solid #1a2a4a;
                 border-radius: 3px;
@@ -1172,7 +1174,7 @@ class MainWindow(QMainWindow):
 
             /* === Chat panel === */
             QTextEdit {
-                background-color: #0a0a0f;
+                background-color: #05070c;
                 color: #ffffff;
                 border: none;
                 font-size: 18px;
@@ -1215,7 +1217,7 @@ class MainWindow(QMainWindow):
             /* Buttons inside the strip are opaque. */
             QWidget#browser_strip QPushButton,
             QWidget#browser_strip QToolButton {
-                background-color: #0d1117;
+                background-color: #080b12;
                 color: #ffffff;
                 border: 1px solid #1a2a4a;
                 border-radius: 3px;
@@ -1228,7 +1230,7 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
             }
             QTabBar::tab {
-                background-color: #0d1117;
+                background-color: #080b12;
                 color: #ffffff;
                 padding: 2px 12px;
                 margin-right: 2px;
@@ -1238,7 +1240,7 @@ class MainWindow(QMainWindow):
                 border-top-right-radius: 6px;
             }
             QTabBar::tab:selected {
-                background-color: #0a0a0f;
+                background-color: #05070c;
                 color: #ffffff;
                 border-color: #2a7abf;
             }
@@ -1248,7 +1250,7 @@ class MainWindow(QMainWindow):
 
             /* === Scroll bars === */
             QScrollBar:vertical {
-                background: #0d1117;
+                background: #080b12;
                 width: 10px;
                 border-radius: 5px;
             }
@@ -1261,7 +1263,7 @@ class MainWindow(QMainWindow):
                 background: #2a7abf;
             }
             QScrollBar:horizontal {
-                background: #0d1117;
+                background: #080b12;
                 height: 10px;
                 border-radius: 5px;
             }
@@ -1528,7 +1530,7 @@ class MainWindow(QMainWindow):
         self.chat_history.setViewportMargins(0, 0, 0, 28)
         self.chat_history.anchorClicked.connect(self._on_chat_link_clicked)
         self.chat_history.document().setDefaultStyleSheet(scale_qss(CHAT_CSS))
-        self.chat_history.setStyleSheet("QTextBrowser { background-color: transparent; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 3px; padding: 2px; }")
+        self.chat_history.setStyleSheet(scale_qss("QTextBrowser { background-color: transparent; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 3px; padding: 2px; }"))
         agents_tab_layout.addWidget(self.chat_history)
 
         # First-run setup cards (v5.1): visible while the chat is fresh, so a
@@ -2024,7 +2026,7 @@ class MainWindow(QMainWindow):
         # bar stay OUTSIDE it so both remain usable while chrome is hidden.
         self._browser_chrome = QWidget()
         self._browser_chrome.setObjectName("browser_chrome")
-        self._browser_chrome.setStyleSheet("background: #0d1117;")
+        self._browser_chrome.setStyleSheet("background: #080b12;")
         _chrome_layout = QVBoxLayout(self._browser_chrome)
         _chrome_layout.setContentsMargins(0, 0, 0, 0)
         _chrome_layout.setSpacing(0)
@@ -2081,7 +2083,7 @@ class MainWindow(QMainWindow):
         # bar inside the chrome container (they reveal together).
         self._browser_strip = QWidget()
         self._browser_strip.setObjectName("browser_strip")
-        self._browser_strip.setStyleSheet("background: #0d1117;")
+        self._browser_strip.setStyleSheet("background: #080b12;")
         _ov = QVBoxLayout(self._browser_strip)
         _ov.setContentsMargins(0, 0, 0, 0)
         _ov.setSpacing(0)
@@ -2270,6 +2272,25 @@ class MainWindow(QMainWindow):
                 lambda _checked=False, size=_size: self._set_ui_font_size(size))
         settings_menu.addSeparator()
 
+        # Text color: same restart-to-apply convention as Font Size. Body
+        # text ships pure white; the blue tiers recolor every stylesheet
+        # text via gui/fonts.scale_qss on the next launch (the background
+        # ladder was darkened 2026-11-03 so dark blue stays readable).
+        _file_zone(settings_menu, tr("Text Color"))
+        theme_group = QActionGroup(settings_menu)
+        for _theme, _theme_label in (("white", tr("White")),
+                                     ("light_blue", tr("Light Blue")),
+                                     ("blue", tr("Blue")),
+                                     ("dark_blue", tr("Dark Blue"))):
+            _theme_act = settings_menu.addAction(_theme_label)
+            _theme_act.setCheckable(True)
+            _theme_act.setChecked(
+                getattr(self.config, "ui_text_theme", "white") == _theme)
+            theme_group.addAction(_theme_act)
+            _theme_act.triggered.connect(
+                lambda _checked=False, theme=_theme: self._set_ui_text_theme(theme))
+        settings_menu.addSeparator()
+
         _file_zone(settings_menu, tr("AI & API Keys"))
         for label, page in API_KEY_PAGES:
             action = _file_item(settings_menu, tr(label))
@@ -2380,7 +2401,7 @@ class MainWindow(QMainWindow):
         page and jump to their page on click; the bell keeps a persistent log
         of events that previously lived only in the Agent transcript or a
         six-second tray balloon."""
-        self.statusBar().setStyleSheet("QStatusBar { background: #0d1117; border-top: 1px solid #1a2a4a; }")
+        self.statusBar().setStyleSheet("QStatusBar { background: #080b12; border-top: 1px solid #1a2a4a; }")
         # Left: hovered link URL (browser linkHovered).
         self._hover_label = QLabel("")
         self._hover_label.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px; padding: 2px 8px;"))
@@ -2655,6 +2676,18 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, tr("Font Size"),
             tr("The new font size applies after DeepFlux restarts."))
+
+    def _set_ui_text_theme(self, theme: str) -> None:
+        """Settings-menu text-color picker (gui/fonts): persist + inform.
+        Stylesheets bake their text colors at setStyleSheet time, so the
+        theme applies on the next launch — same convention as Font Size."""
+        if getattr(self.config, "ui_text_theme", "white") == theme:
+            return
+        self.config.ui_text_theme = theme
+        self.config.to_file(self.config_path)
+        QMessageBox.information(
+            self, tr("Text Color"),
+            tr("The new text color applies after DeepFlux restarts."))
 
     def _popup_settings_menu(self) -> None:
         """Ctrl+,,: open the Settings menu pinned under its menu-bar title."""
@@ -3355,7 +3388,7 @@ class MainWindow(QMainWindow):
         # Chromium's first composited frame paints the page background —
         # unset, that is white, which flashes on every load / tab switch
         # against the dark theme. Set the app background explicitly.
-        page.setBackgroundColor(QColor("#0d1117"))
+        page.setBackgroundColor(QColor("#080b12"))
         view.setPage(page)
         view.setProperty("deepflux_private", private)
         # QWebChannel: each persistent page gets the isolated application bridge.
@@ -3616,7 +3649,7 @@ class MainWindow(QMainWindow):
             chip.setAttribute(Qt.WA_StyledBackground)
             is_active = i == current
             chip.setStyleSheet(
-                f"background: {'#1a2a4a' if is_active else '#0d1117'};"
+                f"background: {'#1a2a4a' if is_active else '#080b12'};"
                 f" border: 1px solid {'#2a7abf' if is_active else '#1a2a4a'};"
                 " border-radius: 3px;")
             cl = QHBoxLayout(chip)
@@ -3849,7 +3882,9 @@ class MainWindow(QMainWindow):
                 pass
         # Static logo (rotation removed). Clock badge mirrors the extension's
         # status badge styling (dlmgr/browser_extension.py createStatusBadge).
-        html = (
+        # scale_qss: font-size + the themeable clock text follow the app-wide
+        # font scale / text color theme like every other surface.
+        html = scale_qss(
             "<html><head><title>DeepFlux</title>"
             "<meta http-equiv='Content-Security-Policy' content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'\">"
             "<style>"
@@ -3947,7 +3982,7 @@ class MainWindow(QMainWindow):
         """Update the AdBlock button appearance based on its state."""
         if self.browser_adblock_btn.isChecked():
             self.browser_adblock_btn.setStyleSheet(
-                "QPushButton { background: #2a7abf; color: #ffffff; font-weight: 600; }"
+                scale_qss("QPushButton { background: #2a7abf; color: #ffffff; font-weight: 600; }")
             )
         else:
             self.browser_adblock_btn.setStyleSheet("")
@@ -3976,7 +4011,7 @@ class MainWindow(QMainWindow):
         """Update the video grabber button appearance based on its state."""
         if self.browser_extension_btn.isChecked():
             self.browser_extension_btn.setStyleSheet(
-                "QPushButton { background: #2a7abf; color: #ffffff; font-weight: 600; }"
+                scale_qss("QPushButton { background: #2a7abf; color: #ffffff; font-weight: 600; }")
             )
         else:
             self.browser_extension_btn.setStyleSheet("")
@@ -4795,12 +4830,12 @@ class MainWindow(QMainWindow):
             safe = safe[lead_m.end():]
         if kind == "reasoning":
             if not self._stream_reasoning_started:
-                self._stream_append('<span style="color:#ffffff; font-size:18px">🧠 ')
+                self._stream_append(scale_qss('<span style="color:#ffffff; font-size:18px">🧠 '))
                 self._stream_reasoning_started = True
             if lead:
                 self._stream_insert_text(lead)
             if safe:
-                self._stream_append(f'<span style="color:#ffffff; font-size:18px">{safe}</span>')
+                self._stream_append(scale_qss(f'<span style="color:#ffffff; font-size:18px">{safe}</span>'))
             return
         if self._stream_reasoning_started and self._stream_content_start is None:
             self._stream_append("<br><br>")  # separate thinking from the answer
@@ -5727,7 +5762,7 @@ class MainWindow(QMainWindow):
         if not info_hash:
             return
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }")
+        menu.setStyleSheet(scale_qss("QMenu { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }"))
 
         act_remove = menu.addAction(tr('Remove from list (keep files)'))
         act_delete = menu.addAction(tr('Remove and delete files'))
@@ -6135,7 +6170,7 @@ class MainWindow(QMainWindow):
         self._tray = QSystemTrayIcon(icon, self)
         self._tray.setToolTip(tr('DeepFlux'))
         menu = QMenu()
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }")
+        menu.setStyleSheet(scale_qss("QMenu { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }"))
         menu.addAction(tr('Show DeepFlux'), self._tray_restore)
         menu.addAction(tr('Quit'), self._tray_quit)
         self._tray.setContextMenu(menu)
@@ -6451,7 +6486,7 @@ class MainWindow(QMainWindow):
         """Play-tab gear button: IPTV settings are split into focused pages —
         show a picker menu at the cursor."""
         menu = QMenu(self)
-        menu.setStyleSheet("QMenu { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }")
+        menu.setStyleSheet(scale_qss("QMenu { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; padding: 4px; } QMenu::item { padding: 3px 20px; border-radius: 4px; } QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }"))
         chosen: Dict[str, Any] = {}
         for label, cls in IPTV_SETTINGS_PAGES:
             menu.addAction(tr(label), lambda _c=False, page_cls=cls: chosen.update(cls=page_cls))
@@ -6915,17 +6950,19 @@ def run_gui(config_path: Optional[str] = None, open_targets: Optional[List[str]]
     register_deepflux_scheme()
     app = QApplication(sys.argv)
     app.setApplicationName("Deeptorrent")
-    # UI language AND font size are fixed for the whole process BEFORE any
-    # widget builds its labels / any stylesheet is applied (restart-to-apply;
-    # gui/i18n + gui/fonts contracts) — so the config loads first, then the
-    # bundled fonts (identical text metrics on every machine, scaled).
+    # UI language, font size AND text color theme are fixed for the whole
+    # process BEFORE any widget builds its labels / any stylesheet is applied
+    # (restart-to-apply; gui/i18n + gui/fonts contracts) — so the config
+    # loads first, then the bundled fonts (identical text metrics on every
+    # machine, scaled).
     from gui.i18n import set_language
     from config import DeeptorrentConfig as _Cfg
     _cfg_path = config_path or _Cfg.default_config_path()
     _cfg_existed = os.path.isfile(_cfg_path)
     _cfg = _Cfg.from_file(_cfg_path)
-    from gui.fonts import load_app_fonts, set_font_scale
+    from gui.fonts import load_app_fonts, set_font_scale, set_text_theme
     set_font_scale(_cfg.ui_font_size)
+    set_text_theme(_cfg.ui_text_theme)
     load_app_fonts(app)
     # Fresh frozen-Linux installs have no installer to seed the sample
     # playlist — apply the same seed the Inno postinstall step writes.

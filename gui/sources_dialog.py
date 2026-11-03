@@ -47,18 +47,18 @@ class SourcesDialog(QDialog):
         self.setMinimumSize(560, 360)
         roomy(self)
         self.setStyleSheet(scale_qss("""
-            QDialog { background-color: #0a0a0f; color: #ffffff; }
+            QDialog { background-color: #05070c; color: #ffffff; }
             QLabel { color: #ffffff; }
-            QTableWidget { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; gridline-color: #1a2a4a; }
+            QTableWidget { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; gridline-color: #1a2a4a; }
             QTableWidget::item { padding: 1px 4px; }
             QTableWidget::item:selected { background-color: #1a2a4a; color: #ffffff; }
-            QHeaderView::section { background-color: #0a0a0f; color: #ffffff; border: none; border-bottom: 1px solid #1a2a4a; padding: 2px 4px; font-weight: 600; }
-            QLineEdit { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
+            QHeaderView::section { background-color: #05070c; color: #ffffff; border: none; border-bottom: 1px solid #1a2a4a; padding: 2px 4px; font-weight: 600; }
+            QLineEdit { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
             QLineEdit:focus { border: 1px solid #2a7abf; }
             QCheckBox { color: #ffffff; }
             QCheckBox::indicator { border: 1px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
             QCheckBox::indicator:checked { background-color: #2a7abf; border-color: #2a7abf; }
-            QPushButton { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
+            QPushButton { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
             QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #ffffff; }
             QPushButton:disabled { color: #ffffff; border-color: #1a2a4a; }
             QLabel#hint { color: #ffffff; font-size: 17px; }

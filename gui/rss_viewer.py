@@ -65,16 +65,16 @@ class RSSViewer(QDialog):
         self.setWindowTitle(tr('RSS Feed Viewer'))
         self.setMinimumSize(1000, 600)
         self.setStyleSheet(scale_qss("""
-            QDialog { background-color: #0a0a0f; color: #ffffff; }
+            QDialog { background-color: #05070c; color: #ffffff; }
             QLabel { color: #ffffff; }
-            QTableWidget { background-color: #0d1117; color: #ffffff; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; selection-background-color: #1a2a4a; selection-color: #ffffff; alternate-background-color: #0f1520; }
-            QHeaderView::section { background-color: #111827; color: #ffffff; border: none; border-bottom: 1px solid #1a2a4a; padding: 2px 4px; font-weight: 600; font-size: 17px; text-transform: uppercase; }
-            QLineEdit { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
+            QTableWidget { background-color: #080b12; color: #ffffff; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; selection-background-color: #1a2a4a; selection-color: #ffffff; alternate-background-color: #0a0e16; }
+            QHeaderView::section { background-color: #0b1120; color: #ffffff; border: none; border-bottom: 1px solid #1a2a4a; padding: 2px 4px; font-weight: 600; font-size: 17px; text-transform: uppercase; }
+            QLineEdit { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
             QLineEdit:focus { border: 1px solid #2a7abf; }
-            QPushButton { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
+            QPushButton { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
             QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #ffffff; }
             QPushButton:pressed { background-color: #0a2a1a; }
-            QPushButton:disabled { background-color: #0d1117; color: #ffffff; }
+            QPushButton:disabled { background-color: #080b12; color: #ffffff; }
             QCheckBox { color: #ffffff; }
             QLabel#status { color: #ffffff; font-size: 20px; }
         """))
@@ -119,7 +119,7 @@ class RSSViewer(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
-        self.table.setStyleSheet("QTableWidget { alternate-background-color: #0f1520; }")
+        self.table.setStyleSheet("QTableWidget { alternate-background-color: #0a0e16; }")
         layout.addWidget(self.table)
 
         # Status label

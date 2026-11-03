@@ -107,18 +107,18 @@ def _set_lang_combo(combo: QComboBox, code: str) -> None:
 
 
 _SHARED_STYLE = """
-    QDialog { background-color: #0a0a0f; color: #ffffff; }
+    QDialog { background-color: #05070c; color: #ffffff; }
     QLabel { color: #ffffff; }
     QGroupBox { color: #ffffff; border: 1px solid #1a2a4a; border-radius: 6px; margin-top: 12px; padding-top: 12px; }
     QGroupBox::title { color: #ffffff; subcontrol-origin: margin; left: 10px; padding: 0 5px; font-weight: 600; }
-    QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
+    QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
     QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border: 1px solid #2a7abf; }
     QCheckBox { color: #ffffff; }
     QCheckBox::indicator { border: 1px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
     QCheckBox::indicator:checked { background-color: #2a7abf; border-color: #2a7abf; }
-    QPushButton { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
+    QPushButton { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
     QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #ffffff; }
-    QTableWidget { background-color: #0d1117; color: #ffffff; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; }
+    QTableWidget { background-color: #080b12; color: #ffffff; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; }
     QScrollArea { background-color: transparent; border: none; }
     QLabel#hint { color: #ffffff; font-size: 17px; }
 """

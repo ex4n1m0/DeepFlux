@@ -48,17 +48,17 @@ from gui.fonts import scale_qss
 logger = logging.getLogger(__name__)
 
 _SHARED_STYLE = """
-    QDialog { background-color: #0a0a0f; color: #ffffff; }
+    QDialog { background-color: #05070c; color: #ffffff; }
     QLabel { color: #ffffff; }
     QGroupBox { color: #ffffff; border: 1px solid #1a2a4a; border-radius: 4px; margin-top: 10px; padding-top: 8px; }
     QGroupBox::title { color: #ffffff; subcontrol-origin: margin; left: 10px; padding: 0 5px; font-weight: 600; }
-    QLineEdit, QSpinBox, QComboBox { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
+    QLineEdit, QSpinBox, QComboBox { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
     QLineEdit:focus, QSpinBox:focus, QComboBox:focus { border: 1px solid #2a7abf; }
-    QComboBox QAbstractItemView { background-color: #0d1117; color: #ffffff; selection-background-color: #1a2a4a; }
+    QComboBox QAbstractItemView { background-color: #080b12; color: #ffffff; selection-background-color: #1a2a4a; }
     QCheckBox { color: #ffffff; }
     QCheckBox::indicator { border: 1px solid #1a2a4a; border-radius: 3px; width: 16px; height: 16px; }
     QCheckBox::indicator:checked { background-color: #2a7abf; border-color: #2a7abf; }
-    QPushButton { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
+    QPushButton { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
     QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #ffffff; }
     QLabel#hint { color: #ffffff; font-size: 17px; }
 """
@@ -1182,7 +1182,7 @@ class APIKeysDialog(QDialog):
             return
 
         self.jkt_test_result.setText(tr('Testing connection...'))
-        self.jkt_test_result.setStyleSheet("color: #ffffff;")
+        self.jkt_test_result.setStyleSheet(scale_qss("color: #ffffff;"))
 
         try:
             full_url = f"{url.rstrip('/')}{torznab_path}"
@@ -1211,7 +1211,7 @@ class APIKeysDialog(QDialog):
             self.jkt_test_result.setStyleSheet("color: #ff3366;")
         elif root.tag == "caps":
             self.jkt_test_result.setText(tr('Connection successful! Fetching indexer list…'))
-            self.jkt_test_result.setStyleSheet("color: #ffffff;")
+            self.jkt_test_result.setStyleSheet(scale_qss("color: #ffffff;"))
             # Fetch with the TYPED (not yet saved) key via a probe config, so
             # cancelling the dialog leaves the saved key untouched. The fetched
             # sources land in the live config either way — same as the Fetch
@@ -1255,7 +1255,7 @@ class APIKeysDialog(QDialog):
         self.jkt_test_result.setText(
             f"Connection successful! Synced {len(outcome)} indexer(s) from Jackett ({enabled} enabled)."
         )
-        self.jkt_test_result.setStyleSheet("color: #ffffff;")
+        self.jkt_test_result.setStyleSheet(scale_qss("color: #ffffff;"))
 
     # -- Local models (bundled llama.cpp) ------------------------------------
 
@@ -1458,7 +1458,7 @@ class APIKeysDialog(QDialog):
                 self.hf_status.setText(
                     f"{custom_entry['label']} " + tr('installed — it appears in '
                                                      'the model list above.'))
-                self.hf_status.setStyleSheet("color: #ffffff;")
+                self.hf_status.setStyleSheet(scale_qss("color: #ffffff;"))
         self._refresh_local_rows()
         if entry is None:
             return
@@ -1470,7 +1470,7 @@ class APIKeysDialog(QDialog):
             f"{entry['label']} installed — the built-in DeepSeek key stays "
             "the default agent. Choose 'Local AI (built-in, uncensored)' in "
             "the endpoint box above (or press Use) to run it.")
-        self.local_test_result.setStyleSheet("color: #ffffff;")
+        self.local_test_result.setStyleSheet(scale_qss("color: #ffffff;"))
 
     def _apply_local_provider(self, entry: dict) -> None:
         """STAGE the switch to the local provider (visuals only). The live
@@ -1483,7 +1483,7 @@ class APIKeysDialog(QDialog):
         self.llm_base_url.setText(LLM_PROVIDER_PRESETS["local"]["base_url"])
         self.local_test_result.setText(
             f"{entry['label']} ready — it becomes the agent when you press OK.")
-        self.local_test_result.setStyleSheet("color: #ffffff;")
+        self.local_test_result.setStyleSheet(scale_qss("color: #ffffff;"))
         self._refresh_local_rows()
 
     def _local_remove(self, entry: dict) -> None:
@@ -1511,7 +1511,7 @@ class APIKeysDialog(QDialog):
 
     def _local_test(self) -> None:
         self.local_test_result.setText(tr('Testing…'))
-        self.local_test_result.setStyleSheet("color: #ffffff;")
+        self.local_test_result.setStyleSheet(scale_qss("color: #ffffff;"))
 
         def work() -> None:
             from infra import local_model
@@ -1556,13 +1556,13 @@ class APIKeysDialog(QDialog):
                                          else LLM_PROVIDER_PRESETS["local"]["models"][0])
                 self.config.llm.fast_model = self.config.llm.model
             self.local_test_result.setText(tr('Model removed.'))
-            self.local_test_result.setStyleSheet("color: #ffffff;")
+            self.local_test_result.setStyleSheet(scale_qss("color: #ffffff;"))
             return
         # action == "test"
         if outcome.get("ok"):
             self.local_test_result.setText(
                 f"✓ {tr('Local server running')} — {outcome.get('detail', '')}")
-            self.local_test_result.setStyleSheet("color: #ffffff;")
+            self.local_test_result.setStyleSheet(scale_qss("color: #ffffff;"))
         else:
             self.local_test_result.setText(
                 tr('Local server not running. It starts automatically with '
@@ -1694,7 +1694,7 @@ class APIKeysDialog(QDialog):
                 name = (entry or {}).get("label") or model_id
             self.server_state_lbl.setText(
                 "● " + tr('Running') + (f" — {name}" if name else ""))
-            self.server_state_lbl.setStyleSheet("color: #ffffff;")
+            self.server_state_lbl.setStyleSheet(scale_qss("color: #ffffff;"))
         elif state == "loading":
             self.server_progress.setVisible(True)
             if st.get("stopping"):
@@ -1714,7 +1714,7 @@ class APIKeysDialog(QDialog):
             err = st.get("error")
             self.server_state_lbl.setText(
                 "○ " + (err or tr('Off — the local AI uses no GPU/RAM until you start it.')))
-            self.server_state_lbl.setStyleSheet("color: #ffffff;")
+            self.server_state_lbl.setStyleSheet(scale_qss("color: #ffffff;"))
 
     # -- Custom Hugging Face models (search -> pick file -> download) --------
 
@@ -1726,7 +1726,7 @@ class APIKeysDialog(QDialog):
         self.hf_search_btn.setEnabled(False)
         self.hf_list.setEnabled(False)
         self.hf_status.setText(tr('Searching Hugging Face…'))
-        self.hf_status.setStyleSheet("color: #ffffff;")
+        self.hf_status.setStyleSheet(scale_qss("color: #ffffff;"))
 
         def work() -> None:
             try:
@@ -1756,7 +1756,7 @@ class APIKeysDialog(QDialog):
         results = outcome.get("results") or []
         if not results:
             self.hf_status.setText(tr("No GGUF models found for") + f" '{query}'.")
-            self.hf_status.setStyleSheet("color: #ffffff;")
+            self.hf_status.setStyleSheet(scale_qss("color: #ffffff;"))
             return
         for r in results:
             item = QListWidgetItem(f"{r['id']}   ·   ⬇ {r['downloads']:,}")
@@ -1765,7 +1765,7 @@ class APIKeysDialog(QDialog):
         self.hf_status.setText(
             f"{len(results)} " + tr('models — double-click one to pick a file '
                                     '(most downloaded first).'))
-        self.hf_status.setStyleSheet("color: #ffffff;")
+        self.hf_status.setStyleSheet(scale_qss("color: #ffffff;"))
 
     def _hf_on_selection(self, current, _previous) -> None:
         self.hf_download_btn.setEnabled(
@@ -1791,7 +1791,7 @@ class APIKeysDialog(QDialog):
         self.hf_search_btn.setEnabled(False)
         self.hf_download_btn.setEnabled(False)
         self.hf_status.setText(f"{tr('Listing')} {repo_id} {tr('GGUF files…')}")
-        self.hf_status.setStyleSheet("color: #ffffff;")
+        self.hf_status.setStyleSheet(scale_qss("color: #ffffff;"))
 
         def work() -> None:
             try:
@@ -1842,7 +1842,7 @@ class APIKeysDialog(QDialog):
             self.hf_list.addItem(item)
         self.hf_status.setText(
             f"{len(files)} " + tr('files — select one and press Download.'))
-        self.hf_status.setStyleSheet("color: #ffffff;")
+        self.hf_status.setStyleSheet(scale_qss("color: #ffffff;"))
 
     def _hf_download(self) -> None:
         from infra import local_model
@@ -1868,7 +1868,7 @@ class APIKeysDialog(QDialog):
         self._custom_dl_entries[entry["id"]] = entry
         self.hf_status.setText(
             f"{tr('Downloading')} {entry['label']} ({entry['size'] / 1024**3:.1f} GiB)…")
-        self.hf_status.setStyleSheet("color: #ffffff;")
+        self.hf_status.setStyleSheet(scale_qss("color: #ffffff;"))
         self._local_download(entry)
 
     def _load_values(self) -> None:

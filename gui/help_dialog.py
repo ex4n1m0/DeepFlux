@@ -26,7 +26,7 @@ HELP_HTML = r"""
   body {
     font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
     color: #ffffff;
-    background-color: #0a0a0f;
+    background-color: #05070c;
     font-size: 20px;
     line-height: 1.6;
     padding: 8px;
@@ -37,12 +37,12 @@ HELP_HTML = r"""
   p { margin: 4px 0; }
   ul { margin: 4px 0; padding-left: 20px; }
   li { margin: 2px 0; }
-  code { color: #ffffff; background-color: #0d1117; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
+  code { color: #ffffff; background-color: #080b12; padding: 1px 4px; border-radius: 3px; font-size: 18px; font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace; }
   table { border-collapse: collapse; width: 100%; margin: 6px 0; }
   th { color: #ffffff; text-align: left; border-bottom: 1px solid #1a2a4a; padding: 4px 6px; }
-  td { border-bottom: 1px solid #111827; padding: 4px 6px; }
-  .note { background-color: #0d1117; border-left: 1px solid #2a7abf; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
-  .warn { background-color: #0d1117; border-left: 1px solid #ffcc00; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  td { border-bottom: 1px solid #0b1120; padding: 4px 6px; }
+  .note { background-color: #080b12; border-left: 1px solid #2a7abf; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
+  .warn { background-color: #080b12; border-left: 1px solid #ffcc00; padding: 6px 10px; margin: 8px 0; border-radius: 0 4px 4px 0; }
 </style>
 </head>
 <body>
@@ -143,6 +143,12 @@ Favorites / Recent. All commands live under the three real menus:
 <p><b>Text too big or too small?</b> Settings → <b>Font Size</b> picks
 Small / Medium / Large for the whole interface (menus, lists, chat,
 dialogs). Like the Language setting above it, it applies the next time
+DeepFlux starts.</p>
+
+<p><b>Prefer colored text?</b> Settings → <b>Text Color</b> recolors all
+interface text — White (default), Light Blue, Blue or Dark Blue — on the
+near-black background. Status colors (errors, warnings, download states)
+always keep their own colors, and like Font Size it applies the next time
 DeepFlux starts.</p>
 
 <p><b>Browsing full-screen:</b> while the Browse page is active, the site
@@ -725,7 +731,7 @@ class HelpDialog(QDialog):
         self.setWindowTitle(tr('DeepFlux — User Guide'))
         self.setMinimumSize(520, 360)
         roomy(self)
-        self.setStyleSheet("QDialog { background-color: #0a0a0f; }")
+        self.setStyleSheet("QDialog { background-color: #05070c; }")
 
         layout = QVBoxLayout(self)
 
@@ -737,20 +743,20 @@ class HelpDialog(QDialog):
         from gui.i18n import active_language
         browser.setHtml(scale_qss(HELP_HTML_ZH if active_language() == "zh" else HELP_HTML))
         browser.setOpenExternalLinks(True)
-        browser.setStyleSheet("""
+        browser.setStyleSheet(scale_qss("""
             QTextBrowser {
-                background-color: #0a0a0f;
+                background-color: #05070c;
                 color: #ffffff;
                 border: none;
             }
-        """)
+        """))
         layout.addWidget(browser)
 
         close_btn = QPushButton(tr('Close'))
         close_btn.clicked.connect(self.accept)
         close_btn.setStyleSheet(scale_qss("""
             QPushButton {
-                background-color: #111827;
+                background-color: #0b1120;
                 color: #ffffff;
                 border: 1px solid #1a2a4a;
                 padding: 2px 16px;
@@ -773,7 +779,7 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(tr('About DeepFlux'))
         self.setMinimumWidth(400)
-        self.setStyleSheet("QDialog { background-color: #0a0a0f; color: #ffffff; }")
+        self.setStyleSheet(scale_qss("QDialog { background-color: #05070c; color: #ffffff; }"))
 
         layout = QVBoxLayout(self)
 
@@ -796,9 +802,9 @@ class AboutDialog(QDialog):
 
         close_btn = QPushButton(tr('Close'))
         close_btn.clicked.connect(self.accept)
-        close_btn.setStyleSheet("""
+        close_btn.setStyleSheet(scale_qss("""
             QPushButton {
-                background-color: #111827;
+                background-color: #0b1120;
                 color: #ffffff;
                 border: 1px solid #1a2a4a;
                 padding: 2px 16px;
@@ -810,5 +816,5 @@ class AboutDialog(QDialog):
                 border: 1px solid #2a7abf;
                 color: #ffffff;
             }
-        """)
+        """))
         layout.addWidget(close_btn)

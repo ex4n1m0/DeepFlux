@@ -85,7 +85,7 @@ _MEDIA_EXTENSIONS = {
 }
 
 _MENU_STYLE = (
-    "QMenu { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a;"
+    "QMenu { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a;"
     " border-radius: 6px; padding: 4px; }"
     " QMenu::item { padding: 3px 20px; border-radius: 4px; }"
     " QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }"

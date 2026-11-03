@@ -19,7 +19,7 @@ import re
 import sys
 from pathlib import Path
 
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QColor, QFont, QFontDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +60,44 @@ _font_scale = 1.0
 
 _FONT_SIZE_RE = re.compile(r"font-size:\s*(\d+(?:\.\d+)?)\s*(px|pt)")
 
+# UI text color theme (Settings → Text Color): every QSS/HTML text literal in
+# the app is `color: #ffffff` at the source level (owner decision 2026-11-03)
+# and scale_qss rewrites it to the ACTIVE theme hex at apply time — so a
+# theme rides the same baked-at-setStyleSheet restart-to-apply convention as
+# the font scale. "white" is byte-identical to the pre-setting look.
+# light_blue reuses the app's established #a8edff cyan; dark_blue is a royal
+# blue kept just readable on the near-black background ladder (~3.7:1).
+TEXT_THEMES = {
+    "white": "#ffffff",
+    "light_blue": "#a8edff",
+    "blue": "#4da3ff",
+    "dark_blue": "#2a63d6",
+}
+_text_theme_hex = "#ffffff"
+
+# Bare `color:` only — the (?<![-\w]) lookbehind rejects selection-color /,
+# background-color / border-color / gridline-color, which all keep their own
+# values: selected text stays WHITE in every theme (dark-blue text on the
+# #1a2a4a selection background would be unreadable), and backgrounds are
+# never recolored by the text theme. Semantic status colors (reds/oranges/
+# yellows/greens) aren't #ffffff and can't match.
+_TEXT_COLOR_RE = re.compile(r"(?<![-\w])color:\s*#ffffff\b", re.IGNORECASE)
+
+# Declaration blocks whose BACKGROUND is one of the bright fills (hover /
+# selected / active / selection + the accent blue) keep their white text in
+# every theme — same reasoning as selection-color: blue text on the accent
+# blue would vanish. Matched against the block's background declarations
+# only, so gridline-color/border-color uses of the same hexes don't protect
+# a block, and selection-background-color in a base-widget block doesn't
+# freeze the widget's body text. A block may also carry an explicit
+# `/* keep-white */` marker for text that INHERITS a bright background from
+# a parent rule (the active rail button's label).
+_BRIGHT_BG_RE = re.compile(
+    r"(?:^|[;{])\s*(?:alternate-)?background(?:-color)?\s*:[^;}]*"
+    r"(?:#1a2a4a|#2a7abf|rgba\(\s*42\s*,\s*122\s*,\s*191)",
+    re.IGNORECASE,
+)
+
 
 def set_font_scale(mode: str) -> None:
     """Set the process-wide font scale from the config's ui_font_size.
@@ -81,14 +119,40 @@ def ui_point_size() -> int:
     return max(9, round(_UI_POINT_SIZE * _font_scale))
 
 
-def scale_qss(css: str) -> str:
-    """Scale every `font-size: Npx`/`Npt` in a QSS/HTML-CSS string to the
-    current font scale. Stylesheets pin absolute sizes that would otherwise
-    NOT follow the app font — every setStyleSheet/setHtml string that sets
-    font-size must go through this. Border widths, paddings and radii are
-    untouched.
+def set_text_theme(mode: str) -> None:
+    """Set the process-wide text color theme from the config's ui_text_theme.
+
+    Called ONCE at boot next to set_font_scale — QSS/HTML text colors are
+    baked at setStyleSheet time, so a later change can only take effect next
+    launch. Unknown values fail closed to white.
     """
-    if _font_scale == 1.0:
+    global _text_theme_hex
+    _text_theme_hex = TEXT_THEMES.get((mode or "").strip().lower(), "#ffffff")
+
+
+def text_theme_hex() -> str:
+    """The active text theme as a #rrggbb literal."""
+    return _text_theme_hex
+
+
+def text_color() -> QColor:
+    """The active text theme as a QColor — for Python-PAINTED text (HUD
+    captions/values, tile titles, progress-delegate digits): painted text
+    must follow the same theme as QSS text, so never hardcode white there."""
+    return QColor(_text_theme_hex)
+
+
+def scale_qss(css: str) -> str:
+    """Scale every `font-size: Npx`/`Npt` to the current font scale AND
+    rewrite every bare `color: #ffffff` to the active text theme.
+
+    Stylesheets pin absolute sizes and colors that would otherwise NOT
+    follow the app font / text theme — every setStyleSheet/setHtml string
+    that sets font-size or text color must go through this. Border widths,
+    paddings and radii are untouched; selection-color/background-color keep
+    their own values (see _TEXT_COLOR_RE).
+    """
+    if _font_scale == 1.0 and _text_theme_hex == "#ffffff":
         return css
 
     def _scaled(m: "re.Match[str]") -> str:
@@ -102,7 +166,37 @@ def scale_qss(css: str) -> str:
             text = f"{value:.1f}".rstrip("0").rstrip(".")
         return f"font-size: {text}{unit}"
 
-    return _FONT_SIZE_RE.sub(_scaled, css)
+    out = _FONT_SIZE_RE.sub(_scaled, css) if _font_scale != 1.0 else css
+    if _text_theme_hex != "#ffffff":
+        out = _apply_text_theme(out)
+    return out
+
+
+def _apply_text_theme(css: str) -> str:
+    """Rewrite themeable `color: #ffffff` declarations to the active theme,
+    QSS-block aware: a declaration block that sets a bright background (see
+    _BRIGHT_BG_RE) or whose selector side / body carries a `keep-white`
+    comment marker keeps its white text; everything else (top-level HTML
+    fragments included) is themed."""
+    out: list = []
+    depth = 0
+    keep_white = False
+    prev = ""
+    for part in re.split(r"([{}])", css):
+        if part == "{":
+            depth += 1
+            keep_white = depth == 1 and "keep-white" in prev
+            out.append(part)
+        elif part == "}":
+            depth -= 1
+            out.append(part)
+        elif depth > 0 and (keep_white or "keep-white" in part
+                            or _BRIGHT_BG_RE.search(part)):
+            out.append(part)
+        else:
+            out.append(_TEXT_COLOR_RE.sub(f"color: {_text_theme_hex}", part))
+        prev = part
+    return "".join(out)
 
 
 def _fonts_dir() -> Path:

@@ -41,13 +41,13 @@ class RSSDialog(QDialog):
         self.setMinimumSize(520, 340)
         roomy(self)
         self.setStyleSheet(scale_qss("""
-            QDialog { background-color: #0a0a0f; color: #ffffff; }
+            QDialog { background-color: #05070c; color: #ffffff; }
             QLabel { color: #ffffff; }
-            QTableWidget { background-color: #0d1117; color: #ffffff; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; selection-background-color: #1a2a4a; selection-color: #ffffff; alternate-background-color: #0f1520; }
-            QHeaderView::section { background-color: #111827; color: #ffffff; border: none; border-bottom: 1px solid #1a2a4a; padding: 2px 4px; font-weight: 600; font-size: 17px; text-transform: uppercase; }
-            QLineEdit, QComboBox { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
+            QTableWidget { background-color: #080b12; color: #ffffff; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; selection-background-color: #1a2a4a; selection-color: #ffffff; alternate-background-color: #0a0e16; }
+            QHeaderView::section { background-color: #0b1120; color: #ffffff; border: none; border-bottom: 1px solid #1a2a4a; padding: 2px 4px; font-weight: 600; font-size: 17px; text-transform: uppercase; }
+            QLineEdit, QComboBox { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 8px; border-radius: 3px; }
             QLineEdit:focus, QComboBox:focus { border: 1px solid #2a7abf; }
-            QPushButton { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
+            QPushButton { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a; padding: 2px 10px; border-radius: 3px; }
             QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #ffffff; }
         """))
         self._build_ui()

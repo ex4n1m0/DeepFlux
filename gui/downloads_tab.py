@@ -49,7 +49,7 @@ from dlmgr.job import JobStatus, SegmentStatus
 from gui.column_sizing import AutoColumnSizer
 from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 from gui.i18n import tr
-from gui.fonts import scale_qss
+from gui.fonts import scale_qss, text_color
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +306,8 @@ class ProgressDelegate(QStyledItemDelegate):
             chunk.setWidth(max(8.0, bar.width() * fraction))
             painter.setBrush(option.palette.brush(QPalette.Highlight))
             painter.drawRoundedRect(chunk, 4.0, 4.0)
-        painter.setPen(QColor(238, 244, 255))
+        # % text follows the app-wide text theme (white by default)
+        painter.setPen(text_color())
         painter.drawText(option.rect, Qt.AlignCenter, text)
         painter.restore()
 
@@ -511,7 +512,7 @@ class DownloadsTab(QWidget):
 
         def _dot() -> QLabel:
             lbl = QLabel(tr('·'))
-            lbl.setStyleSheet("color: #ffffff; border: none;")
+            lbl.setStyleSheet(scale_qss("color: #ffffff; border: none;"))
             return lbl
 
         stats_row = ResponsiveRow()
@@ -667,8 +668,8 @@ class DownloadsTab(QWidget):
     @staticmethod
     def _stat_html(caption: str, value: str, accent: bool = False) -> str:
         color = "#a8edff" if accent else "#ffffff"
-        return (f'<span style="color:#ffffff;">{caption}</span> '
-                f'<b style="color:{color};">{value}</b>')
+        return scale_qss(f'<span style="color:#ffffff;">{caption}</span> '
+                         f'<b style="color:{color};">{value}</b>')
 
     def _update_summary(self, jobs) -> None:
         active = sum(job.status in (JobStatus.DOWNLOADING, JobStatus.PROCESSING) for job in jobs)
@@ -681,7 +682,7 @@ class DownloadsTab(QWidget):
         self._stat_speed.setText(
             self._stat_html(tr("Speed"), _format_speed(speed), accent=speed > 0))
         self._stat_showing.setText(
-            f'<span style="color:#ffffff;">{tr("Showing")}: {showing}/{len(jobs)}</span>'
+            scale_qss(f'<span style="color:#ffffff;">{tr("Showing")}: {showing}/{len(jobs)}</span>')
             if showing != len(jobs) else "")
         self._summary_plain = (
             f"{tr('Active')}: {active} | {tr('Queued')}: {queued} | "

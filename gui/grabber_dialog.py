@@ -41,21 +41,21 @@ logger = logging.getLogger(__name__)
 _THUMB_W, _THUMB_H = 96, 54
 
 _STYLE = """
-    QDialog { background-color: #0a0a0f; color: #ffffff; }
+    QDialog { background-color: #05070c; color: #ffffff; }
     QLabel { color: #ffffff; }
-    QListWidget { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a;
+    QListWidget { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a;
                   border-radius: 6px; selection-background-color: #1a2a4a; }
-    QLineEdit { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a;
+    QLineEdit { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a;
                 padding: 4px 8px; border-radius: 3px; }
     QLineEdit:focus { border: 1px solid #2a7abf; }
-    QPushButton { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a;
+    QPushButton { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a;
                   padding: 4px 12px; border-radius: 3px; }
     QPushButton:hover { background-color: #1a2a4a; border: 1px solid #2a7abf; color: #ffffff; }
     QPushButton:disabled { color: #ffffff; }
     QPushButton#btn_accent { color: #ffffff; font-weight: 600; }
     QCheckBox { color: #ffffff; }
     QCheckBox::indicator { width: 14px; height: 14px; }
-    QSpinBox { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a;
+    QSpinBox { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a;
                padding: 2px 6px; border-radius: 3px; }
     QLabel#status { color: #ffffff; }
     QLabel#status_error { color: #ff3366; }

@@ -599,25 +599,59 @@
   set it) scales the whole UI. Engine = `gui/fonts.py`: `set_font_scale()`
   must run BEFORE `load_app_fonts()` at boot (`run_gui` loads the config
   first for exactly this reason), and EVERY `setStyleSheet`/`setHtml`/
-  `setDefaultStyleSheet` string that contains `font-size:` must be wrapped
-  in `scale_qss(...)` — QSS px sizes do NOT follow the app font
-  (tests/test_font_scale.py pins the wrap coverage). Painted QFont sizes
-  fitted to geometry (channel-number tiles, HUD strip) deliberately do NOT
-  scale. Restart-to-apply, same convention as Language.
+  `setDefaultStyleSheet` string that contains `font-size:` OR themeable
+  white text (`color: #ffffff`) must be wrapped in `scale_qss(...)` — QSS px
+  sizes do NOT follow the app font, and colors bake at setStyleSheet time
+  (tests/test_font_scale.py pins the wrap coverage for both). Painted QFont
+  sizes fitted to geometry (channel-number tiles, HUD strip) deliberately do
+  NOT scale. Restart-to-apply, same convention as Language.
+- Text color themes (2026-11-03, same day as the font-size setting):
+  Settings → Text Color (White default / Light Blue / Blue / Dark Blue,
+  config `ui_text_theme`, top-level like `ui_font_size` — agent can NEVER
+  set it) recolors every stylesheet text. `set_text_theme()` runs at boot
+  next to `set_font_scale()` (mirrored in jackett_setup_dialog), and
+  `scale_qss` rewrites bare `color: #ffffff` → the theme hex, QSS-BLOCK
+  AWARE: `selection-color`, `background-color`, `border-color`,
+  `gridline-color` are never rewritten, and a declaration block whose
+  background is one of the BRIGHT fills (#1a2a4a hover/selected, #2a7abf
+  accent, rgba(42,122,191,…), or a gradient carrying them) keeps its white
+  text — blue text on the accent blue would vanish; a `keep-white` comment
+  on a block's selector side or body pins white for text that INHERITS a
+  bright parent fill (the active rail button's label). A NAMED `color:
+  white` literal means "pinned white on an accent fill" (record/play chips)
+  and is never themed. Python-PAINTED text (HUD captions/values, downloads
+  progress-delegate %, IPTV tile titles + dark-chip labels) follows the
+  theme via `fonts.text_color()`; dim painted secondaries (unselected tile
+  titles, EPG lines) and semantic status colors keep their own colors.
+  Theme hexes live ONLY in `fonts.TEXT_THEMES` — never hardcode one into a
+  stylesheet string (test_all_text_is_pure_white pins the #ffffff-source
+  rule). Restart-to-apply.
+- Background ladder DARKENED (owner decision 2026-11-03, applies always,
+  not only under blue themes — dark blue text must stay readable):
+  `#0a0a0f`→`#05070c` (window base; `rgba(10,10,15,α)` overlays →
+  `rgba(5,7,12,α)`, painted `QColor(10,10,15,α)` chips likewise),
+  `#0d1117`→`#080b12` (panels/menus/tables/inputs + WebEngine page bg +
+  the room portal), `#111827`→`#0b1120` (cards/buttons/hover/HUD bar
+  back), `#0f1520`→`#0a0e16` (zebra rows), painted
+  `QColor(24,26,34)`→`QColor(12,14,22)` (artwork fills). KEPT unchanged:
+  #1a2a4a (hover/selection/borders), #2a7abf accent, #0a1a2e/#0a1a2a,
+  all #000000, semantic fills. tests/test_font_scale.py::
+  test_background_ladder_is_dark pins it. dlmgr/browser_extension.py is a
+  separate surface (Chrome popup) and keeps its own colors.
 - Outlines are 1px (owner decision 2026-11-03): QSS border widths are 1px
   everywhere — do NOT re-introduce 2px/3px borders (`border-radius` values
   are corner ROUNDING and stay as-is). Pinned by
   tests/test_font_scale.py::test_no_thick_qss_borders.
-- Text is PURE WHITE (owner decision 2026-11-03): every QSS
-  `color:`/`selection-color:` literal is `#ffffff`, exempting only semantic
-  status colors (error reds, warning oranges, queued yellow, quiet-ok green
-  — see SEMANTIC_TEXT_COLORS in tests/test_font_scale.py, which pins it).
-  The old dim greys (#8a9ab0 family), off-whites, translucent chat text and
-  accent blue/cyan TEXT (#2a7abf/#a8edff as `color:`) are gone; accent blue
-  survives only in BACKGROUNDS/borders (buttons, selection highlights, HUD
-  bar fills). Python-side status palettes (downloads _STATUS_COLORS,
-  record-state colours) are data, not QSS, and keep their own colors. The
-  HUD's painted captions/values are white (warn/danger values keep color).
+- Text SOURCE is pure white (owner decision 2026-11-03; themeable since
+  same day): every QSS `color:`/`selection-color:` LITERAL is `#ffffff` —
+  theme colors are applied at runtime by scale_qss, never written as
+  literals. Exempt (see SEMANTIC_TEXT_COLORS + the theme bullet above):
+  semantic status colors (error reds, warning oranges, queued yellow,
+  quiet-ok green) and the two accent DATA texts (`#a8edff` downloads stat
+  values, `#2a7abf` active browser-tab label). Python-side status palettes
+  (downloads _STATUS_COLORS, record-state colours) are data, not QSS, and
+  keep their own colors. The HUD's painted captions/values follow the
+  theme (warn/danger values keep color).
 
 - Splitter `setSizes()` before window show is overridden by size hints —
   enforce default ratios in `MainWindow.showEvent`.

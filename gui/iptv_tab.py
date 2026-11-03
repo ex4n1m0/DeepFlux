@@ -89,7 +89,7 @@ from dlmgr.ffmpeg import StreamRecorder, find_ffmpeg, is_network_stream_url
 from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 from gui.window_sizing import roomy
 from gui.i18n import tr
-from gui.fonts import scale_qss
+from gui.fonts import scale_qss, text_color
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +302,7 @@ class PlayerWidget(QWidget):
         # width: the full-fat button row demands ~950px and must not lock
         # the window wide — below it the buttons compact (see _refit_controls).
         self.controls = ResponsiveRow(min_width=580)
-        self.controls.setStyleSheet("background-color: rgba(10,10,15,0.85);")
+        self.controls.setStyleSheet("background-color: rgba(5,7,12,0.85);")
         controls_layout = QVBoxLayout(self.controls)
         controls_layout.setContentsMargins(8, 4, 8, 4)
         controls_layout.setSpacing(3)
@@ -360,7 +360,7 @@ class PlayerWidget(QWidget):
         ctrl.addWidget(self.seek, 1)
 
         self.time_lbl = QLabel(tr('00:00 / 00:00'))
-        self.time_lbl.setStyleSheet("color: #ffffff;")
+        self.time_lbl.setStyleSheet(scale_qss("color: #ffffff;"))
         ctrl.addWidget(self.time_lbl)
 
         self.mute_btn = QPushButton("🔇" if self._config.iptv.muted else "🔊")
@@ -479,7 +479,7 @@ class PlayerWidget(QWidget):
 
         # Error overlay (hidden by default).
         self.error_overlay = QWidget(self.surface)
-        self.error_overlay.setStyleSheet("background-color: rgba(10,10,15,0.95);")
+        self.error_overlay.setStyleSheet("background-color: rgba(5,7,12,0.95);")
         el = QVBoxLayout(self.error_overlay)
         el.setSpacing(12)
         self.error_icon = QLabel(tr('⚠'))
@@ -535,7 +535,7 @@ class PlayerWidget(QWidget):
         # Loading / buffering overlay (shown until the first frame is ready).
         # raise_() is called on show so it sits above the native mpv/VLC HWND.
         self.loading_overlay = QWidget(self.surface)
-        self.loading_overlay.setStyleSheet("background-color: rgba(10,10,15,0.94);")
+        self.loading_overlay.setStyleSheet("background-color: rgba(5,7,12,0.94);")
         ll = QVBoxLayout(self.loading_overlay)
         self.loading_lbl = QLabel(tr('Opening stream…'))
         self.loading_lbl.setStyleSheet(scale_qss(
@@ -571,7 +571,7 @@ class PlayerWidget(QWidget):
         self.buffer_badge = QLabel(tr('⏳ Buffering…'), self.surface)
         self.buffer_badge.setAlignment(Qt.AlignCenter)
         self.buffer_badge.setStyleSheet(scale_qss(
-            "background-color: rgba(10,10,15,0.82); color: #e67e22; "
+            "background-color: rgba(5,7,12,0.82); color: #e67e22; "
             "border-radius: 12px; padding: 6px 18px; font-size: 20px; "
             "font-weight: bold;"))
         self.buffer_badge.hide()
@@ -583,7 +583,7 @@ class PlayerWidget(QWidget):
         self.pure_hint = QLabel("", self.surface)
         self.pure_hint.setAlignment(Qt.AlignCenter)
         self.pure_hint.setStyleSheet(scale_qss(
-            "background-color: rgba(10,10,15,0.82); color: #ffffff; "
+            "background-color: rgba(5,7,12,0.82); color: #ffffff; "
             "border-radius: 12px; padding: 6px 18px; font-size: 20px;"))
         self.pure_hint.hide()
 
@@ -1334,7 +1334,7 @@ class PlayerWidget(QWidget):
         self._narrow_controls = narrow
         if narrow:
             self.controls.setStyleSheet(
-                "background-color: rgba(10,10,15,0.85);"
+                "background-color: rgba(5,7,12,0.85);"
                 "QPushButton { padding: 2px 4px; }")
             for btn in self._narrow_emoji_btns:
                 btn.setMaximumWidth(46)
@@ -1343,7 +1343,7 @@ class PlayerWidget(QWidget):
             self.fs_btn.hide()
         else:
             self.controls.setStyleSheet(
-                "background-color: rgba(10,10,15,0.85);")
+                "background-color: rgba(5,7,12,0.85);")
             for btn in self._narrow_emoji_btns:
                 btn.setMaximumWidth(_MAX_WIDGET_SIZE)
             self.aspect_btn.setMaximumWidth(_MAX_WIDGET_SIZE)
@@ -2216,11 +2216,11 @@ class _SubtitleSearchDialog(QDialog):
         self.setMinimumSize(520, 340)
         roomy(self)
         self.setStyleSheet(scale_qss(
-            "QDialog { background-color: #0a0a0f; color: #ffffff; }"
+            "QDialog { background-color: #05070c; color: #ffffff; }"
             "QLabel { color: #ffffff; }"
-            "QLineEdit, QComboBox { background-color: #0d1117; color: #ffffff; border: 1px solid #1a2a4a; padding: 3px 8px; border-radius: 3px; }"
-            "QTableWidget { background-color: #0d1117; color: #ffffff; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; }"
-            "QPushButton { background-color: #111827; color: #ffffff; border: 1px solid #1a2a4a; padding: 3px 12px; border-radius: 3px; }"
+            "QLineEdit, QComboBox { background-color: #080b12; color: #ffffff; border: 1px solid #1a2a4a; padding: 3px 8px; border-radius: 3px; }"
+            "QTableWidget { background-color: #080b12; color: #ffffff; gridline-color: #1a2a4a; border: 1px solid #1a2a4a; border-radius: 6px; }"
+            "QPushButton { background-color: #0b1120; color: #ffffff; border: 1px solid #1a2a4a; padding: 3px 12px; border-radius: 3px; }"
             "QPushButton:hover { border-color: #2a7abf; color: #ffffff; }"
             "QLabel#hint { color: #ffffff; font-size: 17px; }")
         )
@@ -2417,7 +2417,7 @@ def _neutral_pixmap() -> QPixmap:
     global _NEUTRAL
     if _NEUTRAL is None:
         pm = QPixmap(_TILE_SIZE)
-        pm.fill(QColor(24, 26, 34))
+        pm.fill(QColor(12, 14, 22))
         _NEUTRAL = pm
     return _NEUTRAL
 
@@ -2539,7 +2539,7 @@ class PosterDelegate(QStyledItemDelegate):
             mode = QIcon.Selected if selected else QIcon.Normal
             icon.paint(painter, icon_rect, Qt.AlignCenter, mode, QIcon.Off)
         else:
-            painter.fillRect(icon_rect, QColor(24, 26, 34))
+            painter.fillRect(icon_rect, QColor(12, 14, 22))
             painter.setPen(QColor(120, 130, 150))
             painter.drawText(icon_rect, Qt.AlignCenter, "—")
 
@@ -2548,7 +2548,9 @@ class PosterDelegate(QStyledItemDelegate):
         # programme (dimmed) on line 2 — one line each, elided.
         text = index.data(Qt.DisplayRole) or ""
         epg = index.data(_EPG_ROLE) or ""
-        painter.setPen(QColor(232, 236, 244) if selected else QColor(200, 211, 224))
+        # Selected titles follow the app-wide text theme; unselected stays the
+        # deliberate dim grey (painted secondary, like the EPG line below).
+        painter.setPen(text_color() if selected else QColor(200, 211, 224))
         if epg:
             fm = QFontMetrics(option.font)
             line_h = fm.height()
@@ -2600,8 +2602,8 @@ class PosterDelegate(QStyledItemDelegate):
             self._round_rect(painter, select_rect, bg, QColor(255, 255, 255),
                              "Select")
         else:
-            bg = QColor(10, 10, 15, 220 if hovered else 160)
-            self._round_rect(painter, select_rect, bg, QColor(220, 228, 240),
+            bg = QColor(5, 7, 12, 220 if hovered else 160)
+            self._round_rect(painter, select_rect, bg, text_color(),
                              "Select")
         # Play button states (priority: loading > playing > hover > normal):
         #   loading  → pulsing orange/white with "Loading…" or "Retry 2/5" text
@@ -2632,8 +2634,8 @@ class PosterDelegate(QStyledItemDelegate):
             self._round_rect(painter, play_rect, QColor(42, 122, 191, 240),
                              QColor(255, 255, 255), "▶ Play")
         else:
-            bg = QColor(10, 10, 15, 200 if selected else 160)
-            self._round_rect(painter, play_rect, bg, QColor(220, 228, 240),
+            bg = QColor(5, 7, 12, 200 if selected else 160)
+            self._round_rect(painter, play_rect, bg, text_color(),
                              "▶ Play")
 
     @staticmethod
@@ -3450,7 +3452,7 @@ class DetailPanel(QScrollArea):
         self.sig_metadata.connect(self._apply_metadata)
         self.setWidgetResizable(True)
         self.setStyleSheet(
-            "QScrollArea { background-color: rgba(10,10,15,0.96); "
+            "QScrollArea { background-color: rgba(5,7,12,0.96); "
             "border: 1px solid #1a2a4a; border-radius: 6px; }"
         )
         inner = QWidget()
@@ -3504,7 +3506,7 @@ class DetailPanel(QScrollArea):
 
         self.backdrop = QLabel("")
         self.backdrop.setMinimumHeight(220)
-        self.backdrop.setStyleSheet("background-color: #111827; border: 1px solid #1a2a4a; border-radius: 6px;")
+        self.backdrop.setStyleSheet("background-color: #0b1120; border: 1px solid #1a2a4a; border-radius: 6px;")
         self.backdrop.setAlignment(Qt.AlignCenter)
         self.backdrop.setScaledContents(False)
         # Preferred height (not Fixed) so the label grows to fit the scaled

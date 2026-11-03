@@ -674,6 +674,11 @@ class DeeptorrentConfig:
     # applied once at startup, takes effect next launch. Top-level for the
     # same reason as ui_language: stays user-controlled, agent cannot set it.
     ui_font_size: str = "medium"
+    # UI text color theme ("white" | "light_blue" | "blue" | "dark_blue") —
+    # rewrites every stylesheet text color via gui/fonts.scale_qss; applied
+    # once at startup, takes effect next launch. Top-level for the same
+    # reason as ui_language: stays user-controlled, agent cannot set it.
+    ui_text_theme: str = "white"
 
     @classmethod
     def from_file(cls, path: str) -> "DeeptorrentConfig":
@@ -1050,6 +1055,10 @@ class DeeptorrentConfig:
             ui_font_size=(data.get("ui_font_size") or "medium")
             if (data.get("ui_font_size") or "medium") in ("small", "medium", "large")
             else "medium",
+            ui_text_theme=(data.get("ui_text_theme") or "white")
+            if (data.get("ui_text_theme") or "white")
+            in ("white", "light_blue", "blue", "dark_blue")
+            else "white",
         )
 
     def sanitized_dict(self) -> Dict[str, Any]:

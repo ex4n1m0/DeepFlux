@@ -60,6 +60,12 @@ ZH_CN: dict[str, str] = {
     "Medium": "中",
     "Large": "大",
     "The new font size applies after DeepFlux restarts.": "新字号将在 DeepFlux 重启后生效。",
+    "Text Color": "文字颜色",
+    "White": "白色",
+    "Light Blue": "浅蓝色",
+    "Blue": "蓝色",
+    "Dark Blue": "深蓝色",
+    "The new text color applies after DeepFlux restarts.": "新的文字颜色将在 DeepFlux 重启后生效。",
 
     # --- settings page titles (menu + Settings Hub + Play gear share these) ---
     "Torrent Download Settings…": "种子下载设置…",

@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 
 _STYLE = """
 QWidget#setupRoot {
-    background-color: #0a0a0f;
+    background-color: #05070c;
     color: #ffffff;
     font-family: "Inter", "Segoe UI", "Helvetica Neue", sans-serif;
 }
@@ -46,14 +46,14 @@ QLabel#heading {
 }
 QLabel#subline { color: #ffffff; font-size: 13px; }
 QPlainTextEdit {
-    background-color: #0d1117;
+    background-color: #080b12;
     color: #ffffff;
     border: 1px solid #1a2a4a;
     border-radius: 6px;
     font-size: 13px;
 }
 QPushButton {
-    background-color: #111827;
+    background-color: #0b1120;
     color: #ffffff;
     border: 1px solid #1a2a4a;
     border-radius: 3px;
@@ -277,13 +277,15 @@ def run_setup_jackett_dialog(config_path: Optional[str] = None,
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("Deeptorrent")
     try:
-        from gui.fonts import load_app_fonts, set_font_scale
-        # Match the main app's boot order: the saved font scale must be set
-        # BEFORE the app font is applied (gui/fonts contract).
+        from gui.fonts import load_app_fonts, set_font_scale, set_text_theme
+        # Match the main app's boot order: the saved font scale AND text
+        # theme must be set BEFORE the app font is applied / any stylesheet
+        # is built (gui/fonts contract).
         from config import DeeptorrentConfig
         _cfg = DeeptorrentConfig.from_file(
             config_path or DeeptorrentConfig.default_config_path())
         set_font_scale(_cfg.ui_font_size)
+        set_text_theme(_cfg.ui_text_theme)
         load_app_fonts(app)
     except Exception:
         pass

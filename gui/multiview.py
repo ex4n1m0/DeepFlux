@@ -133,11 +133,11 @@ class GridTile(QWidget):
         self._empty_lbl = QLabel(tr('＋'))
         self._empty_lbl.setAlignment(Qt.AlignCenter)
         self._empty_lbl.setStyleSheet(scale_qss(
-            "color: #ffffff; font-size: 42px; background-color: #0b0e14;"))
+            "color: #ffffff; font-size: 42px; background-color: #080b12;"))
         self._empty_lbl.setParent(self.surface)
 
         strip = QWidget()
-        strip.setStyleSheet("background-color: rgba(10,10,15,0.9);")
+        strip.setStyleSheet("background-color: rgba(5,7,12,0.9);")
         row = QHBoxLayout(strip)
         row.setContentsMargins(4, 1, 4, 1)
         row.setSpacing(4)
@@ -442,7 +442,7 @@ class MultiViewGrid(QWidget):
 
         # Slim control bar under the tiles (grid-wide actions).
         bar = QWidget()
-        bar.setStyleSheet("background-color: rgba(10,10,15,0.9);")
+        bar.setStyleSheet("background-color: rgba(5,7,12,0.9);")
         row = QHBoxLayout(bar)
         row.setContentsMargins(6, 2, 6, 2)
         self.skip_buttons: List[QPushButton] = []

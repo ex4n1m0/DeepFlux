@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from infra.updater import UpdateInfo
+from gui.fonts import scale_qss
 from gui.i18n import tr
 
 # Dialog result codes for the prompt (exec() return values are ints).
@@ -60,7 +61,7 @@ class UpdateDialog(QDialog):
             notes = QLabel(info.notes)
             notes.setWordWrap(True)
             notes.setTextFormat(Qt.PlainText)
-            notes.setStyleSheet("color: #ffffff;")
+            notes.setStyleSheet(scale_qss("color: #ffffff;"))
             layout.addWidget(notes)
 
         size_lbl = QLabel(
@@ -68,7 +69,7 @@ class UpdateDialog(QDialog):
             f"settings are kept — the update reinstalls in place and "
             f"restarts DeepFlux.")
         size_lbl.setWordWrap(True)
-        size_lbl.setStyleSheet("color: #ffffff;")
+        size_lbl.setStyleSheet(scale_qss("color: #ffffff;"))
         layout.addWidget(size_lbl)
 
         buttons = QHBoxLayout()

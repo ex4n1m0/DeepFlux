@@ -21,6 +21,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QPushButton
 
+from gui import fonts
 from gui.i18n import tr
 
 from infra import hardware_monitor
@@ -33,12 +34,11 @@ HEALTH_TIMEOUT = 0.8            # sub-second so one slow probe can't stack
 _ACCENT = QColor("#2a7abf")
 _WARN = QColor("#d29922")
 _DANGER = QColor("#f85149")
-# Text is PURE WHITE everywhere (owner decision 2026-11-03) — _TEXT_DIM kept
-# as a name for the caption slot only; warn/danger VALUE colors stay semantic.
-_TEXT_DIM = QColor("#ffffff")
-_TEXT = QColor("#ffffff")
+# Painted TEXT follows the app-wide text color theme (gui/fonts.text_color,
+# white by default — owner decision 2026-11-03, themed since); warn/danger
+# VALUE colors stay semantic.
 _OK = QColor("#3fb950")
-_BAR_BACK = QColor("#111827")
+_BAR_BACK = QColor("#0b1120")
 _BAR_EDGE = QColor("#1a2a4a")
 
 
@@ -88,14 +88,14 @@ class HudMeter(QFrame):
         painter.setFont(font)
         metrics = painter.fontMetrics()
 
-        painter.setPen(QPen(_TEXT_DIM))
+        painter.setPen(QPen(fonts.text_color()))
         painter.drawText(2, 2, w - 4, metrics.height(), Qt.AlignLeft, self._caption)
 
         color = _level_color(self._percent)
-        # Value TEXT is pure white in the normal state; warn/danger keep
+        # Value TEXT follows the theme in the normal state; warn/danger keep
         # their semantic color (the BAR below always uses the level color).
-        text_color = _TEXT if color is _ACCENT else color
-        painter.setPen(QPen(text_color))
+        value_color = fonts.text_color() if color is _ACCENT else color
+        painter.setPen(QPen(value_color))
         painter.drawText(2, 2, w - 4, metrics.height(), Qt.AlignRight, self._value)
 
         if self._percent is None:
@@ -125,7 +125,7 @@ class HardwareHud(QFrame):
         self.setObjectName("hw_hud")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(
-            "#hw_hud { background-color: #0a0a0f; border: none;"
+            "#hw_hud { background-color: #05070c; border: none;"
             " border-bottom: 1px solid #1a2a4a; }")
 
         self._config = config

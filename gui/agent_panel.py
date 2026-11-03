@@ -77,7 +77,7 @@ class AgentPanel(QFrame):
         self._view.setOpenLinks(False)
         self._view.document().setDefaultStyleSheet(scale_qss(_PANEL_CSS))
         self._view.setStyleSheet(scale_qss(
-            "QTextBrowser { background-color: #0a0a0f; color: #ffffff;"
+            "QTextBrowser { background-color: #05070c; color: #ffffff;"
             " border: 1px solid #1a2a4a; border-radius: 4px; padding: 4px;"
             " font-size: 14px; }")
         )

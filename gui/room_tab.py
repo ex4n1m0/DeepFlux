@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import DeeptorrentConfig
+from gui.fonts import scale_qss
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,7 @@ PORTAL_URL = "https://onlyhumans.deepflux.space/join"
 # The portal's own page background — set as the QtWebEngine page
 # background so the first composited frame doesn't flash white against
 # the app's dark theme.
-_PORTAL_BG = "#0e1518"
+_PORTAL_BG = "#080b12"
 
 
 def _room_disabled_here() -> bool:
@@ -94,7 +95,7 @@ class RoomTab(QWidget):
         # browser tab).
         bar = QHBoxLayout()
         title = QLabel("DeepFlux Room")
-        title.setStyleSheet("color:#ffffff;font-weight:600")
+        title.setStyleSheet(scale_qss("color:#ffffff;font-weight:600"))
         bar.addWidget(title)
         bar.addStretch(1)
         reload_btn = QPushButton("↻ Reload")
@@ -111,7 +112,7 @@ class RoomTab(QWidget):
         if _room_disabled_here():
             note = QLabel("Room is disabled in this environment "
                           "(DF_NO_ROOM is set).")
-            note.setStyleSheet("color:#ffffff")
+            note.setStyleSheet(scale_qss("color:#ffffff"))
             note.setWordWrap(True)
             root.addWidget(note, 1)
             return
