@@ -1,8 +1,8 @@
 {
-  "version": "7.1",
-  "file": "DeepFlux-7.1-Linux-x86_64.AppImage",
-  "size": 611949048,
-  "sha256": "2947b829796ee2e030e4daecdbc2d400b3cddea41c0803bd24bf17f5a2c69d4d",
-  "released": "2026-11-04",
-  "notes": "DeepFlux 7.1 - New Text Color setting (Settings - Text Color: White / Light Blue / Blue / Dark Blue) that recolors every menu, list, chat and dialog, on a darker near-black background that keeps all four color themes easy to read. Error, warning and download-status colors stay unchanged."
+  "version": "7.2",
+  "file": "DeepFlux-7.2-Linux-x86_64.AppImage",
+  "size": 611953144,
+  "sha256": "a88e8908a4737ba3ea571fa29b6c7b2765be6eb192b24eb851ae127eab8f87d9",
+  "released": "2026-11-05",
+  "notes": "DeepFlux 7.2 - The browser address bar now lives in the top menu row, always visible right of Help while the Browse page is active. New defaults: Small font size (with a new even smaller Micro option in Settings - Font Size) and Light Blue text color (Settings - Text Color); existing installs are moved to the new defaults once, and every option can still be set by hand."
 }
