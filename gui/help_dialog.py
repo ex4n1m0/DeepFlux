@@ -696,6 +696,18 @@ To set everything up in one go, run DeepFlux with <code>--setup-jackett</code>
 </div>
 
 <div class="warn">
+<b>Google asks "are you a robot" on searches:</b> that is Google's bot wall
+judging your network or this browser's saved session — not a DeepFlux
+malfunction, and it usually affects one machine while others stay clean.
+To clear it: complete the verification once on the page, or Settings →
+<b>Browser General Settings… → Privacy &amp; Data → Clear Cookies and Cache</b>
+and restart. Private tabs always start with a fresh session and usually keep
+working. On networks where it keeps coming back, sign into your Google
+account in the browser, or switch the address-bar search engine
+(DuckDuckGo / Bing / Brave) in Browser General Settings….
+</div>
+
+<div class="warn">
 <b>HLS download fails:</b> The stream is likely DRM-protected. DeepFlux only supports
 non-DRM or AES-128 encrypted streams.
 </div>

@@ -566,6 +566,16 @@ DeepFlux 安装程序并保留<i>“现在设置 Jackett 种子搜索”</i>勾�
 </div>
 
 <div class="warn">
+<b>用 Google 搜索时被要求“确认我是机器人”：</b>这是 Google 的机器人风控
+在评估你的网络或本浏览器保存的会话 —— 并非 DeepFlux 故障，且通常只影响
+某台机器，其他机器不受影响。要解除：在页面上完成一次验证，或在 设置 →
+<b>浏览器常规设置… → 隐私与数据 → 清除 Cookie 和缓存</b> 后重启。隐私
+标签页每次以全新会话启动，通常不受影响。若在某个网络上反复出现，可在
+浏览器中登录 Google 账号，或在 浏览器常规设置… 里把地址栏搜索引擎换为
+DuckDuckGo / Bing / Brave。
+</div>
+
+<div class="warn">
 <b>HLS 下载失败：</b>该流可能受 DRM 保护。DeepFlux 只支持非 DRM 或
 AES-128 加密的流。
 </div>
