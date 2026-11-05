@@ -56,6 +56,7 @@ ZH_CN: dict[str, str] = {
     "Browser Developer Tools": "浏览器开发者工具",
     "The new language applies after DeepFlux restarts.": "新语言将在 DeepFlux 重启后生效。",
     "Font Size": "字体大小",
+    "Micro": "极小",
     "Small": "小",
     "Medium": "中",
     "Large": "大",

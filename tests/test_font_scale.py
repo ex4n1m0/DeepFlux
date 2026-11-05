@@ -30,22 +30,62 @@ def _default_scale():
 
 def test_config_ui_font_size_roundtrip(tmp_path):
     path = str(tmp_path / "config.json")
-    assert DeeptorrentConfig.from_file(path).ui_font_size == "medium"
+    # Default is "small" since 2026-11-04 (was "medium" in 7.0/7.1).
+    assert DeeptorrentConfig.from_file(path).ui_font_size == "small"
 
-    for mode in ("small", "large"):
+    # ui_defaults_gen=2 opts out of the one-time default migration below —
+    # these rows pin the raw saved-value round trip.
+    for mode in ("micro", "small", "medium", "large"):
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"ui_font_size": mode}, f)
+            json.dump({"ui_font_size": mode, "ui_defaults_gen": 2}, f)
         assert DeeptorrentConfig.from_file(path).ui_font_size == mode
 
-    # invalid values fail closed to medium, not to a crash
+    # invalid values fail closed to the default, not to a crash
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"ui_font_size": "huge"}, f)
-    assert DeeptorrentConfig.from_file(path).ui_font_size == "medium"
+        json.dump({"ui_font_size": "huge", "ui_defaults_gen": 2}, f)
+    assert DeeptorrentConfig.from_file(path).ui_font_size == "small"
 
     # to_file persists the field (asdict round trip)
     DeeptorrentConfig(ui_font_size="small").to_file(path)
     with open(path, encoding="utf-8") as f:
         assert json.load(f)["ui_font_size"] == "small"
+
+
+def test_config_ui_defaults_migrate_once(tmp_path):
+    """7.0/7.1 persisted their defaults (medium font, white text) into every
+    config.json, so a saved default is almost always "never chose". gen 1→2
+    remaps those to the new defaults (small / light_blue) exactly once;
+    explicit choices survive, and after the stamp is saved a genuine
+    Medium/White choice persists normally."""
+    path = str(tmp_path / "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ui_font_size": "medium", "ui_text_theme": "white"}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("small", "light_blue")
+    assert cfg.ui_defaults_gen == 2
+
+    # Explicit picks don't match the remap and survive the migration.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ui_font_size": "large", "ui_text_theme": "blue"}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("large", "blue")
+
+    # A stamped config keeps Medium/White as deliberate choices.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ui_font_size": "medium", "ui_text_theme": "white",
+                   "ui_defaults_gen": 2}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("medium", "white")
+
+    # The migration result survives save + reload (gen=2 blocks re-mapping).
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ui_font_size": "medium", "ui_text_theme": "white"}, f)
+    DeeptorrentConfig.from_file(path).to_file(path)
+    with open(path, encoding="utf-8") as f:
+        saved = json.load(f)
+    assert saved["ui_defaults_gen"] == 2
+    cfg = DeeptorrentConfig.from_file(path)
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("small", "light_blue")
 
 
 def test_font_size_is_not_agent_settable():
@@ -61,17 +101,20 @@ def test_font_size_is_not_agent_settable():
 
 def test_config_ui_text_theme_roundtrip(tmp_path):
     path = str(tmp_path / "config.json")
-    assert DeeptorrentConfig.from_file(path).ui_text_theme == "white"
+    # Default is "light_blue" since 2026-11-04 (was "white" in 7.0/7.1).
+    assert DeeptorrentConfig.from_file(path).ui_text_theme == "light_blue"
 
-    for mode in ("light_blue", "blue", "dark_blue"):
+    # gen=2 opts out of the one-time default migration (see the migration
+    # test) — these rows pin the raw saved-value round trip.
+    for mode in ("white", "light_blue", "blue", "dark_blue"):
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"ui_text_theme": mode}, f)
+            json.dump({"ui_text_theme": mode, "ui_defaults_gen": 2}, f)
         assert DeeptorrentConfig.from_file(path).ui_text_theme == mode
 
-    # invalid values fail closed to white, not to a crash
+    # invalid values fail closed to the default, not to a crash
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"ui_text_theme": "red"}, f)
-    assert DeeptorrentConfig.from_file(path).ui_text_theme == "white"
+        json.dump({"ui_text_theme": "red", "ui_defaults_gen": 2}, f)
+    assert DeeptorrentConfig.from_file(path).ui_text_theme == "light_blue"
 
     # to_file persists the field (asdict round trip)
     DeeptorrentConfig(ui_text_theme="dark_blue").to_file(path)
@@ -90,7 +133,10 @@ def test_text_theme_is_not_agent_settable():
 # --- scale engine -----------------------------------------------------------
 
 def test_set_font_scale_maps_and_fails_closed():
-    assert fonts.FONT_SCALES == {"small": 0.85, "medium": 1.0, "large": 1.15}
+    assert fonts.FONT_SCALES == {"micro": 0.70, "small": 0.85,
+                                 "medium": 1.0, "large": 1.15}
+    fonts.set_font_scale("micro")
+    assert fonts.font_scale() == 0.70
     fonts.set_font_scale("small")
     assert fonts.font_scale() == 0.85
     fonts.set_font_scale("large")
@@ -104,7 +150,8 @@ def test_set_font_scale_maps_and_fails_closed():
 
 
 def test_ui_point_size_tiers():
-    for mode, expected in (("small", 11), ("medium", 13), ("large", 15)):
+    for mode, expected in (("micro", 9), ("small", 11), ("medium", 13),
+                           ("large", 15)):
         fonts.set_font_scale(mode)
         assert fonts.ui_point_size() == expected
 

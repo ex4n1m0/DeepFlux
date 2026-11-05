@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from PySide6.QtCore import QTimer, Qt, QRectF, Signal, QObject, QEvent, QLocale, QProcess, QStringListModel
+from PySide6.QtCore import QTimer, Qt, QRectF, Signal, QObject, QEvent, QLocale, QProcess, QStringListModel, QSize
 from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QFont, QIcon, QKeySequence, QLinearGradient, QPainter, QPen, QPixmap, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
@@ -806,6 +806,27 @@ def _file_item(menu: QMenu, text: str, *, indent: bool = True) -> QAction:
     return action
 
 
+class _MenuUrlHost(QWidget):
+    """Address-bar container for the menu bar's right corner (owner change
+    2026-11-04: the browser URL bar moved out of the auto-hide chrome into
+    the menu row, right of Help). Its sizeHint tracks the fill width set by
+    MainWindow._fit_menubar_url_host — QMenuBar anchors corner widgets by
+    their sizeHint, so a plain QWidget's hint (the line edit's natural
+    width) would snap the bar back to the window's right edge on every
+    internal layout pass."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._fill_width = 240
+
+    def set_fill_width(self, width: int) -> None:
+        self._fill_width = max(1, int(width))
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        hint = super().sizeHint()
+        return QSize(self._fill_width, hint.height())
+
+
 class MainWindow(QMainWindow):
     # Merged Agents-tab input: Enter/Agent = conversational torrent agent,
     # Ctrl+Enter/Search = instant web sweep.
@@ -986,6 +1007,10 @@ class MainWindow(QMainWindow):
             }
             QMenuBar::item { padding: 2px 10px; }
             QMenuBar::item:selected { background-color: #1a2a4a; color: #ffffff; border-radius: 4px; }
+            /* Browser address bar in the menu-bar row (right of Help,
+               Browse tab) — slimmer padding than the big inputs so the
+               menu row stays close to its menus-only height. */
+            QLineEdit#browser_url_bar { padding: 1px 10px; }
 
             /* === Activity rail (v5 navigation) === */
             #activity_rail { background-color: #080b12; border-right: 1px solid #1a2a4a; }
@@ -1913,6 +1938,7 @@ class MainWindow(QMainWindow):
         self._browser_devtools_windows: List[QWebEngineView] = []
 
         self.browser_url_bar = QLineEdit()
+        self.browser_url_bar.setObjectName("browser_url_bar")
         self.browser_url_bar.setPlaceholderText(tr('Enter URL or search...'))
         self.browser_url_bar.returnPressed.connect(self._browser_navigate)
         self._browser_history_model = QStringListModel(self)
@@ -1926,7 +1952,11 @@ class MainWindow(QMainWindow):
         # URL change can't clobber the highlighted suggestion (_url_bar_editing).
         self._browser_history_completer.highlighted[str].connect(
             lambda _text: self.browser_url_bar.setModified(True))
-        nav_layout.addWidget(self.browser_url_bar)
+        # NOT added to nav_layout: the address bar lives in the menu-bar row
+        # right of Help (owner change 2026-11-04) — the menubar section below
+        # hosts it in a corner-widget container that fills the leftover
+        # width, visible only while the Browse tab is active. The nav buttons
+        # and the tab strip keep the hover-reveal chrome below.
 
         self.browser_go_btn = QPushButton(tr('Go'))
         self.browser_go_btn.setObjectName("btn_accent")
@@ -2017,10 +2047,11 @@ class MainWindow(QMainWindow):
         ):
             widget.setAccessibleName(name)
 
-        # Auto-hide chrome container: the address bar AND the tab strip form
+        # Auto-hide chrome container: the nav buttons AND the tab strip form
         # ONE row block above the web view that reveals on hover at the top
         # edge and pushes the page down (owner change 2026-10-28, extending
-        # the 6.5 tab-strip logic to the whole top bar). Opaque background —
+        # the 6.5 tab-strip logic to the whole top bar; the address bar moved
+        # OUT into the menu-bar row on 2026-11-04). Opaque background —
         # a translucent widget would force per-frame alpha blending over
         # video playback (YouTube etc.). The load-progress bar and the find
         # bar stay OUTSIDE it so both remain usable while chrome is hidden.
@@ -2202,6 +2233,7 @@ class MainWindow(QMainWindow):
         # holds actions on content + session; Settings gathers every settings
         # surface in labeled zones; Help is unchanged.
         menubar = QMenuBar(self)
+        self._menubar = menubar
         if sys.platform == "darwin":
             # The native macOS menu bar lives at the top of the screen — keep
             # the in-window bar so the layout stays intact there too.
@@ -2257,25 +2289,28 @@ class MainWindow(QMainWindow):
         settings_menu.addSeparator()
 
         # Font size: same restart-to-apply convention as Language. Display
-        # scaling differs per machine — one click either way covers the
-        # "font too big here / too small there" reports.
+        # scaling differs per machine — micro..large covers the "font too
+        # big here / too small there" reports. Default small since
+        # 2026-11-04 (from_file migrates 7.0/7.1 configs once).
         _file_zone(settings_menu, tr("Font Size"))
         size_group = QActionGroup(settings_menu)
-        for _size, _size_label in (("small", tr("Small")),
+        for _size, _size_label in (("micro", tr("Micro")),
+                                   ("small", tr("Small")),
                                    ("medium", tr("Medium")),
                                    ("large", tr("Large"))):
             _size_act = settings_menu.addAction(_size_label)
             _size_act.setCheckable(True)
-            _size_act.setChecked(getattr(self.config, "ui_font_size", "medium") == _size)
+            _size_act.setChecked(getattr(self.config, "ui_font_size", "small") == _size)
             size_group.addAction(_size_act)
             _size_act.triggered.connect(
                 lambda _checked=False, size=_size: self._set_ui_font_size(size))
         settings_menu.addSeparator()
 
         # Text color: same restart-to-apply convention as Font Size. Body
-        # text ships pure white; the blue tiers recolor every stylesheet
-        # text via gui/fonts.scale_qss on the next launch (the background
-        # ladder was darkened 2026-11-03 so dark blue stays readable).
+        # text ships pure white; the tiers recolor every stylesheet text
+        # via gui/fonts.scale_qss on the next launch (the background ladder
+        # was darkened 2026-11-03 so dark blue stays readable). Default
+        # light_blue since 2026-11-04 (from_file migrates 7.0/7.1 once).
         _file_zone(settings_menu, tr("Text Color"))
         theme_group = QActionGroup(settings_menu)
         for _theme, _theme_label in (("white", tr("White")),
@@ -2285,7 +2320,7 @@ class MainWindow(QMainWindow):
             _theme_act = settings_menu.addAction(_theme_label)
             _theme_act.setCheckable(True)
             _theme_act.setChecked(
-                getattr(self.config, "ui_text_theme", "white") == _theme)
+                getattr(self.config, "ui_text_theme", "light_blue") == _theme)
             theme_group.addAction(_theme_act)
             _theme_act.triggered.connect(
                 lambda _checked=False, theme=_theme: self._set_ui_text_theme(theme))
@@ -2367,6 +2402,27 @@ class MainWindow(QMainWindow):
         about_action = QAction(tr("About"), self)
         about_action.triggered.connect(self._open_about)
         help_menu.addAction(about_action)
+
+        # Address bar in the menu-bar row (owner change 2026-11-04): the
+        # browser URL bar sits right of Help, filling the remaining width —
+        # always reachable without the hover reveal, which the nav buttons
+        # and tab strip below still need. QMenuBar corner widgets only ever
+        # get their sizeHint (never the leftover space), so
+        # _fit_menubar_url_host sets the container's fixed width on every
+        # menubar resize; per-tab visibility swaps the corner widget in/out
+        # (hiding alone does NOT shrink the bar — verified) so every other
+        # tab keeps the slim menu row.
+        self._menubar_url_host = _MenuUrlHost()
+        _url_host_layout = QHBoxLayout(self._menubar_url_host)
+        _url_host_layout.setContentsMargins(10, 2, 10, 2)
+        _url_host_layout.addWidget(self.browser_url_bar)
+        menubar.setCornerWidget(self._menubar_url_host, Qt.TopRightCorner)
+        menubar.installEventFilter(self)
+        if self.main_tabs.currentWidget() is not getattr(self, "_browser_tab", None):
+            # Every other tab starts without the bar; the Browse tab gets it
+            # from _on_main_tab_changed the moment it becomes active.
+            menubar.setCornerWidget(None, Qt.TopRightCorner)
+            self._menubar_url_host.hide()
 
         # Right-click context menu on the torrent table
         self.torrent_table.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -2669,7 +2725,7 @@ class MainWindow(QMainWindow):
         """Settings-menu font-size picker (gui/fonts): persist + inform. The
         scale applies on the next launch — stylesheets bake their font
         sizes at setStyleSheet time, same restart convention as Language."""
-        if getattr(self.config, "ui_font_size", "medium") == size:
+        if getattr(self.config, "ui_font_size", "small") == size:
             return
         self.config.ui_font_size = size
         self.config.to_file(self.config_path)
@@ -2681,7 +2737,7 @@ class MainWindow(QMainWindow):
         """Settings-menu text-color picker (gui/fonts): persist + inform.
         Stylesheets bake their text colors at setStyleSheet time, so the
         theme applies on the next launch — same convention as Font Size."""
-        if getattr(self.config, "ui_text_theme", "white") == theme:
+        if getattr(self.config, "ui_text_theme", "light_blue") == theme:
             return
         self.config.ui_text_theme = theme
         self.config.to_file(self.config_path)
@@ -2750,11 +2806,35 @@ class MainWindow(QMainWindow):
 
     def _browser_focus_url(self) -> None:
         self.main_tabs.setCurrentWidget(self._browser_tab)
-        # The chrome (address bar) may be hover-hidden — reveal it, or the
-        # focus lands on an invisible widget.
-        self._show_browser_chrome()
+        # The address bar lives in the always-visible menu-bar row (the tab
+        # switch above installs it via _on_main_tab_changed) — no chrome
+        # reveal needed before focusing it.
         self.browser_url_bar.setFocus()
         self.browser_url_bar.selectAll()
+
+    def _fit_menubar_url_host(self) -> None:
+        """Stretch the menu-bar address-bar container to the space right of
+        the last menu.
+
+        QMenuBar never expands corner widgets into leftover space (it
+        anchors them right-edge by sizeHint), and changing the width does
+        NOT trigger a relayout — the stale anchor leaves the widget
+        overhanging the right edge. So: update the host's fill-driven
+        sizeHint (every future internal layout pass then anchors
+        consistently) AND place it explicitly. Recomputed on every menubar
+        resize (menus keep constant width; Language and Font Size are both
+        restart-to-apply)."""
+        host = getattr(self, "_menubar_url_host", None)
+        bar = self.menuBar()
+        if host is None or not host.isVisible() or not bar.actions():
+            return
+        menus_right = max(bar.actionGeometry(act).right() for act in bar.actions())
+        width = max(240, bar.width() - menus_right - 4)
+        hint = host.sizeHint()
+        host.set_fill_width(width)
+        host.setGeometry(
+            bar.width() - width, max(0, (bar.height() - hint.height()) // 2),
+            width, hint.height())
 
     def _browser_zoom(self, delta: float, view: Optional[QWebEngineView] = None) -> None:
         view = view or self._current_browser_view()
@@ -2941,6 +3021,11 @@ class MainWindow(QMainWindow):
                 return True
         if obj is self.browser_url_bar and self._url_bar_event(event):
             return True
+        # Menu-bar resizes re-fit the address-bar container (corner widgets
+        # never expand on their own — see _fit_menubar_url_host).
+        if (obj is getattr(self, "_menubar", None)
+                and event.type() == QEvent.Resize):
+            self._fit_menubar_url_host()
         return super().eventFilter(obj, event)
 
     def _url_bar_event(self, event) -> bool:
@@ -5192,6 +5277,26 @@ class MainWindow(QMainWindow):
         agents_tab = getattr(self, "_agents_tab", None)
         if hud is not None and agents_tab is not None:
             hud.set_active(self.main_tabs.widget(index) is agents_tab)
+        # Menu-bar address bar: installed only while the Browse tab is
+        # active. Swapping the corner widget (not just hiding it — a hidden
+        # corner widget does NOT shrink the menu bar) keeps every other tab's
+        # menu row slim.
+        url_host = getattr(self, "_menubar_url_host", None)
+        if url_host is not None:
+            on_browse = (self.main_tabs.widget(index)
+                         is getattr(self, "_browser_tab", None))
+            bar = self.menuBar()
+            if on_browse:
+                bar.setCornerWidget(url_host, Qt.TopRightCorner)
+                url_host.show()
+                # Deferred: setCornerWidget invalidates the menubar layout,
+                # and that activation pass runs AFTER this handler and would
+                # re-anchor the host from stale metrics — the singleShot fit
+                # gets the last word.
+                QTimer.singleShot(0, self._fit_menubar_url_host)
+            elif bar.cornerWidget(Qt.TopRightCorner) is not None:
+                bar.setCornerWidget(None, Qt.TopRightCorner)
+                url_host.hide()
 
     def open_target(self, target: str) -> None:
         """Open a file or URI passed via file association / second instance.

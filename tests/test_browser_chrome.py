@@ -21,11 +21,12 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 QtWidgets = pytest.importorskip("PySide6.QtWidgets")
-from PySide6.QtCore import QPoint, QTimer
+from PySide6.QtCore import QPoint, Qt, QTimer
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QTabWidget, QWidget
+from PySide6.QtWidgets import (QHBoxLayout, QLineEdit, QMainWindow, QMenu,
+                               QTabWidget, QWidget)
 
-from gui.main_window import MainWindow, promote_open_link_action
+from gui.main_window import MainWindow, _MenuUrlHost, promote_open_link_action
 
 
 @pytest.fixture(scope="module")
@@ -267,3 +268,92 @@ def test_browser_view_overrides_context_menu(app):
     assert issubclass(mw._BrowserView, QWebEngineView)
     assert (mw._BrowserView.contextMenuEvent
             is not QWebEngineView.contextMenuEvent)
+
+
+# -- menu-bar address bar (moved out of the chrome, 2026-11-04) ---------------
+
+def _make_tab_host(app):
+    """QMainWindow host mirroring production: a menu bar (File/Help), the
+    address-bar corner-widget container, and the REAL tab-change + width-fit
+    methods bound on. The bar lives right of Help while Browse is active and
+    is swapped out on every other tab (hiding alone does NOT shrink the bar
+    — a hidden corner widget keeps the menu row tall)."""
+    host = QMainWindow()
+    host.main_tabs = QTabWidget()
+    host.setCentralWidget(host.main_tabs)
+    agent_page = QWidget()
+    browser_page = QWidget()
+    host.main_tabs.addTab(agent_page, "Agent")
+    host.main_tabs.addTab(browser_page, "Browse")
+    host._browser_tab = browser_page
+    host._torrents_tab = None
+    for name in ("_on_main_tab_changed", "_fit_menubar_url_host"):
+        setattr(host, name, types.MethodType(getattr(MainWindow, name), host))
+    host.main_tabs.currentChanged.connect(host._on_main_tab_changed)
+
+    mb = host.menuBar()
+    mb.addMenu("File")
+    mb.addMenu("Help")
+    host._menubar = mb
+    host._menubar_url_host = _MenuUrlHost()
+    lay = QHBoxLayout(host._menubar_url_host)
+    lay.setContentsMargins(10, 2, 10, 2)
+    lay.addWidget(QLineEdit())
+    mb.setCornerWidget(host._menubar_url_host, Qt.TopRightCorner)
+    # Same initial condition as the build: the app starts on a non-Browse
+    # tab, so the corner is swapped out until Browse becomes active.
+    mb.setCornerWidget(None, Qt.TopRightCorner)
+    host._menubar_url_host.hide()
+    host.resize(1200, 800)
+    host.show()
+    app.processEvents()
+    return host
+
+
+def test_menubar_url_bar_installs_only_on_browse_tab(app):
+    host = _make_tab_host(app)
+    mb = host.menuBar()
+    # Starts on the Agent tab: no corner widget, bar hidden.
+    assert mb.cornerWidget(Qt.TopRightCorner) is None
+    assert host._menubar_url_host.isHidden()
+
+    host.main_tabs.setCurrentWidget(host._browser_tab)
+    app.processEvents()  # the deferred fit runs on the next loop pass
+    assert mb.cornerWidget(Qt.TopRightCorner) is host._menubar_url_host
+    assert not host._menubar_url_host.isHidden()
+    # Corner widgets only ever get their sizeHint from QMenuBar — the fit
+    # must set the width explicitly so the bar fills the space right of the
+    # menus instead of huddling at the window's right edge (and must not
+    # overhang the right edge from a stale pre-fit anchor).
+    menus_right = max(mb.actionGeometry(a).right() for a in mb.actions())
+    geo = host._menubar_url_host.geometry()
+    assert geo.width() >= mb.width() - menus_right - 8
+    assert geo.right() <= mb.width() - 1
+    assert geo.x() >= menus_right - 8
+
+    # Leaving Browse swaps the corner out again (and hides the container).
+    host.main_tabs.setCurrentIndex(0)
+    assert mb.cornerWidget(Qt.TopRightCorner) is None
+    assert host._menubar_url_host.isHidden()
+    # ...and coming back reinstalls it.
+    host.main_tabs.setCurrentWidget(host._browser_tab)
+    app.processEvents()
+    assert mb.cornerWidget(Qt.TopRightCorner) is host._menubar_url_host
+    assert not host._menubar_url_host.isHidden()
+
+
+def test_menubar_url_bar_fit_tracks_width(app):
+    host = _make_tab_host(app)
+    mb = host.menuBar()
+    host.main_tabs.setCurrentWidget(host._browser_tab)
+    app.processEvents()  # the deferred fit runs on the next loop pass
+    wide = host._menubar_url_host.width()
+    assert wide > 400  # 1200px window: the bar really does expand
+
+    host.resize(700, 600)
+    app.processEvents()
+    host._fit_menubar_url_host()  # the Resize eventFilter path calls exactly this
+    narrow = host._menubar_url_host.width()
+    assert narrow < wide
+    menus_right = max(mb.actionGeometry(a).right() for a in mb.actions())
+    assert narrow >= mb.width() - menus_right - 8

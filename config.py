@@ -669,16 +669,26 @@ class DeeptorrentConfig:
     # whitelist only iterates section dataclasses, so the UI language stays
     # user-controlled like the rest of the ui_* state fields.
     ui_language: str = "en"
-    # UI font size ("small" | "medium" | "large") — scales the app font and
-    # every stylesheet font-size (gui/fonts.set_font_scale/scale_qss);
-    # applied once at startup, takes effect next launch. Top-level for the
-    # same reason as ui_language: stays user-controlled, agent cannot set it.
-    ui_font_size: str = "medium"
+    # UI font size ("micro" | "small" | "medium" | "large") — scales the app
+    # font and every stylesheet font-size (gui/fonts.set_font_scale/
+    # scale_qss); applied once at startup, takes effect next launch.
+    # Top-level for the same reason as ui_language: stays user-controlled,
+    # agent cannot set it. Default "small" since 2026-11-04 (was "medium");
+    # from_file migrates 7.0/7.1 configs once (ui_defaults_gen below).
+    ui_font_size: str = "small"
     # UI text color theme ("white" | "light_blue" | "blue" | "dark_blue") —
     # rewrites every stylesheet text color via gui/fonts.scale_qss; applied
     # once at startup, takes effect next launch. Top-level for the same
     # reason as ui_language: stays user-controlled, agent cannot set it.
-    ui_text_theme: str = "white"
+    # Default "light_blue" since 2026-11-04 (was "white"); from_file
+    # migrates 7.0/7.1 configs once (ui_defaults_gen below).
+    ui_text_theme: str = "light_blue"
+    # Generation stamp for one-time UI-default migrations: 7.0/7.1 persisted
+    # the then-defaults (medium font, white text) into every config.json, so
+    # "saved default" is indistinguishable from "never chose". gen 1 → 2
+    # (2026-11-04) remaps those saved defaults to the new ones (small /
+    # light_blue) exactly once; explicit choices always survive.
+    ui_defaults_gen: int = 2
 
     @classmethod
     def from_file(cls, path: str) -> "DeeptorrentConfig":
@@ -895,7 +905,7 @@ class DeeptorrentConfig:
         if iptv_cache_limit == 500:
             iptv_cache_limit = 10240
 
-        return cls(
+        config = cls(
             llm=LLMConfig(**llm_clean),
             indexer=IndexerConfig(**{k: v for k, v in data.get("indexer", {}).items()
                                      if k in IndexerConfig.__dataclass_fields__}),
@@ -1052,14 +1062,32 @@ class DeeptorrentConfig:
             ui_language=(data.get("ui_language") or "en")
             if (data.get("ui_language") or "en") in ("en", "zh")
             else "en",
-            ui_font_size=(data.get("ui_font_size") or "medium")
-            if (data.get("ui_font_size") or "medium") in ("small", "medium", "large")
-            else "medium",
-            ui_text_theme=(data.get("ui_text_theme") or "white")
-            if (data.get("ui_text_theme") or "white")
+            ui_font_size=(data.get("ui_font_size") or "small")
+            if (data.get("ui_font_size") or "small")
+            in ("micro", "small", "medium", "large")
+            else "small",
+            ui_text_theme=(data.get("ui_text_theme") or "light_blue")
+            if (data.get("ui_text_theme") or "light_blue")
             in ("white", "light_blue", "blue", "dark_blue")
-            else "white",
+            else "light_blue",
+            ui_defaults_gen=data.get("ui_defaults_gen", 1)
+            if isinstance(data.get("ui_defaults_gen", 1), int)
+            else 1,
         )
+        # One-time UI-default migration (gen 1 → 2, 2026-11-04): 7.0/7.1
+        # persisted their defaults into every config.json, so a saved
+        # "medium"/"white" is almost always "never chose" — remap those to
+        # the new defaults once. Explicit picks (small/large/micro, any
+        # theme) don't match the remap and survive untouched; after the
+        # first to_file the gen=2 stamp blocks re-migration, so a genuine
+        # later Medium/White choice persists normally.
+        if config.ui_defaults_gen < 2:
+            config.ui_defaults_gen = 2
+            if config.ui_font_size == "medium":
+                config.ui_font_size = "small"
+            if config.ui_text_theme == "white":
+                config.ui_text_theme = "light_blue"
+        return config
 
     def sanitized_dict(self) -> Dict[str, Any]:
         """asdict() with process-injected shared keys blanked.

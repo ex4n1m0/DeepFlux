@@ -594,9 +594,14 @@
 - Qt QSS does not support `text-transform`/`letter-spacing` — use
   `QFont.setCapitalization/setLetterSpacing` instead (see neon tab bar in
   `gui/main_window.py`).
-- Font size setting (2026-11-03): Settings → Font Size (Small/Medium/Large,
-  config `ui_font_size`, top-level like `ui_language` so the agent can NEVER
-  set it) scales the whole UI. Engine = `gui/fonts.py`: `set_font_scale()`
+- Font size setting (2026-11-03): Settings → Font Size (Micro/Small/Medium/
+  Large, config `ui_font_size`, top-level like `ui_language` so the agent can
+  NEVER set it) scales the whole UI. DEFAULT = "small" since 2026-11-04 (was
+  medium); because 7.0/7.1 persisted the then-default into every config.json,
+  `from_file` remaps a saved "medium"→"small" ONCE via the `ui_defaults_gen`
+  stamp (gen 1→2; explicit picks survive, and post-stamp Medium choices
+  persist normally — tests/test_font_scale.py::test_config_ui_defaults_migrate_once).
+  Engine = `gui/fonts.py`: `set_font_scale()`
   must run BEFORE `load_app_fonts()` at boot (`run_gui` loads the config
   first for exactly this reason), and EVERY `setStyleSheet`/`setHtml`/
   `setDefaultStyleSheet` string that contains `font-size:` OR themeable
@@ -606,9 +611,11 @@
   sizes fitted to geometry (channel-number tiles, HUD strip) deliberately do
   NOT scale. Restart-to-apply, same convention as Language.
 - Text color themes (2026-11-03, same day as the font-size setting):
-  Settings → Text Color (White default / Light Blue / Blue / Dark Blue,
-  config `ui_text_theme`, top-level like `ui_font_size` — agent can NEVER
-  set it) recolors every stylesheet text. `set_text_theme()` runs at boot
+  Settings → Text Color (Light Blue DEFAULT since 2026-11-04 / White / Blue /
+  Dark Blue, config `ui_text_theme`, top-level like `ui_font_size` — agent
+  can NEVER set it) recolors every stylesheet text; the 7.0/7.1 saved
+  "white" default rides the same `ui_defaults_gen` 1→2 migration to
+  light_blue. `set_text_theme()` runs at boot
   next to `set_font_scale()` (mirrored in jackett_setup_dialog), and
   `scale_qss` rewrites bare `color: #ffffff` → the theme hex, QSS-BLOCK
   AWARE: `selection-color`, `background-color`, `border-color`,
@@ -2210,17 +2217,32 @@
   (`MainWindow.eventFilter` → `_browser_view_for_widget` parent-walk): wheel
   events target QWebEngineView's internal render widget, so per-widget /
   ancestor filters never fire (same reason the chrome hover reveal uses
-  a poll timer — the address bar + tab strip form ONE layout row block
+  a poll timer — the nav buttons + tab strip form ONE layout row block
   above the web view (`_browser_chrome`) that pushes the page down when
   revealed, never covering site content; owner change 2026-10-26 retired
   the old floating overlay, 2026-10-28 folded the address bar into the
-  auto-hide and added the left-edge rail reveal — see the next bullet).
+  auto-hide and added the left-edge rail reveal, 2026-11-04 moved the
+  address bar back OUT into the always-visible menu row — see the next
+  bullet).
   Detached fullscreen views are matched via `_browser_fs_state` and zoom
   without touching the badge (it tracks the active tab only).
+- Menu-bar address bar (2026-11-04): the browser URL bar lives in the MENU
+  BAR row, right of Help, filling the remaining width while the Browse tab
+  is active (`browser_url_bar` is created in the Browse-tab build, hosted in
+  `_MenuUrlHost` — a QWidget subclass whose sizeHint tracks the fill width
+  because QMenuBar anchors corner widgets by sizeHint and never expands
+  them). `_fit_menubar_url_host` recomputes width + explicit geometry
+  (setCornerWidget/layout passes use a STALE hint otherwise — the bar
+  overhangs the right edge; verified offscreen) on every menubar Resize via
+  the app-level eventFilter and deferred (singleShot(0)) on tab activation.
+  Entering/leaving Browse SWAPS the corner widget in/out via
+  setCornerWidget(host/None) — merely hiding it does NOT shrink the menu
+  row (pinned in tests/test_browser_chrome.py::test_menubar_url_bar_*).
 - Browser auto-hide chrome + rail (2026-10-28, `tests/test_browser_chrome.py`):
-  while the Browse tab is active the WHOLE top bar (address bar + tab
-  strip, `_browser_chrome`) and the activity rail are hover-hidden — the
-  site gets the full window. The 120ms `_strip_poll` cursor poll drives
+  while the Browse tab is active the nav-button + tab-strip chrome
+  (`_browser_chrome`) and the activity rail are hover-hidden — the
+  site gets the full window (the address bar itself stays reachable in
+  the menu row). The 120ms `_strip_poll` cursor poll drives
   everything (`_poll_browser_hover` → `_check_chrome_hover` on
   `_browser_tab` coords / `_check_rail_hover` on `main_tabs` coords,
   negative x = over the rail). Rules, do not regress:

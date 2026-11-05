@@ -53,9 +53,11 @@ _UI_POINT_SIZE = 13
 # UI font size setting (Settings → Font Size): one multiplier for the app
 # font point size AND every stylesheet font-size (via scale_qss). Display
 # scaling differs per machine, so what reads fine on one screen is too
-# big/small on another; small/large are ±~15%. "medium" is scale 1.0 —
-# byte-identical to the pre-setting look.
-FONT_SCALES = {"small": 0.85, "medium": 1.0, "large": 1.15}
+# big/small on another; small/large are ±~15% and micro one step further
+# down at −30%. "medium" is scale 1.0 — byte-identical to the pre-setting
+# look. Default is "small" (owner decision 2026-11-04; existing 7.0/7.1
+# configs are migrated once — see config.from_file's ui_defaults_gen).
+FONT_SCALES = {"micro": 0.70, "small": 0.85, "medium": 1.0, "large": 1.15}
 _font_scale = 1.0
 
 _FONT_SIZE_RE = re.compile(r"font-size:\s*(\d+(?:\.\d+)?)\s*(px|pt)")
@@ -115,7 +117,7 @@ def font_scale() -> float:
 
 
 def ui_point_size() -> int:
-    """The application font's point size at the current scale (11/13/15pt)."""
+    """The application font's point size at the current scale (9/11/13/15pt)."""
     return max(9, round(_UI_POINT_SIZE * _font_scale))
 
 

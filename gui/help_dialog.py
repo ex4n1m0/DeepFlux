@@ -141,21 +141,22 @@ Favorites / Recent. All commands live under the three real menus:
 <b>Help</b>.</p>
 
 <p><b>Text too big or too small?</b> Settings → <b>Font Size</b> picks
-Small / Medium / Large for the whole interface (menus, lists, chat,
-dialogs). Like the Language setting above it, it applies the next time
-DeepFlux starts.</p>
+Micro / Small / Medium / Large for the whole interface (menus, lists,
+chat, dialogs); Small is the default. Like the Language setting above it,
+it applies the next time DeepFlux starts.</p>
 
 <p><b>Prefer colored text?</b> Settings → <b>Text Color</b> recolors all
-interface text — White (default), Light Blue, Blue or Dark Blue — on the
+interface text — Light Blue (default), White, Blue or Dark Blue — on the
 near-black background. Status colors (errors, warnings, download states)
 always keep their own colors, and like Font Size it applies the next time
 DeepFlux starts.</p>
 
 <p><b>Browsing full-screen:</b> while the Browse page is active, the site
-gets the whole window — the left rail and the address/tab bar hide and
-push the page instead of covering it. Move the mouse to the very top edge
-to bring the address bar and tab strip back, or to the left edge to bring
-the rail back; they hide again shortly after the mouse leaves. Load
+gets the whole window — the left rail and the toolbar/tab strip hide and
+push the page instead of covering it. The address bar stays available in
+the menu row next to <b>Help</b>; move the mouse to the very top edge to
+bring the toolbar and tab strip back, or to the left edge to bring the
+rail back; they hide again shortly after the mouse leaves. Load
 progress, the find bar (<code>Ctrl+F</code>) and <code>Ctrl+L</code> work
 as usual. Right-clicking a link puts <b>Open link in new tab</b> on the
 first row.</p>
