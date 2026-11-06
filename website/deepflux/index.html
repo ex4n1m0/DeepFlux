@@ -4,12 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DeepFlux — Super Intelligent Download Tool</title>
-<meta name="description" content="DeepFlux — an AI-powered download manager with a built-in browser, media player, community chat room, and file manager. The agent drives the whole app.">
+<meta name="description" content="DeepFlux — a free, open-source, AI-powered download manager with a built-in browser, media player, community chat room, and file manager. The agent drives the whole app.">
 <meta name="theme-color" content="#050507">
 <link rel="icon" type="image/webp" href="DeepFlux.webp">
 <!-- Open Graph -->
 <meta property="og:title" content="DeepFlux — Super Intelligent Download Tool">
-<meta property="og:description" content="Super-intelligent download manager with a built-in browser, media player, community room and file manager — the agent runs all of it. Free for Windows and Linux.">
+<meta property="og:description" content="Super-intelligent, open-source download manager with a built-in browser, media player, community room and file manager — the agent runs all of it. Free for Windows and Linux.">
 <meta property="og:image" content="https://deepflux.space/deepflux/DeepOG6.jpg">
 <meta property="og:url" content="https://deepflux.space/deepflux/">
 <meta property="og:type" content="website">
@@ -17,22 +17,39 @@
 <!-- Twitter Card -->
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="DeepFlux — Super Intelligent Download Tool">
-<meta name="twitter:description" content="Super-intelligent download manager with a built-in browser, media player, community room and file manager — the agent runs all of it. Free for Windows and Linux.">
+<meta name="twitter:description" content="Super-intelligent, open-source download manager with a built-in browser, media player, community room and file manager — the agent runs all of it. Free for Windows and Linux.">
 <meta name="twitter:image" content="https://deepflux.space/deepflux/DeepOG6.jpg">
 <link rel="canonical" href="https://deepflux.space/deepflux/">
 <link rel="alternate" hreflang="en" href="https://deepflux.space/deepflux/">
 <link rel="alternate" hreflang="zh-CN" href="https://deepflux.space/deepflux/zh/">
 <link rel="alternate" hreflang="x-default" href="https://deepflux.space/deepflux/">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Fonts: self-hosted OFL variable fonts (the same files the zh page
+     uses). No third-party font CDN — the page renders fully offline-safe. -->
+<style>
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("fonts/Inter-var.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+20AC, U+FFFD;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("fonts/SpaceGrotesk-var.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+20AC, U+FFFD;
+}
+</style>
 <style>
   :root {
     --bg: #050507;
     --ink: #eef4ff;
     --muted: rgba(238, 244, 255, 0.70);
-    --faint: rgba(238, 244, 255, 0.62);
-    --ghost: rgba(238, 244, 255, 0.52);
+    --faint: rgba(238, 244, 255, 0.72);
+    --ghost: rgba(238, 244, 255, 0.66);
     --line: rgba(255, 255, 255, 0.08);
     --card: rgba(255, 255, 255, 0.024);
     --cyan: #5bc8f5;
@@ -41,8 +58,8 @@
     --magenta: #b44bf0;
     --green: #4ade80;
     --grad: linear-gradient(90deg, #5bc8f5 0%, #4f7df9 42%, #8b5cf6 72%, #b44bf0 100%);
-    --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
-    --font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --font-display: "Space Grotesk", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+    --font-body: "Inter", "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", system-ui, -apple-system, sans-serif;
     --font-mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, monospace;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -363,6 +380,40 @@
     vertical-align: 1px;
   }
 
+  /* ---- Try-asking prompts (click to copy) ---- */
+  .prompt-row {
+    margin-top: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+  }
+  .prompt-row .try-lbl {
+    font-size: 0.66rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ghost);
+  }
+  button.prompt {
+    appearance: none;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 7px 14px;
+    font-family: var(--font-body);
+    font-size: 0.78rem;
+    line-height: 1.4;
+    color: var(--faint);
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s, background 0.2s;
+  }
+  button.prompt:hover, button.prompt:focus-visible {
+    color: var(--ink);
+    border-color: rgba(255, 255, 255, 0.28);
+    background: rgba(255, 255, 255, 0.06);
+  }
+
   /* ---- Hero app window (real capture; the titlebar is decorative chrome) ---- */
   .shot {
     margin: 44px auto 0;
@@ -385,12 +436,20 @@
     color: var(--ghost);
   }
   .shot-capture { display: block; width: 100%; height: auto; }
+  .shot-caption {
+    margin: 16px auto 0;
+    max-width: 660px;
+    text-align: center;
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: var(--ghost);
+  }
 
   /* ---- Sections ---- */
   section.block { padding: 64px 0 0; scroll-margin-top: 84px; }
   .section-head { text-align: center; margin-bottom: 40px; }
   .section-head .kicker {
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     letter-spacing: 0.22em;
     text-transform: uppercase;
     color: var(--ghost);
@@ -464,7 +523,6 @@
     background: rgba(255, 255, 255, 0.04);
   }
   .tile:hover::before, .tile:focus-within::before { opacity: 0.9; }
-  .tile.span2 { grid-column: span 2; }
   .tile .icon {
     width: 40px; height: 40px;
     display: flex; align-items: center; justify-content: center;
@@ -480,9 +538,7 @@
     letter-spacing: 0.01em;
     margin-bottom: 6px;
   }
-  .tile p { font-size: 0.82rem; line-height: 1.55; color: var(--faint); }
-  .tile.big h3 { font-size: 1.08rem; }
-  .tile.big p { font-size: 0.88rem; }
+  .tile p { font-size: 0.875rem; line-height: 1.55; color: var(--faint); }
 
   /* ---- Install tabs ---- */
   .tabs {
@@ -516,7 +572,7 @@
     background: var(--grad);
     border-radius: 2px;
   }
-  .tab small { display: block; font-family: var(--font-body); font-weight: 500; font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ghost); margin-top: 2px; }
+  .tab small { display: block; font-family: var(--font-body); font-weight: 500; font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ghost); margin-top: 2px; }
   .tabpanel { padding: 28px 30px 26px; }
   .tabpanel[hidden] { display: none; }
   .panel-head {
@@ -559,7 +615,7 @@
   }
   .note svg { flex-shrink: 0; margin-top: 2px; }
   .checksum { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .checksum .lbl { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ghost); }
+  .checksum .lbl { font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ghost); }
   .checksum code {
     font-family: var(--font-mono);
     font-size: 0.72rem;
@@ -583,6 +639,26 @@
     transition: color 0.2s, border-color 0.2s;
   }
   .checksum .copy:hover, .checksum .copy:focus-visible { color: var(--ink); border-color: rgba(255, 255, 255, 0.3); }
+
+  /* Collapsible checksum — visible only when a visitor wants to verify. */
+  details.verify summary {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 0;
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ghost);
+    cursor: pointer;
+    transition: color 0.2s;
+  }
+  details.verify summary::-webkit-details-marker { display: none; }
+  details.verify summary::before { content: "\25B8"; font-size: 0.68rem; transition: transform 0.2s ease; }
+  details.verify[open] summary::before { transform: rotate(90deg); }
+  details.verify summary:hover, details.verify summary:focus-visible { color: var(--ink); }
+  details.verify .checksum { margin-top: 10px; }
 
   /* ---- Trust pillars ---- */
   .pillars {
@@ -650,7 +726,6 @@
 
   @media (max-width: 960px) {
     .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .tile.span2 { grid-column: span 2; }
     .pillars { grid-template-columns: minmax(0, 1fr); }
     .agent-grid { grid-template-columns: minmax(0, 1fr); gap: 34px; }
     .panel-head { flex-direction: column; align-items: flex-start; }
@@ -662,8 +737,10 @@
     .btn-nav .os-label { display: none; }
     .btn-nav { padding: 9px 13px; }
     .bento { grid-template-columns: minmax(0, 1fr); }
-    .tile.span2 { grid-column: auto; }
     .tabpanel { padding: 22px 18px; }
+    /* Touch: interactive controls get ≥44px targets and press feedback. */
+    .btn-nav, .tab, .checksum .copy, details.lang > summary, button.prompt { min-height: 44px; }
+    a.btn:active, button.btn:active, .tab:active, .checksum .copy:active, button.prompt:active { transform: translateY(1px) scale(0.99); }
     .tab { font-size: 0.82rem; padding: 12px 6px 11px; }
     .cta-row .btn { width: 100%; }
     .btn-xl { padding: 16px 24px; }
@@ -682,7 +759,7 @@
   <div class="topbar">
     <div class="page">
       <nav class="top" aria-label="Main">
-        <a class="brand" href="/">
+        <a class="brand" href="/deepflux/">
           <img src="DeepFlux.webp" alt="DeepFlux logo">
           <span>DeepFlux</span>
         </a>
@@ -704,7 +781,7 @@
             </details>
           </li>
           <li>
-            <a class="btn btn-primary btn-nav" aria-label="Download DeepFlux" href="/api/download?f=DeepFlux7.4Setup.exe" download>
+            <a class="btn btn-primary btn-nav" aria-label="Download DeepFlux" href="/api/download?f=DeepFlux7.5Setup.exe" download>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               <span class="os-label">Download</span>
             </a>
@@ -730,17 +807,50 @@
       <div class="cta-row">
         <!-- /api/download counts the click (Upstash counter) then 302s to the
              static file; it redirects uncounted when the counter isn't set up. -->
-        <a class="btn btn-primary btn-xl" href="/api/download?f=DeepFlux7.4Setup.exe" download>
+        <a class="btn btn-primary btn-xl" id="dl-primary" href="/api/download?f=DeepFlux7.5Setup.exe" download aria-label="Download DeepFlux for Windows">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Download for Windows</span>
         </a>
-        <a class="btn btn-ghost btn-xl" href="/api/download?f=DeepFlux-7.2-Linux-x86_64.AppImage" download>
+        <a class="btn btn-ghost btn-xl" id="dl-secondary" href="/api/download?f=DeepFlux-7.2-Linux-x86_64.AppImage" download aria-label="Download DeepFlux for Linux">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Linux (AppImage)</span>
         </a>
       </div>
-      <p class="meta-row">Free &middot; no account &middot; v7.4 &middot; Windows 10/11 &amp; Linux<span class="live" id="live" hidden
+      <p class="meta-row">Free &middot; open source &middot; v7.5 &middot; Windows 10/11 &amp; Linux<span class="live" id="live" role="status" hidden
          title="The user count is anonymous — a random id per install, nothing else. Opt out in the app's Download settings."></span></p>
+      <div class="prompt-row">
+        <span class="try-lbl">Try asking it</span>
+        <button class="prompt" type="button" data-prompt="Download the latest Ubuntu LTS ISO" title="Click to copy — paste it into the agent">Download the latest Ubuntu LTS ISO</button>
+        <button class="prompt" type="button" data-prompt="Get Blender for Windows" title="Click to copy — paste it into the agent">Get Blender for Windows</button>
+        <button class="prompt" type="button" data-prompt="Play NASA TV" title="Click to copy — paste it into the agent">Play NASA TV</button>
+      </div>
+    </section>
+
+    <section class="block" id="agent" aria-label="Meet the agent">
+      <div class="section-head">
+        <div class="kicker">The agent</div>
+      </div>
+      <div class="agent-grid">
+        <div>
+          <ul class="agent-points">
+            <li><b>Searches and fetches.</b> Indexers and the web &mdash; then
+            downloads, or streams as it goes.</li>
+            <li><b>Runs the app.</b> Browser, queue, player, files &mdash; by
+            chat or voice.</li>
+            <li><b>Asks first.</b> Installs, deletions and downloads wait for
+            your yes.</li>
+          </ul>
+        </div>
+        <div class="shot">
+          <div class="shot-titlebar" aria-hidden="true">
+            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            <span class="title">DeepFlux</span>
+          </div>
+          <img class="shot-capture" src="shot-agent-en.webp" width="2550" height="1500"
+               loading="eager" fetchpriority="high" decoding="async"
+               alt="The DeepFlux agent chat: asked to download the latest Ubuntu and Debian installer ISOs, it searches indexers, lists two healthy sources, asks for confirmation, and reports both downloads queued with a live speed.">
+        </div>
+      </div>
     </section>
 
     <div class="shot">
@@ -752,68 +862,52 @@
            loading="lazy" decoding="async"
            alt="DeepFlux on Windows, Download page: three active torrents (the Ubuntu and Debian installers downloading, a Blender archive seeding) above the direct-download list with live progress bars and speeds.">
     </div>
-
-    <section class="block" id="agent" aria-label="Meet the agent">
-      <div class="section-head">
-        <div class="kicker">The agent</div>
-      </div>
-      <div class="agent-grid">
-        <div>
-          <ul class="agent-points">
-            <li><b>Searches and fetches.</b> Torrent indexers and the web, then
-            downloads &mdash; or streams while it downloads.</li>
-            <li><b>Runs the app.</b> Browser, queue, player, file manager
-            &mdash; by chat.</li>
-            <li><b>Asks first.</b> Every install, deletion and download needs
-            your approval.</li>
-          </ul>
-        </div>
-        <div class="shot">
-          <div class="shot-titlebar" aria-hidden="true">
-            <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-            <span class="title">DeepFlux</span>
-          </div>
-          <img class="shot-capture" src="shot-agent-en.webp" width="2550" height="1500"
-               loading="lazy" decoding="async"
-               alt="The DeepFlux agent chat: asked to download the latest Ubuntu and Debian installer ISOs, it searches indexers, lists two healthy sources, asks for confirmation, and reports both downloads queued with a live speed.">
-        </div>
-      </div>
-    </section>
+    <p class="shot-caption">The engine at work &mdash; official Ubuntu and Debian installers plus a Blender archive in one queue.</p>
 
     <section class="block" id="capabilities" aria-label="What DeepFlux can do">
       <div class="section-head">
         <div class="kicker">Capabilities</div>
       </div>
       <div class="bento">
-        <article class="tile big span2">
+        <article class="tile">
           <div class="icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 20l-4-4 4.5-4.5a2.12 2.12 0 0 0-3-3z"/><path d="M5.5 11.5l7 7"/></svg></div>
-          <h3>Torrent engine</h3>
-          <p>Full BitTorrent engine &mdash; stream while you download, control it by chat.</p>
+          <h3>Torrents</h3>
+          <p>Full BitTorrent engine &mdash; stream while it downloads, control it by chat.</p>
         </article>
         <article class="tile">
-          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
-          <h3>Embedded browser</h3>
-          <p>Chromium with private tabs and bookmarks.</p>
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M4 19h16"/></svg></div>
+          <h3>Direct downloads</h3>
+          <p>HTTP, HLS/DASH and YouTube &mdash; resumable, segmented parallel speed.</p>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="4" width="20" height="14" rx="2"/><polygon points="9 8 16 11 9 14 9 8"/></svg></div>
           <h3>Player</h3>
-          <p>Dolby Vision, SVP motion, subtitles, MilkDrop.</p>
+          <p>Dolby Vision, SVP motion, subtitles, MilkDrop visuals.</p>
         </article>
         <article class="tile">
           <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="13" rx="2"/><polyline points="17 2 12 7 7 2"/></svg></div>
-          <h3>IPTV &amp; EPG</h3>
-          <p>Live TV, movies and series with a full guide.</p>
+          <h3>Live TV</h3>
+          <p>IPTV with a full EPG guide &mdash; live channels, movies, series.</p>
         </article>
         <article class="tile">
-          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><path d="M4 19h16"/></svg></div>
-          <h3>Downloads</h3>
-          <p>HTTP, HLS/DASH and YouTube &mdash; resumable.</p>
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+          <h3>Browser</h3>
+          <p>Chromium with private tabs and bookmarks.</p>
         </article>
-        <article class="tile span2">
-          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg></div>
-          <h3>&hellip;and more</h3>
-          <p>Community room, RSS auto-downloads, voice input, a dual-pane file manager.</p>
+        <article class="tile">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 2v5M12 2v5M15 2v5M9 17v5M12 17v5M15 17v5"/></svg></div>
+          <h3>Local AI</h3>
+          <p>Run open-weight models on your own GPU &mdash; uncensored and offline.</p>
+        </article>
+        <article class="tile">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
+          <h3>Community</h3>
+          <p>The Room &mdash; chat with the community from inside the app.</p>
+        </article>
+        <article class="tile">
+          <div class="icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="url(#g1)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+          <h3>Feeds &amp; files</h3>
+          <p>RSS auto-downloads and a dual-pane file manager.</p>
         </article>
       </div>
       <svg width="0" height="0" aria-hidden="true"><defs>
@@ -831,7 +925,7 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(238,244,255,0.5)" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg>
         <p>The agent works out of the box &mdash; a shared AI key is built in and
         rotates with every release. Bring your own key or run a local model:
-        <b>File&nbsp;&rarr;&nbsp;API Keys</b>.</p>
+        <b>Settings&nbsp;&rarr;&nbsp;AI &amp; API Keys&nbsp;&rarr;&nbsp;AI Agent Key…</b>.</p>
       </div>
       <div class="tabs">
         <div class="tablist" role="tablist" aria-label="Choose your platform">
@@ -842,9 +936,9 @@
           <div class="panel-head">
             <div>
               <div class="panel-title">Windows 10 / 11 &middot; 64-bit</div>
-              <div class="panel-sub">v7.4 &middot; 414.2 MB &middot; per-user, no admin &middot; updates itself</div>
+              <div class="panel-sub">v7.5 &middot; 414.1 MB &middot; per-user, no admin &middot; updates itself</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux7.4Setup.exe" download>
+            <a class="btn btn-ghost btn-panel" href="/api/download?f=DeepFlux7.5Setup.exe" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Download setup
             </a>
@@ -857,11 +951,14 @@
             <li>SmartScreen? <b>More info &rarr; Run anyway</b> &mdash; the
             build is unsigned.</li>
           </ol>
-          <div class="checksum">
-            <span class="lbl">sha256</span>
-            <code>edf91b8abe4d845a6ce6f73848a9b173815c425f4337d8bc97ade0fb51ccb3ea</code>
-            <button class="copy" type="button" data-copy="edf91b8abe4d845a6ce6f73848a9b173815c425f4337d8bc97ade0fb51ccb3ea">Copy</button>
-          </div>
+          <details class="verify">
+            <summary>Verify sha256</summary>
+            <div class="checksum">
+              <span class="lbl">sha256</span>
+              <code>4a74971540a45bdc462dae8e65dfffc024332255edd69b14fb91c2b5b819f968</code>
+              <button class="copy" type="button" data-copy="4a74971540a45bdc462dae8e65dfffc024332255edd69b14fb91c2b5b819f968">Copy</button>
+            </div>
+          </details>
         </div>
 
         <div class="tabpanel" role="tabpanel" id="panel-linux" aria-labelledby="tab-linux" hidden>
@@ -870,7 +967,7 @@
               <div class="panel-title">Linux x86-64 &middot; AppImage</div>
               <div class="panel-sub">v7.2 &middot; 583.6 MB &middot; Ubuntu 24.04+, Debian 13, Fedora 40+, Arch</div>
             </div>
-            <a class="btn btn-primary btn-panel" href="/api/download?f=DeepFlux-7.2-Linux-x86_64.AppImage" download>
+            <a class="btn btn-ghost btn-panel" href="/api/download?f=DeepFlux-7.2-Linux-x86_64.AppImage" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Download AppImage
             </a>
@@ -880,18 +977,21 @@
             in place.</li>
             <li>Need FFmpeg for a stream? <b>Ask the agent</b> to install it.</li>
           </ol>
-          <div class="checksum">
-            <span class="lbl">sha256</span>
-            <code>a88e8908a4737ba3ea571fa29b6c7b2765be6eb192b24eb851ae127eab8f87d9</code>
-            <button class="copy" type="button" data-copy="a88e8908a4737ba3ea571fa29b6c7b2765be6eb192b24eb851ae127eab8f87d9">Copy</button>
-          </div>
+          <details class="verify">
+            <summary>Verify sha256</summary>
+            <div class="checksum">
+              <span class="lbl">sha256</span>
+              <code>a88e8908a4737ba3ea571fa29b6c7b2765be6eb192b24eb851ae127eab8f87d9</code>
+              <button class="copy" type="button" data-copy="a88e8908a4737ba3ea571fa29b6c7b2765be6eb192b24eb851ae127eab8f87d9">Copy</button>
+            </div>
+          </details>
         </div>
       </div>
     </section>
 
     <section class="block" id="trust" aria-label="How DeepFlux treats you">
       <div class="section-head">
-        <div class="kicker">By design</div>
+        <div class="kicker">Privacy by design</div>
       </div>
       <div class="pillars">
         <div class="pillar">
@@ -933,6 +1033,9 @@
       <a class="kin-link" href="https://modelswarm.deepflux.space/" target="_blank" rel="noopener"><b>ModelSwarm</b></a>
     </div>
     <div class="icons">
+      <a class="icon" href="https://github.com/ex4n1m0/DeepFlux" target="_blank" rel="noopener" aria-label="DeepFlux on GitHub">
+        <img src="GitHub.png" alt="DeepFlux on GitHub">
+      </a>
       <a class="icon" href="https://buymeacoffee.com/ex4n1m0" target="_blank" rel="noopener" aria-label="Buy me a coffee">
         <img src="BuyMeCoffee.png" alt="Buy me a coffee">
       </a>
@@ -1024,11 +1127,65 @@
       });
     })();
 
-    // Language dropdown: close when clicking elsewhere on the page.
+    (function () {
+      // Prompt chips: click to copy a ready-made agent prompt.
+      document.querySelectorAll('.prompt').forEach(function (btn) {
+        var label = btn.textContent;
+        btn.addEventListener('click', function () {
+          var done = function () {
+            btn.textContent = 'Copied \u2713';
+            setTimeout(function () { btn.textContent = label; }, 1600);
+          };
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(btn.dataset.prompt).then(done, done);
+          } else {
+            var ta = document.createElement('textarea');
+            ta.value = btn.dataset.prompt;
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (err) {}
+            document.body.removeChild(ta);
+            done();
+          }
+        });
+      });
+    })();
+
+    (function () {
+      // Linux visitors: make the AppImage the primary CTA and point the nav
+      // Download pill at it. Android/CrOS UAs contain "Linux" too — desktop only.
+      var ua = navigator.userAgent;
+      if (!/Linux/i.test(ua) || /Android|CrOS/i.test(ua)) return;
+      var primary = document.getElementById('dl-primary');
+      var secondary = document.getElementById('dl-secondary');
+      var navBtn = document.querySelector('nav.top a.btn[href^="/api/download"]');
+      if (!primary || !secondary) return;
+      var winHref = primary.href, linHref = secondary.href;
+      primary.href = linHref; secondary.href = winHref;
+      var pl = primary.querySelector('.os-label');
+      var sl = secondary.querySelector('.os-label');
+      if (pl) pl.textContent = 'Download for Linux';
+      if (sl) sl.textContent = 'Windows (setup)';
+      primary.classList.remove('btn-primary'); primary.classList.add('btn-ghost');
+      secondary.classList.remove('btn-ghost'); secondary.classList.add('btn-primary');
+      primary.setAttribute('aria-label', 'Download DeepFlux for Linux');
+      secondary.setAttribute('aria-label', 'Download DeepFlux for Windows');
+      if (navBtn) navBtn.href = linHref;
+    })();
+
+    // Language dropdown: close on outside click or Escape (focus returns to
+    // the trigger).
     (function () {
       document.querySelectorAll('details.lang').forEach(function (d) {
         document.addEventListener('click', function (e) {
           if (d.open && !d.contains(e.target)) d.removeAttribute('open');
+        });
+        d.addEventListener('keydown', function (e) {
+          if (e.key === 'Escape' && d.open) {
+            d.removeAttribute('open');
+            var s = d.querySelector('summary');
+            if (s) s.focus();
+          }
         });
       });
     })();

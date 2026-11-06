@@ -1,8 +1,8 @@
 {
-  "version": "7.4",
-  "file": "DeepFlux7.4Setup.exe",
-  "size": 434293073,
-  "sha256": "edf91b8abe4d845a6ce6f73848a9b173815c425f4337d8bc97ade0fb51ccb3ea",
-  "released": "2026-11-06",
-  "notes": "DeepFlux 7.4 - fixes browser flashing on hybrid-GPU laptops: the built-in browser now pins itself to the dedicated GPU (Settings > Browser, on by default), stopping the white/black flashes during video playback. Also ships the 7.3 reliability fixes."
+  "version": "7.5",
+  "file": "DeepFlux7.5Setup.exe",
+  "size": 434250701,
+  "sha256": "4a74971540a45bdc462dae8e65dfffc024332255edd69b14fb91c2b5b819f968",
+  "released": "2026-11-07",
+  "notes": "DeepFlux 7.5 - fixes a crash that could close the app during video playback (the crash logger introduced in 7.4 could itself trip over the video engine's internal events and shut the app down). Playback sessions are stable again."
 }
