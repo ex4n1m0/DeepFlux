@@ -47,6 +47,19 @@ _repro*.py
 _*_probe*.py
 torrent file/
 
+# Agent-tooling session state (Mimosa review ledgers etc.) — never tracked,
+# never deployed (website/.vercelignore also excludes it from Vercel).
+.mimosa/
+
+# Screenshot scratch tool (see AGENTS.md "Website deploy" section).
+_site_shots.py
+
+# One-off local-AI benchmark scratch (run on a specific machine; results are
+# machine-specific, not reference data).
+benchmark_models.py
+BENCHMARK_REPORT.md
+benchmark_results.json
+
 # Local agent session data (ZCode CLI)
 .zcode/
 

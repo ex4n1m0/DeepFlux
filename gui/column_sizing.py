@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Qt
-from PySide6.QtWidgets import QHeaderView, QTableView, QTreeView, QWidget
+from PySide6.QtWidgets import QHeaderView, QTableView, QWidget
 
 # Cell-text scan cap per column: content sizing stays cheap even on a
 # queue left accumulating for weeks; beyond this, widths settle at the

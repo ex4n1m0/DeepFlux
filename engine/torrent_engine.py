@@ -5,8 +5,6 @@ a command queue so the caller never blocks on session I/O.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
 import logging
 import os
 import queue
@@ -698,7 +696,13 @@ class TorrentEngine:
             total_up += status.get("upload_rate", 0)
         dht_nodes = 0
         try:
-            dht_nodes = self._session.status().dht_nodes
+            # session.status() is deprecated in libtorrent 2.x — read the
+            # counter from the session-stats API instead (review 2026-11-06).
+            metrics = self._session.session_stats_metrics()
+            if "dht.dht_nodes" in metrics:
+                dht_nodes = int(self._session.session_stats()[metrics["dht.dht_nodes"]])
+            else:
+                dht_nodes = self._session.status().dht_nodes
         except Exception:
             pass
         return {

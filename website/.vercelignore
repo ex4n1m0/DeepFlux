@@ -1,0 +1,5 @@
+# Vercel deploy ignore list (deepflux.space). Vercel ships everything else
+# in this directory — keep internal tooling state out of production.
+# .mimosa = local agent-tooling session state (review ledgers, source
+# baselines, per-file diffs of api/*.js). Must never reach the edge.
+.mimosa

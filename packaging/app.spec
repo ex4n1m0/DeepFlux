@@ -4,6 +4,7 @@
 Build with:
     pyinstaller packaging/app.spec --clean
 """
+import json
 import os
 import sys
 
@@ -86,20 +87,38 @@ if os.path.isdir(licenses_dir):
         if fname.lower().endswith((".txt", ".md", ".html")):
             license_datas.append((os.path.join(licenses_dir, fname), "licenses"))
 
-# Local AI (6.0): the pinned llama.cpp runtime zips (names carry the
-# version, e.g. llama-b11727-bin-win-vulkan-x64.zip, so glob the dir) and
-# the tracked model manifest read by infra/local_model.py. Missing zips
-# only drop the installer's local-model step (skipifsourcedoesntexist).
+# Local AI (6.0): ship ONLY the llama.cpp runtime zips named by the tracked
+# PINNED.json (superseded zips must never ride along — review 2026-11-06:
+# a dir glob bundled ~124 MB of stale runtimes). The pin file itself ships
+# too, so infra/local_model.py can pick the exact pinned asset at setup
+# time. Missing zips only drop the installer's local-model step
+# (skipifsourcedoesntexist).
 llama_dir = os.path.join(project_root, "packaging", "llama")
 llama_zips = []
-if os.path.isdir(llama_dir):
-    for fname in os.listdir(llama_dir):
-        if fname.lower().endswith(".zip"):
-            llama_zips.append((os.path.join(llama_dir, fname), "llama"))
+llama_pinned = []
+llama_pin_path = os.path.join(llama_dir, "PINNED.json")
+if os.path.isdir(llama_dir) and os.path.isfile(llama_pin_path):
+    with open(llama_pin_path, "r", encoding="utf-8") as _pin_fh:
+        _pin = json.load(_pin_fh)
+    for _variant, _meta in (_pin.get("assets") or {}).items():
+        _name = _meta.get("asset") or ""
+        if not _name.lower().endswith(".zip"):
+            print(f"WARNING: PINNED.json asset name not a zip: {_name!r} — skipped.")
+            continue
+        _path = os.path.join(llama_dir, _name)
+        if os.path.isfile(_path):
+            llama_zips.append((_path, "llama"))
+        else:
+            print(f"WARNING: pinned llama asset missing on disk: {_name} — "
+                  "run packaging/fetch_llama.py before the release build.")
+    llama_pinned.append((llama_pin_path, "llama"))
+else:
+    print("WARNING: packaging/llama/PINNED.json missing — run "
+          "packaging/fetch_llama.py before the release build (the build still "
+          "works, just without the local AI step).")
 if not llama_zips:
-    print("WARNING: no llama.cpp runtime zips in packaging/llama — "
-          "run packaging/fetch_llama.py before the release build "
-          "(the build still works, just without the local AI step).")
+    print("WARNING: no pinned llama.cpp runtime zips available — the local AI "
+          "setup step will not be offered.")
 
 # Data files — only include those that exist so a missing asset fails softly
 # instead of aborting the whole PyInstaller build with a cryptic error.
@@ -110,7 +129,7 @@ _wanted_datas = [
     (os.path.join(project_root, "packaging", "fonts", "JetBrainsMono.ttf"), "packaging/fonts"),
     (os.path.join(project_root, "packaging", "fonts", "Inter-OFL.txt"), "packaging/fonts"),
     (os.path.join(project_root, "packaging", "fonts", "JetBrainsMono-OFL.txt"), "packaging/fonts"),
-    (os.path.join(project_root, "DeepFlux5.png"), "."),
+    (os.path.join(project_root, "DeepFlux.png"), "."),
     # Agent-tab background: the owner's neon wordmark banner (2026-10-13),
     # with the website hero banner as a fallback asset.
     (os.path.join(project_root, "DeepFluxNeonBanner.webp"), "."),
@@ -154,7 +173,7 @@ a = Analysis(
     [os.path.join(project_root, "main.py")],
     pathex=[project_root],
     binaries=libtorrent_binaries + yt_dlp_binaries + mpv_binaries + vlc_binaries + curl_cffi_binaries + ddgs_binaries + primp_binaries + fake_useragent_binaries + crypto_binaries + nacl_binaries + argon2_binaries + fw_binaries + ct2_binaries + ort_binaries + tok_binaries + hf_binaries,
-    datas=datas + llama_zips + yt_dlp_datas + curl_cffi_datas + ddgs_datas + primp_datas + fake_useragent_datas + crypto_datas + nacl_datas + argon2_datas + license_datas + fw_datas + ct2_datas + ort_datas + tok_datas + hf_datas,
+    datas=datas + llama_zips + llama_pinned + yt_dlp_datas + curl_cffi_datas + ddgs_datas + primp_datas + fake_useragent_datas + crypto_datas + nacl_datas + argon2_datas + license_datas + fw_datas + ct2_datas + ort_datas + tok_datas + hf_datas,
     hiddenimports=[
         "engine",
         "engine.torrent_engine",

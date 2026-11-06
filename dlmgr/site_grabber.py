@@ -40,6 +40,14 @@ from .http_client import BROWSER_HEADERS
 logger = logging.getLogger(__name__)
 
 
+def _close_quiet(resp) -> None:
+    """Close a streamed response whose body we are deliberately not reading."""
+    try:
+        resp.close()
+    except Exception:
+        pass
+
+
 class GrabberError(RuntimeError):
     """Search/resolve failure with a user-presentable message."""
 
@@ -163,7 +171,7 @@ class SiteGrabber:
         headers = dict(BROWSER_HEADERS)
         if referer:
             headers["Referer"] = referer
-        return http_client.get(url, headers=headers, timeout=25)
+        return http_client.get(url, headers=headers, timeout=25, stream=True)
 
     def _form_templates(self, page_html: str, page_url: str) -> List[str]:
         """Search-URL templates derived from GET search forms on the page."""
@@ -191,8 +199,9 @@ class SiteGrabber:
         page_url, page_html = site_url, ""
         try:
             resp = self._fetch(site_url)
-            page_html = resp.text if resp.status_code < 400 else ""
             page_url = getattr(resp, "url", None) or site_url
+            page_html = (http_client.read_capped(resp)
+                         if resp.status_code < 400 else _close_quiet(resp) or "")
             lang = lang or self._lang_prefix(page_url)  # e.g. "/" redirected to "/en"
         except Exception as exc:
             logger.debug("site page fetch failed for %s: %s", site_url, exc)
@@ -235,9 +244,11 @@ class SiteGrabber:
                 errors.append(f"{url}: {exc}")
                 continue
             if resp.status_code >= 400:
+                _close_quiet(resp)
                 errors.append(f"{url}: HTTP {resp.status_code}")
                 continue
-            videos = self.parse_cards(resp.text, getattr(resp, "url", None) or url, site_host=host)
+            videos = self.parse_cards(http_client.read_capped(resp),
+                                      getattr(resp, "url", None) or url, site_host=host)
             if videos:
                 self.templates[host] = candidate
                 return videos, candidate

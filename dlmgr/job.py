@@ -5,7 +5,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 
 class JobStatus(Enum):
@@ -137,7 +137,6 @@ class DownloadJob:
         could load one job's segment map for the other's file (review
         2026-09-15). Old extension-less state files are simply not found —
         those jobs restart from scratch once."""
-        import os
         return self.save_path + ".dtresume"
 
     def to_dict(self) -> dict:

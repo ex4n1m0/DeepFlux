@@ -17,6 +17,8 @@ official, unmodified archives.
 The zips (~52 MB combined) are gitignored; a fresh clone re-runs this
 script. When a matching file already exists locally (same size + sha256 as
 the release asset, per the GitHub asset digest), the download is skipped.
+After pinning, any zip from a PREVIOUS pin is deleted (app.spec ships only
+the pinned names — leftovers never ride in the bundle).
 installer.iss uses skipifsourcedoesntexist, so builds without the zips
 still compile (they just don't offer the local-model step).
 
@@ -164,6 +166,14 @@ def main() -> int:
     with open(os.path.join(OUT_DIR, "PINNED.json"), "w", encoding="utf-8") as fh:
         json.dump(pinned, fh, indent=2)
         fh.write("\n")
+    # app.spec ships ONLY the pinned asset names, so any zip from an older
+    # pin is dead weight on the build machine — remove it (review 2026-11-06:
+    # three versions had accumulated, ~124 MB of stale bundles).
+    pinned_names = {a["asset"] for a in pinned_assets.values()}
+    for fname in sorted(os.listdir(OUT_DIR)):
+        if fname.lower().endswith(".zip") and fname not in pinned_names:
+            print(f"Removing superseded runtime zip: {fname}")
+            os.remove(os.path.join(OUT_DIR, fname))
     total = sum(a["size"] for a in pinned_assets.values())
     print(f"Pinned {tag}: {total / 1e6:.1f} MB across {len(pinned_assets)} variants")
     print(f"Files: {OUT_DIR}\\*.zip\n       {lic_path}")

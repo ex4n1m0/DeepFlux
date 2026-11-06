@@ -14,6 +14,7 @@ check safe to call at startup from a background thread.
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import time
@@ -62,11 +63,16 @@ def is_outdated(current: str, latest: str) -> bool:
 
 def fetch_latest_version(timeout: float = 10.0) -> str:
     """Latest yt-dlp version from PyPI. Raises on network/API failure."""
-    from .http_client import get
+    from .http_client import get, read_capped
 
-    response = get(PYPI_JSON_URL, timeout=timeout)
+    response = get(PYPI_JSON_URL, timeout=timeout, stream=True)
     response.raise_for_status()
-    version = response.json()["info"]["version"]
+    # Cap the read anyway — no unbounded buffering (review 2026-11-06).
+    # The yt-dlp PyPI JSON lists every release+wheel and measures 2-5 MiB,
+    # so the cap must stay well above that or the probe always fails
+    # (measured 2026-11-06 boot: >1 MiB).
+    data = read_capped(response, 8 * 1024 * 1024)
+    version = json.loads(data)["info"]["version"]
     return str(version)
 
 

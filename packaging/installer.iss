@@ -3,7 +3,7 @@
 ; Then open this script in Inno Setup and Compile.
 
 #define MyAppName "DeepFlux"
-#define MyAppVersion "7.2"
+#define MyAppVersion "7.4"
 #define MyAppPublisher "DeepFlux"
 #define MyAppExeName "DeepFlux.exe"
 ; PyInstaller onedir output, relative to this script (packaging/..\dist).
@@ -28,7 +28,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir={#BuildOutputDir}
-OutputBaseFilename=DeepFlux7.2Setup
+OutputBaseFilename=DeepFlux7.4Setup
 SetupIconFile=icon.ico
 Compression=lzma
 SolidCompression=yes
@@ -210,6 +210,18 @@ begin
     '}';
 
   SaveStringToFile(ConfigPath, Config, False);
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  // The uninstaller wipes the WHOLE ~/.deeptorrent data dir (config.json,
+  // API keys, install_id, fast-resume, indexer health, extracted llama
+  // runtimes, multi-GB downloaded GGUFs) with no other warning — ask first
+  // (review 2026-11-06; CurUninstallStepChanged usPostUninstall below).
+  Result := MsgBox(
+    'Uninstalling DeepFlux will also DELETE all user data: settings, API ' +
+    'keys, download history, local AI models and caches.' + #13#10 + #13#10 +
+    'Continue?', mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

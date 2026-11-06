@@ -14,7 +14,6 @@ Fonts live in ``packaging/fonts/`` (bundled into the frozen app via
 from __future__ import annotations
 
 import logging
-import os
 import re
 import sys
 from pathlib import Path

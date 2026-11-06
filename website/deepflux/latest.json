@@ -1,8 +1,8 @@
 {
-  "version": "7.2",
-  "file": "DeepFlux7.2Setup.exe",
-  "size": 544261686,
-  "sha256": "77094929a72712dbe906e969f10d1175347a37b721d1b7b8e2434b57791731ef",
-  "released": "2026-11-05",
-  "notes": "DeepFlux 7.2 - The browser address bar now lives in the top menu row, always visible right of Help while the Browse page is active. New defaults: Small font size (with a new even smaller Micro option in Settings - Font Size) and Light Blue text color (Settings - Text Color); existing installs are moved to the new defaults once, and every option can still be set by hand."
+  "version": "7.4",
+  "file": "DeepFlux7.4Setup.exe",
+  "size": 434293073,
+  "sha256": "edf91b8abe4d845a6ce6f73848a9b173815c425f4337d8bc97ade0fb51ccb3ea",
+  "released": "2026-11-06",
+  "notes": "DeepFlux 7.4 - fixes browser flashing on hybrid-GPU laptops: the built-in browser now pins itself to the dedicated GPU (Settings > Browser, on by default), stopping the white/black flashes during video playback. Also ships the 7.3 reliability fixes."
 }

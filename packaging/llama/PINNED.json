@@ -1,16 +1,16 @@
 {
-  "version": "b12065",
+  "version": "b12167",
   "assets": {
     "cpu": {
-      "asset": "llama-b12065-bin-win-cpu-x64.zip",
-      "size": 24608885,
-      "sha256": "7c4135dd85af0764ae14206cb98843c731970200fcc803d85cf21a7e1df4306c"
+      "asset": "llama-b12167-bin-win-cpu-x64.zip",
+      "size": 24726767,
+      "sha256": "430d22ba7693f2135f9d3e5301f7d773cf1b8ba89fdf5ca3a5cdc5d5a7173980"
     },
     "vulkan": {
-      "asset": "llama-b12065-bin-win-vulkan-x64.zip",
-      "size": 37554508,
-      "sha256": "80adeed888c397b252ce9677d237c426fd4f7317ee1f16a45ebcca5ce842c323"
+      "asset": "llama-b12167-bin-win-vulkan-x64.zip",
+      "size": 37685589,
+      "sha256": "f99b2fc83d93f4a36778e5966600c8a4a36e8a3a6660521601317c02f974ca9d"
     }
   },
-  "downloaded": "2026-11-03"
+  "downloaded": "2026-11-06"
 }

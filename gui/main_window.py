@@ -1,6 +1,7 @@
 """PySide6 main window for Deeptorrent."""
 from __future__ import annotations
 
+import html
 import json
 import logging
 import os
@@ -10,19 +11,18 @@ import threading
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from PySide6.QtCore import QTimer, Qt, QRectF, Signal, QObject, QEvent, QLocale, QProcess, QStringListModel, QSize
-from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QFont, QIcon, QKeySequence, QLinearGradient, QPainter, QPen, QPixmap, QShortcut, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QTimer, Qt, Signal, QObject, QEvent, QLocale, QProcess, QStringListModel, QSize
+from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QIcon, QKeySequence, QLinearGradient, QPainter, QPixmap, QShortcut, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QCompleter,
     QDialog,
     QFileDialog,
-    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -41,7 +41,6 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTextBrowser,
-    QTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -49,12 +48,10 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEnginePage, QWebEngineSettings, QWebEngineUrlSchemeHandler
-from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import QUrl, QByteArray
 
 from agent.loop import AgentLoop
-from agent.llm import create_llm_client
 from agent.tools import ToolRegistry
 from agent.rss import RSSMonitor
 from config import APP_VERSION, DeeptorrentConfig
@@ -70,7 +67,6 @@ from gui.rss_dialog import RSSDialog
 from gui.rss_viewer import RSSViewer
 from gui.i18n import tr
 from gui.update_dialog import (
-    RESULT_LATER,
     RESULT_SKIP,
     RESULT_UPDATE_NOW,
     UpdateDialog,
@@ -112,14 +108,14 @@ from gui.browser_channel import create_channel, channel_injection_script
 # stream-while-downloading) keys off this flag.
 _PLAY_TAB_SUPPORTED = sys.platform in ("win32", "linux")
 if _PLAY_TAB_SUPPORTED:
-    from gui.iptv_tab import AgentIPTVBridge, IPTVTab
-    from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog
-from gui.room_tab import RoomTab
-from gui.voice_input import MIN_SECONDS, SAMPLE_RATE as VOICE_SAMPLE_RATE, VoiceRecorder, VoiceTranscriber, pcm_to_whisper_audio
-from gui.fonts import scale_qss
-from dlmgr.engine import DownloadEngine
-from dlmgr.control_api import ControlAPI
-from gui.window_sizing import roomy
+    from gui.iptv_tab import AgentIPTVBridge, IPTVTab  # noqa: E402
+    from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog  # noqa: E402
+from gui.room_tab import RoomTab  # noqa: E402
+from gui.voice_input import MIN_SECONDS, SAMPLE_RATE as VOICE_SAMPLE_RATE, VoiceRecorder, VoiceTranscriber, pcm_to_whisper_audio  # noqa: E402
+from gui.fonts import scale_qss  # noqa: E402
+from dlmgr.engine import DownloadEngine  # noqa: E402
+from dlmgr.control_api import ControlAPI  # noqa: E402
+from gui.window_sizing import roomy  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -827,6 +823,27 @@ class _MenuUrlHost(QWidget):
         return QSize(self._fill_width, hint.height())
 
 
+def _write_bytes_atomic(path: str, payload: bytes) -> None:
+    """Temp + fsync + os.replace write. config.json must never be written in
+    place — a truncated file loads as {} and silently wipes sources/keys
+    (review 2026-11-06)."""
+    tmp_path = path + ".importing"
+    with open(tmp_path, "wb") as fh:
+        fh.write(payload)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp_path, path)
+
+
+def _reload_config_in_place(config: DeeptorrentConfig, path: str) -> None:
+    """Replace a live config object's fields from the file at `path` WITHOUT
+    rebinding the object, so every holder of the reference (agent loop, tool
+    registry, background writers) sees the new values."""
+    fresh = DeeptorrentConfig.from_file(path)
+    for name in config.__dataclass_fields__:
+        setattr(config, name, getattr(fresh, name))
+
+
 class MainWindow(QMainWindow):
     # Merged Agents-tab input: Enter/Agent = conversational torrent agent,
     # Ctrl+Enter/Search = instant web sweep.
@@ -959,6 +976,17 @@ class MainWindow(QMainWindow):
         self._pending_update = None         # UpdateInfo for the running download
         threading.Thread(target=self._update_check_worker, daemon=True,
                          kwargs={"force": False}, name="update-check").start()
+
+        # Hybrid-GPU Windows machines: pin the built-in browser to the
+        # dedicated GPU via the per-exe Windows graphics preference. Runs on
+        # a DELAYED daemon thread, NOT inline at startup — the DXGI/registry
+        # work on the main thread during startup disturbed the heap such
+        # that the frozen build's lazy imports AV'd (2026-11-06 forensic:
+        # the PyInstaller archive-extract fault tracked the call). Writing
+        # it late costs nothing: the preference is only read when Chromium's
+        # GPU process starts on the NEXT launch.
+        threading.Thread(target=self._gpu_preference_worker, daemon=True,
+                         name="gpu-preference").start()
 
         # Anonymous usage ping — powers the live "users online" count on the
         # website (deepflux.space). Payload: random install id + version + OS;
@@ -1439,9 +1467,9 @@ class MainWindow(QMainWindow):
         """Find the logo PNG for the branding header."""
         candidates = [
             os.path.join(os.path.dirname(__file__), "..", "packaging", "logo_48.png"),
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux5.png"),
+            os.path.join(os.path.dirname(__file__), "..", "DeepFlux.png"),
             os.path.join(sys._MEIPASS, "packaging", "logo_48.png") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(sys._MEIPASS, "DeepFlux5.png") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(sys._MEIPASS, "DeepFlux.png") if hasattr(sys, "_MEIPASS") else "",
         ]
         for path in candidates:
             if path and os.path.isfile(path):
@@ -1458,8 +1486,8 @@ class MainWindow(QMainWindow):
             os.path.join(sys._MEIPASS, "DeepFluxNeonBanner.webp") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "website", "deepflux", "DeepFluxBanner.webp"),
             os.path.join(sys._MEIPASS, "DeepFluxBanner.webp") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux5.png"),
-            os.path.join(sys._MEIPASS, "DeepFlux5.png") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(os.path.dirname(__file__), "..", "DeepFlux.png"),
+            os.path.join(sys._MEIPASS, "DeepFlux.png") if hasattr(sys, "_MEIPASS") else "",
         ]
         for path in candidates:
             if path and os.path.isfile(path):
@@ -1469,8 +1497,8 @@ class MainWindow(QMainWindow):
     def _resolve_watermark_path(self) -> str:
         """Find the full-size logo PNG for the chat watermark (prefers high-res)."""
         candidates = [
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux5.png"),
-            os.path.join(sys._MEIPASS, "DeepFlux5.png") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(os.path.dirname(__file__), "..", "DeepFlux.png"),
+            os.path.join(sys._MEIPASS, "DeepFlux.png") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "packaging", "logo_48.png"),
             os.path.join(sys._MEIPASS, "packaging", "logo_48.png") if hasattr(sys, "_MEIPASS") else "",
         ]
@@ -4383,6 +4411,17 @@ class MainWindow(QMainWindow):
         if result:
             self._agent_signals.event.emit({"type": "ytdlp_update", **result})
 
+    def _gpu_preference_worker(self) -> None:
+        """Apply the per-exe dedicated-GPU preference (Settings → Browser),
+        AFTER the startup allocation storm settles (see __init__)."""
+        try:
+            time.sleep(15)
+            if sys.platform == "win32":
+                from infra.gpu_preference import apply_force_dedicated_gpu
+                apply_force_dedicated_gpu(bool(self.config.browser.force_dedicated_gpu))
+        except Exception:
+            logger.debug("GPU preference application skipped", exc_info=True)
+
     def _local_model_worker(self) -> None:
         """Lazy-start the bundled llama.cpp server for the "local" provider
         (same contract as Jackett/FlareSolverr auto-start) and surface a
@@ -4676,7 +4715,8 @@ class MainWindow(QMainWindow):
         interpolation is HTML-escaped before reaching the rich-text sink
         (a crafted anchor used to allow href breakout / markup injection,
         incl. a one-click no-confirmation magnet link; review 2026-09-15)."""
-        esc = lambda v: _html.escape(str(v if v is not None else ""), quote=True)
+        def esc(v) -> str:
+            return html.escape(str(v if v is not None else ""), quote=True)
         if tool == "web_search":
             return f"for \"{esc(args.get('query', ''))}\""
         if tool == "web_fetch":
@@ -4837,7 +4877,11 @@ class MainWindow(QMainWindow):
             elif etype == "rss_monitor":
                 feed = event.get("feed", "")
                 new_items = event.get("new_items", 0)
-                self._append_event(f"📡 RSS monitor: {new_items} new item(s) in '{feed}' (monitor mode, not downloaded)")
+                # The feed name is user/agent-settable — escape it before the
+                # rich-text sink (markup injection incl. one-click magnet
+                # links; review 2026-11-06).
+                safe_feed = str(feed).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                self._append_event(f"📡 RSS monitor: {new_items} new item(s) in '{safe_feed}' (monitor mode, not downloaded)")
             elif etype == "jackett_sync":
                 if not event.get("reachable", True):
                     # The hourly timer re-checks — show the failure once per session.
@@ -5262,15 +5306,19 @@ class MainWindow(QMainWindow):
         self._dl_panes["downloads"].setVisible(mode in ("both", "downloads"))
 
     def _enforce_agent_split(self) -> None:
-        """Set the Download tab splitter to 50/50 if no saved state restored it."""
+        """Set the Download tab splitter to 50/50 if no saved state restored it
+        (a restored user ratio must win — review 2026-11-06)."""
         w = self.agent_splitter.width()
-        if w > 0:
+        if w > 0 and not self.config.ui_splitters.get("download_v5_stack", ""):
             self.agent_splitter.setSizes([w // 2, w - w // 2])
 
     def _on_main_tab_changed(self, index: int) -> None:
-        """Enforce the 50/50 Download split when that tab becomes visible."""
+        """Enforce the 50/50 Download split when that tab becomes visible —
+        first visit only; re-visits must not clobber a user-adjusted ratio
+        (review 2026-11-06)."""
         if self.main_tabs.widget(index) is self._torrents_tab:
-            QTimer.singleShot(0, self._enforce_agent_split)
+            if not self._agent_ratio_applied:
+                QTimer.singleShot(0, self._enforce_agent_split)
         # Fires DURING _build_ui's insertTab calls, before _agents_tab is
         # assigned — getattr, never a bare attribute.
         hud = getattr(self, "hw_hud", None)
@@ -5843,7 +5891,7 @@ class MainWindow(QMainWindow):
             self, tr('Clear Completed'),
             f"Remove {len(completed)} completed torrent(s) from the list?\n\n"
             f"Files: " + ", ".join(names[:3]) + ("..." if len(names) > 3 else "") + "\n\n"
-            f"Downloaded files will be kept on disk.",
+            "Downloaded files will be kept on disk.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
@@ -6432,16 +6480,29 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, tr('Import Settings'), str(exc))
             return
         # The running app keeps its in-memory config; the imported file takes
-        # effect on the next launch. Back up the current one first.
+        # effect on the next launch. Back up the current one first, and write
+        # the replacement ATOMICALLY (a truncated config.json loads as {} and
+        # silently wipes sources/keys — never write it in place,
+        # review 2026-11-06).
         try:
             if os.path.exists(self.config_path):
                 import shutil
                 shutil.copy2(self.config_path, self.config_path + ".bak")
-            Path(self.config_path).write_bytes(payload)
+            _write_bytes_atomic(self.config_path, payload)
+            # Reload the imported config into the LIVE object so background
+            # writers (RSS worker, hourly Jackett sync, agent RSS persist)
+            # persist the NEW settings instead of reverting the import on
+            # their next tick (review 2026-11-06). Object identity is kept,
+            # so the agent loop / tool registry keep working.
+            _reload_config_in_place(self.config, self.config_path)
         except OSError as exc:
             QMessageBox.warning(self, tr('Import Settings'),
                                 f"Could not replace the current settings:\n{exc}")
             return
+        # Guard the freshly imported file for the modal's duration and for
+        # both branches: closeEvent / the periodic browser-session save would
+        # otherwise re-write the (previously stale) in-memory config.
+        self._skip_config_save = True
         box = QMessageBox(self)
         box.setWindowTitle(tr('Import Settings'))
         box.setText(
@@ -6451,11 +6512,10 @@ class MainWindow(QMainWindow):
         restart_btn = box.addButton(tr('Restart now'), QMessageBox.AcceptRole)
         box.addButton(tr('Later'), QMessageBox.RejectRole)
         box.exec()
-        # Both branches must guard the freshly imported file: the periodic
-        # browser-session save and closeEvent re-write the (stale) in-memory
-        # config — on "Later" that silently reverted the import on the very
-        # next tab switch (review 2026-09-15).
-        self._skip_config_save = True
+        # closeEvent re-writes the in-memory config on exit; both branches
+        # keep the flag set so the freshly imported file always survives
+        # (review 2026-09-15; the in-memory config was reloaded from the
+        # imported file above, so background writers are already safe).
         if box.clickedButton() is restart_btn:
             self._restart_app()
         else:
@@ -6689,9 +6749,9 @@ class MainWindow(QMainWindow):
             self._rss_monitor = RSSMonitor(self.config.rss)
             feed_count = len(self.config.rss.feeds)
             self._append_agent(
-                f"**RSS feeds updated.**\n\n"
-                f"| # | Name | Mode | Category |\n"
-                f"|---|------|------|----------|\n" +
+                "**RSS feeds updated.**\n\n"
+                "| # | Name | Mode | Category |\n"
+                "|---|------|------|----------|\n" +
                 "\n".join(
                     f"| {i+1} | {f.name or f.url} | {'Auto-download' if f.mode == 'auto_download' else 'Monitor'} | {f.category} |"
                     for i, f in enumerate(self.config.rss.feeds)
@@ -7078,6 +7138,16 @@ def run_gui(config_path: Optional[str] = None, open_targets: Optional[List[str]]
         logger.debug("first-run seed skipped", exc_info=True)
     set_language(_cfg.ui_language)
     window = MainWindow(config_path=config_path)
+    # Freeze the startup object graph (2026-11-06 forensic): the frozen
+    # build's GC re-scans of this enormous graph native-AV'd in innocent
+    # code (PyInstaller archive extract during lazy imports, EPG XML parse)
+    # across several builds. Freezing keeps the collector off the early
+    # objects; everything created afterwards is still collected normally.
+    try:
+        import gc
+        gc.freeze()
+    except Exception:
+        logger.debug("gc.freeze skipped", exc_info=True)
     window.show()
     # Targets passed on the command line (file associations / "Open with").
     for t in (open_targets or []):

@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from config import DeeptorrentConfig
 from infra import local_model

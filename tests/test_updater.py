@@ -46,12 +46,20 @@ def test_parse_feed_valid():
     _feed_bytes(version="abc"), _feed_bytes(version=""),
     _feed_bytes(file="../evil.exe"), _feed_bytes(file="a/b.exe"),
     _feed_bytes(file="a\\b.exe"), _feed_bytes(file=""),
+    # Extension whitelist (2026-11-06): only installers we would run.
+    _feed_bytes(file="evil.bat"), _feed_bytes(file="evil.js"),
+    _feed_bytes(file="DeepFlux9.9Setup"),
     _feed_bytes(sha256="XYZ"), _feed_bytes(sha256="a" * 63),
     _feed_bytes(size=0), _feed_bytes(size=-5),
     _feed_bytes(size=3 * 1024 * 1024 * 1024),
 ])
 def test_parse_feed_rejects_malformed(body):
     assert updater.parse_feed(body) is None
+
+
+def test_parse_feed_accepts_appimage():
+    info = updater.parse_feed(_feed_bytes(file="DeepFlux-9.9-Linux-x86_64.AppImage"))
+    assert info is not None and info.file.endswith(".AppImage")
 
 
 def test_parse_feed_rejects_oversized_body():

@@ -17,15 +17,12 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Callable, Iterable, List, Optional, Tuple
+from typing import Callable, Iterable, Optional, Tuple
 
 from .models import (
     SECTION_LIVE,
     Channel,
-    Episode,
-    Movie,
     Playlist,
-    Series,
     make_id,
 )
 

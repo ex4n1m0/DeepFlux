@@ -5,15 +5,16 @@ import ipaddress
 import logging
 import re
 import socket
-import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import requests
 from defusedxml import ElementTree as ET
 from defusedxml.common import DefusedXmlException
 
 from config import RSSFeed
+if TYPE_CHECKING:
+    from config import RSSConfig
 
 logger = logging.getLogger(__name__)
 

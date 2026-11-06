@@ -1,7 +1,6 @@
 """Tool-calling layer: expose engine and discovery as JSON-schema tools."""
 from __future__ import annotations
 
-import binascii
 import copy
 import ipaddress
 import json
@@ -16,9 +15,8 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-import httpx
 import requests
 
 try:
@@ -27,6 +25,8 @@ except ImportError:  # ddgs not installed — DuckDuckGo stage is skipped
     DDGS = None
 
 from config import DeeptorrentConfig, LLM_PROVIDER_PRESETS, source_popularity
+if TYPE_CHECKING:
+    from config import IndexerConfig, WebSearchConfig
 from engine import TorrentEngine
 from agent.memory import MemoryStore
 from agent.rss import RSSMonitor
@@ -34,8 +34,6 @@ from infra import jackett
 from infra.indexer_health import (
     KIND_FLARE,
     KIND_JACKETT,
-    KIND_UNKNOWN,
-    ZOMBIE_FAILURES,
     classify_indexer_error,
     health_store,
     kind_hint,
@@ -2505,10 +2503,12 @@ class ToolRegistry:
                     "namespace": 0, "format": "json"},
             headers={"User-Agent": BROWSER_UA},
             timeout=self._ABOUT_TIMEOUT,
+            stream=True,
         )
         r.raise_for_status()
-        r.encoding = "utf-8"  # Wikimedia omits the charset — avoid mojibake
-        data = r.json()
+        # Capped reads (fixed keyless endpoints, still never unbounded —
+        # review 2026-11-06); Wikimedia omits the charset, so decode as UTF-8.
+        data = json.loads(_read_resp_text_capped(r, 512 * 1024))
         pages = data[1] if len(data) > 1 else []
         if not pages:
             return None
@@ -2517,11 +2517,15 @@ class ToolRegistry:
             f"https://en.wikipedia.org/api/rest_v1/page/summary/{requests.utils.quote(page)}",
             headers={"User-Agent": BROWSER_UA},
             timeout=self._ABOUT_TIMEOUT,
+            stream=True,
         )
         if not s.ok:
+            try:
+                s.close()
+            except Exception:
+                pass
             return None
-        s.encoding = "utf-8"
-        sj = s.json()
+        sj = json.loads(_read_resp_text_capped(s, 512 * 1024))
         extract = (sj.get("extract") or "").strip()
         if not extract:
             return None
@@ -4149,7 +4153,9 @@ class ToolRegistry:
 
     def _list_torrent_sources(self) -> Dict[str, Any]:
         rows = [{
-            "id": s.id, "name": s.name, "url": s.url, "type": s.type,
+            "id": s.id, "name": s.name,
+            "url": redact_source_credentials(s.url),  # Xtream user:pass must
+            "type": s.type,                          # never reach the LLM
             "enabled": s.enabled, "categories": list(s.categories), "origin": s.origin,
         } for s in self.config.sources.sources]
         return {
@@ -4216,6 +4222,12 @@ class ToolRegistry:
         command = (command or "").strip()
         if not command:
             raise ToolError("command must not be empty")
+        denied = _shell_command_denied(command)
+        if denied:
+            raise ToolError(
+                f"Command refused ({denied}): it matches a destructive-command "
+                "pattern. Use the dedicated file tools (delete_path, "
+                "remove_download) for deletions instead of run_shell.")
         # The per-call wait cap also stays under the agent's task wall-clock
         # budget (the loop only enforces it BETWEEN calls, so a wait longer
         # than the budget would double a task's worst-case runtime).
@@ -4876,8 +4888,8 @@ class WebSearchClient:
                     resp.close()
                 if too_large:
                     return [], f"{url}: response exceeded the fetch limit"
-                lines = [l.strip() for l in buffer.decode("utf-8", "replace").splitlines()]
-                return [l for l in lines if l and not l.startswith("#")], None
+                lines = [raw_line.strip() for raw_line in buffer.decode("utf-8", "replace").splitlines()]
+                return [raw_line for raw_line in lines if raw_line and not raw_line.startswith("#")], None
             except Exception as exc:
                 logger.warning("Failed to fetch tracker list %s: %s", url, exc)
                 return [], f"{url}: {exc}"
@@ -4977,6 +4989,86 @@ class WebSearchClient:
         return results
 
 
+_TORZNAB_BODY_LIMIT = 8 * 1024 * 1024  # torznab XML is small; cap it anyway
+
+
+# Destructive-command deny-list for the confirmation-gated run_shell tool.
+# It exists for installs and checks — deletions belong to the dedicated
+# file tools (delete_path, remove_download), and a prompt injection (or a
+# careless model) must never drive a recursive/disk-level wipe through the
+# shell even after the user confirms "run this command" (review 2026-11-06).
+_SHELL_DENY_PATTERNS = (
+    re.compile(r"(?i)\bformat\s+[a-zA-Z]:"),                      # format C:
+    re.compile(r"(?i)\bdiskpart\b"),                              # disk partitioning
+    re.compile(r"(?i)\b(del|erase)\b[^|&<>\n]*\s/s"),             # del /s (recursive)
+    re.compile(r"(?i)\b(rd|rmdir)\b[^|&<>\n]*\s/s"),              # rd /s (recursive)
+    re.compile(r"(?i)\brm\s+-[a-zA-Z]*(?:rf|fr)[a-zA-Z]*\b"),     # rm -rf / rm -fr
+    re.compile(r"(?i)\bdd\b[^|&<>\n]*\bof=/dev/(?:sd|nvme|mmcblk|vd|xvd|disk)"),
+    re.compile(r"(?i)\bmkfs(?:\.\w+)?\b"),                        # mkfs.* filesystems
+    re.compile(r"(?i)\bwipefs\b"),
+    re.compile(r"(?i)\breg\s+(?:delete|del)\b"),                  # registry delete
+    re.compile(r"(?i)\bcleanmgr\b\s+/sagerun:\d+"),               # disk cleanup
+)
+
+
+def _shell_command_denied(command: str) -> str:
+    """The matched deny pattern ('' when the command is allowed)."""
+    for pattern in _SHELL_DENY_PATTERNS:
+        m = pattern.search(command)
+        if m:
+            return pattern.pattern
+    return ""
+
+
+def _read_resp_text_capped(resp, max_bytes: int = _TORZNAB_BODY_LIMIT) -> str:
+    """Drain a streamed response up to `max_bytes`, close it, return text.
+
+    '' when the body exceeds the cap. The torznab/Jackett URL is
+    user-configurable (can be remote) — a huge/malicious XML error body must
+    never be buffered unbounded (review 2026-11-06). Test mocks that only
+    carry `.text` (iter_content yields nothing) fall back to it, still
+    capped."""
+    chunks = []
+    total = 0
+    try:
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                logger.warning("torznab body over %d bytes dropped", max_bytes)
+                return ""
+            chunks.append(chunk)
+    except Exception:
+        logger.debug("torznab streamed read failed — using buffered body",
+                     exc_info=True)
+    try:
+        if not chunks:
+            # Test mocks / non-streamed responses carry the body in
+            # `.content`/`.text` instead of iter_content.
+            content = getattr(resp, "content", None)
+            if isinstance(content, (bytes, bytearray)):
+                if len(content) > max_bytes:
+                    logger.warning("torznab body over %d bytes dropped", max_bytes)
+                    return ""
+                return bytes(content).decode(
+                    getattr(resp, "encoding", None) or "utf-8", errors="replace")
+            text = getattr(resp, "text", None)
+            if isinstance(text, str):
+                if len(text.encode("utf-8", "replace")) > max_bytes:
+                    logger.warning("torznab body over %d bytes dropped", max_bytes)
+                    return ""
+                return text
+            return ""
+        encoding = getattr(resp, "encoding", None) or "utf-8"
+        return b"".join(chunks).decode(encoding, errors="replace")
+    finally:
+        try:
+            resp.close()
+        except Exception:
+            pass
+
+
 class TorznabClient:
     """Torznab/Jackett search client."""
 
@@ -5002,7 +5094,7 @@ class TorznabClient:
         }
         try:
             url = f"{self.config.url.rstrip('/')}{self.config.torznab_path}"
-            resp = requests.get(url, params=params, timeout=self.config.timeout)
+            resp = requests.get(url, params=params, timeout=self.config.timeout, stream=True)
         except Exception as exc:
             # Error text embeds the full URL — scrub the query so the
             # Jackett apikey never reaches the LLM/logs (most common case:
@@ -5031,7 +5123,7 @@ class TorznabClient:
         }
         try:
             url = f"{self.config.url.rstrip('/')}{path}"
-            resp = requests.get(url, params=params, timeout=self.config.timeout)
+            resp = requests.get(url, params=params, timeout=self.config.timeout, stream=True)
         except Exception as exc:
             err = _scrub_query_secrets(str(exc))
             logger.warning("Indexer %s search failed: %s", indexer_id, err)
@@ -5052,8 +5144,9 @@ class TorznabClient:
         # 1. Body-borne errors (any status — Jackett also uses 200 for these).
         # Scrubbed like every other error path: a hostile/misbehaving server
         # at the configured URL can echo the request (which carries the
-        # apikey in its query string) back inside an error body.
-        text = resp.text or ""
+        # apikey in its query string) back inside an error body. The body is
+        # read streamed with a hard cap (never unbounded, review 2026-11-06).
+        text = _read_resp_text_capped(resp)
         if text.lstrip().startswith("<"):
             try:
                 import xml.etree.ElementTree as ET
@@ -5069,7 +5162,7 @@ class TorznabClient:
                 pass  # not XML — fall through
         else:
             try:
-                payload = resp.json()
+                payload = json.loads(text)
                 message = payload.get("error") if isinstance(payload, dict) else None
                 if message:
                     return {"success": False, "results": [],
@@ -5081,7 +5174,7 @@ class TorznabClient:
             err = _scrub_query_secrets(f"HTTP {resp.status_code}: {resp.reason or 'error'}")
             logger.warning("Indexer HTTP failure: %s", err)
             return {"success": False, "results": [], "error": err}
-        return self._parse_torznab(resp.text)
+        return self._parse_torznab(text)
 
     def _throttle(self) -> None:
         # Locked: without this, parallel workers read the same timestamp and

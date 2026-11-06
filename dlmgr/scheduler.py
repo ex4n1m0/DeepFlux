@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, List
+from typing import List
 
 
 class TokenBucketThrottler:
@@ -41,7 +41,14 @@ class TokenBucketThrottler:
             self._tokens = float(self._capacity)
 
     def acquire(self, n: int) -> None:
-        """Block until n tokens are available. Returns immediately if unlimited."""
+        """Block until n tokens are available. Returns immediately if unlimited.
+
+        A request LARGER than the bucket capacity can never accumulate enough
+        tokens (the refill caps at capacity), so it is granted once the bucket
+        is full — without this the old ``tokens >= n`` check never fired and
+        acquire() deadlocked forever on oversized requests (review
+        2026-11-06; the engine's chunk writes hit this whenever a chunk
+        exceeded the configured rate)."""
         if self._rate <= 0:
             return
         while True:
@@ -50,8 +57,9 @@ class TokenBucketThrottler:
                 elapsed = now - self._last_refill
                 self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
                 self._last_refill = now
-                if self._tokens >= n:
-                    self._tokens -= n
+                if self._tokens >= n or (n > self._capacity
+                                         and self._tokens >= self._capacity):
+                    self._tokens -= min(n, self._tokens)
                     return
                 # Calculate wait time for enough tokens.
                 deficit = n - self._tokens

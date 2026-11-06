@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QPushButton,
@@ -47,7 +46,7 @@ HELP_HTML = r"""
 </head>
 <body>
 
-<h1>DeepFlux 7.2 — User Guide</h1>
+<h1>DeepFlux {VERSION} — User Guide</h1>
 
 <p>DeepFlux is an AI-powered download manager with a built-in browser, media player,
 community chat room, and file manager. The AI agent can search for and download
@@ -728,7 +727,7 @@ the native host wasn't registered.
 </table>
 
 <h2>Version</h2>
-<p>DeepFlux 7.2 — AI Deep Search</p>
+<p>DeepFlux {VERSION} — AI Deep Search</p>
 <p>AI via built-in local models (uncensored, offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
@@ -754,7 +753,10 @@ class HelpDialog(QDialog):
         # (gui/help_dialog_zh.py mirrors this file section for section).
         from gui.help_dialog_zh import HELP_HTML_ZH
         from gui.i18n import active_language
-        browser.setHtml(scale_qss(HELP_HTML_ZH if active_language() == "zh" else HELP_HTML))
+        guide = HELP_HTML_ZH if active_language() == "zh" else HELP_HTML
+        # {VERSION} travels from config.APP_VERSION — the guide text must
+        # never hardcode a release number (review 2026-11-06).
+        browser.setHtml(scale_qss(guide.replace("{VERSION}", APP_VERSION)))
         browser.setOpenExternalLinks(True)
         browser.setStyleSheet(scale_qss("""
             QTextBrowser {

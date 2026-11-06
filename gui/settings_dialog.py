@@ -571,6 +571,14 @@ class BrowserSettingsDialog(QDialog):
         extension_hint.setWordWrap(True)
         general_layout.addRow("", extension_hint)
 
+        self.browser_gpu_check = QCheckBox(tr('Use the dedicated GPU for the built-in browser (Windows)'))
+        general_layout.addRow("", self.browser_gpu_check)
+
+        gpu_hint = QLabel(tr('On hybrid-GPU machines (Intel/AMD graphics + NVIDIA/AMD dedicated card) the browser can flash when Windows switches adapters — especially during video playback. This pins DeepFlux to the dedicated GPU. Applies on the next launch.'))
+        gpu_hint.setObjectName("hint")
+        gpu_hint.setWordWrap(True)
+        general_layout.addRow("", gpu_hint)
+
         self.browser_restore_tabs = QCheckBox(tr('Restore open tabs on startup'))
         general_layout.addRow("", self.browser_restore_tabs)
 
@@ -620,6 +628,7 @@ class BrowserSettingsDialog(QDialog):
         self.browser_search_engine.setCurrentIndex(max(index, 0))
         self.browser_adblock_check.setChecked(self.config.browser.adblock_enabled)
         self.browser_extension_check.setChecked(self.config.browser.extension_enabled)
+        self.browser_gpu_check.setChecked(self.config.browser.force_dedicated_gpu)
         self.browser_restore_tabs.setChecked(self.config.browser.restore_tabs)
         self.browser_history_enabled.setChecked(self.config.browser.history_enabled)
         self.browser_history_days.setValue(self.config.browser.history_retention_days)
@@ -641,6 +650,7 @@ class BrowserSettingsDialog(QDialog):
             self.config.browser.search_engine = self.browser_search_engine.currentData() or "google"
             self.config.browser.adblock_enabled = self.browser_adblock_check.isChecked()
             self.config.browser.extension_enabled = self.browser_extension_check.isChecked()
+            self.config.browser.force_dedicated_gpu = self.browser_gpu_check.isChecked()
             self.config.browser.restore_tabs = self.browser_restore_tabs.isChecked()
         if self._page in ("all", "privacy"):
             self.config.browser.history_enabled = self.browser_history_enabled.isChecked()
@@ -1381,7 +1391,10 @@ class APIKeysDialog(QDialog):
             font_bold = (entry["id"] == active_id or entry["id"] == reco_id)
             name.setStyleSheet("font-weight: 700;" if font_bold else "")
             prefix = "★ " if entry["id"] == reco_id else ""
-            suffix = "  ✓ " + tr("active") if entry["id"] == active_id else ""
+            # "in use" (not "active") — the downloads status line also
+            # translates "active" ("活动中") and one source key cannot serve
+            # both meanings (review 2026-11-06).
+            suffix = "  ✓ " + tr("in use") if entry["id"] == active_id else ""
             name.setText(f"{prefix}{entry['label']}{suffix}")
 
     def _local_use(self, entry: dict) -> None:

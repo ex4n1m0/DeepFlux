@@ -56,6 +56,15 @@
   (that is eight lines; d–g+i in ONE process and j–o in one process are
   the current poison shapes). If a chunk native-AVs, suspect the dice
   first: re-run / re-split before hunting code.
+  POWERSHELL NOTE (2026-11-06): the chunk commands assume a
+  glob-expanding shell (bash). PowerShell passes wildcards to native
+  commands LITERALLY — `pytest tests/test_a*.py` exits 4 with
+  "file or directory not found". PowerShell-safe form per chunk:
+  `$files = Get-ChildItem tests -Filter 'test_*.py' -File |
+  Where-Object { $_.Name.Substring(5,1) -match '^[abc]$' } |
+  ForEach-Object { $_.FullName }; python -m pytest $files -q --tb=short`
+  (letter groups: a-c / d-g / h / i / local_model solo / j+llm /
+  loop+memory+m-n-o / r-y).
 - Tests must NEVER write the real `~/.deeptorrent/config.json`: the autouse
   fixture in `tests/conftest.py` redirects `DeeptorrentConfig.default_config_path`
   for every test; still pass explicit paths whenever
@@ -324,8 +333,11 @@
   milkdrop; Info.plist carries NSMicrophoneUsageDescription for voice —
   missing it makes macOS KILL the process on first mic access; version is
   parsed from installer.iss MyAppVersion), `packaging/gen_macos_icon.py`
-  (Pillow writes packaging/icon.icns from the tracked DeepFlux4.png — keep
-  the PNG ≥512px), `packaging/verify_boot.py` (offscreen boot smoke:
+  (Pillow writes packaging/icon.icns from the tracked DeepFlux.png — the
+  SINGLE logo source everywhere since 2026-11-06, when the window/tray/
+  file-association icons and all three specs converged off the retired
+  DeepFlux5.png; keep the PNG ≥512px), `packaging/verify_boot.py` (offscreen
+  boot smoke:
   builds the REAL MainWindow, asserts tabs, no iptv_tab attr, no iptv_*
   tools in the registry; run locally on Windows too — asserts flip by
   platform. Needs QT_QPA_PLATFORM=offscreen +
@@ -555,10 +567,13 @@
     (Xtream username/password); `_find_feed` resolves the redacted form.
     Jackett error text is query-scrubbed (`_scrub_query_secrets`) so the
     apikey never rides exception strings.
-  * Room: the welcome record TRIMS history to fit MAX_WIRE_BYTES (an
-    over-cap welcome made the room permanently unjoinable); `_recv_line` is
-    bounded; pre-join pings are budgeted (5); leaving mid-connect must not
-    resurrect the join (role re-check under the lock).
+  * Room (OnlyHumans hub since the IRC-room rewrite): client history is
+    trimmed to HISTORY_KEEP (800) so a bloated log never rides every rejoin;
+    hub reads are STREAMED with a 2 MiB body cap (`_read_capped_json` in
+    ircmgr/oh_room.py) and unread responses are `_discard`-closed; leaving
+    mid-connect must not resurrect the join (role re-check under the lock —
+    `_join_pass`/`_try_found`/`_seek_seat`/`_handle_key_delivery`, and
+    `_stop_room` clears `_pending`+role).
   * EPG table PK is (url, channel_id, start) with an in-place migration —
     concurrent guides must not overwrite each other's shared channels.
   * `iptv_list_sources`/`_list_rss_feeds`/`_format_tool_args`/markdown link
@@ -573,9 +588,12 @@
     head ERROR (auto-retried); ranged file creation never truncates
     (O_CREAT, not "w+b"); .dtresume names include the extension; HLS init
     sections are fetched with decrypt=False (RFC 8216); ffmpeg remux has a
-    wall-clock kill; settings import sets _skip_config_save on BOTH dialog
-    branches; target=_blank inherits the private flag; downloads re-sniff
-    is once-per-job; the cookie cache is LRU.
+    wall-clock kill; settings import writes config.json atomically
+    (temp+fsync+os.replace via `_write_bytes_atomic`), reloads the imported
+    config into the live object (`_reload_config_in_place` — background
+    writers then persist the NEW settings) and sets _skip_config_save on
+    BOTH dialog branches; target=_blank inherits the private flag;
+    downloads re-sniff is once-per-job; the cookie cache is LRU.
   * Accepted residuals (documented, not fixed): DNS-rebinding TOCTOU on
     validate-then-fetch (needs pinned-IP connections — too invasive);
     Room fan-out can block ≤75s per wedged peer (needs per-member queues);

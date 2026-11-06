@@ -1,0 +1,27 @@
+#!/bin/sh
+# Keep README.md's "Current version" line in sync with installer.iss.
+# Runs on every commit; rewrites and stages README.md when they disagree.
+python - <<'PYEOF'
+import re, subprocess, sys
+from pathlib import Path
+
+iss = Path("packaging/installer.iss").read_text(encoding="utf-8")
+m = re.search(r'#define MyAppVersion "([^"]+)"', iss)
+if not m:
+    sys.exit(0)
+version = m.group(1)
+
+readme = Path("README.md")
+text = readme.read_text(encoding="utf-8")
+pat = re.compile(r"\*\*Current version: [^*]+\*\*[^—\n]*(—|\(kept|\(kept in sync)?", re.M)
+line_re = re.compile(r"\*\*Current version: [^*]+\*\*")
+if line_re.search(text):
+    new_text = line_re.sub(f"**Current version: {version}**", text, count=1)
+else:
+    anchor = "Website and installer: **https://deepflux.space**"
+    new_text = text.replace(anchor, anchor + f"\n\n**Current version: {version}**", 1)
+if new_text != text:
+    readme.write_text(new_text, encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], check=True)
+    print(f"pre-commit: README.md version synced to {version}")
+PYEOF

@@ -763,6 +763,32 @@ def find_server_exe(variant: str = "vulkan") -> Optional[str]:
     return exe if os.path.isfile(exe) else None
 
 
+def _pick_bundled_zip(root: str, variant: str) -> Optional[str]:
+    """The installer-shipped zip for a variant ('cpu'/'vulkan' inside the
+    asset name) inside one bundle root.
+
+    The pinned asset (packaging/llama/PINNED.json, shipped into the frozen
+    build since 2026-11-06) wins — a multi-zip dir must never let a
+    superseded runtime get extracted (alphabetical listdir used to pick the
+    OLDEST build). Falls back to a plain name scan only when the pin file is
+    absent (developer-placed zips)."""
+    pinned = os.path.join(root, "PINNED.json")
+    if os.path.isfile(pinned):
+        asset = None
+        try:
+            with open(pinned, "r", encoding="utf-8") as fh:
+                asset = json.load(fh).get("assets", {}).get(variant, {}).get("asset")
+        except (OSError, ValueError):
+            asset = None
+        if asset and asset.lower().endswith(".zip") and os.path.isfile(os.path.join(root, asset)):
+            return os.path.join(root, asset)
+        return None
+    for name in os.listdir(root):
+        if name.endswith(f"-bin-win-{variant}-x64.zip"):
+            return os.path.join(root, name)
+    return None
+
+
 def _bundled_zip(variant: str) -> Optional[str]:
     """The installer-shipped zip for a variant ('cpu'/'vulkan' inside the
     asset name), if this build carries one."""
@@ -772,11 +798,10 @@ def _bundled_zip(variant: str) -> Optional[str]:
         roots = [os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                               "packaging", "llama")]
     for root in roots:
-        if not os.path.isdir(root):
-            continue
-        for name in os.listdir(root):
-            if name.endswith(f"-bin-win-{variant}-x64.zip"):
-                return os.path.join(root, name)
+        if os.path.isdir(root):
+            picked = _pick_bundled_zip(root, variant)
+            if picked:
+                return picked
     return None
 
 

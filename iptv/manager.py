@@ -24,13 +24,10 @@ from .artwork import ArtworkCache
 from .cache import IPTVCache, default_data_dir
 from .epg import EPGManager
 from .framegrab import FrameGrabber
-from .metadata import MetadataPipeline, metadata_key
+from .metadata import MetadataPipeline
 from .models import (
-    ALL_SECTIONS,
-    SECTION_FAVORITES,
     SECTION_LIVE,
     SECTION_MOVIES,
-    SECTION_RECENT,
     SECTION_SERIES,
     Category,
     Channel,

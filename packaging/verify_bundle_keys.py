@@ -275,7 +275,7 @@ def main() -> int:
         return 0
 
     targets = [bundle] + ([installer] if installer else [])
-    print(f"[1/3] raw byte scan of {targets[0]}" + (f" + installer" if installer else ""))
+    print(f"[1/3] raw byte scan of {targets[0]}" + (" + installer" if installer else ""))
     raw_hits = raw_scan(targets, markers)
     print(f"[2/3] embedded-PYZ / CArchive constants scan of {bundle} exes (pyinstxtractor attack)")
     exe_fails, exe_reviews = exe_scan(bundle, markers)

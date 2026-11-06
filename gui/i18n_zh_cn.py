@@ -20,7 +20,6 @@ ZH_CN: dict[str, str] = {
     # --- activity rail / tab titles ---
     "Agent": "智能体",
     "Browse": "浏览",
-    "Download": "下载",
     "Play": "播放",
     "Command": "文件管理",
     "Room": "聊天室",
@@ -528,6 +527,9 @@ ZH_CN: dict[str, str] = {
     "Web Search": "网页搜索",
     "When enabled, a script scans every page for downloadable videos (<video>, HLS, DASH, YouTube, etc.) and shows a status badge. Its monitoring can cause flashing during video playback — turn off if you experience that. Off by default. You can also toggle this from the toolbar button next to AdBlock.":
         "启用后，脚本会扫描每个页面上可下载的视频（<video>、HLS、DASH、YouTube 等）并显示状态徽标。其监控可能在播放视频时造成闪烁 —— 如遇到请关闭。默认关闭。也可通过 AdBlock 旁边的工具栏按钮切换。",
+    "Use the dedicated GPU for the built-in browser (Windows)": "内置浏览器使用独立显卡（Windows）",
+    "On hybrid-GPU machines (Intel/AMD graphics + NVIDIA/AMD dedicated card) the browser can flash when Windows switches adapters — especially during video playback. This pins DeepFlux to the dedicated GPU. Applies on the next launch.":
+        "在混合显卡机器（Intel/AMD 核显 + NVIDIA/AMD 独立显卡）上，Windows 切换显卡时浏览器可能会闪烁 —— 尤其是播放视频时。此选项将 DeepFlux 固定到独立显卡。下次启动时生效。",
     "Which MilkDrop preset to start with.": "启动时使用哪个 MilkDrop 预设。",
     "Zoom in  (Ctrl+=  or Ctrl+scroll up)": "放大（Ctrl+= 或 Ctrl+向上滚动）",
     "Zoom out  (Ctrl+-  or Ctrl+scroll down)": "缩小（Ctrl+- 或 Ctrl+向下滚动）",
@@ -607,7 +609,6 @@ ZH_CN: dict[str, str] = {
     "Clear": "清除",
     "Copy": "复制",
     "Open": "打开",
-    "Remove": "移除",
     "Stop": "停止",
     "Search": "搜索",
     "Send": "发送",
@@ -816,7 +817,7 @@ ZH_CN: dict[str, str] = {
     "Make this the agent's model (applies on OK)": "将其设为智能体的模型（点击“确定”后生效）",
     "GPU+CPU": "显卡+CPU",
     "won't fit": "无法运行",
-    "active": "使用中",
+    "in use": "使用中",
     "Local models run entirely on this PC through the bundled llama.cpp server (no API key, nothing sent to the cloud). The badge on each row says how this machine would run it: GPU = full video-memory offload (fastest), GPU+CPU = split, CPU = processor only. Downloading a model offers to make it the agent when no cloud key of your own is configured. Interrupted downloads resume where they stopped.":
         "本地模型通过内置的 llama.cpp 服务器完全在这台电脑上运行（无需 API 密钥，不向云端发送任何内容）。每行的徽章标明本机将如何运行它：GPU = 全部载入显存（最快）、GPU+CPU = 混合拆分、CPU = 仅用处理器。在自己没有配置云端密钥时，下载模型会主动将其设为智能体。中断的下载会从停止处续传。",
 

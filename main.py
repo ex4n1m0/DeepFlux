@@ -2,14 +2,11 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import os
 import re
-import shutil
 import sys
 import threading
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from agent.loop import AgentLoop
@@ -19,6 +16,20 @@ from engine import TorrentEngine
 from gui import run_gui
 
 logger = logging.getLogger(__name__)
+
+
+def _enable_crash_log() -> None:
+    """Windowed builds have no console — native faults (extension code, GC
+    heap corruption) die silently. Dump the Python stack of the faulting
+    thread to a file so crashes are diagnosable (2026-11-06)."""
+    try:
+        import faulthandler
+        _base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        _path = os.path.join(_base, "DeepFlux", "faulthandler.log")
+        os.makedirs(os.path.dirname(_path), exist_ok=True)
+        faulthandler.enable(open(_path, "a", encoding="utf-8"))
+    except Exception:
+        pass
 
 
 def format_size(num: int) -> str:
@@ -382,6 +393,7 @@ def _forward_to_running_instance(targets: List[str]) -> bool:
 
 
 def main() -> None:
+    _enable_crash_log()
     # Linux: the Play tab embeds mpv/VLC video via X11 window IDs, and
     # Wayland has no cross-client window embedding — so default Qt to xcb
     # (XWayland on Wayland sessions). An explicit QT_QPA_PLATFORM from the

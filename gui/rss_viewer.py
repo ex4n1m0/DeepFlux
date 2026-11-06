@@ -221,7 +221,6 @@ class RSSViewer(QDialog):
         row = 0
         for feed_url, items in self._all_items.items():
             feed_name = self._feed_names.get(feed_url, feed_url)
-            feed_mode = self._feed_modes.get(feed_url, "monitor")
 
             for i, item in enumerate(items):
                 title = item.get("title", "Unknown")
@@ -295,7 +294,6 @@ class RSSViewer(QDialog):
             failed = 0
             for feed_url, indices in to_download.items():
                 items = self._all_items.get(feed_url, [])
-                feed_name = self._feed_names.get(feed_url, feed_url)
                 # Find the feed config to get category.
                 category = "Other"
                 for f in self.config.rss.feeds:
@@ -320,7 +318,8 @@ class RSSViewer(QDialog):
                             })
                             downloaded += 1
                         elif torrent_url:
-                            import tempfile, os
+                            import tempfile
+                            import os
                             resp = requests.get(torrent_url, timeout=30, headers={"User-Agent": "Deeptorrent/0.1"})
                             resp.raise_for_status()
                             tmp_path = None

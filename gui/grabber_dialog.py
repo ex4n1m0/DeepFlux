@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from dlmgr.site_grabber import GrabberError, GrabberVideo, SiteGrabber
+from dlmgr.site_grabber import GrabberVideo, SiteGrabber
 from gui.window_sizing import roomy
 from gui.i18n import tr
 from gui.fonts import scale_qss

@@ -3,8 +3,9 @@
 Builds the real MainWindow with a throwaway config and lets the event loop
 run for a few seconds — catches import-time platform bugs, missing data
 files, and constructor crashes before PyInstaller wastes a build.
-Platform-aware: on Windows the Play tab must exist, on macOS/Linux it must
-not (everything keys off _PLAY_TAB_SUPPORTED in gui/main_window.py).
+Platform-aware: on Windows and Linux (the 2026-10-11 full port) the Play
+tab must exist, on macOS it must not (everything keys off
+_PLAY_TAB_SUPPORTED in gui/main_window.py).
 
 Must run BEFORE QApplication is created (env vars):
     QT_QPA_PLATFORM=offscreen

@@ -25,7 +25,6 @@ import logging
 import os
 import re
 import sys
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

@@ -91,9 +91,9 @@ def _install_linux_icon() -> str:
     """Copy the app logo into the hicolor theme; returns the icon name."""
     candidates = []
     if hasattr(sys, "_MEIPASS"):
-        candidates.append(os.path.join(sys._MEIPASS, "DeepFlux5.png"))
+        candidates.append(os.path.join(sys._MEIPASS, "DeepFlux.png"))
     here = os.path.dirname(os.path.abspath(__file__))
-    candidates.append(os.path.join(here, "..", "DeepFlux5.png"))
+    candidates.append(os.path.join(here, "..", "DeepFlux.png"))
     src = next((c for c in candidates if os.path.isfile(c)), "")
     dst_dir = os.path.join(os.path.expanduser("~"), ".local", "share", "icons",
                            "hicolor", "512x512", "apps")

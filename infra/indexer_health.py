@@ -32,7 +32,7 @@ import os
 import tempfile
 import threading
 import time
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 

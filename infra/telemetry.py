@@ -20,7 +20,6 @@ Qt-free and stdlib+requests only, same shape as ``infra/jackett`` and
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import sys
@@ -55,8 +54,9 @@ def install_id(data_dir: str) -> str:
     Lives in its own file next to config.json — deliberately NOT in the
     config itself, so a Settings Export/Import must not transplant one
     machine's identity onto another (two machines sharing an id would
-    under-count). Survives installs/upgrades: the installer only ever
-    deletes config.json."""
+    under-count). Survives installs/upgrades (installs preserve
+    config.json since 2026-09-19; only the uninstaller removes the data
+    dir, and it asks first)."""
     global _install_id_cache
     if _install_id_cache:
         return _install_id_cache

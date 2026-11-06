@@ -300,6 +300,25 @@ def test_cancel_hls_job_removes_temp_segments(engine, tmp_path):
     assert not os.path.isdir(temp_dir)
 
 
+def test_remove_errored_stream_job_cleans_segment_dirs(engine, tmp_path):
+    # Regression: remove_job used shutil.rmtree without importing shutil in
+    # this module (NameError) — removing an incomplete stream job crashed and
+    # re-orphaned the multi-GB .segments dirs (review 2026-11-06).
+    save = str(tmp_path / "stream.mp4")
+    seg_dir = save + ".segments"
+    audio_dir = save + ".segments.audio"
+    os.makedirs(seg_dir)
+    os.makedirs(audio_dir)
+    job = DownloadJob(filename="stream.mp4", save_path=save, job_type="hls")
+    job.status = JobStatus.ERROR
+    engine._jobs[job.id] = job
+    with mock.patch.object(resume_state, "delete_resume_state"):
+        assert engine.remove_job(job.id) is True
+    assert job.id not in engine._jobs
+    assert not os.path.isdir(seg_dir)
+    assert not os.path.isdir(audio_dir)
+
+
 def test_resume_state_encrypts_request_credentials(tmp_path):
     job = DownloadJob(
         url="https://example.com/file?token=signed-secret",

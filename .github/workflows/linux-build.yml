@@ -16,21 +16,19 @@ name: Linux build
 # wider-compat manylinux_2_28 container job is the upgrade path if users
 # on older distros ever ask.
 #
-# Trigger: every push to this branch (workflow_dispatch only works once
-# the file reaches the default branch) + manual dispatch after that.
+# Trigger: manual dispatch only (2026-11-06: the old `push` trigger named
+# the retired linux-port branch; CI builds are release-gated by hand).
 on:
   workflow_dispatch:
-  push:
-    branches: [linux-port]
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -53,11 +51,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Not in requirements.txt but imported by the app (dev machines
-          # carry them; CI must be explicit). python-vlc is the OPTIONAL
-          # VLC fallback backend (pure ctypes wrapper — only activates on
-          # machines with a system VLC; libvlc itself is not bundled).
-          pip install cryptography defusedxml Pillow PyInstaller python-vlc
+          # Build tool only (runtime deps live in requirements.txt;
+          # python-vlc is the OPTIONAL VLC fallback backend, also listed
+          # there — pure ctypes wrapper, only activates on machines with a
+          # system VLC).
+          pip install PyInstaller
 
       - name: Embed shared DeepSeek key (from secret, obfuscated)
         env:
@@ -219,7 +217,7 @@ jobs:
           QT_QPA_PLATFORM=offscreen ./dist/DeepFlux-*-Linux-x86_64.AppImage --help
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: DeepFlux-${{ steps.ver.outputs.version }}-Linux-x86_64
           path: |

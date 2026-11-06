@@ -140,8 +140,12 @@ def parse_feed(body: bytes) -> Optional[UpdateInfo]:
     if not _VERSION_RE.match(version):
         return None
     # The filename becomes a path segment below — a basename only, never
-    # separators or traversal fragments.
+    # separators or traversal fragments — and an installer we would actually
+    # run (the Linux apply path additionally checks .AppImage; the Windows
+    # Start-Process path must never be handed a non-exe, review 2026-11-06).
     if not file_name or "/" in file_name or "\\" in file_name or file_name.startswith("."):
+        return None
+    if not file_name.endswith((".exe", ".AppImage")):
         return None
     if not _SHA256_RE.match(sha):
         return None

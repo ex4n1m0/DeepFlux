@@ -37,6 +37,60 @@ _DETACHED_PROCESS = getattr(subprocess, "DETACHED_PROCESS", 0)
 
 _IS_WINDOWS = os.name == "nt"
 
+# Jackett's t=indexers XML is small — cap the read anyway so a
+# misconfigured/remote instance can never buffer an unbounded body into the
+# app process (review 2026-11-06).
+_INDEXERS_BODY_LIMIT = 5 * 1024 * 1024
+
+
+def _read_resp_capped(resp: requests.Response) -> str:
+    """Drain a streamed response up to _INDEXERS_BODY_LIMIT, close it.
+
+    Test mocks that only carry `.text` (iter_content yields nothing) fall
+    back to it, still capped."""
+    chunks = []
+    total = 0
+    try:
+        for chunk in resp.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > _INDEXERS_BODY_LIMIT:
+                logger.warning("Jackett response body over %d bytes — dropped",
+                               _INDEXERS_BODY_LIMIT)
+                return ""
+            chunks.append(chunk)
+    except Exception:
+        logger.debug("Jackett streamed read failed — using buffered body",
+                     exc_info=True)
+    try:
+        if not chunks:
+            # Test mocks / non-streamed responses carry the body in
+            # `.content`/`.text` instead of iter_content.
+            content = getattr(resp, "content", None)
+            if isinstance(content, (bytes, bytearray)):
+                if len(content) > _INDEXERS_BODY_LIMIT:
+                    logger.warning("Jackett response body over %d bytes — dropped",
+                                   _INDEXERS_BODY_LIMIT)
+                    return ""
+                return bytes(content).decode(
+                    getattr(resp, "encoding", None) or "utf-8", errors="replace")
+            text = getattr(resp, "text", None)
+            if isinstance(text, str):
+                if len(text.encode("utf-8", "replace")) > _INDEXERS_BODY_LIMIT:
+                    logger.warning("Jackett response body over %d bytes — dropped",
+                                   _INDEXERS_BODY_LIMIT)
+                    return ""
+                return text
+            return ""
+        encoding = getattr(resp, "encoding", None) or "utf-8"
+        return b"".join(chunks).decode(encoding, errors="replace")
+    finally:
+        try:
+            resp.close()
+        except Exception:
+            pass
+
 # Jackett Windows install locations + executables. Console first: it serves
 # the API in-process even when the (unstartable-without-elevation) service
 # is installed but stopped; the tray app can sit idle without serving in
@@ -169,9 +223,10 @@ def fetch_indexers_detailed(config: DeeptorrentConfig, timeout: float = 15
         _torznab_url(config),
         params={"apikey": config.indexer.api_key, "t": "indexers"},
         timeout=timeout,
+        stream=True,
     )
     resp.raise_for_status()
-    root = ET.fromstring(resp.text)
+    root = ET.fromstring(_read_resp_capped(resp))
     sources: List[SourceConfig] = []
     definition_ids: set = set()
     for idx in root.findall("indexer"):

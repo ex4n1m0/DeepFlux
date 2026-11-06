@@ -35,7 +35,7 @@ Differences from app_macos.spec:
     (libnss3, libasound, libxkbcommon-x11, the libxcb set…) that a
     PyInstaller onedir alone would leave on the target's disk.
   * No .icns/icon — ELF executables carry no icon; the AppImage uses the
-    tracked DeepFlux5.png directly.
+    tracked DeepFlux.png directly.
 """
 import os
 import re
@@ -106,7 +106,7 @@ _wanted_datas = [
     (os.path.join(project_root, "packaging", "fonts", "JetBrainsMono.ttf"), "packaging/fonts"),
     (os.path.join(project_root, "packaging", "fonts", "Inter-OFL.txt"), "packaging/fonts"),
     (os.path.join(project_root, "packaging", "fonts", "JetBrainsMono-OFL.txt"), "packaging/fonts"),
-    (os.path.join(project_root, "DeepFlux5.png"), "."),
+    (os.path.join(project_root, "DeepFlux.png"), "."),
     # Agent-tab watermark: the website hero banner (same file as deepflux.space).
     (os.path.join(project_root, "DeepFluxNeonBanner.webp"), "."),
 (os.path.join(project_root, "website", "deepflux", "DeepFluxBanner.webp"), "."),

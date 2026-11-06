@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 from dataclasses import replace
@@ -429,8 +430,8 @@ class DownloadEngine:
         Parses the manifest, downloads segments, and remuxes via FFmpeg.
         The job's file_size is set to the number of segments (for progress
         tracking), and the actual output file is produced after remuxing."""
-        from .hls_dash import parse_manifest, HLSDownloader, DRMError
-        from .ffmpeg import FFmpegWrapper, find_ffmpeg, KNOWN_CONTAINER_EXTS
+        from .hls_dash import parse_manifest
+        from .ffmpeg import KNOWN_CONTAINER_EXTS
 
         # Parse the manifest.
         info = parse_manifest(
@@ -698,7 +699,7 @@ class DownloadEngine:
         player. yt-dlp handles the signature cipher, adaptive format merging,
         and other complexities. Progress is reported via yt-dlp's progress hook."""
         try:
-            from yt_dlp import YoutubeDL
+            from yt_dlp import YoutubeDL  # noqa: F401 — availability probe
         except ImportError:
             job = DownloadJob(
                 url=url,
@@ -756,7 +757,6 @@ class DownloadEngine:
                 # the correct extension based on the downloaded format. Without
                 # it, prepare_filename returns a path with no extension and the
                 # final-file detection below fails.
-                filename = job.filename
                 if job.filename and job.filename != "youtube_video" and os.path.splitext(job.filename)[1]:
                     # User gave a filename with extension — use it as-is.
                     outtmpl = os.path.join(os.path.dirname(job.save_path), job.filename)
@@ -1213,8 +1213,10 @@ class DownloadEngine:
                         new_worker.start()
                         logger.info("Restarted stalled segment %d of job %s", stalled_seg.index, job_id)
                         continue
-                    # Take the first done worker and re-purpose it.
-                    donor = done.pop(0)
+                    # One done worker budgets one stalled rebalance (a fresh
+                    # tail worker is spawned below; the donor's segment is
+                    # already DONE and its worker inert).
+                    done.pop(0)
                     stalled_seg = stalled_w.segment
                     # Split the stalled segment's remaining range in half.
                     remaining = stalled_seg.remaining_bytes

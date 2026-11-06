@@ -138,7 +138,6 @@ class PlayerBackend:
         self.on_state: Optional[Callable[[str], None]] = None  # "playing"|"paused"|"stopped"|"error"
         self.on_position: Optional[Callable[[float, float], None]] = None  # (pos, duration) seconds
         self.on_buffer: Optional[Callable[[float], None]] = None  # 0..1
-        on_meta = None  # placeholder
         self.on_meta: Optional[Callable[[dict], None]] = None
         self.on_tracks: Optional[Callable[[List[dict]], None]] = None
         self.on_error: Optional[Callable[[str], None]] = None

@@ -45,6 +45,45 @@ def test_manifest_pins_are_complete():
         assert m["license"] == "apache-2.0"
 
 
+# ---------------------------------------------------------------------------
+# Bundled runtime zip selection (pinned asset wins)
+# ---------------------------------------------------------------------------
+
+def test_pick_bundled_zip_prefers_pinned_asset(tmp_path):
+    # Regression 2026-11-06: a multi-version zip dir used to extract the
+    # OLDEST runtime (alphabetical os.listdir) instead of the pinned one.
+    for name in ("llama-b11729-bin-win-cpu-x64.zip",
+                 "llama-b12065-bin-win-cpu-x64.zip"):
+        (tmp_path / name).write_bytes(b"zip")
+    (tmp_path / "PINNED.json").write_text(json.dumps({
+        "version": "b12065",
+        "assets": {"cpu": {"asset": "llama-b12065-bin-win-cpu-x64.zip"},
+                   "vulkan": {"asset": "llama-b12065-bin-win-vulkan-x64.zip"}},
+    }), encoding="utf-8")
+    picked = local_model._pick_bundled_zip(str(tmp_path), "cpu")
+    assert picked == str(tmp_path / "llama-b12065-bin-win-cpu-x64.zip")
+
+
+def test_pick_bundled_zip_returns_none_when_pinned_asset_missing(tmp_path):
+    (tmp_path / "llama-b11729-bin-win-cpu-x64.zip").write_bytes(b"zip")
+    (tmp_path / "PINNED.json").write_text(json.dumps({
+        "assets": {"cpu": {"asset": "llama-b12065-bin-win-cpu-x64.zip"}},
+    }), encoding="utf-8")
+    assert local_model._pick_bundled_zip(str(tmp_path), "cpu") is None
+
+
+def test_pick_bundled_zip_falls_back_to_scan_without_pin(tmp_path):
+    (tmp_path / "llama-b11729-bin-win-vulkan-x64.zip").write_bytes(b"zip")
+    assert local_model._pick_bundled_zip(str(tmp_path), "vulkan") == \
+        str(tmp_path / "llama-b11729-bin-win-vulkan-x64.zip")
+
+
+def test_pick_bundled_zip_ignores_malformed_pin(tmp_path):
+    (tmp_path / "llama-b11729-bin-win-cpu-x64.zip").write_bytes(b"zip")
+    (tmp_path / "PINNED.json").write_text("{not json", encoding="utf-8")
+    assert local_model._pick_bundled_zip(str(tmp_path), "cpu") is None
+
+
 def test_manifest_agrees_with_preset_default():
     """config.py's preset model id and the module default must be manifest
     ids (three copies of one literal — this pins them together)."""

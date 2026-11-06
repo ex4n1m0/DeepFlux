@@ -32,7 +32,7 @@ import shutil
 import subprocess
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -302,8 +302,17 @@ def dxgi_adapters() -> List[Tuple[str, int]]:
         return []
     try:
         dxgi = ctypes.WinDLL("dxgi")
+        # Declared argtypes/restype — a WinDLL call without them converts
+        # arguments as C ints, which TRUNCATES 64-bit pointers and corrupts
+        # the heap (crashing later in innocent code — the frozen-build
+        # startup AVs of 2026-11-06; this function only started running on
+        # the main thread at every startup once gpu_preference used it).
+        create_factory = dxgi.CreateDXGIFactory1
+        create_factory.argtypes = [ctypes.POINTER(_GUID),
+                                   ctypes.POINTER(ctypes.c_void_p)]
+        create_factory.restype = ctypes.c_long
         factory = ctypes.c_void_p()
-        hr = dxgi.CreateDXGIFactory1(
+        hr = create_factory(
             ctypes.byref(_IID_IDXGIFactory1), ctypes.byref(factory))
         if hr != 0 or not factory:
             return []

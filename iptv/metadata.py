@@ -215,7 +215,6 @@ def _retry_request(
     The caller decides whether a ``"transient"`` exhaustion is worth a
     negative-cache entry — by the framegrab principle it usually is NOT.
     """
-    last_exc: Optional[Exception] = None
     for attempt in range(max_attempts):
         try:
             r = session.get(url, params=params, headers=headers, timeout=timeout)
@@ -233,7 +232,6 @@ def _retry_request(
             if status in (401, 403):
                 return None, "auth"
             if status in _RETRY_STATUS:
-                last_exc = requests.HTTPError(response=r)
                 if attempt < max_attempts - 1:
                     wait = backoff_base * (2 ** attempt) * (0.5 + random.random())
                     time.sleep(wait)
@@ -242,7 +240,6 @@ def _retry_request(
             logger.debug("retry_request: HTTP %d for %s", status, url)
             return None, "permanent"
         except (requests.ConnectionError, requests.Timeout) as exc:
-            last_exc = exc
             if attempt < max_attempts - 1:
                 wait = backoff_base * (2 ** attempt) * (0.5 + random.random())
                 logger.debug("retry_request: transient %s (attempt %d/%d) — retrying in %.1fs",
@@ -1046,7 +1043,6 @@ class JavBusProvider(MetadataProvider):
 
     def _fetch_html(self, url: str) -> str:
         """Fetch raw HTML with the shared retry pattern (3 attempts, jittered)."""
-        domain = _extract_domain(url)
         for attempt in range(3):
             try:
                 r = self._session.get(url, timeout=20)
@@ -1089,14 +1085,12 @@ class JavBusProvider(MetadataProvider):
 
         # Studio: <span>製作商:</span> ... <a href="...">Studio</a>
         #         or <span>メーカー:</span> ...
-        studio = ""
         for label in ("製作商", "メーカー", "Studio"):
             m = re.search(
                 rf'<span[^>]*>{label}\s*:</span>\s*</p>\s*<p[^>]*>\s*<a[^>]*>([^<]+)</a>',
                 html,
             )
             if m:
-                studio = m.group(1).strip()
                 break
 
         # Release date: <p>2023-05-14</p> in the info container.
@@ -1219,10 +1213,6 @@ class JavLibraryProvider(MetadataProvider):
         # Actresses: links in the cast section.
         actresses = re.findall(r'<a href="vl_star\.php[^"]*"[^>]*>([^<]+)</a>', html)
         genres = [a.strip() for a in actresses if a.strip()][:5]
-
-        # Studio: link in the metadata table.
-        studio_m = re.search(r'<a href="vl_maker\.php[^"]*"[^>]*>([^<]+)</a>', html)
-        studio = studio_m.group(1).strip() if studio_m else ""
 
         # Release date.
         date_m = re.search(r'(\d{4}-\d{2}-\d{2})', html)
@@ -1358,12 +1348,6 @@ class FanzaProvider(MetadataProvider):
             r'<a[^>]*href="[^"]*article=actress[^"]*"[^>]*>([^<]+)</a>', html,
         )
         genres = [a.strip() for a in actresses if a.strip()][:5]
-
-        # Studio: <a href=".../article=maker/id=.../">Studio</a>
-        studio_m = re.search(
-            r'<a[^>]*href="[^"]*article=maker[^"]*"[^>]*>([^<]+)</a>', html,
-        )
-        studio = studio_m.group(1).strip() if studio_m else ""
 
         # Release date: <td>2023/05/14</td> or 2023-05-14.
         date_m = re.search(r'(\d{4}[-/]\d{2}[-/]\d{2})', html)

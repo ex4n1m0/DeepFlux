@@ -876,14 +876,18 @@ def test_fetch_about_tmdb_fuzzy_miss_falls_back_to_wikipedia(mock_engine):
         resp.ok = True
         resp.raise_for_status = lambda: None
         if "opensearch" in str(kwargs.get("params", {}).get("action", "")):
-            resp.json.return_value = ["john digweed", ["John Digweed"], [""], ["https://en.wikipedia.org/wiki/John_Digweed"]]
+            payload = ["john digweed", ["John Digweed"], [""], ["https://en.wikipedia.org/wiki/John_Digweed"]]
+            resp.json.return_value = payload
+            resp.text = json.dumps(payload)
         else:
-            resp.json.return_value = {
+            payload = {
                 "title": "John Digweed",
                 "description": "British DJ and record producer",
                 "extract": "John Digweed is a British DJ, record producer and actor.",
                 "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/John_Digweed"}},
             }
+            resp.json.return_value = payload
+            resp.text = json.dumps(payload)
         return resp
 
     with patch("iptv.metadata.TMDBProvider.fetch", return_value={"title": "Totally Unrelated", "year": "2001"}), \
@@ -1361,6 +1365,30 @@ def test_run_shell_rejects_bad_args(tools, tmp_path):
         tools.call("run_shell", {"command": "   "})
     with pytest.raises(ToolError, match="does not exist"):
         tools.call("run_shell", {"command": "echo hi", "cwd": str(tmp_path / "missing")})
+
+
+def test_run_shell_refuses_destructive_commands(tools):
+    # The deny-list (2026-11-06) blocks recursive/disk-level wipes even
+    # after confirmation — deletions belong to the dedicated file tools.
+    for command in (
+        "format C: /q /y",
+        "diskpart /s script.txt",
+        "del /s /q C:\\Windows\\Temp\\*",
+        "rd /s /q C:\\data",
+        "rm -rf /home/user/docs",
+        "dd if=/dev/zero of=/dev/sda",
+        "mkfs.ext4 /dev/sdb1",
+        "wipefs -a /dev/sdb",
+        "reg delete HKLM\\Software /f",
+    ):
+        with pytest.raises(ToolError, match="destructive"):
+            tools.call("run_shell", {"command": command})
+
+
+def test_run_shell_allows_ordinary_commands(tools):
+    result = tools.call("run_shell", {"command": _py_cmd("print('fine')")})
+    assert result["success"]
+    assert "fine" in result["output"]
 
 
 def test_run_shell_policy_and_always_visible(tools):

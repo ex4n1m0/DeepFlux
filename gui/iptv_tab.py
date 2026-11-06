@@ -34,14 +34,12 @@ from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import (Qt, QPoint, QTimer, QUrl, Signal, QObject, QSize,
                             QRect, QEvent)
-from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QFontMetrics,
+from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QFontMetrics,
                            QPainter, QPen, QPixmap, QIcon)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
-    QDoubleSpinBox,
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -71,8 +69,8 @@ from PySide6.QtWidgets import (
 
 from config import APP_VERSION, DeeptorrentConfig, IPTVSourceConfig
 from iptv.artwork import PRIORITY_PREFETCH, PRIORITY_VISIBLE
-from iptv.manager import YEAR_OTHERS, IPTVManager
-from iptv.metadata import clean_title, extract_year, metadata_key
+from iptv.manager import IPTVManager
+from iptv.metadata import extract_year, metadata_key
 from iptv.models import (
     SECTION_FAVORITES,
     SECTION_LIVE,
@@ -80,7 +78,6 @@ from iptv.models import (
     SECTION_RECENT,
     SECTION_SERIES,
     Channel,
-    Movie,
     Series,
 )
 from iptv.player import PlayerBackend, create_backend

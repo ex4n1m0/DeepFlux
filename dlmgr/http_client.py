@@ -145,3 +145,85 @@ def get(
 def head(url: str, headers: Optional[Dict[str, str]] = None, timeout=15, allow_redirects: bool = True):
     """HEAD with a Chrome TLS fingerprint when curl_cffi is available."""
     return _request("HEAD", url, _sanitize_headers(headers), timeout, False, allow_redirects)
+
+
+# Hard cap for page/text bodies read through read_capped/get_text (same
+# policy as the agent's RSS reads): a hostile or misconfigured server must
+# never make the GUI process buffer an unbounded body (review 2026-11-06).
+DEFAULT_PAGE_BODY_LIMIT = 5 * 1024 * 1024  # 5 MiB
+
+
+def read_capped(response, max_bytes: int = DEFAULT_PAGE_BODY_LIMIT) -> str:
+    """Drain a STREAMED response's body up to `max_bytes` and close it.
+
+    Returns the decoded text; '' when the body exceeds the cap. Callers
+    that need the HTTP status or URL must read those BEFORE calling this
+    (the response is closed afterwards). Test mocks that only carry
+    `.text` (iter_content yields nothing) fall back to that buffered text,
+    still capped."""
+    chunks = []
+    total = 0
+    try:
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > max_bytes:
+                logger.warning("response body over %d bytes dropped: %s",
+                               max_bytes, getattr(response, "url", "?"))
+                return ""
+            chunks.append(chunk)
+    except Exception:
+        logger.debug("streamed body read failed — using buffered body",
+                     exc_info=True)
+    try:
+        if not chunks:
+            # Test mocks / non-streamed responses carry the body in
+            # `.content`/`.text` instead of iter_content.
+            content = getattr(response, "content", None)
+            if isinstance(content, (bytes, bytearray)):
+                if len(content) > max_bytes:
+                    logger.warning("response body over %d bytes dropped: %s",
+                                   max_bytes, getattr(response, "url", "?"))
+                    return ""
+                return bytes(content).decode(
+                    getattr(response, "encoding", None)
+                    or getattr(response, "apparent_encoding", None) or "utf-8",
+                    errors="replace")
+            text = getattr(response, "text", None)
+            if isinstance(text, str):
+                if len(text.encode("utf-8", "replace")) > max_bytes:
+                    logger.warning("response body over %d bytes dropped: %s",
+                                   max_bytes, getattr(response, "url", "?"))
+                    return ""
+                return text
+            return ""
+        encoding = (getattr(response, "encoding", None)
+                    or getattr(response, "apparent_encoding", None) or "utf-8")
+        return b"".join(chunks).decode(encoding, errors="replace")
+    finally:
+        try:
+            response.close()
+        except Exception:
+            pass
+
+
+def get_text(
+    url: str,
+    headers: Optional[Dict[str, str]] = None,
+    timeout=15,
+    max_bytes: int = DEFAULT_PAGE_BODY_LIMIT,
+    allow_redirects: bool = True,
+) -> str:
+    """GET a page body as text, streamed with a hard byte cap.
+
+    Returns '' on HTTP >= 400 or an oversized body."""
+    resp = get(url, headers=headers, timeout=timeout, stream=True,
+               allow_redirects=allow_redirects)
+    if resp.status_code >= 400:
+        try:
+            resp.close()
+        except Exception:
+            pass
+        return ""
+    return read_capped(resp, max_bytes)

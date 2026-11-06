@@ -165,6 +165,22 @@ def test_grid_columns_dynamic_3_to_9():
         app.processEvents()
 
 
+def test_enforce_agent_split_respects_saved_ratio():
+    # Regression 2026-11-06: the 50/50 enforcement used to run
+    # unconditionally, clobbering user-saved splitter ratios on every
+    # Torrents-tab visit.
+    from gui.main_window import MainWindow
+    splitter = SimpleNamespace(width=lambda: 1000, setSizes=mock.Mock())
+    saved = SimpleNamespace(ui_splitters={"download_v5_stack": "AAAA"})
+    MainWindow._enforce_agent_split(
+        SimpleNamespace(agent_splitter=splitter, config=saved))
+    splitter.setSizes.assert_not_called()
+    defaulted = SimpleNamespace(ui_splitters={})
+    MainWindow._enforce_agent_split(
+        SimpleNamespace(agent_splitter=splitter, config=defaulted))
+    splitter.setSizes.assert_called_once_with([500, 500])
+
+
 @pytest.mark.parametrize("tab_name", ["iptv", "commander", "room", "downloads"])
 def test_tabs_stay_shrinkable(tmp_path, tab_name):
     """Regression cap: no tab page may demand a wide window again — the

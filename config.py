@@ -9,7 +9,7 @@ import os
 import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 try:
     from dotenv import load_dotenv
@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "7.2"
+APP_VERSION = "7.4"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -319,6 +319,7 @@ class BrowserConfig:
     adblock_enabled: bool = True
     adblock_disabled_sites: List[str] = field(default_factory=list)
     extension_enabled: bool = False  # Video grabber (browser extension JS injection) — off by default
+    force_dedicated_gpu: bool = True  # pin the built-in browser to the dGPU on hybrid Windows machines (owner decision 2026-11-06)
     grabber_auto_queue: bool = False  # Site Grabber: queue search results without a Download click
     grabber_auto_limit: int = 5  # max videos the Site Grabber auto-queues per search/page
     grabber_last_site: str = ""  # Site Grabber: last site searched (prefill when no tab is open)
@@ -926,6 +927,7 @@ class DeeptorrentConfig:
                 adblock_enabled=data.get("browser", {}).get("adblock_enabled", True),
                 adblock_disabled_sites=[str(host).lower() for host in data.get("browser", {}).get("adblock_disabled_sites", [])],
                 extension_enabled=data.get("browser", {}).get("extension_enabled", False),
+                force_dedicated_gpu=bool(data.get("browser", {}).get("force_dedicated_gpu", True)),
                 grabber_auto_queue=bool(data.get("browser", {}).get("grabber_auto_queue", False)),
                 grabber_auto_limit=max(1, int(data.get("browser", {}).get("grabber_auto_limit", 5) or 5)),
                 grabber_last_site=str(data.get("browser", {}).get("grabber_last_site", "") or ""),

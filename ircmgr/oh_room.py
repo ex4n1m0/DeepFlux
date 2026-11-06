@@ -431,6 +431,62 @@ def verify_mail_item(item: Dict[str, Any]) -> str:
     return sender
 
 
+# Hub responses are small JSON (MAIL_CHUNK=16 envelopes max), but the hub is
+# an untrusted peer — reads are streamed and hard-capped so a misbehaving
+# server can never buffer an unbounded body into the app process
+# (review 2026-11-06).
+_HUB_BODY_LIMIT = 2 * 1024 * 1024
+
+
+def _discard(r: requests.Response) -> None:
+    """Close an unread streamed response so its connection is reusable."""
+    try:
+        r.close()
+    except Exception:
+        pass
+
+
+def _read_capped_json(r: requests.Response) -> Any:
+    """Drain a streamed hub response up to _HUB_BODY_LIMIT and parse it.
+
+    Test mocks / non-streamed responses that only carry `.content`/`.text`
+    (no iter_content) fall back to the buffered body, still capped."""
+    chunks = []
+    total = 0
+    try:
+        for chunk in r.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            total += len(chunk)
+            if total > _HUB_BODY_LIMIT:
+                _discard(r)
+                raise OhRoomError("hub response exceeded the size limit")
+            chunks.append(chunk)
+    except OhRoomError:
+        raise
+    except Exception:
+        logger.debug("hub streamed read failed — using buffered body",
+                     exc_info=True)
+    finally:
+        try:
+            r.close()
+        except Exception:
+            pass
+    if not chunks:
+        content = getattr(r, "content", None)
+        if isinstance(content, (bytes, bytearray)):
+            if len(content) > _HUB_BODY_LIMIT:
+                raise OhRoomError("hub response exceeded the size limit")
+            return json.loads(bytes(content) or b"null")
+        text = getattr(r, "text", None)
+        if isinstance(text, str):
+            if len(text.encode("utf-8", "replace")) > _HUB_BODY_LIMIT:
+                raise OhRoomError("hub response exceeded the size limit")
+            return json.loads(text) if text else None
+        return None
+    return json.loads(b"".join(chunks) or b"null")
+
+
 class Hub:
     """HTTP client for the OnlyHumans rendezvous hub (untrusted storage:
     every response is signature-verified before use)."""
@@ -444,6 +500,10 @@ class Hub:
 
     def _request(self, method: str, path: str, **kw) -> requests.Response:
         kw.setdefault("timeout", HTTP_TIMEOUT)
+        # Streamed: hub reads must be drained through _read_capped_json /
+        # _discard so a misbehaving hub can never buffer an unbounded body
+        # into the app process (review 2026-11-06).
+        kw.setdefault("stream", True)
         return self._session.request(method, self._base + path, **kw)
 
     def fetch_gk(self) -> Tuple[str, bytes]:
@@ -452,9 +512,10 @@ class Hub:
                 return self._gk_cache[0], self._gk_cache[1]
         r = self._request("GET", "/api/gk", headers={"cache-control": "no-cache"})
         if r.status_code == 503:
+            _discard(r)
             raise OhRoomError("the room hub is not serving a room key yet")
         r.raise_for_status()
-        payload = r.json()
+        payload = _read_capped_json(r)
         try:
             gk = unb64(str(payload.get("gk_b64", "")))
         except KeyError as exc:
@@ -473,16 +534,22 @@ class Hub:
                 "addrs": [], "ts_ms": ts,
                 "sig_b64": b64(sign(_reg_canonical(peer_id, pub_b64, [], ts)))}
         r = self._request("PUT", "/api/reg", json=body)
-        if not r.ok:
-            raise OhRoomError(f"reg failed: {r.status_code}")
+        ok = r.ok
+        status = r.status_code
+        _discard(r)
+        if not ok:
+            raise OhRoomError(f"reg failed: {status}")
 
     def lookup_room(self, room_hex: str) -> Optional[Dict[str, Any]]:
         r = self._request("GET", f"/api/room/{room_hex}")
         if r.status_code == 404:
+            _discard(r)
             return None
         if not r.ok:
-            raise OhRoomError(f"room lookup failed: {r.status_code}")
-        return r.json()
+            status = r.status_code
+            _discard(r)
+            raise OhRoomError(f"room lookup failed: {status}")
+        return _read_capped_json(r)
 
     def register_room(self, room_hex: str, peer_id: str, pub_b64: str,
                       sign: Callable[[bytes], bytes]) -> bool:
@@ -493,10 +560,12 @@ class Hub:
                 "sig_b64": b64(sign(_room_canonical(room_hex, peer_id,
                                                     pub_b64, ts)))}
         r = self._request("PUT", "/api/room", json=body)
-        if r.status_code == 409:
+        status = r.status_code
+        _discard(r)
+        if status == 409:
             return False
-        if not r.ok:
-            raise OhRoomError(f"room register failed: {r.status_code}")
+        if not 200 <= status < 300:
+            raise OhRoomError(f"room register failed: {status}")
         return True
 
     def mail_push_batch(self, peer_id: str, pub_b64: str,
@@ -519,10 +588,14 @@ class Hub:
                 })
             r = self._request("PUT", "/api/inbox", json={"items": items})
             if r.status_code == 429:
+                _discard(r)
                 time.sleep(MAIL_THROTTLE_WAIT)
                 r = self._request("PUT", "/api/inbox", json={"items": items})
-            if not r.ok:
-                raise OhRoomError(f"mail push failed: {r.status_code}")
+            ok = r.ok
+            status = r.status_code
+            _discard(r)
+            if not ok:
+                raise OhRoomError(f"mail push failed: {status}")
 
     def mail_drain(self, peer_id: str,
                    sign: Callable[[bytes], bytes]) -> List[Dict[str, Any]]:
@@ -532,15 +605,18 @@ class Hub:
             "GET",
             f"/api/inbox/{peer_id}?ts_ms={ts}&sig_b64={sig}")
         if not r.ok:
-            raise OhRoomError(f"mail drain failed: {r.status_code}")
-        return list(r.json().get("items") or [])
+            status = r.status_code
+            _discard(r)
+            raise OhRoomError(f"mail drain failed: {status}")
+        return list(_read_capped_json(r).get("items") or [])
 
     def presence(self, token: str) -> int:
         try:
             r = self._request("POST", "/api/presence", json={"token": token})
             if not r.ok:
+                _discard(r)
                 return 0
-            return int(r.json().get("online", 0))
+            return int(_read_capped_json(r).get("online", 0))
         except Exception:
             return 0
 
@@ -997,7 +1073,6 @@ class OhRoomController:
         with self._lock:
             room = self._room
             pending = self._pending is not None
-            room_hex = self._room_hex
             host = self._is_host
         if room is None:
             if pending:

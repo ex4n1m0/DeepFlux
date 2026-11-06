@@ -7,8 +7,7 @@ import re
 import sys
 import threading
 import time
-from concurrent.futures import Future
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from agent.llm import LLMClient, LLMMessage, create_llm_client

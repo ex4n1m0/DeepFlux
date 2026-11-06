@@ -98,10 +98,12 @@ class GenericExtractor(ExtractorBase):
         Raises ``NoStreamFound`` when the page has no recognisable stream."""
         req_headers = dict(BROWSER_HEADERS)
         req_headers.update(headers or {})
-        resp = http_client.get(url, headers=req_headers, timeout=25)
+        resp = http_client.get(url, headers=req_headers, timeout=25, stream=True)
         resp.raise_for_status()
         page_url = getattr(resp, "url", None) or url
-        found = find_stream(resp.text, page_url)
+        # Streamed + hard-capped read — a video site page must never be
+        # buffered unbounded into the GUI process (review 2026-11-06).
+        found = find_stream(http_client.read_capped(resp), page_url)
         if not found:
             raise NoStreamFound(f"No video stream found on {url}")
         found["page_url"] = page_url

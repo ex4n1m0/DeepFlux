@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import re
 import subprocess
 import sys
@@ -436,12 +437,36 @@ class FFmpegWrapper:
             # segment input) must never block this forever — the loop is
             # bounded and the process killed on timeout (review 2026-09-15;
             # previously the job sat in PROCESSING with no error and the
-            # orphan ffmpeg.exe outlived the app).
+            # orphan ffmpeg.exe outlived the app). The deadline was checked
+            # only BETWEEN stderr lines, so a SILENT hung ffmpeg was never
+            # killed — a pump thread feeds a queue and the deadline is also
+            # checked while waiting (review 2026-11-06).
             deadline = time.monotonic() + _REMUX_TIMEOUT_S
             duration = 0.0
             current_time = 0.0
             timed_out = False
-            for line in proc.stderr:
+            line_q: "queue.Queue[str]" = queue.Queue()
+            stream_done = threading.Event()
+
+            def _pump() -> None:
+                try:
+                    for raw in proc.stderr:
+                        line_q.put(raw)
+                finally:
+                    stream_done.set()
+
+            threading.Thread(target=_pump, daemon=True).start()
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    break
+                if stream_done.is_set() and line_q.empty():
+                    break
+                try:
+                    line = line_q.get(timeout=min(0.5, remaining))
+                except queue.Empty:
+                    continue
                 line = line.strip()
                 # Parse Duration.
                 m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.\d+)", line)
@@ -455,9 +480,6 @@ class FFmpegWrapper:
                     current_time = int(h) * 3600 + int(mi) * 60 + float(s)
                     if on_progress:
                         on_progress(min(1.0, current_time / duration))
-                if time.monotonic() >= deadline:
-                    timed_out = True
-                    break
 
             if timed_out:
                 proc.kill()

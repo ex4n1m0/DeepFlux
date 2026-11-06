@@ -5,7 +5,7 @@ import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from gui.main_window import _break_long_tokens, _markdown_to_html
+from gui.main_window import MainWindow, _break_long_tokens, _markdown_to_html
 
 
 def test_long_token_gets_break_opportunities():
@@ -32,11 +32,113 @@ def test_short_text_untouched():
     assert _break_long_tokens("hello world") == "hello world"
 
 
+def test_format_tool_args_escapes_llm_controlled_values():
+    # Regression: _format_tool_args used to reference an undefined `_html`
+    # module (2026-11-06 review) — every tool_start event raised a NameError
+    # that the event handler silently swallowed, killing the escape layer.
+    fmt = MainWindow._format_tool_args  # stateless — safe to call unbound
+    out = fmt(None, "web_search", {"query": '<img src=x onerror=alert(1)>'})
+    assert "<img" not in out and "&lt;img" in out
+    out = fmt(None, "search_indexers", {"query": 'magnet:?xt=urn:btih:" onclick="x'})
+    assert '" onclick' not in out
+
+
+def test_format_tool_args_handles_every_tool_without_raising():
+    fmt = MainWindow._format_tool_args
+    cases = [        ("web_search", {"query": "q"}),
+        ("web_fetch", {"url": "https://example.com"}),
+        ("search_indexers", {"query": "q"}),
+        ("find_alt_trackers", {"torrent_name": "t"}),
+        ("find_alt_release", {"torrent_name": "t"}),
+        ("search_memory", {"query": "q"}),
+        ("save_memory", {"content": "c"}),
+        ("add_magnet", {"uri": "magnet:?xt=urn:btih:aa"}),
+        ("add_torrent_file", {"path": "/p"}),
+        ("diagnose_swarm", {"info_hash": "a" * 40}),
+        ("get_torrent_status", {"info_hash": "a" * 40}),
+        ("pause_torrent", {"info_hash": "a" * 40}),
+        ("add_tracker", {"url": "u"}),
+        ("list_directory", {"path": "/p"}),
+        ("copy_path", {"source": "s", "destination": "d"}),
+        ("rename_path", {"path": "/p", "new_name": "n"}),
+        ("iptv_search", {"query": "q"}),
+        ("iptv_play", {"query": "q"}),
+        ("iptv_set_volume", {"level": 50}),
+        ("browser_navigate", {"url": "u"}),
+        ("browser_close_tab", {"index": 1}),
+        ("browser_click", {"selector": "s"}),
+        ("browser_fill", {"selector": "s", "value": "v"}),
+        ("browser_scroll", {"direction": "down"}),
+        ("browser_add_bookmark", {"url": "u"}),
+        ("remove_download", {"job_id": "j"}),
+        ("force_recheck", {"info_hash": "a" * 40}),
+        ("set_torrent_rate_limits", {"download_kb": 10, "upload_kb": 5}),
+        ("add_rss_feed", {"url": "u"}),
+        ("iptv_add_source", {"name": "n"}),
+        ("set_api_key", {"slot": "s", "value": "v"}),
+        ("set_settings", {"path": "p", "value": "v"}),
+        ("add_torrent_source", {"name": "n"}),
+        ("run_shell", {"command": "echo hi"}),
+        ("no_args_tool", {}),
+        ("unknown_tool_xyz", {"a": "1", "b": "2"}),
+    ]
+    for tool, args in cases:
+        s = fmt(None, tool, args)
+        assert isinstance(s, str), tool
+
+
 def test_markdown_table_with_magnet_is_wrappable():
     md = "| Name | Magnet |\n|---|---|\n| rel | `magnet:?xt=urn:btih:" + "b2" * 30 + "` |"
     out = _break_long_tokens(_markdown_to_html(md))
     assert "\u200b" in out
     assert "<table>" in out
+
+
+def test_rss_and_sources_dialogs_construct_offscreen():
+    # Regression 2026-11-06: these three dialogs had zero test references —
+    # a constructor regression would only surface at runtime.
+    from unittest.mock import MagicMock
+
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.rss_dialog import RSSDialog
+    from gui.rss_viewer import RSSViewer
+    from gui.sources_dialog import SourcesDialog
+
+    app = QApplication.instance() or QApplication([])
+    cfg = DeeptorrentConfig()
+    dlg = RSSDialog(cfg)
+    dlg.close()
+    viewer = RSSViewer(cfg, MagicMock())
+    viewer.close()
+    src = SourcesDialog(cfg)
+    src.close()
+    app.processEvents()
+
+
+def test_atomic_config_write_leaves_no_temp_and_replaces(tmp_path):
+    from gui.main_window import _write_bytes_atomic
+    p = str(tmp_path / "config.json")
+    _write_bytes_atomic(p, b'{"a": 1}')
+    assert (tmp_path / "config.json").read_bytes() == b'{"a": 1}'
+    assert not (tmp_path / "config.json.importing").exists()
+    _write_bytes_atomic(p, b'{"b": 2}')
+    assert (tmp_path / "config.json").read_bytes() == b'{"b": 2}'
+    assert not (tmp_path / "config.json.importing").exists()
+
+
+def test_reload_config_in_place_keeps_identity(tmp_path):
+    from config import DeeptorrentConfig
+    from gui.main_window import _reload_config_in_place
+    cfg = DeeptorrentConfig()
+    ident = id(cfg)
+    p = str(tmp_path / "config.json")
+    cfg.download.default_folder = "C:\\Imported"
+    cfg.to_file(p)
+    cfg.download.default_folder = "C:\\Stale"  # stale in-memory value
+    _reload_config_in_place(cfg, p)
+    assert id(cfg) == ident  # holders of the reference stay valid
+    assert cfg.download.default_folder == "C:\\Imported"
 
 
 def test_settings_menu_pages_fit_low_resolution():

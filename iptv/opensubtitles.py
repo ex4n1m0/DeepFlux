@@ -20,10 +20,14 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
+from config import APP_VERSION
+
 logger = logging.getLogger(__name__)
 
 API_BASE = "https://api.opensubtitles.com/api/v1"
-USER_AGENT = "DeepFlux v7.2"
+# Version travels from config.APP_VERSION — never hardcode a release number
+# (the UA rides the same version-bump checklist; review 2026-11-06).
+USER_AGENT = f"DeepFlux v{APP_VERSION}"
 _TIMEOUT = 20
 
 

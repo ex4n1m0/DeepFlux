@@ -22,3 +22,13 @@ argon2-cffi>=23.1.0
 # googlevideo URLs) — keep the floor at a recent known-good release.
 yt-dlp>=2026.10.26
 faster-whisper>=1.1.0,<2
+# Settings backup (.dfc) encryption — ships a Rust native ext, so app.spec
+# collect_all's it. Absent until 2026-11-06, which broke File → Export
+# Settings on plain `pip install -r requirements.txt` runs.
+cryptography>=41.0.0
+# Logo/icon generation (gen_logo_assets.py, gen_macos_icon.py) and the
+# Pillow hiddenimports the specs carry.
+Pillow>=10.0.0
+# agent/rss.py imports it at module level; also hardens XML parsing against
+# entity-expansion bombs.
+defusedxml>=0.7.1
