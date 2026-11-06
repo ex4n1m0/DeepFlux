@@ -1,8 +1,8 @@
 {
-  "version": "7.2",
-  "file": "DeepFlux-7.2-Linux-x86_64.AppImage",
-  "size": 611953144,
-  "sha256": "a88e8908a4737ba3ea571fa29b6c7b2765be6eb192b24eb851ae127eab8f87d9",
-  "released": "2026-11-05",
-  "notes": "DeepFlux 7.2 - The browser address bar now lives in the top menu row, always visible right of Help while the Browse page is active. New defaults: Small font size (with a new even smaller Micro option in Settings - Font Size) and Light Blue text color (Settings - Text Color); existing installs are moved to the new defaults once, and every option can still be set by hand."
+  "version": "7.5",
+  "file": "DeepFlux-7.5-Linux-x86_64.AppImage",
+  "size": 613800440,
+  "sha256": "5de8b167aa907badfd6f72a996c89e3c7e100da2290cb282934721941babc74b",
+  "released": "2026-11-07",
+  "notes": "DeepFlux 7.5 - fixes a crash that could close the app during video playback (the crash logger introduced in 7.4 could itself trip over the video engine's internal events and shut the app down). Playback sessions are stable again."
 }
