@@ -21,13 +21,26 @@ logger = logging.getLogger(__name__)
 def _enable_crash_log() -> None:
     """Windowed builds have no console — native faults (extension code, GC
     heap corruption) die silently. Dump the Python stack of the faulting
-    thread to a file so crashes are diagnosable (2026-11-06)."""
+    thread to a file so crashes are diagnosable (2026-11-06).
+
+    MUST pass all_threads=False (2026-11-07). faulthandler installs a
+    VECTORED exception handler on Windows: it fires on EVERY raised
+    exception on ANY thread — including ones the raiser catches itself.
+    libmpv's native threads raise-and-catch internal exceptions (code
+    0xe24c4a02, observed ~2x/hour during IPTV playback); with
+    all_threads=True faulthandler then walks EVERY thread's Python stack
+    from that foreign thread, which itself AVs probabilistically and KILLS
+    the process (11 crashes on 2026-11-06, two proven via WER dumps:
+    AV inside Py_DumpTracebackThreads under RtlpCallVectoredHandlers on a
+    libmpv thread). all_threads=False only dumps the faulting thread —
+    verified safe for no-tstate foreign threads; benign mpv exceptions
+    just log a 2-line "Windows fatal exception: code 0xe24c4a02" header."""
     try:
         import faulthandler
         _base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         _path = os.path.join(_base, "DeepFlux", "faulthandler.log")
         os.makedirs(os.path.dirname(_path), exist_ok=True)
-        faulthandler.enable(open(_path, "a", encoding="utf-8"))
+        faulthandler.enable(open(_path, "a", encoding="utf-8"), all_threads=False)
     except Exception:
         pass
 

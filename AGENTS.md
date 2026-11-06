@@ -549,6 +549,24 @@
   the apply until the extra windows are closed.
 
 ## Conventions
+- FAULTHANDLER CRASH LOG (main.py::_enable_crash_log, added 7.4 2026-11-06;
+  fixed 2026-11-07 after it KILLED the app 11x that night): on Windows
+  `faulthandler.enable()` registers a VECTORED exception handler that fires
+  on EVERY raised exception on ANY thread — including ones the raiser
+  catches itself. libmpv's native threads raise-and-catch code
+  0xe24c4a02 (~2x/h during IPTV playback; benign, invisible before 7.4);
+  faulthandler's default ALL-THREADS traceback walk then ran from that
+  foreign thread and itself AV'd (WER dumps: AV in
+  Py_DumpTracebackThreads under RtlpCallVectoredHandlers on a libmpv
+  thread), killing the process. RULE: the call MUST pass
+  `all_threads=False` (dumps only the faulting thread; verified safe for
+  no-tstate foreign threads via a ctypes RaiseException harness — benign
+  mpv exceptions just leave a 2-line header in
+  `%LOCALAPPDATA%\DeepFlux\faulthandler.log`). Pinned by
+  tests/test_crash_log.py. Diagnosis tools that earned their keep:
+  `%LOCALAPPDATA%\CrashDumps` (Win11 default WER dumps) + winget
+  Microsoft.WinDbg (cdbX64.exe `-z <dmp> -c ".ecxr; k"`) + the
+  faulthandler.log itself.
 - 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,
   ~30 fixed, all with file-level rationale comments + regression tests).
   Durable rules that came out of it — do not regress:
