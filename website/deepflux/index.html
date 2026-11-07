@@ -316,19 +316,38 @@
   }
   @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
   header.hero h1 {
-    /* Centered in the band between the eyebrow and the sphere; the visual
-       gap to the sphere is the margin-bottom plus the webp's own
-       transparent top padding, so the top gap mirrors it. */
+    /* Caption UNDER the wordmark banner (owner decision 2026-11-07): the
+       banner is the hero; the slogan is its smaller title. */
     font-family: var(--font-display);
     font-weight: 700;
-    font-size: clamp(2.4rem, 5.5vw, 4rem);
-    line-height: 1.08;
+    font-size: clamp(1.4rem, 2.4vw, 1.9rem);
+    line-height: 1.2;
     letter-spacing: -0.01em;
     color: var(--ink);
     text-align: center;
-    margin: 28px 0 22px;
+    margin: 20px 0 34px;
   }
-  header.hero .banner-glow {
+  /* Hero wordmark banner (DeepFluxNov2026.webp, added 2026-11-07): the
+     glow art is baked onto a near-black canvas — screen-blend the image so
+     its black drops into the page background and only the glow composites.
+     The rotating sphere mark it replaced moved to the page foot
+     (section.closing below). */
+  header.hero .hero-banner {
+    display: block;
+    width: min(880px, 100%);
+    margin: 0 auto;
+  }
+  header.hero .hero-banner img {
+    display: block;
+    width: 100%;
+    height: auto;
+    mix-blend-mode: screen;
+  }
+
+  /* Closing mark at the foot of the page: the rotating logo that used to
+     sit in the hero (moved 2026-11-07). */
+  section.closing { display: flex; justify-content: center; padding: 88px 0 0; }
+  .banner-glow {
     position: relative;
     display: block;
     /* Logo mark cropped tight to its artwork (DeepFlux-rot.webp —
@@ -338,7 +357,7 @@
     width: min(260px, 100%);
     margin: 0 auto;
   }
-  header.hero .banner-glow::before {
+  .banner-glow::before {
     content: "";
     position: absolute;
     inset: -14%;
@@ -346,7 +365,7 @@
                 radial-gradient(52% 56% at 68% 46%, rgba(139, 92, 246, 0.18), transparent 70%);
     filter: blur(22px);
   }
-  header.hero img.banner {
+  img.banner {
     position: relative;
     width: 100%;
     height: auto;
@@ -794,10 +813,11 @@
   <main id="main" class="page" tabindex="-1">
     <header class="hero">
       <div class="eyebrow"><span class="spark" aria-hidden="true"></span> AI agent &middot; built in</div>
-      <h1>Super Intelligent Download Tool</h1>
-      <div class="banner-glow">
-        <img class="banner" src="DeepFlux-rot.webp" alt="DeepFlux logo">
+      <div class="hero-banner">
+        <img src="DeepFluxNov2026.webp" width="2057" height="764"
+             fetchpriority="high" decoding="async" alt="DeepFlux wordmark">
       </div>
+      <h1>Super Intelligent Download Tool</h1>
       <div class="hero-copy">
         <p>All your downloads, media and files in one app &mdash; driven by an AI agent you just talk to.</p>
       </div>
@@ -811,7 +831,7 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Download for Windows</span>
         </a>
-        <a class="btn btn-ghost btn-xl" id="dl-secondary" href="/api/download?f=DeepFlux-7.5-Linux-x86_64.AppImage" download aria-label="Download DeepFlux for Linux">
+        <a class="btn btn-ghost btn-xl" id="dl-secondary" href="/api/download?f=DeepFlux-7.6-Linux-x86_64.AppImage" download aria-label="Download DeepFlux for Linux">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           <span class="os-label">Linux (AppImage)</span>
         </a>
@@ -965,9 +985,9 @@
           <div class="panel-head">
             <div>
               <div class="panel-title">Linux x86-64 &middot; AppImage</div>
-              <div class="panel-sub">v7.5 &middot; 585.4 MB &middot; Ubuntu 24.04+, Debian 13, Fedora 40+, Arch</div>
+              <div class="panel-sub">v7.6 &middot; 613.8 MB &middot; Ubuntu 24.04+, Debian 13, Fedora 40+, Arch</div>
             </div>
-            <a class="btn btn-ghost btn-panel" href="/api/download?f=DeepFlux-7.5-Linux-x86_64.AppImage" download>
+            <a class="btn btn-ghost btn-panel" href="/api/download?f=DeepFlux-7.6-Linux-x86_64.AppImage" download>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
               Download AppImage
             </a>
@@ -981,8 +1001,8 @@
             <summary>Verify sha256</summary>
             <div class="checksum">
               <span class="lbl">sha256</span>
-              <code>5de8b167aa907badfd6f72a996c89e3c7e100da2290cb282934721941babc74b</code>
-              <button class="copy" type="button" data-copy="5de8b167aa907badfd6f72a996c89e3c7e100da2290cb282934721941babc74b">Copy</button>
+              <code>3edca6a7a4716d3fda61d5ce8367d8802f8d90a9c617652ab7efc8e34445beaa</code>
+              <button class="copy" type="button" data-copy="3edca6a7a4716d3fda61d5ce8367d8802f8d90a9c617652ab7efc8e34445beaa">Copy</button>
             </div>
           </details>
         </div>
@@ -1017,6 +1037,12 @@
             <p>Free. Your setup exports to a file and moves with you.</p>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section class="closing" aria-label="DeepFlux">
+      <div class="banner-glow">
+        <img class="banner" src="DeepFlux-rot.webp" alt="DeepFlux logo">
       </div>
     </section>
   </main>
