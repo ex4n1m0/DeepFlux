@@ -2365,6 +2365,12 @@ class CommanderTab(QWidget):
         from ctypes import wintypes
 
         class SHFILEOPSTRUCTW(ctypes.Structure):
+            # shellapi.h uses #pragma pack(1): without this the compiler's
+            # default 8-byte alignment inserts padding before the pointer
+            # fields and shell32 reads pFrom/pTo from our padding bytes —
+            # a wild LPCWSTR deref IN OUR PROCESS (latent since 3.4.1,
+            # found in the 2026-11-07 stability audit).
+            _pack_ = 1
             _fields_ = [
                 ("hwnd", wintypes.HWND),
                 ("wFunc", wintypes.UINT),

@@ -33,7 +33,13 @@ os.environ.setdefault(
 # In-process hang watchdog: if the Qt event loop never reaches quit(),
 # dump all thread stacks and die non-zero. (Shell `timeout` proved
 # unreliable on the macOS runner — this keeps the CI step bounded.)
-faulthandler.enable()
+# all_threads=False is MANDATORY (the 7.4/7.5 lesson, missed here until
+# 2026-11-07): the default all-thread VEH walks EVERY thread from a
+# foreign native exception — benign mpv/Chromium raise-and-catch codes
+# included — and the walk itself AVs on no-tstate threads, KILLING the
+# boot smoke (a dump in the 2026-11-07 audit died inside
+# Py_DumpTraceback itself). See main.py::_enable_crash_log.
+faulthandler.enable(all_threads=False)
 
 
 def _watchdog() -> None:

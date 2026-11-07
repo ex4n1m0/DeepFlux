@@ -87,6 +87,7 @@ def test_add_magnet_confirmation(mock_engine):
         done,
     ])
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # this test pins the confirmation path (7.6 default is on)
     tools = ToolRegistry(mock_engine, config)
     loop = AgentLoop(mock_engine, config, tools=tools, llm=llm)
 
@@ -451,6 +452,7 @@ def test_auto_heal_does_not_bypass_chat_confirmation(mock_engine):
         },
     }
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # confirmation path (7.6 default is on)
     config.watchdog.auto_heal = True
     loop = AgentLoop(
         mock_engine, config, tools=ToolRegistry(mock_engine, config),
@@ -481,6 +483,7 @@ def test_mixed_batch_is_preserved_until_confirmation(mock_engine):
         LLMMessage(role="assistant", content="Done."),
     ])
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # confirmation path (7.6 default is on)
     loop = AgentLoop(mock_engine, config, tools=ToolRegistry(mock_engine, config), llm=llm)
 
     result = loop.chat("list and add")
@@ -506,6 +509,7 @@ def test_run_shell_confirmation_warns_about_secret_dumping(mock_engine):
         }
 
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # confirmation path (7.6 default is on)
 
     secret_loop = AgentLoop(
         mock_engine, config, tools=ToolRegistry(mock_engine, config),
@@ -534,6 +538,7 @@ def test_reject_clears_pending_action(mock_engine):
         "function": {"name": "delete_path", "arguments": json.dumps({"path": "/tmp/file"})},
     }
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # confirmation path (7.6 default is on)
     loop = AgentLoop(
         mock_engine, config, tools=ToolRegistry(mock_engine, config),
         llm=MockLLM([LLMMessage(role="assistant", tool_calls=[call])]),
@@ -567,6 +572,7 @@ def test_followup_destructive_call_requires_new_confirmation(mock_engine):
         LLMMessage(role="assistant", tool_calls=[second]),
     ])
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # confirmation path (7.6 default is on)
     loop = AgentLoop(mock_engine, config, tools=ToolRegistry(mock_engine, config), llm=llm)
 
     loop.chat("repair it")
@@ -587,6 +593,7 @@ def test_confirmation_preview_redacts_sensitive_arguments(mock_engine):
         })},
     }
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # confirmation path (7.6 default is on)
     loop = AgentLoop(
         mock_engine, config, tools=ToolRegistry(mock_engine, config),
         llm=MockLLM([LLMMessage(role="assistant", tool_calls=[call])]),
@@ -606,6 +613,7 @@ def test_confirmation_preview_includes_destructive_defaults(mock_engine):
         "function": {"name": "cancel_download", "arguments": json.dumps({"job_id": "abc123"})},
     }
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # confirmation path (7.6 default is on)
     loop = AgentLoop(
         mock_engine, config, tools=ToolRegistry(mock_engine, config),
         llm=MockLLM([LLMMessage(role="assistant", tool_calls=[call])]),

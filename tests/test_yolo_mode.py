@@ -62,13 +62,13 @@ def test_yolo_mode_executes_confirmation_tools_immediately(mock_engine):
 
 
 def test_yolo_off_still_confirms(mock_engine):
-    """Default off: the pre-existing behavior is untouched."""
+    """Yolo off (explicit): the confirmation behavior is untouched."""
     add_call = _add_magnet_call()
     llm = _MockLLM([
         LLMMessage(role="assistant", content=None, tool_calls=[add_call]),
     ])
     config = DeeptorrentConfig()
-    assert config.llm.yolo_mode is False
+    config.llm.yolo_mode = False
     tools = ToolRegistry(mock_engine, config)
     loop = AgentLoop(mock_engine, config, tools=tools, llm=llm)
     r1 = loop.chat("add magnet:?xt=urn:btih:" + "d" * 40 + " to Movies")
@@ -76,8 +76,50 @@ def test_yolo_off_still_confirms(mock_engine):
     mock_engine.add_magnet.assert_not_called()
 
 
+def test_yolo_default_on():
+    """Default ON since 7.6 (owner decision 2026-11-07): a fresh config
+    boots with confirmations off."""
+    config = DeeptorrentConfig()
+    assert config.llm.yolo_mode is True
+
+
+def test_yolo_default_migrates_once(tmp_path):
+    """The old default (False, shipped since 5.8) was persisted into every
+    config.json by any save, so a saved False is almost always "never
+    chose". yolo_defaults_gen 1→2 remaps it to True exactly once; a
+    stamped config keeps a deliberate Off; a saved True never changes."""
+    path = str(tmp_path / "config.json")
+
+    # Unstamped config carrying the old default → migrated to True.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"llm": {"yolo_mode": False}}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert cfg.llm.yolo_mode is True
+    assert cfg.yolo_defaults_gen == 2
+
+    # Stamped config: a deliberate Off persists.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"llm": {"yolo_mode": False}, "yolo_defaults_gen": 2}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert cfg.llm.yolo_mode is False
+    assert cfg.yolo_defaults_gen == 2
+
+    # Saved True survives the migration untouched; the stamp is written.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"llm": {"yolo_mode": True}}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert cfg.llm.yolo_mode is True
+
+    # A config with no llm section at all (fresh) just gets the default.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert cfg.llm.yolo_mode is True
+
+
 def test_yolo_system_prompt_states_unattended_mode(mock_engine):
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # baseline off; flipped below (7.6 default is on)
     tools = ToolRegistry(mock_engine, config)
     loop = AgentLoop(mock_engine, config, tools=tools, llm=_MockLLM([]))
     base = loop._render_system_prompt()
@@ -93,6 +135,7 @@ def test_yolo_mode_denied_from_agent_settings(mock_engine):
     """The agent can never flip its own permission gate: llm.yolo_mode is
     absent from list_settings and rejected by set_settings."""
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # start OFF; the gate must keep it off
     tools = ToolRegistry(mock_engine, config)
 
     listed = tools.call("list_settings", {})
@@ -109,6 +152,7 @@ def test_yolo_off_mid_conversation_on_next_chat(mock_engine):
     """Toggling between chats: pendings from before still resolve the old way,
     and the next chat honors the new mode."""
     config = DeeptorrentConfig()
+    config.llm.yolo_mode = False  # starts off for the first half
     tools = ToolRegistry(mock_engine, config)
     add_call = _add_magnet_call()
     llm = _MockLLM([

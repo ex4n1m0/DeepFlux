@@ -15,8 +15,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from PySide6.QtCore import QTimer, Qt, Signal, QObject, QEvent, QLocale, QProcess, QStringListModel, QSize
-from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QIcon, QKeySequence, QLinearGradient, QPainter, QPixmap, QShortcut, QTextCharFormat, QTextCursor
+from PySide6.QtCore import (QAbstractAnimation, QEasingCurve, QEvent, QLineF,
+                            QLocale, QObject, QPointF, QProcess, QRectF, QSize,
+                            QStringListModel, Qt, QTimer, QVariantAnimation,
+                            Signal)
+from PySide6.QtGui import (QAction, QActionGroup, QColor, QCursor, QIcon,
+                           QKeySequence, QLinearGradient, QPainter,
+                           QPainterPath, QPen, QPixmap, QShortcut,
+                           QTextCharFormat, QTextCursor)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -89,11 +95,107 @@ from gui.column_sizing import AutoColumnSizer
 from gui.responsive import OverflowRow, ResponsiveRow
 from gui.commander_tab import CommanderTab
 from gui.commander_bridge import CommanderBridge
-from gui.activity_rail import ActivityRail
 from gui.settings_hub import SettingsHub
 from gui.agent_panel import AgentPanel
 from gui.win_taskbar import TaskbarProgress
 from gui.browser_bridge import BrowserBridge, accept_language_header, normalize_browser_target
+
+# v7.6 tab icons for the menu bar (EN title -> icon kind; looked up
+# through tr() so translated tab titles still find their icon). The icons
+# are PAINTED line-art in the light accent blue (owner request 2026-11-07:
+# "high tech, all blue" — emoji rendered in clashing native colors).
+_TAB_ICONS = {
+    "Agent": "agent",
+    "Browse": "browse",
+    "Download": "download",
+    "Play": "play",
+    "Command": "command",
+    "Room": "room",
+}
+
+
+def _tab_icon_pixmap(kind: str, size: float = 16.0, dpr: float = 2.0) -> QPixmap:
+    """Paint one menu-bar tab icon: light-blue icon on a 16-unit grid.
+
+    Icon-contract rules (2026-11-07 pixel-forensics of the first attempt,
+    which rendered as 9x14 anti-aliased mush): draw with PURE FLOAT
+    geometry (never int()-cast coordinates — rounding fragmented the
+    shapes), uniform 2.0-unit strokes, shapes spanning most of the
+    canvas, and SOLID fill where a small outline would smother (the play
+    triangle). devicePixelRatio keeps it crisp under DPI scaling.
+    """
+    import math
+    pm = QPixmap(round(size * dpr), round(size * dpr))
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    accent = QColor("#a8edff")
+    pen = QPen(accent, 2.0)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+
+    def _dot(x: float, y: float, r: float) -> None:
+        p.setBrush(accent)
+        p.drawEllipse(QPointF(x, y), r, r)
+        p.setBrush(Qt.NoBrush)
+
+    if kind == "agent":
+        # Neural node: closed hexagon + bright core dot.
+        path = QPainterPath()
+        r = 6.0
+        pts = [(8.0 + r * math.cos(math.radians(60 * k - 90)),
+                8.0 + r * math.sin(math.radians(60 * k - 90))) for k in range(6)]
+        path.moveTo(*pts[0])
+        for pt in pts[1:]:
+            path.lineTo(*pt)
+        path.closeSubpath()
+        p.drawPath(path)
+        _dot(8.0, 8.0, 1.7)
+    elif kind == "browse":
+        # Globe: circle + one equator + one meridian.
+        p.drawEllipse(QRectF(2.5, 2.5, 11.0, 11.0))
+        p.drawLine(QLineF(2.5, 8.0, 13.5, 8.0))
+        p.drawEllipse(QRectF(5.75, 2.5, 4.5, 11.0))
+    elif kind == "download":
+        # Arrow down onto a tray line.
+        p.drawLine(QLineF(8.0, 3.0, 8.0, 9.0))
+        p.drawLine(QLineF(4.8, 6.4, 8.0, 9.6))
+        p.drawLine(QLineF(11.2, 6.4, 8.0, 9.6))
+        p.drawLine(QLineF(3.0, 12.5, 13.0, 12.5))
+    elif kind == "play":
+        # SOLID triangle — outlines smother at this size.
+        path = QPainterPath()
+        path.moveTo(5.5, 3.5)
+        path.lineTo(12.5, 8.0)
+        path.lineTo(5.5, 12.5)
+        path.closeSubpath()
+        p.setBrush(accent)
+        p.drawPath(path)
+        p.setBrush(Qt.NoBrush)
+    elif kind == "command":
+        # Dual-pane file manager: two squares with a clear gap.
+        p.drawRoundedRect(QRectF(2.5, 4.0, 5.0, 8.0), 1.5, 1.5)
+        p.drawRoundedRect(QRectF(8.5, 4.0, 5.0, 8.0), 1.5, 1.5)
+    elif kind == "room":
+        # Chat bubble + tail + two dots.
+        p.drawRoundedRect(QRectF(2.5, 3.5, 11.0, 7.5), 3.0, 3.0)
+        p.drawLine(QLineF(5.5, 11.0, 4.5, 13.5))
+        _dot(6.2, 7.2, 0.9)
+        _dot(9.8, 7.2, 0.9)
+    else:
+        # Unknown page: a diamond.
+        path = QPainterPath()
+        path.moveTo(8.0, 2.5)
+        path.lineTo(13.5, 8.0)
+        path.lineTo(8.0, 13.5)
+        path.lineTo(2.5, 8.0)
+        path.closeSubpath()
+        p.drawPath(path)
+    p.end()
+    return pm
 from gui.browser_history import BrowserHistory
 from gui.browser_channel import create_channel, channel_injection_script
 # The Play (IPTV/player) tab is Windows + Linux. macOS stays excluded
@@ -772,6 +874,37 @@ class _BrowserView(QWebEngineView):
         menu.deleteLater()
 
 
+class _ElideLabel(QLabel):
+    """QLabel that elides its text to whatever width it actually gets.
+
+    A plain QLabel's minimumSizeHint is its FULL text width, so tab-title
+    labels grew the tab strip's (and therefore the whole window's) minimum
+    — with many tabs open the window ballooned to a huge size (owner
+    report 2026-11-07). The browser tab strip must FIT the space it has,
+    no matter how many tabs are open: this label reports a zero-width
+    minimum and paints an elided copy of its text (full title in the
+    tooltip)."""
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        ms = super().minimumSizeHint()
+        ms.setWidth(0)
+        return ms
+
+    def paintEvent(self, _event) -> None:  # noqa: N102
+        painter = QPainter(self)
+        fm = self.fontMetrics()
+        painter.drawText(
+            self.rect(),
+            int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+            fm.elidedText(self.text(), Qt.TextElideMode.ElideRight, self.width()),
+        )
+
+
+# Widest a browser tab chip may get, Chrome-style: tabs share the row and
+# elide when narrow; a single long title must never stretch its chip (or
+# the window) out.
+_BROWSER_TAB_MAX_WIDTH = 220
+
 # Small text indent that marks a File-menu row as belonging to a zone
 # (headers sit flush left, items are pushed in — see _file_zone/_file_item).
 _FILE_ITEM_INDENT = "    "
@@ -823,6 +956,52 @@ class _MenuUrlHost(QWidget):
         return QSize(self._fill_width, hint.height())
 
 
+class _BookmarksPopup(QMenu):
+    """The Bookmarks toolbar popup (and its folder submenus). QMenu
+    swallows right-clicks on plain actions (they never reach any
+    handler), so this subclass turns a right press into a context menu
+    for whatever is under the cursor: a top-level bookmark action
+    (bookmark_urls) or a folder submenu title (folder_paths). Folder
+    bookmark ROWS handle their own right-click via the row widgets.
+    MainWindow._rebuild_bookmarks_bar keeps both maps in sync."""
+
+    def __init__(self, title, parent):
+        super().__init__(title, parent)
+        # QAction -> bookmark url, for the top-level (plain-action) entries.
+        self.bookmark_urls: Dict[QAction, str] = {}
+        # QAction (a submenu's menuAction) -> full folder path.
+        self.folder_paths: Dict[QAction, str] = {}
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.RightButton:
+            act = self.actionAt(event.position().toPoint())
+            url = self.bookmark_urls.get(act)
+            folder = None if url else self.folder_paths.get(act)
+            if url or folder:
+                event.accept()
+                # The popup STAYS OPEN under the context menu (owner
+                # 2026-11-07: it vanishing the moment the remove menu
+                # appeared felt like the menu crashed). Picking Remove
+                # rebuilds the open menu in place — the entry disappears
+                # live; dismissing the context menu leaves the popup for
+                # further browsing.
+                # Climb to the MainWindow: a SUBMENU's QObject parent is
+                # its parent menu, not the window (and Qt may reparent
+                # popup menus at show time — resolve at dispatch, never
+                # cache).
+                win = self.parent()
+                while win is not None and not hasattr(win, "_bookmark_context_menu"):
+                    win = win.parent()
+                if win is not None:
+                    pos = event.globalPosition().toPoint()
+                    if url:
+                        win._bookmark_context_menu(url, pos)
+                    else:
+                        win._bookmark_folder_context_menu(folder, pos)
+                return
+        super().mousePressEvent(event)
+
+
 def _write_bytes_atomic(path: str, payload: bytes) -> None:
     """Temp + fsync + os.replace write. config.json must never be written in
     place — a truncated file loads as {} and silently wipes sources/keys
@@ -844,6 +1023,179 @@ def _reload_config_in_place(config: DeeptorrentConfig, path: str) -> None:
         setattr(config, name, getattr(fresh, name))
 
 
+class _EdgeSlide(QObject):
+    """Smooth slide-in/out for the browser auto-hide banners.
+
+    Owner request 2026-11-07: the top chrome (address bar + tab strip)
+    and the left activity rail used to appear/vanish instantly; both now
+    animate over DURATION_MS (half a second). The animation drives BOTH
+    the minimum and the maximum of the axis on every frame — a
+    layout-implied minimum (the chrome's fixed-height rows, the rail's
+    fixed width) always beats a too-small maximum, so a maximum-only
+    animation would be a visual no-op below the layout minimum. The
+    natural constraints are captured at construction and restored on
+    every exit path, so direct show()/hide() callers elsewhere (pure
+    video fullscreen) never meet a collapsed widget.
+
+    reveal()/collapse() animate; reversing mid-flight keeps the current
+    extent and scales the duration to the remaining distance so a
+    reversal never feels slower than the full slide. A completed collapse
+    hides the widget (the layout then reserves nothing — same end state
+    as the old instant hide) and fires on_hidden. hide_now()/show_now()
+    jump instantly, for invisible contexts (tab switch, DOM fullscreen).
+
+    natural() MUST be invariant under the slide's own constraint
+    mutation: it is consulted at animation start (and, for a from-hidden
+    reveal, right after the axis was zeroed), so it can never read the
+    animated axis' live minimum/maximum — that is exactly what _set_axis
+    mutates every frame. Capture a constant at wiring time (a stored
+    fixed width) or use sizeHint(), which constraints don't affect.
+    """
+
+    DURATION_MS = 500  # owner-requested half-second slide
+
+    def __init__(self, widget, natural, on_hidden=None, *, vertical=True,
+                 parent=None):
+        super().__init__(parent or widget)
+        self._w = widget
+        self._natural_of = natural        # () -> full extent in px
+        self._on_hidden = on_hidden       # called when a collapse completes
+        self._vertical = vertical
+        self._restore = self._mins()      # natural (min, max) constraints
+        self._anim = QVariantAnimation(self)
+        self._anim.valueChanged.connect(self._apply)
+        self._anim.finished.connect(self._finished)
+        self._target = None               # None | "shown" | "hidden"
+        self._cur = None                  # last applied extent in px
+        self._full = None                 # natural extent of this anim cycle
+        self._retargeting = False         # finished() fired by our own stop()
+
+    # -- axis plumbing -----------------------------------------------------
+
+    def _mins(self):
+        if self._vertical:
+            return self._w.minimumHeight(), self._w.maximumHeight()
+        return self._w.minimumWidth(), self._w.maximumWidth()
+
+    def _set_axis(self, value):
+        if self._vertical:
+            self._w.setMinimumHeight(value)
+            self._w.setMaximumHeight(value)
+        else:
+            self._w.setMinimumWidth(value)
+            self._w.setMaximumWidth(value)
+
+    def _apply(self, value):
+        self._cur = int(value)
+        self._set_axis(self._cur)
+
+    def _restore_axis(self):
+        lo, hi = self._restore
+        if self._vertical:
+            self._w.setMinimumHeight(lo)
+            self._w.setMaximumHeight(hi)
+        else:
+            self._w.setMinimumWidth(lo)
+            self._w.setMaximumWidth(hi)
+
+    # -- animation -----------------------------------------------------------
+
+    def _stop_anim(self):
+        """Stop without running the completion handler."""
+        self._target = None
+        self._retargeting = True
+        try:
+            # Some Qt builds emit finished on stop; the guard eats either.
+            self._anim.stop()
+        finally:
+            self._retargeting = False
+
+    def _animate_to(self, target):
+        """Start (or reverse) the slide toward `target` ("shown"/"hidden").
+
+        The natural extent is read from natural() only while at rest and
+        cached for the whole animation cycle: mid-flight the widget's own
+        constraints are polluted (the rail's natural width IS its
+        minimumWidth), so a reversal must reuse the value captured when
+        the cycle began — otherwise it would animate toward the polluted
+        extent and pop to the restored size on completion.
+        """
+        running = self._anim.state() == QAbstractAnimation.State.Running
+        if not running:
+            self._full = max(1, int(self._natural_of()))
+        full = self._full
+        end = 0 if target == "hidden" else full
+        if running:
+            start = self._cur if self._cur is not None else full
+        elif target == "hidden":
+            start = full
+        else:
+            start = 0
+        self._stop_anim()
+        self._target = target
+        self._anim.setStartValue(start)
+        self._anim.setEndValue(end)
+        self._anim.setDuration(
+            max(1, round(self.DURATION_MS * abs(end - start) / full)))
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.start()
+
+    def _finished(self):
+        if self._retargeting:
+            return
+        target, self._target = self._target, None
+        if target == "hidden":
+            self._restore_axis()
+            self._w.hide()
+            if self._on_hidden is not None:
+                self._on_hidden()
+        elif target == "shown":
+            self._restore_axis()
+
+    # -- public API ------------------------------------------------------------
+
+    def reveal(self):
+        """Slide in. No-op when already shown (or sliding in)."""
+        if self._target == "shown":
+            return
+        if self._target is None and not self._w.isHidden():
+            return
+        if self._w.isHidden():
+            # Appear at zero extent first, then grow — the widget must be
+            # visible for the slide to be seen at all.
+            self._set_axis(0)
+            self._w.show()
+        self._animate_to("shown")
+
+    def collapse(self):
+        """Slide out. No-op when already hidden (or sliding out)."""
+        if self._target == "hidden":
+            return
+        if self._target is None and self._w.isHidden():
+            return
+        self._animate_to("hidden")
+
+    def is_animating_out(self) -> bool:
+        """True while a collapse is in flight — mid-slide the semantic
+        "hidden" flag is still down (it flips on completion), so callers
+        that must not leave a half-hidden banner behind check this."""
+        return self._target == "hidden"
+
+    def hide_now(self):
+        """Instant hide, any animation discarded (invisible contexts)."""
+        self._stop_anim()
+        self._restore_axis()
+        self._cur = 0
+        self._w.hide()
+
+    def show_now(self):
+        """Instant show at natural size, any animation discarded."""
+        self._stop_anim()
+        self._restore_axis()
+        self._cur = int(self._natural_of())
+        self._w.show()
+
+
 class MainWindow(QMainWindow):
     # Merged Agents-tab input: Enter/Agent = conversational torrent agent,
     # Ctrl+Enter/Search = instant web sweep.
@@ -851,6 +1203,10 @@ class MainWindow(QMainWindow):
     # Browser auto-hide: how close to a window edge the cursor must come
     # (px) to reveal the hidden chrome (top) / activity rail (left).
     _EDGE_REVEAL_PX = 10
+    # Grace the visible chrome gets after the mouse LEAVES it before it
+    # slides away (owner 2026-11-07: 400ms felt instant — the toolbar
+    # banner vanished while you were still aiming around it).
+    _CHROME_HIDE_GRACE_MS = 2000
 
     def __init__(self, config_path: Optional[str] = None) -> None:
         super().__init__()
@@ -977,14 +1333,17 @@ class MainWindow(QMainWindow):
         threading.Thread(target=self._update_check_worker, daemon=True,
                          kwargs={"force": False}, name="update-check").start()
 
-        # Hybrid-GPU Windows machines: pin the built-in browser to the
-        # dedicated GPU via the per-exe Windows graphics preference. Runs on
-        # a DELAYED daemon thread, NOT inline at startup — the DXGI/registry
-        # work on the main thread during startup disturbed the heap such
-        # that the frozen build's lazy imports AV'd (2026-11-06 forensic:
-        # the PyInstaller archive-extract fault tracked the call). Writing
-        # it late costs nothing: the preference is only read when Chromium's
-        # GPU process starts on the NEXT launch.
+        # Per-exe Windows graphics preference for the built-in browser
+        # (default "integrated" since 7.6, owner decision 2026-11-07 — the
+        # dGPU pin's DXGI detection chain destabilized this machine and
+        # drained laptop batteries; the integrated write needs no adapter
+        # detection at all). Runs on a DELAYED daemon thread, NOT inline at
+        # startup — the DXGI/registry work on the main thread during
+        # startup disturbed the heap such that the frozen build's lazy
+        # imports AV'd (2026-11-06 forensic: the PyInstaller archive-extract
+        # fault tracked the call). Writing it late costs nothing: the
+        # preference is only read when Chromium's GPU process starts on the
+        # NEXT launch.
         threading.Thread(target=self._gpu_preference_worker, daemon=True,
                          name="gpu-preference").start()
 
@@ -1031,65 +1390,58 @@ class MainWindow(QMainWindow):
                 background-color: #080b12;
                 color: #ffffff;
                 border-bottom: 1px solid #1a2a4a;
-                padding: 0px;
+                /* 1px top pad nudges the (top-anchored) menu chips down;
+                   the icon row's top margin compensates so the corner
+                   icons stay put (owner nudge 2026-11-07). */
+                padding: 1px 0px 0px 0px;
             }
-            QMenuBar::item { padding: 2px 10px; }
-            QMenuBar::item:selected { background-color: #1a2a4a; color: #ffffff; border-radius: 4px; }
+            /* v7.6 (owner 2026-11-07): menu titles sit on PERMANENT chips
+               matching the tab-icon buttons (TopLeftCorner) — same #14203a
+               rest fill (darkened from #1a2a4a, owner request), 4px radius,
+               solid-accent hover, text centered in the chip. The physical
+               gap between QMenuBar items is a fixed style metric (7px —
+               layout() is None on this build, QSS margin is ignored), so
+               visual separation comes from a 2px border colored EXACTLY
+               like the bar (a "moat") instead of unmovable spacing. */
+            QMenuBar::item {
+                background-color: #14203a; color: #ffffff;
+                border: 6px solid #080b12; border-radius: 9px;
+                padding: 2px 8px;
+            }
+            QMenuBar::item:selected {
+                background-color: #2a7abf; color: #ffffff;
+                border: 6px solid #080b12;
+            }
+            QMenuBar::item:checked { background-color: #2a7abf; color: #ffffff; }
             /* Browser address bar in the menu-bar row (right of Help,
                Browse tab) — slimmer padding than the big inputs so the
                menu row stays close to its menus-only height. */
             QLineEdit#browser_url_bar { padding: 1px 10px; }
-
-            /* === Activity rail (v5 navigation) === */
-            #activity_rail { background-color: #080b12; border-right: 1px solid #1a2a4a; }
-            QFrame[railBtn="true"] {
-                background: transparent;
-                border: 1px solid transparent;
-                border-radius: 6px;
-            }
-            QFrame[railBtn="true"]:hover {
-                background-color: #0b1120;
-                border: 1px solid #1a2a4a;
-            }
-            QFrame[railBtn="true"][active="true"] {
-                background-color: #1a2a4a;
-                border: 1px solid #2a7abf;
-            }
-            QLabel[railIcon="true"] {
-                background: transparent; border: none;
-                font-size: 21px;
-            }
-            QLabel[railText="true"] {
-                background: transparent; border: none;
-                font-size: 11px; color: #ffffff;
-            }
-            /* keep-white: this label rides the active rail button's #1a2a4a fill */
-            QFrame[railBtn="true"][active="true"] QLabel[railText="true"] { color: #ffffff; }
-            QLabel[railBadge="true"] {
-                background-color: #2a7abf; color: #ffffff;
-                border-radius: 7px; font-size: 11px; font-weight: 700;
-                padding: 0px 4px; min-width: 10px; min-height: 12px;
-            }
 
             /* === Agent quick-ask panel (v5) === */
             #agent_panel { background-color: #080b12; border-left: 1px solid #1a2a4a; }
             #agent_panel QLabel#panel_title { font-size: 16px; font-weight: 700; }
 
             /* === Agent first-run setup cards (v5.1) === */
+            /* 7.6: chip language everywhere (owner 2026-11-07) — same
+               recipe as the menu-bar chips: #14203a fill + invisible moat
+               colored like the surrounding background, accent hover. */
             QPushButton#setup_card {
-                background-color: #0b1120;
+                background-color: #14203a;
                 color: #ffffff;
-                border: 1px solid #1a2a4a;
-                border-radius: 8px;
-                padding: 10px 16px;
+                border-left: 6px solid #05070c;
+                border-right: 6px solid #05070c;
+                border-top: 2px solid #05070c;
+                border-bottom: 2px solid #05070c;
+                border-radius: 9px;
+                padding: 6px 10px;
                 font-size: 16px;
                 font-weight: 600;
                 text-align: left;
             }
             QPushButton#setup_card:hover {
-                background-color: #1a2a4a;
+                background-color: #2a7abf;
                 color: #ffffff;
-                border: 1px solid #2a7abf;
             }
 
             /* === Play section chips (v5.1) === */
@@ -1108,19 +1460,28 @@ class MainWindow(QMainWindow):
                 border: 1px solid #2a7abf;
             }
 
-            /* === Status-bar chips + bell (v5) === */
+            /* === Status-bar chips + bell (v5; restyled 7.6 to match the
+               menu-bar chips: permanent #14203a chip + 6px invisible moat
+               colored like the status bar's own #080b12 background, solid
+               accent hover) === */
             QPushButton#status_chip {
-                background: transparent;
+                background-color: #14203a;
                 color: #ffffff;
-                border: 1px solid transparent;
-                border-radius: 4px;
-                padding: 1px 8px;
+                border-left: 6px solid #080b12;
+                border-right: 6px solid #080b12;
+                border-top: 2px solid #080b12;
+                border-bottom: 2px solid #080b12;
+                border-radius: 6px;
+                padding: 0px 6px;
                 font-size: 15px;
             }
             QPushButton#status_chip:hover {
-                background-color: #0b1120;
+                background-color: #2a7abf;
                 color: #ffffff;
-                border: 1px solid #1a2a4a;
+                border-left: 6px solid #080b12;
+                border-right: 6px solid #080b12;
+                border-top: 2px solid #080b12;
+                border-bottom: 2px solid #080b12;
             }
             QMenu {
                 background-color: #0b1120;
@@ -1180,25 +1541,37 @@ class MainWindow(QMainWindow):
                 border-color: #1a2a4a;
             }
 
-            /* === Primary action buttons (accent) === */
+            /* === Primary action buttons (accent) — 7.6: FILLED accent chip
+               (was outline-on-dark); white text on the bright fill is the
+               documented keep-white exception. === */
             QPushButton#btn_accent {
-                background-color: #0a1a2e;
-                border: 1px solid #2a7abf;
+                background-color: #2a7abf;
+                border-left: 6px solid #05070c;
+                border-right: 6px solid #05070c;
+                border-top: 2px solid #05070c;
+                border-bottom: 2px solid #05070c;
+                border-radius: 9px;
+                padding: 2px 10px;
                 color: #ffffff;
             }
             QPushButton#btn_accent:hover {
-                background-color: #2a7abf;
+                background-color: #3b8ad2;
                 color: #ffffff;
             }
 
-            /* === Secondary buttons (subtle) === */
+            /* === Secondary buttons — 7.6 chip recipe (see setup_card). === */
             QPushButton#btn_secondary {
-                background-color: #0b1120;
-                border: 1px solid #1a2a4a;
+                background-color: #14203a;
+                border-left: 6px solid #05070c;
+                border-right: 6px solid #05070c;
+                border-top: 2px solid #05070c;
+                border-bottom: 2px solid #05070c;
+                border-radius: 9px;
+                padding: 2px 10px;
                 color: #ffffff;
             }
             QPushButton#btn_secondary:hover {
-                background-color: #1a2a4a;
+                background-color: #2a7abf;
                 color: #ffffff;
             }
 
@@ -1345,10 +1718,6 @@ class MainWindow(QMainWindow):
         self._setup_shortcuts()
         self._setup_input_history()
         self.setAcceptDrops(True)
-        # The HUD sampler stays dormant until the UI is fully built; Agent
-        # is the landing tab, so activate it right away.
-        if getattr(self, "hw_hud", None) is not None:
-            self.hw_hud.set_active(True)
 
         # Restore window geometry from the previous session; always start
         # on the Agent tab (user request 3.5.4).
@@ -1364,10 +1733,6 @@ class MainWindow(QMainWindow):
 
         # System tray icon (minimize-to-tray + completion toasts).
         self._setup_tray()
-
-        # Startup greeting (2026-09-12): auto-send "Hello" shortly after
-        # launch so the agent always welcomes the user.
-        QTimer.singleShot(1500, self._send_startup_greeting)
 
     def changeEvent(self, event) -> None:  # noqa: N802
         # Single source of truth for video-fullscreen chrome: the window can
@@ -1402,23 +1767,18 @@ class MainWindow(QMainWindow):
         """Hide the app chrome regular fullscreen KEEPS (activity rail, agent
         side panel) for pure fullscreen, and restore it afterwards.
 
-        Regular fullscreen deliberately leaves the rail visible (the look
+        Regular fullscreen deliberately leaves the menus visible (the look
         the owner likes); pure fullscreen is video-ONLY, so everything else
         goes. Visibility is snapshotted on entry so an open agent panel
         comes back exactly as it was."""
         if on:
             if getattr(self, "_pure_chrome_saved", None) is None:
-                self._pure_chrome_saved = (
-                    self.activity_rail.isVisibleTo(self),
-                    self.agent_panel.isVisibleTo(self),
-                )
-            self.activity_rail.hide()
+                self._pure_chrome_saved = (self.agent_panel.isVisibleTo(self),)
             self.agent_panel.hide()
         else:
             saved = getattr(self, "_pure_chrome_saved", None)
             if saved is not None:
-                self.activity_rail.setVisible(saved[0])
-                self.agent_panel.setVisible(saved[1])
+                self.agent_panel.setVisible(saved[0])
                 self._pure_chrome_saved = None
 
     def _restore_splitters(self) -> None:
@@ -1478,10 +1838,13 @@ class MainWindow(QMainWindow):
 
     def _resolve_banner_path(self) -> str:
         """Find the wordmark banner for the Agent tab background (owner art,
-        2026-10-13: DeepFluxNeonBanner.webp — the neon wordmark + particle
-        streams). The website hero banner and a square icon stay as fallbacks
-        so the tab keeps working if the art is ever removed."""
+        2026-11-07: DeepFluxNovBanner.webp — the chrome wordmark with lens
+        flare + purple swoosh; succeeded the 2026-10-13 neon banner). The
+        website hero banner and a square icon stay as fallbacks so the tab
+        keeps working if the art is ever removed."""
         candidates = [
+            os.path.join(os.path.dirname(__file__), "..", "DeepFluxNovBanner.webp"),
+            os.path.join(sys._MEIPASS, "DeepFluxNovBanner.webp") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "DeepFluxNeonBanner.webp"),
             os.path.join(sys._MEIPASS, "DeepFluxNeonBanner.webp") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "website", "deepflux", "DeepFluxBanner.webp"),
@@ -1564,15 +1927,12 @@ class MainWindow(QMainWindow):
         agents_tab_layout = QVBoxLayout(agents_tab)
         agents_tab_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Hardware HUD (6.1): always-on CPU/RAM/GPU/VRAM strip above the
-        # chat — the live numbers are what tells the user which local model
-        # their machine can actually feed. Sampling sleeps while another
-        # tab is active (set_active below).
-        from gui.hardware_hud import HardwareHud
-        self.hw_hud = HardwareHud(self.config)
-        self.hw_hud.open_keys_requested.connect(
-            lambda: self._open_api_keys("ai"))
-        agents_tab_layout.addWidget(self.hw_hud)
+        # Hardware HUD (6.1) REMOVED in 7.6 (owner decision 2026-11-07):
+        # the always-on CPU/RAM/GPU strip's 2s sampler was bisect-proven to
+        # be the boot-crash trigger on the dev machine (worker bisect: base
+        # stripped run + manual agent chat = alive; HUD re-enabled ALONE =
+        # AV in ~30s, repeatedly). infra/hardware_monitor.py STAYS — the
+        # local-AI model picker's GPU detection uses it.
 
         self.chat_history = _ChatHistoryEdit(self._resolve_banner_path())
         self.chat_history.setReadOnly(True)
@@ -1637,8 +1997,8 @@ class MainWindow(QMainWindow):
         yolo_btn.setChecked(self.config.llm.yolo_mode)
         yolo_btn.setToolTip(
             "YOLO mode: the agent runs EVERYTHING without asking — shell\n"
-            "commands, downloads, file deletions, settings writes. Off by\n"
-            "default; enabling is your call and applies to the next message."
+            "commands, downloads, file deletions, settings writes. On by\n"
+            "default; this button turns it off; applies to the next message."
         )
         yolo_btn.clicked.connect(self._on_yolo_toggle)
         self.yolo_btn = yolo_btn
@@ -2147,8 +2507,12 @@ class MainWindow(QMainWindow):
         _ov.setContentsMargins(0, 0, 0, 0)
         _ov.setSpacing(0)
 
-        # Tab strip content: one chip per open tab.
-        self._tab_strip_container = QWidget()
+        # Tab strip content: one chip per open tab. ResponsiveRow: the row's
+        # reported minimum is CAPPED (240px floor) so no number of tabs can
+        # ever grow the window's minimum again — chips shrink and elide to
+        # fit whatever width the strip actually has (owner report
+        # 2026-11-07: many tabs ballooned the window to a huge size).
+        self._tab_strip_container = ResponsiveRow(min_width=240)
         self._tab_strip_container.setStyleSheet("background: transparent;")
         self._tab_strip_layout = QHBoxLayout(self._tab_strip_container)
         self._tab_strip_layout.setContentsMargins(4, 0, 0, 2)
@@ -2175,16 +2539,23 @@ class MainWindow(QMainWindow):
         # 120ms cursor poll — QWebEngineView consumes mouse events
         # (separate Chromium compositor), so event-filter tracking doesn't
         # work; the poll is the only reliable way. Visibility is tracked in
-        # flags (_chrome_hidden, _rail_hidden_for_browser) so the logic
-        # works even while the tab page itself is hidden.
+        # the _chrome_hidden flag so the logic works even while the tab
+        # page itself is hidden. The chrome SLIDES over
+        # _EdgeSlide.DURATION_MS (owner request 2026-11-07 — it used to pop
+        # in/out instantly); the flag flips when the slide completes, so
+        # the reveal zone keeps tracking the shrinking banner and
+        # re-hovering it reverses the slide.
         self._chrome_hidden = True
-        self._rail_hidden_for_browser = False
         self._chrome_hide_timer = QTimer(self)
         self._chrome_hide_timer.setSingleShot(True)
         self._chrome_hide_timer.timeout.connect(self._hide_browser_chrome)
-        self._rail_hide_timer = QTimer(self)
-        self._rail_hide_timer.setSingleShot(True)
-        self._rail_hide_timer.timeout.connect(self._hide_browser_rail)
+        self._chrome_slide = _EdgeSlide(
+            self._browser_chrome,
+            lambda: self._browser_chrome.sizeHint().height(),
+            self._on_chrome_slide_hidden,
+            vertical=True,
+            parent=self,
+        )
         self._strip_poll = QTimer(self)
         self._strip_poll.timeout.connect(self._poll_browser_hover)
         self._strip_poll.start(120)
@@ -2267,6 +2638,52 @@ class MainWindow(QMainWindow):
             # the in-window bar so the layout stays intact there too.
             menubar.setNativeMenuBar(False)
         self.setMenuBar(menubar)
+        # --- v7.6 tab icons (replaced the v5 left activity rail, owner
+        # decision 2026-11-07): one small icon per tab in the menu bar's
+        # TOP-LEFT CORNER widget (same mechanism as the Browse-tab URL bar
+        # in the top-right — QWidgetAction-in-menubar rendered nothing on
+        # this build), each on a PERMANENT rounded chip (owner follow-up:
+        # "make them always look like hover"). Hover = solid accent fill;
+        # the active tab keeps the chip + accent border; the Download icon
+        # carries the active-transfer count (see _set_download_badge).
+        self._tab_icon_actions: List[QToolButton] = []
+        self._download_tab_action: Optional[QToolButton] = None
+        # Keep the row referenced on self — a corner widget with no parent
+        # and no Python ref gets garbage-collected (C++ deleted) right
+        # after construction; same reason _menubar_url_host lives on self.
+        _icons_row = self._tab_icons_row = QWidget()
+        _icons_row.setAttribute(Qt.WA_StyledBackground, False)
+        _icons_lay = QHBoxLayout(_icons_row)
+        _icons_lay.setContentsMargins(6, 1, 0, 2)
+        _icons_lay.setSpacing(4)
+        _kinds_tr = {tr(k): v for k, v in _TAB_ICONS.items()}
+        for _i in range(self.main_tabs.count()):
+            _title = self.main_tabs.tabText(_i)
+            _kind = _kinds_tr.get(_title, "generic")
+            _btn = QToolButton(_icons_row)
+            _btn.setIcon(QIcon(_tab_icon_pixmap(_kind)))
+            _btn.setIconSize(QSize(16, 16))
+            _btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+            _btn.setCheckable(True)
+            _btn.setCursor(Qt.PointingHandCursor)
+            _btn.setToolTip(f"{_title}  (Ctrl+{_i + 1})")
+            _btn.setStyleSheet(
+                "QToolButton { background-color: #14203a;"
+                " border: 6px solid #080b12; border-radius: 9px;"
+                " padding: 2px; }"
+                "QToolButton:hover { background-color: #2a7abf; }"
+                "QToolButton:checked { border: 6px solid #a8edff; }")
+            _btn.clicked.connect(
+                lambda _c=False, idx=_i: self.main_tabs.setCurrentIndex(idx))
+            _icons_lay.addWidget(_btn)
+            self._tab_icon_actions.append(_btn)
+            if _title == tr("Download"):
+                self._download_tab_action = _btn
+        menubar.setCornerWidget(_icons_row, Qt.TopLeftCorner)
+        # NB: menu-item separation is done VISUALLY (bar-colored border
+        # moat in the QSS above) — menubar.layout() is None on this build
+        # and QSS margin is ignored, so the 7px style gap is unmovable.
+        self._sync_tab_icon_actions()
         file_menu = menubar.addMenu(tr("File"))
 
         add_magnet_action = _file_item(file_menu, tr("Add Magnet Link..."), indent=False)
@@ -2352,59 +2769,61 @@ class MainWindow(QMainWindow):
             theme_group.addAction(_theme_act)
             _theme_act.triggered.connect(
                 lambda _checked=False, theme=_theme: self._set_ui_text_theme(theme))
-        settings_menu.addSeparator()
 
-        _file_zone(settings_menu, tr("AI & API Keys"))
+        # v7.6 (owner decision 2026-11-07): the Settings menu's feature
+        # zones became TOP-LEVEL menus placed right of Settings — API,
+        # Downloads, Browser, Play. Settings keeps the app-level items
+        # only (Hub, Language, Font Size, Text Color).
+
+        api_menu = menubar.addMenu(tr("API"))
         for label, page in API_KEY_PAGES:
-            action = _file_item(settings_menu, tr(label))
+            action = _file_item(api_menu, tr(label))
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_api_keys(selected))
 
-        _file_zone(settings_menu, tr("Downloads && Sources"))
-        indexer_settings_action = _file_item(settings_menu, tr("Jackett Indexer Settings..."))
+        downloads_menu = menubar.addMenu(tr("Downloads"))
+        indexer_settings_action = _file_item(downloads_menu, tr("Jackett Indexer Settings..."))
         indexer_settings_action.triggered.connect(self._open_indexer_settings)
 
         for label, page in DOWNLOAD_SETTINGS_PAGES:
-            action = _file_item(settings_menu, tr(label))
+            action = _file_item(downloads_menu, tr(label))
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_downloads_settings(selected))
 
-        sources_action = _file_item(settings_menu, tr("Torrent Search Sources..."))
+        sources_action = _file_item(downloads_menu, tr("Torrent Search Sources..."))
         sources_action.triggered.connect(self._open_sources)
 
-        rss_action2 = _file_item(settings_menu, tr("RSS Feed Subscriptions..."))
+        rss_action2 = _file_item(downloads_menu, tr("RSS Feed Subscriptions..."))
         rss_action2.triggered.connect(self._open_rss_dialog)
 
-        _file_zone(settings_menu, tr("Browser"))
+        browser_menu = menubar.addMenu(tr("Browser"))
         for label, page in BROWSER_SETTINGS_PAGES:
-            action = _file_item(settings_menu, tr(label))
+            action = _file_item(browser_menu, tr(label))
             action.triggered.connect(
                 lambda _checked=False, selected=page: self._open_browser_settings(selected))
 
-        history_action = _file_item(settings_menu, tr("Browser History..."))
+        history_action = _file_item(browser_menu, tr("Browser History..."))
         history_action.triggered.connect(self._show_browser_history)
 
-        devtools_action = _file_item(settings_menu, tr("Browser Developer Tools"))
+        devtools_action = _file_item(browser_menu, tr("Browser Developer Tools"))
         devtools_action.triggered.connect(self._browser_open_devtools)
 
         if _PLAY_TAB_SUPPORTED:
-            _file_zone(settings_menu, tr("Play"))
+            play_menu = menubar.addMenu(tr("Play"))
             for label, _cls in IPTV_SETTINGS_PAGES:
-                action = _file_item(settings_menu, tr(label))
+                action = _file_item(play_menu, tr(label))
                 action.triggered.connect(lambda _c=False, page_cls=_cls: self._open_iptv_page(page_cls))
 
         # Bookmarks live ONLY under the browser toolbar's Bookmarks button
         # (import/export + the folder tree) — nothing bookmark-related in the
         # menus (user request 3.5.6).
-        self._bookmarks_menu = QMenu(tr("Bookmarks"), self)
+        self._bookmarks_menu = _BookmarksPopup(tr("Bookmarks"), self)
         self._rebuild_bookmarks_bar()
 
-        # --- Activity rail (v5 navigation) + agent side panel ---------------
-        self.activity_rail = ActivityRail(self.main_tabs, self)
-        self.activity_rail.page_requested.connect(self.main_tabs.setCurrentIndex)
-        self.activity_rail.settings_requested.connect(self._open_settings_hub)
-        layout.insertWidget(0, self.activity_rail)
-
+        # --- Agent side panel -------------------------------------------------
+        # (v7.6: the v5 left activity rail is REMOVED, owner decision
+        # 2026-11-07 — its tab icons live in the menu bar left of File and
+        # its feature menus moved out of Settings; see _setup_menus.)
         self.agent_panel = AgentPanel(self)
         self.agent_panel.setVisible(False)
         self.agent_panel.submit_requested.connect(self._on_agent_panel_submit)
@@ -2485,10 +2904,17 @@ class MainWindow(QMainWindow):
         page and jump to their page on click; the bell keeps a persistent log
         of events that previously lived only in the Agent transcript or a
         six-second tray balloon."""
-        self.statusBar().setStyleSheet("QStatusBar { background: #080b12; border-top: 1px solid #1a2a4a; }")
+        self.statusBar().setStyleSheet(
+            "QStatusBar { background: #080b12; border-top: 1px solid #1a2a4a;"
+            " padding: 0px; }"
+            "QStatusBar::item { border: 0px; }")
+        _sb_layout = self.statusBar().layout()
+        if _sb_layout is not None:
+            _sb_layout.setSpacing(4)
+            _sb_layout.setContentsMargins(4, 0, 4, 0)
         # Left: hovered link URL (browser linkHovered).
         self._hover_label = QLabel("")
-        self._hover_label.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px; padding: 2px 8px;"))
+        self._hover_label.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px; padding: 0px 8px;"))
         self.statusBar().addWidget(self._hover_label, 1)
 
         # Center-right chips: downloads + agent. Flat buttons styled by QSS.
@@ -2514,7 +2940,7 @@ class MainWindow(QMainWindow):
 
         # Right: permanent transfer summary.
         self._status_label = QLabel(tr("Ready"))
-        self._status_label.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px; padding: 2px 8px;"))
+        self._status_label.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px; padding: 0px 8px;"))
         self._status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.statusBar().addPermanentWidget(self._status_label)
 
@@ -2579,15 +3005,11 @@ class MainWindow(QMainWindow):
             parts.append(f"{tr('Downloads')}: {d_active} {tr('active')}  ↓ {format_rate(d_speed)}")
         self._status_label.setText("   •   ".join(parts) if parts else tr("Ready"))
 
-        # v5: rail badge + download chip + taskbar progress.
+        # v5: download chip + taskbar progress; v7.6: the old rail badge
+        # lives on the Download tab icon in the menu bar.
         active = t_downloading + d_active
         self._dl_chip.setText(f"⬇ {active} · {format_rate(t_down + d_speed)}" if active else tr("⬇ idle"))
-        try:
-            # badge lookup keys on the TAB TITLE — keep it in tr() so the
-            # translated rail still finds the (translated) Download button
-            self.activity_rail.set_badge(tr("Download"), str(active) if active else "")
-        except Exception:
-            pass  # rail not built yet during early refreshes
+        self._set_download_badge(active)
         busy = bool(self._agent_thread and self._agent_thread.is_alive())
         self._agent_chip.setText(tr("🧠 busy…") if busy else tr("🧠 agent"))
         self._update_taskbar_progress(torrents, jobs, active)
@@ -2913,37 +3335,71 @@ class MainWindow(QMainWindow):
             if view in self._browser_devtools_windows else None)
         devtools.show()
 
+    def _sync_tab_icon_actions(self) -> None:
+        """Menu-bar tab icons (v7.6): the checked icon follows the current
+        tab. Guarded — _on_main_tab_changed fires during _build_ui's
+        insertTab calls, before the icons exist."""
+        actions = getattr(self, "_tab_icon_actions", None)
+        if not actions:
+            return
+        current = self.main_tabs.currentIndex()
+        for i, act in enumerate(actions):
+            act.setChecked(i == current)
+
+    def _fit_tab_icon_height(self) -> None:
+        """Match the icon chips' height to the menu chips'.
+
+        The menu items' height follows the app FONT SIZE setting while the
+        icon chips' natural height does not — measured mismatch at the
+        default font: icons 29px vs menus 22px, which read as vertically
+        misaligned chips. Called once after the first show (post-layout)
+        so actionGeometry is final; recalibrates on every launch."""
+        acts = [a for a in self.menuBar().actions() if a.text()]
+        if not acts:
+            return
+        h = self.menuBar().actionGeometry(acts[0]).height()
+        if h <= 10:
+            return  # geometry not laid out yet
+        for b in getattr(self, "_tab_icon_actions", None) or []:
+            b.setFixedHeight(h)
+
+    def _set_download_badge(self, active: int) -> None:
+        """Active-transfer count onto the Download tab icon (v7.6 successor
+        of the removed activity-rail badge): the bare count appears as the
+        button's text beside the painted icon, and the button switches to
+        icon+text style only while a count is showing."""
+        act = getattr(self, "_download_tab_action", None)
+        if act is None:
+            return
+        if active:
+            act.setText(str(active))
+            act.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        else:
+            act.setText("")
+            act.setToolButtonStyle(Qt.ToolButtonIconOnly)
+
     def _poll_browser_hover(self) -> None:
         """Check cursor position and show/hide the browser chrome (address
-        bar + tab strip) and the activity rail.
+        bar + tab strip).
 
         Called by a 120ms timer (QWebEngineView consumes mouse events so
         event-filter tracking doesn't work). Showing the chrome pushes the
         page content down; hiding it lets the page fill the space again —
-        chrome never covers site content. The rail hides while the Browse
-        tab is active (more room for the site) and is restored on every
-        other tab — but only when THIS auto-hide hid it, so pure video
-        fullscreen (which hides the rail itself) is never fought."""
+        chrome never covers site content. The chrome SLIDES over
+        _EdgeSlide.DURATION_MS rather than popping (2026-11-07). (The v5
+        activity rail's left-edge auto-hide died with the rail in 7.6.)"""
         from PySide6.QtGui import QCursor
-        # Off the Browse tab: chrome hidden, rail restored if we hid it.
-        if self.main_tabs.currentWidget() is not self._browser_tab:
+        # Off the Browse tab / during DOM fullscreen: chrome hidden.
+        if (self.main_tabs.currentWidget() is not self._browser_tab
+                or self._browser_fs_state is not None):
             self._hide_browser_chrome(force=True)
-            if self._rail_hidden_for_browser:
-                self._rail_hidden_for_browser = False
-                self.activity_rail.show()
-            return
-        # Skip during DOM fullscreen — the view is detached to its own
-        # window and chrome/rail must not linger over the empty content
-        # area.
-        if self._browser_fs_state is not None:
-            self._hide_browser_chrome(force=True)
-            if not self._rail_hidden_for_browser and self.activity_rail.isVisibleTo(self):
-                self._rail_hidden_for_browser = True
-                self.activity_rail.hide()
             return
         cursor = QCursor.pos()
         self._check_chrome_hover(self._browser_tab.mapFromGlobal(cursor))
-        self._check_rail_hover(self.main_tabs.mapFromGlobal(cursor))
+
+    def _on_chrome_slide_hidden(self) -> None:
+        """Collapse-completed hook: the chrome is now semantically hidden."""
+        self._chrome_hidden = True
 
     def _check_chrome_hover(self, pos) -> None:
         """Show/hide the browser chrome based on cursor position."""
@@ -2951,6 +3407,8 @@ class MainWindow(QMainWindow):
         # hidden (a full-chrome-height zone would pop the bar while the
         # user aims at site headers); once visible, the zone extends a few
         # px past the chrome so it doesn't flicker-hide at the boundary.
+        # Mid-slide the zone tracks the shrinking/growing bar — hovering
+        # a half-collapsed chrome reverses its slide.
         if self._chrome_hidden:
             zone_h = self._EDGE_REVEAL_PX
         else:
@@ -2962,54 +3420,33 @@ class MainWindow(QMainWindow):
             self._show_browser_chrome()
         elif not self._chrome_hidden and not self._browser_chrome.underMouse():
             if not self._chrome_hide_timer.isActive():
-                self._chrome_hide_timer.start(400)
+                self._chrome_hide_timer.start(self._CHROME_HIDE_GRACE_MS)
 
     def _show_browser_chrome(self) -> None:
-        """Reveal the browser chrome (address bar + tab strip).
+        """Reveal the browser chrome (address bar + tab strip) — slides in
+        over _EdgeSlide.DURATION_MS.
 
         Also called by paths that programmatically focus the address bar
         (Ctrl+L etc.) — focusing a hidden bar would look like a no-op."""
-        if self._chrome_hidden:
-            self._chrome_hidden = False
-            self._browser_chrome.show()
+        self._chrome_hidden = False
+        self._chrome_slide.reveal()  # no-op unless hidden or mid-slide-out
 
     def _hide_browser_chrome(self, force: bool = False) -> None:
         """Hide the browser chrome (fired by the hide timer / tab switch).
 
-        force skips the underMouse guard — used from the poll's early-exit
-        branches where the chrome must go away regardless of the cursor."""
-        if force or not self._browser_chrome.underMouse():
-            self._chrome_hide_timer.stop()
+        The timer path slides out over _EdgeSlide.DURATION_MS; the
+        _chrome_hidden flag flips when the slide COMPLETES (the reveal
+        zone keeps tracking the shrinking bar while it animates). force
+        skips the underMouse guard AND jumps instantly — its callers are
+        invisible contexts (other tabs, DOM fullscreen)."""
+        if not force and self._browser_chrome.underMouse():
+            return
+        self._chrome_hide_timer.stop()
+        if force:
             self._chrome_hidden = True
-            self._browser_chrome.hide()
-
-    def _check_rail_hover(self, pos) -> None:
-        """Show/hide the activity rail based on cursor position (left edge).
-
-        pos is in main_tabs coordinates: negative x = over the rail (it
-        sits left of main_tabs), 0..edge = the reveal strip at the left
-        edge of the content area."""
-        if self._rail_hidden_for_browser:
-            in_zone = -6 <= pos.x() < self._EDGE_REVEAL_PX
+            self._chrome_slide.hide_now()
         else:
-            in_zone = -self.activity_rail.width() - 6 <= pos.x() <= 6
-        in_zone = in_zone and 0 <= pos.y() <= self.main_tabs.height()
-        if in_zone:
-            self._rail_hide_timer.stop()
-            if self._rail_hidden_for_browser:
-                self._rail_hidden_for_browser = False
-                self.activity_rail.show()
-        elif (not self._rail_hidden_for_browser
-              and not self.activity_rail.underMouse()):
-            if not self._rail_hide_timer.isActive():
-                self._rail_hide_timer.start(400)
-
-    def _hide_browser_rail(self) -> None:
-        """Hide the activity rail (fired by the hide timer)."""
-        if not self.activity_rail.underMouse():
-            self._rail_hidden_for_browser = True
-            self._rail_hide_timer.stop()
-            self.activity_rail.hide()
+            self._chrome_slide.collapse()
 
     def _setup_input_history(self) -> None:
         """Terminal-style Up/Down recall for the merged Agents input."""
@@ -3253,22 +3690,6 @@ class MainWindow(QMainWindow):
 
         self._agent_thread = threading.Thread(target=_worker, daemon=True)
         self._agent_thread.start()
-
-    def _send_startup_greeting(self) -> None:
-        """Auto-send "Hello" once after startup so the agent greets the user.
-
-        Skipped when the agent is already busy or the user beat the timer to
-        the input box (typing, voice dictation) — never clobbers real input."""
-        if self._agent_thread and self._agent_thread.is_alive():
-            return
-        if self.chat_input.text().strip():
-            return
-        self.chat_input.setText(tr('Hello'))
-        self._onboarding_greeting = True
-        try:
-            self._on_send()
-        finally:
-            self._onboarding_greeting = False
 
     # ------------------------------------------------------------------
     # Voice input (mic button next to the agent input)
@@ -3760,6 +4181,12 @@ class MainWindow(QMainWindow):
         for i in range(self.browser_tabs.count()):
             chip = QWidget()
             chip.setAttribute(Qt.WA_StyledBackground)
+            # Auto-fit (owner report 2026-11-07): the strip's chips must
+            # SHARE the available width — never grow the window. The chip
+            # caps at _BROWSER_TAB_MAX_WIDTH and shrinks freely (the title
+            # label is an _ElideLabel whose minimum is zero), so any number
+            # of tabs fits the space the strip already has.
+            chip.setMaximumWidth(_BROWSER_TAB_MAX_WIDTH)
             is_active = i == current
             chip.setStyleSheet(
                 f"background: {'#1a2a4a' if is_active else '#080b12'};"
@@ -3768,7 +4195,8 @@ class MainWindow(QMainWindow):
             cl = QHBoxLayout(chip)
             cl.setContentsMargins(6, 1, 2, 1)
             cl.setSpacing(2)
-            lbl = QLabel(self.browser_tabs.tabText(i))
+            lbl = _ElideLabel(self.browser_tabs.tabText(i))
+            lbl.setToolTip(self.browser_tabs.tabToolTip(i))
             lbl.setStyleSheet(scale_qss(
                 f"background: transparent; color: {'#2a7abf' if is_active else '#8a9ab0'}; font-size: 17px;"))
             lbl.setCursor(Qt.PointingHandCursor)
@@ -3776,11 +4204,18 @@ class MainWindow(QMainWindow):
             cl.addWidget(lbl)
             if self.browser_tabs.count() > 1:
                 x = QPushButton(tr('×'))
-                x.setFixedSize(14, 14)
+                x.setFixedSize(20, 20)
                 x.setAttribute(Qt.WA_StyledBackground)
+                # Visible-by-default white × (owner report 2026-11-07: the
+                # old tiny dark-red × was barely visible); turns red on
+                # hover for the destructive affordance. Pure-white literal
+                # per the text-theme contract (scale_qss rewrites it).
                 x.setStyleSheet(scale_qss(
-                    "QPushButton { background: transparent; color: #ff6666; border: none; font-size: 18px; font-weight: 700; }"
-                    "QPushButton:hover { color: #ff3366; background: #3a1a2a; border-radius: 3px; }"))
+                    "QPushButton { background: transparent; color: #ffffff;"
+                    " border: 1px solid transparent; border-radius: 4px;"
+                    " font-size: 19px; font-weight: 700; padding: 0px; }"
+                    "QPushButton:hover { color: #ff5555;"
+                    " background: #3a1a2a; border: 1px solid #ff5555; }"))
                 x.clicked.connect(lambda _c, idx=i: self._browser_close_tab(idx))
                 cl.addWidget(x)
             layout.addWidget(chip)
@@ -4231,6 +4666,8 @@ class MainWindow(QMainWindow):
         """
         menu = self._bookmarks_menu
         menu.clear()
+        menu.bookmark_urls = {}
+        menu.folder_paths = {}
 
         import_action = QAction(tr('Import Bookmarks...'), self)
         import_action.triggered.connect(self._import_bookmarks)
@@ -4269,17 +4706,26 @@ class MainWindow(QMainWindow):
                 b = entry[1]
                 action = menu.addAction(b.title[:40] or b.url)
                 action.setToolTip(b.url)
+                menu.bookmark_urls[action] = b.url  # right-click → remove
                 action.triggered.connect(lambda _c, u=b.url: self._browser_open_bookmark(u))
             else:
                 name, node = entry[1], entry[2]
-                submenu = menu.addMenu(name)
-                self._fill_bookmark_menu(submenu, node)
+                submenu = _BookmarksPopup(name, menu)
+                menu.addMenu(submenu)
+                menu.folder_paths[submenu.menuAction()] = name  # right-click → remove
+                self._fill_bookmark_menu(submenu, node, prefix=name)
 
-    def _fill_bookmark_menu(self, menu: QMenu, node: dict) -> None:
-        """Fill a folder menu with subfolder submenus and bookmark rows."""
+    def _fill_bookmark_menu(self, menu: _BookmarksPopup, node: dict,
+                            prefix: str = "") -> None:
+        """Fill a folder menu with subfolder submenus and bookmark rows.
+        `prefix` is the menu's own folder path, so nested subfolders
+        register their FULL path ("News/Tech") for right-click removal."""
         for name, sub in node["folders"].items():
-            submenu = menu.addMenu(name)
-            self._fill_bookmark_menu(submenu, sub)
+            path = f"{prefix}/{name}" if prefix else name
+            submenu = _BookmarksPopup(name, menu)
+            menu.addMenu(submenu)
+            menu.folder_paths[submenu.menuAction()] = path  # right-click → remove
+            self._fill_bookmark_menu(submenu, sub, prefix=path)
         for b in node["items"]:
             self._add_bookmark_menu_item(menu, b)
 
@@ -4307,6 +4753,13 @@ class MainWindow(QMainWindow):
         )
         lay.addWidget(open_btn, 1)
 
+        # Right-click anywhere on the row opens the same remove menu (context
+        # events propagate from the NoContextMenu buttons up to the row).
+        row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        row.customContextMenuRequested.connect(
+            lambda pos, u=b.url, w=row: self._bookmark_context_menu(u, w.mapToGlobal(pos))
+        )
+
         remove_btn = QToolButton()
         remove_btn.setText(tr('✕'))
         remove_btn.setToolTip(tr('Remove bookmark'))
@@ -4321,27 +4774,46 @@ class MainWindow(QMainWindow):
         action.setDefaultWidget(row)
         menu.addAction(action)
 
-    def _bookmark_folder_context_menu(self, folder: str, btn) -> None:
-        """Right-click menu for a folder button: remove the whole folder."""
+    def _bookmark_folder_context_menu(self, folder: str, global_pos) -> None:
+        """Right-click menu for a FOLDER submenu title: remove the whole
+        folder and every bookmark under it. Non-blocking popup(), like
+        _bookmark_context_menu."""
         menu = QMenu(self)
-        remove_action = menu.addAction(f"Remove folder '{folder}' and its bookmarks")
-        action = menu.exec(btn.mapToGlobal(btn.rect().center()))
-        if action == remove_action:
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        remove_action = menu.addAction(
+            tr("Remove folder '{name}' and its bookmarks").format(name=folder))
+
+        def _remove() -> None:
             prefix = folder + "/"
             self.config.browser.bookmarks = [
                 b for b in self.config.browser.bookmarks
                 if b.folder != folder and not b.folder.startswith(prefix)
             ]
             self._save_config()
+            # No close(): the popup rebuilds IN PLACE (the folder submenu
+            # disappears from the open menu).
             self._rebuild_bookmarks_bar()
 
-    def _bookmark_context_menu(self, url: str, btn) -> None:
-        """Show a context menu to remove a bookmark."""
+        remove_action.triggered.connect(_remove)
+        menu.popup(global_pos)
+
+    def _bookmark_context_menu(self, url: str, global_pos) -> None:
+        """Right-click menu for a bookmark (top-level popup actions and
+        folder rows both land here): remove it. Non-blocking popup() — this
+        runs inside the bookmarks popup's own mouse-press dispatch, and a
+        nested exec() there can wedge the menu's event loop."""
         menu = QMenu(self)
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         remove_action = menu.addAction(tr('Remove bookmark'))
-        action = menu.exec(btn.mapToGlobal(btn.rect().center()))
-        if action == remove_action:
+
+        def _remove() -> None:
+            # No close(): the bookmarks popup rebuilds IN PLACE (the entry
+            # disappears from the open menu) — QMenu handles dynamic
+            # action changes while shown.
             self._browser_remove_bookmark(url)
+
+        remove_action.triggered.connect(_remove)
+        menu.popup(global_pos)
 
     def _save_config(self) -> None:
         """Save the current config to disk."""
@@ -4412,13 +4884,14 @@ class MainWindow(QMainWindow):
             self._agent_signals.event.emit({"type": "ytdlp_update", **result})
 
     def _gpu_preference_worker(self) -> None:
-        """Apply the per-exe dedicated-GPU preference (Settings → Browser),
-        AFTER the startup allocation storm settles (see __init__)."""
+        """Apply the per-exe GPU preference (Settings → Browser; default
+        "integrated" since 7.6), AFTER the startup allocation storm
+        settles (see __init__)."""
         try:
             time.sleep(15)
             if sys.platform == "win32":
-                from infra.gpu_preference import apply_force_dedicated_gpu
-                apply_force_dedicated_gpu(bool(self.config.browser.force_dedicated_gpu))
+                from infra.gpu_preference import apply_gpu_preference
+                apply_gpu_preference(self.config.browser.gpu_preference)
         except Exception:
             logger.debug("GPU preference application skipped", exc_info=True)
 
@@ -5291,6 +5764,11 @@ class MainWindow(QMainWindow):
                 self._taskbar = TaskbarProgress(int(self.winId()))
             except Exception:
                 self._taskbar = None
+        # Calibrate the tab-icon chips to the menu chips' height once the
+        # menu bar has real geometry (v7.6 vertical alignment fix).
+        if not getattr(self, "_tab_icons_fitted", False):
+            self._tab_icons_fitted = True
+            QTimer.singleShot(0, self._fit_tab_icon_height)
         # Enforce default split ratios once the splitters have real
         # dimensions — pre-show setSizes() gets overridden by content size hints.
         if not self._agent_ratio_applied:
@@ -5316,15 +5794,14 @@ class MainWindow(QMainWindow):
         """Enforce the 50/50 Download split when that tab becomes visible —
         first visit only; re-visits must not clobber a user-adjusted ratio
         (review 2026-11-06)."""
+        # Guarded like everything else here: fires during _build_ui's
+        # insertTab calls and on test hosts that bind only a method subset.
+        sync = getattr(self, "_sync_tab_icon_actions", None)
+        if sync is not None:
+            sync()
         if self.main_tabs.widget(index) is self._torrents_tab:
             if not self._agent_ratio_applied:
                 QTimer.singleShot(0, self._enforce_agent_split)
-        # Fires DURING _build_ui's insertTab calls, before _agents_tab is
-        # assigned — getattr, never a bare attribute.
-        hud = getattr(self, "hw_hud", None)
-        agents_tab = getattr(self, "_agents_tab", None)
-        if hud is not None and agents_tab is not None:
-            hud.set_active(self.main_tabs.widget(index) is agents_tab)
         # Menu-bar address bar: installed only while the Browse tab is
         # active. Swapping the corner widget (not just hiding it — a hidden
         # corner widget does NOT shrink the menu bar) keeps every other tab's
@@ -5556,8 +6033,9 @@ class MainWindow(QMainWindow):
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         self._insert_html(f'<div class="msg-user"><b>{tr("You:")}</b> {safe}</div>')
         self.agent_panel.append_exchange("user", text)
-        if not getattr(self, "_onboarding_greeting", False):
-            self._onboarding.hide()
+        # The startup auto-"Hello" is gone (owner decision 2026-11-07, 7.6)
+        # — every first user message hides the onboarding cards.
+        self._onboarding.hide()
 
     def _clear_chat(self) -> None:
         """Clear the merged Agents history and restore the logo background."""
@@ -7034,11 +7512,6 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-        # Hardware HUD sampler thread.
-        hud = getattr(self, "hw_hud", None)
-        if hud is not None:
-            hud.shutdown()
-
         # Best-effort telemetry "leaving" note — never blocks the quit.
         try:
             from infra import telemetry
@@ -7143,8 +7616,14 @@ def run_gui(config_path: Optional[str] = None, open_targets: Optional[List[str]]
     # code (PyInstaller archive extract during lazy imports, EPG XML parse)
     # across several builds. Freezing keeps the collector off the early
     # objects; everything created afterwards is still collected normally.
+    # collect() FIRST (2026-11-07 audit): any cyclic garbage still alive at
+    # this instant would otherwise be frozen into the permanent generation
+    # and leak for the whole session. (Honesty note: this is a band-aid
+    # against the documented environment-level heap/layout AV family, not
+    # a cure — crashes continued across builds with it in place.)
     try:
         import gc
+        gc.collect()
         gc.freeze()
     except Exception:
         logger.debug("gc.freeze skipped", exc_info=True)

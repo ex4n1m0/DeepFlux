@@ -329,12 +329,22 @@ def test_every_white_text_stylesheet_is_themed():
 
 def test_no_thick_qss_borders():
     """Outlines are 1px (owner decision 2026-11-03). border-radius values
-    are corner rounding and are exempt."""
+    are corner rounding and are exempt. Narrow owner-approved exemption
+    (2026-11-07, 7.6 menu-bar chips): INVISIBLE spacing moats — 6px
+    borders colored exactly like the bar (#080b12) that visually separate
+    the chips because Qt's fixed 7px menu-item gap cannot be changed —
+    plus the matching 6px active-tab ring on the icon chips (width kept
+    at 6px across states so checking never shifts the layout)."""
     thick = re.compile(r"border(?:-top|-right|-bottom|-left|-width)?:\s*[2-9]px")
+    # invisible moats (#080b12 bar / #05070c window base) + icon ring
+    exempt = ("#080b12", "#05070c", "#a8edff; }")
     offenders = []
     for path in sorted(GUI_DIR.glob("*.py")):
         for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             for m in thick.finditer(line):
+                window = line[max(0, m.start() - 20):m.end() + 30]
+                if any(e in window or e in line for e in exempt):
+                    continue
                 offenders.append(f"{path.name}:{i}: {m.group(0)}")
     assert not offenders, f"thick QSS borders found: {offenders}"
 

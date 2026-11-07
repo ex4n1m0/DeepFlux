@@ -421,6 +421,7 @@ ZH_CN: dict[str, str] = {
     "Remove Torrent": "移除种子",
     "Remove and delete files": "移除并删除文件",
     "Remove bookmark": "移除书签",
+    "Remove folder '{name}' and its bookmarks": "删除文件夹“{name}”及其所有书签",
     "Remove from List": "从列表移除",
     "Remove from list (keep files)": "从列表移除（保留文件）",
     "Remove source": "移除源",
@@ -527,9 +528,12 @@ ZH_CN: dict[str, str] = {
     "Web Search": "网页搜索",
     "When enabled, a script scans every page for downloadable videos (<video>, HLS, DASH, YouTube, etc.) and shows a status badge. Its monitoring can cause flashing during video playback — turn off if you experience that. Off by default. You can also toggle this from the toolbar button next to AdBlock.":
         "启用后，脚本会扫描每个页面上可下载的视频（<video>、HLS、DASH、YouTube 等）并显示状态徽标。其监控可能在播放视频时造成闪烁 —— 如遇到请关闭。默认关闭。也可通过 AdBlock 旁边的工具栏按钮切换。",
-    "Use the dedicated GPU for the built-in browser (Windows)": "内置浏览器使用独立显卡（Windows）",
-    "On hybrid-GPU machines (Intel/AMD graphics + NVIDIA/AMD dedicated card) the browser can flash when Windows switches adapters — especially during video playback. This pins DeepFlux to the dedicated GPU. Applies on the next launch.":
-        "在混合显卡机器（Intel/AMD 核显 + NVIDIA/AMD 独立显卡）上，Windows 切换显卡时浏览器可能会闪烁 —— 尤其是播放视频时。此选项将 DeepFlux 固定到独立显卡。下次启动时生效。",
+    "Integrated GPU (power saving)": "集成显卡（省电）",
+    "Dedicated GPU (high performance)": "独立显卡（高性能）",
+    "Let Windows decide": "由 Windows 决定",
+    "Browser graphics preference (Windows):": "浏览器显卡偏好（Windows）：",
+    "Which GPU Windows should use for DeepFlux. Integrated (default) avoids adapter switching and saves laptop battery; pick Dedicated only if the browser flashes during video playback on a hybrid-GPU machine. Applies on the next launch.":
+        "Windows 为 DeepFlux 使用哪块显卡。集成显卡（默认）可避免显卡切换并节省笔记本电量；仅在混合显卡机器上播放视频出现闪烁时才选择独立显卡。下次启动时生效。",
     "Which MilkDrop preset to start with.": "启动时使用哪个 MilkDrop 预设。",
     "Zoom in  (Ctrl+=  or Ctrl+scroll up)": "放大（Ctrl+= 或 Ctrl+向上滚动）",
     "Zoom out  (Ctrl+-  or Ctrl+scroll down)": "缩小（Ctrl+- 或 Ctrl+向下滚动）",

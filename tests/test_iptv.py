@@ -5517,10 +5517,11 @@ def test_fullscreen_hides_section_chips(tmp_path):
         _close_tab(tab)
 
 
-def test_pure_chrome_hides_rail_and_agent_panel(tmp_path):
+def test_pure_chrome_hides_agent_panel(tmp_path):
     """set_video_pure_chrome: pure fullscreen hides the chrome regular
-    fullscreen KEEPS (activity rail, agent panel) and restores the exact
-    visibility each had before."""
+    fullscreen KEEPS (agent panel) and restores the exact visibility it
+    had before. (The activity rail was REMOVED in 7.6 — agent panel is
+    the only snapshotted member now.)"""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication, QWidget
     from gui.main_window import MainWindow
@@ -5532,30 +5533,28 @@ def test_pure_chrome_hides_rail_and_agent_panel(tmp_path):
         pass
 
     win = _FakeWin()
-    rail = QWidget(win)  # child widgets are born visible — rail shows with win
     panel = QWidget(win)
     panel.hide()  # the real AgentPanel is setVisible(False) at construction
-    win.activity_rail = rail
     win.agent_panel = panel
 
     MainWindow.set_video_pure_chrome(win, True)
-    assert rail.isHidden() and panel.isHidden()
+    assert panel.isHidden()
     # Idempotent re-entry must not overwrite the snapshot with "hidden".
     MainWindow.set_video_pure_chrome(win, True)
-    assert rail.isHidden() and panel.isHidden()
+    assert panel.isHidden()
 
     MainWindow.set_video_pure_chrome(win, False)
-    assert not rail.isHidden() and panel.isHidden()
+    assert panel.isHidden()  # was hidden before the pure round-trip
 
     # An OPEN agent panel comes back after the pure round-trip.
     panel.show()
     MainWindow.set_video_pure_chrome(win, True)
-    assert rail.isHidden() and panel.isHidden()
+    assert panel.isHidden()
     MainWindow.set_video_pure_chrome(win, False)
-    assert not rail.isHidden() and not panel.isHidden()
+    assert not panel.isHidden()
     # Restore without a prior enter is a no-op, never crashes.
     MainWindow.set_video_pure_chrome(win, False)
-    assert not rail.isHidden() and not panel.isHidden()
+    assert not panel.isHidden()
 
 
 # ---------------------------------------------------------------------------

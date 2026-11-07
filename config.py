@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "7.5"
+APP_VERSION = "7.6"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -206,11 +206,13 @@ class LLMConfig:
     stream: bool = True             # stream tokens to the UI as they arrive
     memory_enabled: bool = True     # persistent local memory (markdown files on disk)
     memory_dir: str = ""            # empty = default (~/.deeptorrent/memory)
-    # YOLO mode (owner request 2026-10-13): the agent NEVER asks for tool
-    # confirmation — run_shell, deletions, everything executes immediately.
+    # YOLO mode (owner request 2026-10-13; default ON since 7.6, owner
+    # decision 2026-11-07): the agent NEVER asks for tool confirmation —
+    # run_shell, deletions, everything executes immediately.
     # Deliberately NOT settable by the agent itself (set_settings deny list):
     # a prompt injection must not be able to unlock its own gates.
-    yolo_mode: bool = False
+    # Existing installs migrate once via yolo_defaults_gen below.
+    yolo_mode: bool = True
     # 6.4.2 (owner 2026-10-21): stamped TRUE only when the USER explicitly
     # saves the local provider in the GUI. from_file migrates any provider
     # == "local" WITHOUT this stamp back to the DeepSeek default — that is
@@ -319,7 +321,7 @@ class BrowserConfig:
     adblock_enabled: bool = True
     adblock_disabled_sites: List[str] = field(default_factory=list)
     extension_enabled: bool = False  # Video grabber (browser extension JS injection) — off by default
-    force_dedicated_gpu: bool = True  # pin the built-in browser to the dGPU on hybrid Windows machines (owner decision 2026-11-06)
+    gpu_preference: str = "integrated"  # browser GPU: "integrated" (power-saving, default since 7.6 — owner decision 2026-11-07) | "dedicated" | "auto" (Windows decides)
     grabber_auto_queue: bool = False  # Site Grabber: queue search results without a Download click
     grabber_auto_limit: int = 5  # max videos the Site Grabber auto-queues per search/page
     grabber_last_site: str = ""  # Site Grabber: last site searched (prefill when no tab is open)
@@ -623,6 +625,21 @@ class UpdaterConfig:
     last_check: float = 0.0   # epoch of the last feed probe; 0 = never
 
 
+def _gpu_pref_of(browser: dict) -> str:
+    """Browser GPU preference with legacy migration: the 7.4–7.5 era used a
+    boolean (force_dedicated_gpu: True→"dedicated", False→"auto"); fresh
+    configs get the 7.6 default "integrated" (owner decision 2026-11-07 —
+    the dGPU pin's DXGI detection chain destabilized at least one machine
+    and the integrated path needs no adapter detection at all)."""
+    pref = browser.get("gpu_preference")
+    if pref in ("integrated", "dedicated", "auto"):
+        return pref
+    if "force_dedicated_gpu" in browser:
+        # Saved by a 7.4–7.5 build: preserve that explicit choice.
+        return "dedicated" if browser["force_dedicated_gpu"] else "auto"
+    return "integrated"
+
+
 @dataclass
 class DeeptorrentConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -690,6 +707,13 @@ class DeeptorrentConfig:
     # (2026-11-04) remaps those saved defaults to the new ones (small /
     # light_blue) exactly once; explicit choices always survive.
     ui_defaults_gen: int = 2
+    # Generation stamp for the one-time YOLO-default migration: llm.yolo_mode
+    # shipped False since 5.8 and every config save persists the whole llm
+    # section, so a saved False is almost always "never chose" — a bare
+    # default flip would never reach existing installs. gen 1 → 2
+    # (2026-11-07, owner: YOLO on by default) remaps saved False → True
+    # exactly once; a deliberate later Off persists normally.
+    yolo_defaults_gen: int = 2
 
     @classmethod
     def from_file(cls, path: str) -> "DeeptorrentConfig":
@@ -927,7 +951,7 @@ class DeeptorrentConfig:
                 adblock_enabled=data.get("browser", {}).get("adblock_enabled", True),
                 adblock_disabled_sites=[str(host).lower() for host in data.get("browser", {}).get("adblock_disabled_sites", [])],
                 extension_enabled=data.get("browser", {}).get("extension_enabled", False),
-                force_dedicated_gpu=bool(data.get("browser", {}).get("force_dedicated_gpu", True)),
+                gpu_preference=_gpu_pref_of(data.get("browser", {})),
                 grabber_auto_queue=bool(data.get("browser", {}).get("grabber_auto_queue", False)),
                 grabber_auto_limit=max(1, int(data.get("browser", {}).get("grabber_auto_limit", 5) or 5)),
                 grabber_last_site=str(data.get("browser", {}).get("grabber_last_site", "") or ""),
@@ -1075,6 +1099,9 @@ class DeeptorrentConfig:
             ui_defaults_gen=data.get("ui_defaults_gen", 1)
             if isinstance(data.get("ui_defaults_gen", 1), int)
             else 1,
+            yolo_defaults_gen=data.get("yolo_defaults_gen", 1)
+            if isinstance(data.get("yolo_defaults_gen", 1), int)
+            else 1,
         )
         # One-time UI-default migration (gen 1 → 2, 2026-11-04): 7.0/7.1
         # persisted their defaults into every config.json, so a saved
@@ -1089,6 +1116,15 @@ class DeeptorrentConfig:
                 config.ui_font_size = "small"
             if config.ui_text_theme == "white":
                 config.ui_text_theme = "light_blue"
+        # One-time YOLO-default migration (gen 1 → 2, 2026-11-07): the
+        # shipped default was False since 5.8, so configs saved before the
+        # flip carry False without anyone choosing it — move them to the
+        # new default once. After the first to_file the gen=2 stamp blocks
+        # re-migration, so a genuine later Off persists.
+        if config.yolo_defaults_gen < 2:
+            config.yolo_defaults_gen = 2
+            if config.llm.yolo_mode is False:
+                config.llm.yolo_mode = True
         return config
 
     def sanitized_dict(self) -> Dict[str, Any]:

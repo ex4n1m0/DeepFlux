@@ -571,10 +571,13 @@ class BrowserSettingsDialog(QDialog):
         extension_hint.setWordWrap(True)
         general_layout.addRow("", extension_hint)
 
-        self.browser_gpu_check = QCheckBox(tr('Use the dedicated GPU for the built-in browser (Windows)'))
-        general_layout.addRow("", self.browser_gpu_check)
+        self.browser_gpu_combo = QComboBox()
+        self.browser_gpu_combo.addItem(tr('Integrated GPU (power saving)'), "integrated")
+        self.browser_gpu_combo.addItem(tr('Dedicated GPU (high performance)'), "dedicated")
+        self.browser_gpu_combo.addItem(tr('Let Windows decide'), "auto")
+        general_layout.addRow(tr('Browser graphics preference (Windows):'), self.browser_gpu_combo)
 
-        gpu_hint = QLabel(tr('On hybrid-GPU machines (Intel/AMD graphics + NVIDIA/AMD dedicated card) the browser can flash when Windows switches adapters — especially during video playback. This pins DeepFlux to the dedicated GPU. Applies on the next launch.'))
+        gpu_hint = QLabel(tr('Which GPU Windows should use for DeepFlux. Integrated (default) avoids adapter switching and saves laptop battery; pick Dedicated only if the browser flashes during video playback on a hybrid-GPU machine. Applies on the next launch.'))
         gpu_hint.setObjectName("hint")
         gpu_hint.setWordWrap(True)
         general_layout.addRow("", gpu_hint)
@@ -628,7 +631,8 @@ class BrowserSettingsDialog(QDialog):
         self.browser_search_engine.setCurrentIndex(max(index, 0))
         self.browser_adblock_check.setChecked(self.config.browser.adblock_enabled)
         self.browser_extension_check.setChecked(self.config.browser.extension_enabled)
-        self.browser_gpu_check.setChecked(self.config.browser.force_dedicated_gpu)
+        gpu_idx = self.browser_gpu_combo.findData(self.config.browser.gpu_preference)
+        self.browser_gpu_combo.setCurrentIndex(max(0, gpu_idx))
         self.browser_restore_tabs.setChecked(self.config.browser.restore_tabs)
         self.browser_history_enabled.setChecked(self.config.browser.history_enabled)
         self.browser_history_days.setValue(self.config.browser.history_retention_days)
@@ -650,7 +654,7 @@ class BrowserSettingsDialog(QDialog):
             self.config.browser.search_engine = self.browser_search_engine.currentData() or "google"
             self.config.browser.adblock_enabled = self.browser_adblock_check.isChecked()
             self.config.browser.extension_enabled = self.browser_extension_check.isChecked()
-            self.config.browser.force_dedicated_gpu = self.browser_gpu_check.isChecked()
+            self.config.browser.gpu_preference = self.browser_gpu_combo.currentData()
             self.config.browser.restore_tabs = self.browser_restore_tabs.isChecked()
         if self._page in ("all", "privacy"):
             self.config.browser.history_enabled = self.browser_history_enabled.isChecked()

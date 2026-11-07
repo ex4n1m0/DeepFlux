@@ -549,6 +549,22 @@
   the apply until the extra windows are closed.
 
 ## Conventions
+
+- MENU BAR + NAVIGATION (7.6 restructure, owner decision 2026-11-07):
+  the v5 left activity rail is GONE (gui/activity_rail.py deleted). Tab
+  navigation = small icon-only checkable QActions LEFT of File
+  (`_TAB_ICONS` map, `_sync_tab_icon_actions` keeps checked = current
+  tab, `_set_download_badge` puts the active-transfer count on the ⬇
+  icon's text). Menu order: icons · File · Settings · API · Downloads ·
+  Browser · Play (Play gated by _PLAY_TAB_SUPPORTED) · Help. The
+  Settings menu keeps ONLY app-level items (Hub, Language, Font Size,
+  Text Color); the feature zones moved to their own top-level menus
+  (API = AI & API Keys pages; Downloads = Jackett + download pages +
+  Sources + RSS; Browser = browser pages + History + DevTools; Play =
+  IPTV pages). The browser left-edge RAIL auto-hide died with the rail —
+  the hover poll is CHROME-ONLY now (`_rail_*` symbols all removed);
+  pure fullscreen (`set_video_pure_chrome`) snapshots only the agent
+  panel. Do not re-add a left rail or rail-adjacent pollers.
 - FAULTHANDLER CRASH LOG (main.py::_enable_crash_log, added 7.4 2026-11-06;
   fixed 2026-11-07 after it KILLED the app 11x that night): on Windows
   `faulthandler.enable()` registers a VECTORED exception handler that fires
@@ -563,10 +579,40 @@
   no-tstate foreign threads via a ctypes RaiseException harness — benign
   mpv exceptions just leave a 2-line header in
   `%LOCALAPPDATA%\DeepFlux\faulthandler.log`). Pinned by
-  tests/test_crash_log.py. Diagnosis tools that earned their keep:
+  tests/test_crash_log.py — which since 2026-11-07 pins EVERY repo
+  `faulthandler.enable()` site (app code AND packaging): the same bug was
+  found still live in `packaging/verify_boot.py` (bare enable → the boot
+  smoke was killing ITSELF on Windows; one WER dump died inside
+  Py_DumpTraceback itself). Diagnosis tools that earned their keep:
   `%LOCALAPPDATA%\CrashDumps` (Win11 default WER dumps) + winget
   Microsoft.WinDbg (cdbX64.exe `-z <dmp> -c ".ecxr; k"`) + the
   faulthandler.log itself.
+- 2026-11-07 STABILITY INVESTIGATION (owner: "app became crash-prone after
+  the 7.4 AI review" — verdict: NOT 7.4's code): a release-tree bisect
+  (pre-7.4 / 7.4 / 7.5, boot smoke 5x + a 4-file pytest combo 3x per tree)
+  came out FLAT — the combo crashes identically on all three trees and
+  WER ReportArchive shows this machine's python3.11.exe native crashes go
+  back to 2026-09-13, two months before 7.4. The real story: (a) 7.4's
+  faulthandler genuinely killed the app for one night (fixed in 7.5, and
+  its verify_boot twin fixed 2026-11-07, see above); (b) the same logger
+  made pre-existing crash noise VISIBLE (9 of 15 faulthandler.log entries
+  are benign mpv 0xe24c4a02 headers); (c) the residual family — AVs
+  detonating in innocent pure-Python frames (EPG ElementTree, artwork
+  os.stat, agent json.dumps, urllib3 reads) in giant single processes —
+  is an environment-level heap/layout artifact (Store-Python 3.11 + the
+  native stack; bytecode-shape sensitive). Real app bugs fixed on the way:
+  mpv observers must NEVER re-enter libmpv natively from inside a
+  callback (`self._mpv.pause` read in `_cache_stall` raced teardown —
+  track state in a Python attr, see iptv/player.py), and shellapi ctypes
+  structs need `_pack_ = 1` (SHFILEOPSTRUCTW in commander_tab read pFrom
+  from padding bytes — latent since 3.4.1). `run_gui`'s gc.freeze() now
+  collect()s first (frozen cycles leak for the session). Do NOT re-open
+  the "which release broke stability" hunt — the bisect data is in
+  /tmp/bisect_* logs and the memory file. Open follow-up (owner
+  decision): try a python.org (non-Store) Python 3.11 + clean venv to
+  test the environmental-family theory; prime in-app suspect for deeper
+  audit: `_rasterize_svg`'s off-GUI-thread QtSvg/QFont work
+  (iptv/artwork.py, audit confidence 25%).
 - 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,
   ~30 fixed, all with file-level rationale comments + regression tests).
   Durable rules that came out of it — do not regress:
@@ -803,7 +849,7 @@
   sources list when stale (>24h, `sources.last_jackett_fetch`) or EMPTY.
   `maybe_auto_sync(force=True)` skips the daily gate — wired to Settings →
   Jackett Indexer Settings…: OK forces an immediate sync; a successful Test
-  Connection (button lives in Settings → AI & API Keys, Search Keys page,
+  Connection (button lives in API menu, Search Keys page,
   under the Jackett key) fetches
   with the TYPED (unsaved) key + saved URL/path via a probe config
   (`APIKeysDialog._jkt_fetch_worker`) and merges into the live config;
@@ -908,27 +954,28 @@
   0 VRAM; and COM vtable access needs a DOUBLE dereference: object →
   lpVtbl → slots). DedicatedVideoMemory is a SIZE_T (no WMI AdapterRAM
   4 GB wrap) and matched Vulkan's 16003 MiB exactly on the 5080 Mobile.
-- Hardware HUD (6.1): `gui/hardware_hud.py::HardwareHud` — the
-  always-visible strip at the top of the Agent page (CPU/RAM/GPU/VRAM
-  meters, custom-painted so global QSS can't restyle them, warn ≥75% /
-  danger ≥90% coloring) + the local-AI status chip (🧠 model · ● running /
-  ◐ loading / ○ down / ☁ Cloud AI) that opens Settings → AI & API Keys →
-  AI Agent Key… on
-  click. Sampling = ONE persistent daemon thread (2 s cadence) that
-  sleeps while the Agent tab isn't active (`set_active` from
-  `_on_main_tab_changed`, which must getattr `_agents_tab` — it fires
-  during `_build_ui`'s insertTab calls before that attr exists) and stays
-  dormant until MainWindow finishes building the UI (first tick spawns
-  subprocesses that must not race window construction). Server health is
-  probed every 3rd tick with a 0.8 s timeout (never stacks). Qt-free
-  numbers live in `infra/hardware_monitor.py`: GetSystemTimes deltas
-  (CPU), GlobalMemoryStatusEx (RAM), nvidia-smi CSV (GPU/VRAM live —
-  ~80 ms, driver-shipped at System32, 60 s failure backoff so a missing
-  binary never spawns a doomed process per poll; NO psutil — it's not in
-  requirements.txt so frozen builds can't rely on it). Non-NVIDIA GPUs
-  show name+VRAM from the static chain, no live utilization. Tests:
-  `tests/test_hardware_hud.py` (parsers, backoff, widget states, chip
-  states, open-keys signal).
+- Hardware HUD (6.1) — **REMOVED in 7.6 (owner decision 2026-11-07)**:
+  `gui/hardware_hud.py` + `tests/test_hardware_hud.py` are gone. The HUD's
+  2 s sampler (GetSystemTimes + GlobalMemoryStatusEx ctypes + nvidia-smi
+  subprocess + llama health requests) was WORKER-BISECT PROVEN to be the
+  boot-crash trigger on the dev machine: with ALL background workers
+  quiesced the full GUI (incl. a manual agent chat) ran indefinitely;
+  re-enabling ONLY the HUD killed the process with an AV in ~30 s —
+  and after the removal the fully normal app (greeting + all workers)
+  boots and runs clean where 7 consecutive full launches had died.
+  Do NOT re-add an always-on polling strip to this machine's build; if a
+  successor is ever wanted, sample on demand (button/dropdown) instead of
+  a cadence thread. `infra/hardware_monitor.py` STAYS — the local-AI
+  model picker's GPU detection (`dxgi_adapters` chain) uses it; its
+  ctypes declarations were re-audited clean (FILETIME/MEMORYSTATUSEX
+  layouts correct — the corruption mechanism on this machine was never
+  pinned to a specific line; the sampler's external interactions
+  (nvidia-smi spawn cadence / injected hooks) remain the prime suspect
+  given SVPManager.exe + LightingService.exe crash independently too).
+  The 6.1-era doc follows for history: the strip was the always-visible
+  top of the Agent page (CPU/RAM/GPU/VRAM meters + the local-AI status
+  chip opening API menu), sampling = ONE daemon thread
+  (2 s) gated by `set_active` from `_on_main_tab_changed`.
 - API Keys → AI page (6.1 UX rework): per-model FIT BADGES
   (`gpu_full`=GPU green / `gpu_partial`=GPU+CPU blue / `ram_only`=CPU
   grey / None=won't fit red) + sizes in the status, ★ marks the
@@ -1048,7 +1095,7 @@
   `~/.deeptorrent/models/<id>/` (shared home with the whisper model).
   MEASURED: 2.52 GiB in 19s (~140 MB/s avg). Cancel keeps the .part.
 - Custom Hugging Face models (6.3 feature, GUI-ONLY — never an agent tool):
-  Settings → AI & API Keys → AI Agent Key… has a "Custom model from Hugging Face" section —
+  API menu → AI Agent Key… has a "Custom model from Hugging Face" section —
   `local_model.hf_search` (GET /api/models, filter=gguf, downloads-sorted,
   LIVE-VERIFIED field names) → double-click a repo →
   `local_model.hf_gguf_files` (GET /api/models/<repo>/tree/main; the LFS
@@ -1086,7 +1133,7 @@
   Repl.shutdown. Variant choice: vulkan when GPU detected (falls back to
   the cpu build on spawn failure). GUI: `_local_model_worker` startup
   thread + a `local_model` dim event (HTML-escaped like flaresolverr's);
-  Settings → AI & API Keys → AI Agent Key… has the whole ladder with hardware line,
+  API menu → AI Agent Key… has the whole ladder with hardware line,
   recommendation, Download/Remove/Test.
 - Packaging: installer.iss [Files] wildcards `llama-*-bin-win-cpu-x64.zip`
   etc. into `_internal\llama` (skipifsourcedoesntexist); app.spec globs the
@@ -1109,7 +1156,7 @@
   on OpenRouter); custom endpoints omit it unless explicitly enabled. Per-call
   `model=` override: summaries use `config.llm.fast_model` + effort "low";
   planning uses `model` + `reasoning_effort` from config. The Provider combo,
-  Base URL and custom model live in Settings → AI & API Keys; keyless custom endpoints
+  Base URL and custom model live in API menu; keyless custom endpoints
   are supported. DeepSeek/OpenRouter models remain preset-locked. There is NO
   separate AI Settings dialog:
   stream / memory / agent-debug are assumed always-on — `from_file` forces
@@ -1152,18 +1199,54 @@
   watchdog auto-heal setting. The enabled watchdog is started by GUI/CLI, records
   first observations without false stalls, has per-torrent cooldowns, and can
   mutate only through its torrent-recovery allowlist.
-- YOLO mode (owner request 2026-10-13, shipped 5.8): `config.llm.yolo_mode`
+- YOLO mode (owner request 2026-10-13, shipped 5.8; DEFAULT ON since 7.6,
+  owner decision 2026-11-07): `config.llm.yolo_mode`
   disables ALL tool confirmations — `_queue_confirmation` returns None, so
   run_shell/deletions/settings writes execute immediately. SECURITY RULE:
   `("llm", "yolo_mode")` is in `_SETTINGS_DENY_PATHS` — the agent can NEVER
   set it via set_settings (a prompt injection must not unlock its own gates);
   only the user's GUI toggle (🔓 YOLO button by the agent input, warning
-  dialog on enable, `MainWindow._on_yolo_toggle`) can. The system prompt
+  dialog on manual enable, `MainWindow._on_yolo_toggle`) can. DEFAULT
+  MIGRATION: the old default (False, shipped since 5.8) was persisted into
+  every config.json by any save, so `from_file` remaps saved False → True
+  ONCE via the `yolo_defaults_gen` 1→2 stamp (same pattern as
+  ui_defaults_gen); a deliberate later Off persists (gen=2 blocks
+  re-migration). The system prompt
   gains an UNATTENDED MODE paragraph when on (otherwise models narrate
   waiting for approvals that never come). The watchdog auto-heal allowlist
   is NOT affected — yolo changes chat confirmations only. Tests:
-  tests/test_yolo_mode.py (immediate execution, default-off unchanged,
-  deny, mid-conversation toggle, prompt paragraph).
+  tests/test_yolo_mode.py (immediate execution, default-on, migration-once,
+  deny, mid-conversation toggle, prompt paragraph); tests/test_loop.py
+  confirmation-path tests set yolo_mode=False explicitly.
+- Browser tab strip AUTO-FITS (owner report 2026-11-07: many tabs ballooned
+  the window to a huge minimum): tab chips use `_ElideLabel` (zero-width
+  minimumSizeHint, paintEvent draws elidedText; a plain QLabel's minimum =
+  its FULL text width is the bug), each chip is capped at
+  `_BROWSER_TAB_MAX_WIDTH` (220), and `_tab_strip_container` is a
+  `ResponsiveRow(min_width=240)` — no tab count can ever grow the window
+  minimum again; tabs shrink/elide to share the strip (full title in the
+  tooltip). Pinned by tests/test_browser_chrome.py
+  (test_tab_strip_never_grows_the_window_minimum,
+  test_elide_label_elides_instead_of_demanding_width).
+- BOOKMARKS POPUP right-click delete (2026-11-07, shipped 7.6): the popup
+  and every folder submenu are `_BookmarksPopup` (QMenu subclass) — QMenu
+  swallows right-clicks on plain actions, so the subclass maps them by
+  POSITION: top-level bookmark actions via `bookmark_urls`, folder submenu
+  TITLES via `folder_paths` (full path, so nested "News/Tech" deletes
+  exactly its subtree), folder bookmark ROWS via CustomContextMenu on the
+  row widget. Dispatch climbs the parent chain to MainWindow (a submenu's
+  QObject parent is its parent MENU, not the window — pinned by
+  test_nested_submenu_right_click_reaches_main_window). Both context menus
+  use NON-BLOCKING popup() (a nested exec() inside the menu's own
+  mouse-press dispatch wedges its event loop — the offscreen tests hung
+  on exactly that) and NEVER close the bookmarks popup: picking Remove
+  rebuilds the OPEN menu in place (QMenu handles dynamic action changes
+  while shown; owner wants the window to stay, not vanish). The row ✕
+  buttons still close-then-remove (deliberate "done" signal).
+- Chrome hide grace is `_CHROME_HIDE_GRACE_MS` (2000 since 7.6, owner
+  2026-11-07: the 400ms default made the banner vanish while the user was
+  still aiming around it); re-entering the banner zone cancels the pending
+  hide. Pinned by test_chrome_hide_grace_is_two_seconds.
 - `search_indexers` has `deep` param: default quick pass = private tier +
   top-1 public source; zero hits auto-escalate to the full sweep. The GUI
   never passes `deep=True` directly — only the agent does; the Agent tab's
@@ -1822,7 +1905,7 @@
   short-lived link → GET). 406 = daily quota (suggest account creds);
   optional username/password login → Bearer JWT raises it. Keys live in
   `config.iptv.opensubtitles_*` (env `OPENSUBTITLES_API_KEY` fills an empty
-  key), entered in Settings → AI & API Keys → OpenSubtitles Key…. Player CC menu →
+  key), entered in API menu → OpenSubtitles Key…. Player CC menu →
   "Find subtitles online…"
   opens `_SubtitleSearchDialog`; downloaded .srt lands next to the video
   (`stem.lang.srt`, deduped) or `~/.deeptorrent/subtitles/` for streams, and

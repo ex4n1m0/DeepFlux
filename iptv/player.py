@@ -268,6 +268,12 @@ class MpvBackend(PlayerBackend):
         self._created = False
         self._want_interpolation = False  # user setting; gated by smooth mode
         self._smooth = True               # False for live streams
+        # Pause state as seen by the "pause" observer. Observers run on
+        # mpv's own event thread — re-entering libmpv from inside one
+        # (reading self._mpv.pause, a native mpv_get_property) races
+        # backend teardown and has produced a real AV (faulthandler.log
+        # 2026-11: _cache_stall -> _get_property). Read this instead.
+        self._paused_state = False
 
     def _creation_kwargs(self, wid: str, vo: str) -> dict:
         """mpv.MPV constructor kwargs.
@@ -321,6 +327,7 @@ class MpvBackend(PlayerBackend):
 
             @self._mpv.property_observer("pause")
             def _pause(_name, value):
+                self._paused_state = bool(value)
                 if self.on_state:
                     self.on_state("paused" if value else "playing")
 
@@ -328,11 +335,13 @@ class MpvBackend(PlayerBackend):
             def _cache_stall(_name, value):
                 # Cache starvation is mid-playback buffering, not a user
                 # pause. On refill, only report "playing" when the user
-                # hasn't paused — the pause observer owns that state.
+                # hasn't paused — the pause observer owns that state (in
+                # the Python-side _paused_state; NEVER re-read the native
+                # mpv property from inside this observer — see __init__).
                 if self.on_state:
                     if value:
                         self.on_state("buffering")
-                    elif not self._mpv.pause:
+                    elif not self._paused_state:
                         self.on_state("playing")
 
             @self._mpv.property_observer("eof-reached")

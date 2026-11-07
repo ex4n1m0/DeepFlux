@@ -1,9 +1,11 @@
-"""v5 UI surface: activity rail, agent quick-ask panel, taskbar progress.
+"""v5/v7.6 UI surface: menu-bar tab icons, agent quick-ask panel, taskbar
+progress.
 
-All offscreen; no MainWindow needed for the rail/panel (they take any parent),
-and TaskbarProgress must be an inert no-op wherever COM is unavailable. Qt is
-bootstrapped the same way the other GUI tests do it (a module-scoped
-QApplication — no pytest-qt in this repo).
+The v5 left activity rail was REMOVED in 7.6 (owner decision 2026-11-07) —
+its tab icons live in the menu bar left of File. All offscreen; the icon
+helpers are MainWindow methods bound onto a bare host (the real
+MainWindow is too heavy to build here). Qt is bootstrapped the same way
+the other GUI tests do it (a module-scoped QApplication — no pytest-qt).
 """
 import os
 
@@ -14,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QTabWidget, QWidget  # noqa: E402
 
-from gui.activity_rail import ActivityRail  # noqa: E402
+from gui.main_window import MainWindow, _TAB_ICONS  # noqa: E402
 from gui.agent_panel import AgentPanel  # noqa: E402
 from gui.win_taskbar import TaskbarProgress  # noqa: E402
 
@@ -36,53 +38,71 @@ def _tabs(parent) -> QTabWidget:
     return tabs
 
 
-def test_rail_builds_one_button_per_tab(qapp):
-    parent = QWidget()
-    tabs = _tabs(parent)
-    rail = ActivityRail(tabs, parent)
-    assert list(rail._buttons) == ["Agent", "Browse", "Download", "Play", "Command", "Room"]
+def _icon_host(qapp):
+    """Bare host carrying the two v7.6 icon helpers (bound from the real
+    MainWindow) + a QTabWidget shaped like production."""
+    import types
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QToolButton
+    host = QWidget()
+    host.main_tabs = _tabs(host)
+    host._tab_icon_actions = []
+    host._download_tab_action = None
+    for i in range(host.main_tabs.count()):
+        act = QToolButton(host)
+        act.setCheckable(True)
+        act.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        host._tab_icon_actions.append(act)
+        if host.main_tabs.tabText(i) == "Download":
+            host._download_tab_action = act
+    for name in ("_sync_tab_icon_actions", "_set_download_badge"):
+        setattr(host, name, types.MethodType(getattr(MainWindow, name), host))
+    host._sync_tab_icon_actions()
+    return host
 
 
-def test_rail_syncs_active_with_tabs(qapp):
-    parent = QWidget()
-    tabs = _tabs(parent)
-    rail = ActivityRail(tabs, parent)
-    tabs.setCurrentIndex(3)
-    assert rail._buttons["Play"].property("active") is True
-    assert rail._buttons["Agent"].property("active") is False
-    rail.set_active(0)
-    assert rail._buttons["Agent"].property("active") is True
-    assert rail._buttons["Play"].property("active") is False
+def test_tab_icons_map_covers_all_pages(qapp):
+    assert set(_TAB_ICONS) == {"Agent", "Browse", "Download", "Play",
+                               "Command", "Room"}
 
 
-def test_rail_page_requested_signal(qapp):
-    parent = QWidget()
-    rail = ActivityRail(_tabs(parent), parent)
-    received = []
-    rail.page_requested.connect(received.append)
-    rail._buttons["Download"].clicked.emit()
-    rail._settings_btn.clicked.emit()  # settings pin, not a page
-    assert received == [2]
+def test_tab_icon_sync_follows_current_tab(qapp):
+    host = _icon_host(qapp)
+    checked = [a.isChecked() for a in host._tab_icon_actions]
+    assert checked[0] is True and sum(checked) == 1
+    host.main_tabs.setCurrentIndex(3)  # Play
+    host._sync_tab_icon_actions()
+    checked = [a.isChecked() for a in host._tab_icon_actions]
+    assert checked[3] is True and sum(checked) == 1
 
 
-def test_rail_settings_pin_signal(qapp):
-    parent = QWidget()
-    rail = ActivityRail(_tabs(parent), parent)
-    received = []
-    rail.settings_requested.connect(lambda: received.append(True))
-    rail._settings_btn.clicked.emit()
-    assert received == [True]
+def test_tab_icon_sync_tolerates_empty_host(qapp):
+    # Fires during _build_ui's insertTab calls before the icons exist.
+    import types
+    bare = QWidget()
+    bare._sync_tab_icon_actions = types.MethodType(
+        MainWindow._sync_tab_icon_actions, bare)
+    bare._sync_tab_icon_actions()  # must not raise
 
 
-def test_rail_badge_show_hide(qapp):
-    parent = QWidget()
-    rail = ActivityRail(_tabs(parent), parent)
-    rail.set_badge("Download", "3")
-    assert rail._buttons["Download"]._badge.text() == "3"
-    rail.set_badge("Download", "")
-    assert rail._buttons["Download"]._badge.isHidden()
-    # Unknown page title is a no-op, not a crash.
-    rail.set_badge("Nope", "9")
+def test_download_badge_sets_and_clears(qapp):
+    from PySide6.QtCore import Qt
+    host = _icon_host(qapp)
+    host._set_download_badge(3)
+    assert host._download_tab_action.text() == "3"
+    assert (host._download_tab_action.toolButtonStyle()
+            == Qt.ToolButtonTextBesideIcon)
+    host._set_download_badge(0)
+    assert host._download_tab_action.text() == ""
+    assert (host._download_tab_action.toolButtonStyle()
+            == Qt.ToolButtonIconOnly)
+
+
+def test_tab_icon_pixmap_paints_all_kinds(qapp):
+    from gui.main_window import _tab_icon_pixmap
+    for kind in list(_TAB_ICONS.values()) + ["generic", "unknown-page"]:
+        pm = _tab_icon_pixmap(kind)
+        assert not pm.isNull() and pm.width() == 32  # 16px @ 2x DPR
 
 
 def test_agent_panel_submit_signal(qapp):

@@ -59,10 +59,10 @@ organize files, all with your confirmation for sensitive actions.</p>
 <ol>
   <li><b>AI key (optional):</b> the agent works out of the box on a built-in
       shared DeepSeek key — no account needed. To run it on your own key
-      instead, open Settings → AI &amp; API Keys: <i>AI Agent Key…</i> (pick the
+      instead, open API →: <i>AI Agent Key…</i> (pick the
       DeepSeek endpoint, or DeepSeek via OpenRouter), adjust the base URL if
       needed, and paste your key. Your own key is independent of the shared one.</li>
-  <li><b>Set up Jackett (optional but recommended):</b> Settings → Jackett Indexer Settings….
+  <li><b>Set up Jackett (optional but recommended):</b> Downloads → Jackett Indexer Settings….
       Jackett connects to torrent indexers and gives the agent structured search results.
       DeepFlux starts it automatically when it's not running. If you kept the
       <i>“Set up Jackett torrent search now”</i> box checked at the end of the
@@ -116,28 +116,30 @@ equivalent) and DeepFlux finds it on PATH. To make DeepFlux the default for
   <tr><th>Tab</th><th>What it does</th><th>Agent control</th></tr>
   <tr><td><b>Browse</b></td><td>Full Chromium browser (HTML5 fullscreen video works — ESC exits).
       Downloads route to the download manager with a notification; <code>.torrent</code> links add automatically.</td><td>Navigate, tabs, read pages, click, fill forms, bookmarks</td></tr>
-  <tr><td><b>Agent</b></td><td>AI chat with voice input (🎤). The agent greets you automatically on every start. <code>Enter</code> = agent search; <code>Ctrl+Enter</code> = quick web search.</td><td>—</td></tr>
+  <tr><td><b>Agent</b></td><td>AI chat with voice input (🎤). <code>Enter</code> = agent search; <code>Ctrl+Enter</code> = quick web search.</td><td>—</td></tr>
   <tr><td><b>Download</b></td><td>Torrents on top, download manager below. Auto-focused whenever a transfer is added.</td><td>Full queue control: list, pause, resume, retry, cancel</td></tr>
   <tr><td><b>Play</b></td><td>IPTV and media player — live TV, movies, series, and your own local media folders.</td><td>Search playlist, play, pause, stop, volume, EPG</td></tr>
   <tr><td><b>Command</b></td><td>Dual-pane file manager (Double Commander style).</td><td>Browse, copy, move, batch rename, delete — folder tabs, favorites, breadcrumbs, wildcard selection</td></tr>
   <tr><td><b>Room</b></td><td>DeepFlux Room — the embedded OnlyHumans community chat (every word is a room; opens on the “deepflux” room).</td><td>—</td></tr>
 </table>
 
-<p>Switch pages with <code>Ctrl+1</code>–<code>Ctrl+6</code> or by clicking the
-<b>activity rail</b> on the left edge: <b>Agent</b>, <b>Browse</b>, <b>Download</b>,
-<b>Play</b>, <b>Command</b> and <b>Room</b>. The rail always shows where you are,
-carries the active-download count as a badge, and pins <b>Settings</b> at the
-bottom — <code>Ctrl+,</code> opens the searchable <b>Settings Hub</b> (type
-"jackett" or "api key" to find any setting). <b>Ctrl+K</b> opens the <b>agent
+<p>Switch pages with <code>Ctrl+1</code>–<code>Ctrl+6</code> or by clicking
+the small <b>tab icons at the left of the menu bar</b>: <b>🧠 Agent</b>,
+<b>🌐 Browse</b>, <b>⬇ Download</b>, <b>▶ Play</b>, <b>🗂 Command</b> and
+<b>💬 Room</b>. The active page's icon stays highlighted and the Download
+icon carries the active-transfer count. <code>Ctrl+,</code> opens the
+searchable <b>Settings Hub</b> (type "jackett" or "api key" to find any
+setting). <b>Ctrl+K</b> opens the <b>agent
 quick-ask panel</b> — ask anything from any page; the conversation is shared with
 the Agent page. The status strip at the bottom shows live activity chips
 (downloads, agent state) and the 🔔 bell keeps a log of recent events
 (completions, syncs, updates). On the Download page, view chips
 (<b>Both / Torrents / Downloads</b>) focus either list at full width; on the
 Play page, section chips jump straight to Live TV / Movies / Series /
-Favorites / Recent. All commands live under the three real menus:
-<b>File</b> (actions), <b>Settings</b> (hub + labeled zones) and
-<b>Help</b>.</p>
+Favorites / Recent. Commands live under the menu bar:
+<b>File</b> (actions), <b>Settings</b> (app settings: hub, language, font
+size, text color), <b>API</b>, <b>Downloads</b>, <b>Browser</b>,
+<b>Play</b> (feature settings) and <b>Help</b>.</p>
 
 <p><b>Text too big or too small?</b> Settings → <b>Font Size</b> picks
 Micro / Small / Medium / Large for the whole interface (menus, lists,
@@ -151,11 +153,11 @@ always keep their own colors, and like Font Size it applies the next time
 DeepFlux starts.</p>
 
 <p><b>Browsing full-screen:</b> while the Browse page is active, the site
-gets the whole window — the left rail and the toolbar/tab strip hide and
-push the page instead of covering it. The address bar stays available in
+gets the whole window — the toolbar/tab strip hides and pushes the page
+instead of covering it. The address bar stays available in
 the menu row next to <b>Help</b>; move the mouse to the very top edge to
-bring the toolbar and tab strip back, or to the left edge to bring the
-rail back; they hide again shortly after the mouse leaves. Load
+bring the toolbar and tab strip back; it hides again shortly after the
+mouse leaves. Load
 progress, the find bar (<code>Ctrl+F</code>) and <code>Ctrl+L</code> work
 as usual. Right-clicking a link puts <b>Open link in new tab</b> on the
 first row.</p>
@@ -211,7 +213,7 @@ are set) and merges the results — a Perplexity key adds a synthesized answer.<
 <p>Out of the box the agent runs on a built-in DeepSeek key that ships with
 the setup file — no account and no setup needed. The agent can ALSO run on a
 local model instead of a cloud API — nothing leaves your PC. Local AI is
-optional: enable it later in Settings → AI &amp; API Keys → <i>AI Agent Key…</i>
+optional: enable it later in API → → <i>AI Agent Key…</i>
 (or tick the optional box
 at the end of setup), where DeepFlux detects your GPU and RAM, picks the
 matching model from a pinned Hugging Face ladder and downloads it once
@@ -221,7 +223,7 @@ answers without cloud-style refusals.</p>
   <li><b>Where things live:</b> models in <code>~/.deeptorrent/models/</code>,
     the llama.cpp engine in <code>~/.deeptorrent/llama/</code>. The server binds
     only to your own machine (127.0.0.1:8199) and starts with the app.</li>
-  <li><b>Manage models:</b> Settings → AI &amp; API Keys → <i>AI Agent Key…</i> lists every model with its
+  <li><b>Manage models:</b> API → → <i>AI Agent Key…</i> lists every model with its
     size, a fit badge and status, your detected hardware, the recommended pick
     (★), and Use / Download / Remove buttons. The badge says how THIS machine
     would run the model — <b>GPU</b> = fully in video memory (fastest),
@@ -240,13 +242,6 @@ answers without cloud-style refusals.</p>
     file from a repository and downloads it into the same list — then
     <b>Use</b> makes it the agent's model. Downloads are verified against
     Hugging Face's own checksums and resume if interrupted.</li>
-  <li><b>Live hardware strip:</b> the top of the Agent page always shows
-    CPU, RAM, GPU and VRAM utilization. Watch it while a local model runs —
-    a GPU pegged at 100% with VRAM nearly full means a smaller model will
-    answer faster. The chip on the right shows which AI is answering
-    (cloud, or the local model with a state dot) and opens the model
-    manager when clicked. Live GPU numbers need the NVIDIA driver; on other
-    GPUs the name and VRAM still show.</li>
   <li><b>Switch anytime:</b> the same dialog's "API endpoint" combo moves
     between Local AI and the cloud providers — a saved cloud key is kept and
     works the moment you switch back.</li>
@@ -274,14 +269,14 @@ browser, and every app-setup change (adding sources, writing keys, changing
 settings). Read-only actions (searching, listing, status checks) run immediately.</p>
 <p><b>YOLO mode</b> (the 🔓 <i>YOLO</i> button next to the agent input) turns ALL
 confirmations off: the agent runs shell commands, downloads, deletions and settings
-changes immediately, without asking. It is off by default, and the agent itself can
-never switch it on — only you can, from that button. With it on, a misunderstood
+changes immediately, without asking. It is on by default, and the agent itself can
+never change it — only you can, from that button. With it on, a misunderstood
 request can act on your machine unattended; the agent still narrates destructive
 actions (exact commands and paths) as it performs them.</p>
 
 <div class="note">
 <b>Tip:</b> Jackett gives much better results than web searches. Install it and add
-your indexers in Settings → Torrent Search Sources… → Fetch from Jackett.
+your indexers in Downloads → Torrent Search Sources… → Fetch from Jackett.
 </div>
 
 <h2>Downloading</h2>
@@ -554,7 +549,7 @@ exception — it lives on the browser toolbar's Bookmarks button.</p>
       endpoint, base URL and key, Jackett, Brave, Perplexity, TMDb,
       OpenSubtitles.</td></tr>
   <tr><td><b>Browser Settings</b></td><td>Homepage, privacy/data, History, Developer Tools.</td></tr>
-  <tr><td><b>Bookmarks button</b> (browser toolbar, left of Private)</td><td><b>Import Bookmarks…</b> / <b>Export Bookmarks…</b> and your whole bookmark folder tree in one popup — bookmarks live here, not in the menus.</td></tr>
+  <tr><td><b>Bookmarks button</b> (browser toolbar, left of Private)</td><td><b>Import Bookmarks…</b> / <b>Export Bookmarks…</b> and your whole bookmark folder tree in one popup. <b>Right-click</b> any bookmark or folder to remove it — deleting a folder takes its bookmarks with it, and the popup stays open and updates on the spot.</td></tr>
   <tr><td><b>Downloads &amp; Sources</b></td><td><b>Jackett Indexer Settings</b> (URL; Test Connection syncs your indexer list), the settings pages (Torrent Downloads, Torrent Queue, Download Manager — save paths, bandwidth limits, connections), <b>Torrent Search Sources</b> (which sites the agent searches), and <b>RSS Feed Subscriptions</b> (subscriptions — or just ask the agent).</td></tr>
   <tr><td><b>Play</b></td><td>Four small pages: Playlist Sources, Metadata &amp; Cache (artwork cache, EPG), Subtitles &amp; Languages (preferred audio/subtitle language), and Playback (backend, decoding, buffer, smooth motion, SVP interpolation, throttling).</td></tr>
 </table>
@@ -608,7 +603,7 @@ internet by default:</p>
   online" count. It carries only a random install id (a file on your disk, not
   tied to you), the app version and your OS name — nothing else: no username,
   no machine name, no file names, no browsing or download activity. Turn it
-  off in Settings → Downloads → Download Manager Settings.</li>
+  off in Downloads → Download Manager Settings.</li>
   <li><b>Update checks</b> — a daily check for an outdated YouTube downloader
   (warn-only). Same settings page.</li>
   <li><b>The Room</b> — while joined, the room keeps a connection to the
@@ -644,7 +639,7 @@ the network when you ask it to.</p>
 <h2>Keeping DeepFlux Updated</h2>
 
 <p>DeepFlux checks for new versions automatically (once a day, Windows
-installs only — the checkbox lives in Settings → Download Manager Settings…). When a
+installs only — the checkbox lives in Downloads → Download Manager Settings…). When a
 new version is out, a small dialog offers <b>Update now</b>, <b>Remind me
 later</b> and <b>Skip this version</b>. You can also check any time via
 <b>Help → Check for Updates…</b></p>
@@ -658,7 +653,7 @@ click. Your sources, API keys and settings are carried over (the update
 reinstalls in place and keeps your config), and active downloads pause and
 resume automatically. The update log is at
 <code>~/.deeptorrent/logs/update.log</code> if you ever need to check what
-happened. The automatic check can be turned off in Settings → Download
+happened. The automatic check can be turned off in Downloads → Download
 Manager Settings….</p>
 
 <h2>Troubleshooting</h2>
@@ -673,22 +668,22 @@ once enough people have installed the release.
 </div>
 
 <div class="warn">
-<b>Agent not responding:</b> Check your API key in Settings → AI &amp; API Keys. The
+<b>Agent not responding:</b> Check your API key in API →. The
 built-in shared AI key is rotated occasionally; a current install picks the new
 key up automatically once it updates — so if the agent stops answering, update to
 the latest version (Help → Check for Updates…), or set your own key to be
 independent of the shared one. (The macOS build ships without a built-in key —
-add your own under Settings → AI &amp; API Keys.)
+add your own under API →.)
 </div>
 
 <div class="warn">
 <b>No search results:</b> Make sure Jackett is running and your sources are enabled
-(Settings → Torrent Search Sources…). Without Jackett, the agent falls back to slower web searches.
+(Downloads → Torrent Search Sources…). Without Jackett, the agent falls back to slower web searches.
 Indexers that keep failing are put in a cooldown automatically (skipped for a while,
 then re-tried), and sources that no longer exist in Jackett are skipped for Jackett
 searches automatically — check the Agent tab's dim event lines to see which and why.
 If many indexers report Cloudflare challenges, install FlareSolverr and set its URL in
-Settings → Jackett Indexer Settings….
+Downloads → Jackett Indexer Settings….
 To set everything up in one go, run DeepFlux with <code>--setup-jackett</code>
 (see Getting Started) or re-run the DeepFlux installer and keep the
 <i>“Set up Jackett torrent search now”</i> box checked.

@@ -78,3 +78,7 @@ packaging/flaresolverr/flaresolverr/
 # Bundled llama.cpp runtime zips (~52 MB, fetched+hashed by packaging/fetch_llama.py;
 # PINNED.json and the MIT notice ARE tracked so builds stay reviewable)
 packaging/llama/*.zip
+
+# Session tool dirs (video plugins / harness artifacts)
+.v2c/
+.video_agent/
