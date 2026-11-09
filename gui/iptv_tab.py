@@ -81,7 +81,9 @@ from iptv.models import (
     Series,
 )
 from iptv.player import PlayerBackend, create_backend
-from gui.multiview import MultiViewGrid, build_playback_headers
+from gui.multiview import (
+    DEFAULT_LAYOUT, MULTIVIEW_LAYOUTS, MultiViewGrid, build_playback_headers,
+)
 from dlmgr.ffmpeg import StreamRecorder, find_ffmpeg, is_network_stream_url
 from gui.responsive import OverflowRow, ResponsiveRow, shrink_label
 from gui.window_sizing import roomy
@@ -246,6 +248,12 @@ class PlayerWidget(QWidget):
         self._compact_minimum_size: Optional[QSize] = None
         self._compact_control_visibility: Dict[QWidget, bool] = {}
         self._multiview_grid: Optional[MultiViewGrid] = None
+        # Active multiview layout ("4x4"/"2x2"/"1x2"/"2x1"); a stale config
+        # value falls back to the default here, never at grid-build time.
+        self._multiview_layout: str = (
+            config.iptv.multiview_layout
+            if config.iptv.multiview_layout in MULTIVIEW_LAYOUTS
+            else DEFAULT_LAYOUT)
         self._build_ui()
         # Fullscreen key handling (Esc/F/Space/…) lives in keyPressEvent, and
         # in pure fullscreen every other focusable widget is hidden — without
@@ -431,12 +439,10 @@ class PlayerWidget(QWidget):
         self.compact_btn.clicked.connect(self._toggle_compact)
         tools.addWidget(self.compact_btn)
 
-        self.mv_btn = QPushButton(tr('▦ 4×4'))
-        self.mv_btn.setToolTip(
-            "Multiview grid: up to 16 tiles (local files + one IPTV stream), "
-            "each with its own audio")
+        self.mv_btn = QPushButton()
         self.mv_btn.setCheckable(True)
         self.mv_btn.toggled.connect(self._on_multiview_toggled)
+        self._refresh_multiview_btn()  # label/tooltip for the active layout
         tools.addWidget(self.mv_btn)
 
         self.pure_btn = QPushButton(tr('🖥 Pure'))
@@ -717,12 +723,25 @@ class PlayerWidget(QWidget):
         self._backend = backend
 
     # -- multiview grid --------------------------------------------------------
+    def _refresh_multiview_btn(self) -> None:
+        """Point the ▦ button's label/tooltip at the active layout."""
+        rows, cols, label = MULTIVIEW_LAYOUTS[self._multiview_layout]
+        self.mv_btn.setText(tr(label))
+        self.mv_btn.setToolTip(
+            f"Multiview grid: up to {rows * cols} tiles "
+            f"(local files + one IPTV stream), each with its own audio — "
+            f"switch layout (4×4 / 2×2 / dual split) from the bar under "
+            f"the grid")
+
     def _ensure_multiview(self) -> MultiViewGrid:
-        """The 4×4 tile grid, created on first use as another video_stack
-        page (sibling of the surface — never a child of it, see _build_ui)."""
+        """The tile grid in the ACTIVE layout (4×4 / 2×2 / dual split),
+        created on first use as another video_stack page (sibling of the
+        surface — never a child of it, see _build_ui)."""
         if self._multiview_grid is None:
-            grid = MultiViewGrid(self._manager, self._config)
+            grid = MultiViewGrid(self._manager, self._config,
+                                 layout=self._multiview_layout)
             grid.sig_promote_requested.connect(self._promote_from_grid)
+            grid.sig_layout_requested.connect(self._set_multiview_layout)
             self.video_stack.addWidget(grid)
             self._multiview_grid = grid
         return self._multiview_grid
@@ -754,6 +773,36 @@ class PlayerWidget(QWidget):
         self.mv_btn.setChecked(False)
         self.mv_btn.blockSignals(False)
         _toggle_accent(self.mv_btn, False)
+
+    def _set_multiview_layout(self, name: str) -> None:
+        """Switch the multiview layout live (the combo in the bar under the
+        grid).
+
+        With a grid showing, this tears it down and rebuilds a fresh one in
+        the new shape — every tile stops (same semantics as every other
+        multiview exit path) and the old page leaves the video stack, since
+        tile surfaces must never be reparented. With no grid up (or only a
+        hidden leftover page), the old widget is dropped and the choice is
+        remembered for the next toggle. The layout persists in
+        ``iptv.multiview_layout``; the ▦ button keeps its checked state —
+        the user is still in multiview, just in a different shape."""
+        if name not in MULTIVIEW_LAYOUTS or name == self._multiview_layout:
+            return
+        self._multiview_layout = name
+        self._config.iptv.multiview_layout = name
+        self._refresh_multiview_btn()
+        old = self._multiview_grid
+        if old is None:
+            return
+        showing = self.video_stack.currentWidget() is old
+        # dispose (not shutdown+deleteLater): the widget — and with it the
+        # tile surfaces' native HWNDs — must not die while a slow mpv
+        # terminate() is still running on a destroy thread.
+        old.dispose()
+        self.video_stack.removeWidget(old)
+        self._multiview_grid = None
+        if showing:
+            self.video_stack.setCurrentWidget(self._ensure_multiview())
 
     def _promote_from_grid(self, channel: Any) -> None:
         """A tile asked for the full player: leave grid mode (stopping all

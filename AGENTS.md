@@ -613,6 +613,48 @@
   test the environmental-family theory; prime in-app suspect for deeper
   audit: `_rasterize_svg`'s off-GUI-thread QtSvg/QFont work
   (iptv/artwork.py, audit confidence 25%).
+- 2026-11-08 CRASH WAVE, RESOLVED — environmental (NVIDIA half-install);
+  do NOT chase as an app bug. Owner report: "client closes when connecting
+  to Jackett". Forensics (faulthandler.log + 5 WER dumps + event log):
+  SEVEN native crashes in one day (07:53→21:22), ALL byte-identical —
+  python311.dll+0x49245 (object-allocator region, nearest export
+  PyType_GenericAlloc), READ of the same garbage pointer 0x400000002, on
+  whatever worker thread was allocating. Trigger paths = everything
+  allocation-heavy: Jackett Test Connection ×3
+  (settings_dialog._jkt_fetch_worker → jackett.fetch_indexers_detailed),
+  the hourly Jackett auto-sync, an agent search_indexers call (died the
+  instant a 1337x timeout fired), the segmented updater download, and
+  graceful SHUTDOWN 3 s after the state save. Cross-BUILD (the 07:53 crash
+  ran the pre-7.6 binary — proven via the updater's strict is_newer gate +
+  last_check; evening crashes ran 7.6) → release-independent, matching the
+  11-07 bisect; only DeepFlux.exe crashed machine-wide (3-day event log).
+  ROOT CAUSE: a half-completed NVIDIA installation — driver package
+  staged into DriverStore 19:59 while the App/overlay stayed mismatched
+  (nvspcap64.dll is injected into every DeepFlux process since ≥09-05;
+  the half-state likely left by overnight KB5127691). FIX = letting the
+  NVIDIA App finish its installation ended the wave (owner-verified).
+  The 11-07 "residual family" above is this same actor. RULE: if the
+  signature returns (CPython allocator AV + fixed garbage pointer +
+  innocent Python frame on top), suspect the environment FIRST (NVIDIA
+  overlay/driver state, recent Windows updates), never the code path the
+  faulthandler stack shows. Forensic kit that worked (cdb is NO LONGER
+  installed on this machine): %LOCALAPPDATA%\CrashDumps +
+  %LOCALAPPDATA%\DeepFlux\faulthandler.log + `Get-WinEvent
+  -FilterHashtable @{LogName='Application'; Id=1000}`; parse minidumps
+  with a PowerShell BinaryReader (exception stream type 6, module list
+  type 4 with 108-byte entries; the exe's in-dump VersionInfo is 0.0.0.0
+  — useless), then PE-parse the faulting DLL ON DISK for bytes/nearest
+  export at the fault RVA (PE32+: NumberOfRvaAndSizes @optStart+108, data
+  dirs @+112; export dir: NumberOfFunctions @+20, AddressOfFunctions
+  @+28). CPython runs a public symbol server,
+  https://symbols.python.org/python311.pdb/<GUID+age>/python311.pdb
+  (bundled DLL = 3.11.9, sig FC457C591F7D4CC09AC2DB42401CE2C7, age 1).
+  Leftover: %LOCALAPPDATA%\DeepFlux\updates\DeepFlUX7.6Setup.exe.part
+  (414 MB) is a dead interrupted download — deletable. Machine drift
+  noticed 11-08: git AND Python are gone machine-wide (registry, Appx
+  packages, PATH all empty) — the verify/test commands in this file
+  cannot run until a Python is reinstalled (the 11-07 python.org-3.11
+  follow-up).
 - 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,
   ~30 fixed, all with file-level rationale comments + regression tests).
   Durable rules that came out of it — do not regress:
@@ -1445,6 +1487,28 @@
   track **id** (not track-list index); VLC normalizes
   `audio_get_track_description`/`video_get_spu_description` tuples and
   disables subs with -1.
+- Multiview grid (gui/multiview.py, 4×4 since 5.x; 2×2 + dual split added
+  2026-11-09): layout registry `MULTIVIEW_LAYOUTS` name → (rows, cols, mv_btn
+  label) — "4x4"/"2x2"/"1x2" (dual, side by side)/"2x1" (dual, stacked);
+  unknown names fall back to 4×4 at EVERY guard (registry helper,
+  PlayerWidget init, MultiViewGrid ctor). Persisted as
+  `iptv.multiview_layout` — REMEMBER: `from_file` constructs IPTVConfig
+  field-by-field; a new field must be added to BOTH the dataclass and the
+  from_file enumeration or it silently resets on restart (that exact bug
+  shipped for one review cycle). Everything except the ctor loop is
+  count-agnostic (single-stream rule, bulk fill, folder rotate, skip-all,
+  promote, parallel shutdown). Layout switching (combo in the bar under the
+  grid → sig_layout_requested → PlayerWidget._set_multiview_layout):
+  teardown + REBUILD a fresh grid widget — tile surfaces must never be
+  reparented, and the old widget is `dispose()`d = shutdown + deleteLater
+  DEFERRED until the destroy threads exit (a stuck mpv terminate must not
+  have its HWND torn down under it; plain shutdown keeps the emptied widget
+  as a hidden stack page — that path is unchanged). mv_btn stays a plain
+  checkable QPushButton (OverflowRow candidate) whose label follows the
+  layout; leaving multiview STILL keeps the hidden emptied page, but a
+  later layout change drops it so the next toggle builds the new shape.
+  One IPTV stream per grid in EVERY layout (provider connection cap is
+  about connections, not geometry). Tests: tests/test_multiview.py.
 - Force-stop all provider streams (2026-11-01, providers cap concurrent
   streams): `PlayerWidget.force_stop_all_streams` ("⛔ Stop All" tools-row
   button + "⛔ Close All Streams" on stream-LIMIT errors in `_show_error`)

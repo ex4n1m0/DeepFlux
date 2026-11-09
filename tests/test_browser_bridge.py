@@ -350,3 +350,57 @@ def test_channel_download_plain_file_uses_http_job(app):
         "https://source.example/file.zip", "file", "File") is True
     window._dl_engine.add_job.assert_called_once()
     window._dl_engine.add_youtube_job.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# sendPlay — the "▶ Play" handoff to the in-app player.
+#
+# Regression (found in the 2026-11-08 missav study): the payload carried only
+# {url, type, title}, so mpv fetched the stream with no Referer. Hotlink CDNs
+# behind Cloudflare (surrit.com) 403 that instantly — "▶ Play" errored while
+# Download (which forwards referrer+cookies) worked. The payload must mirror
+# sendDownload's referrer/cookies so play_web_stream can pass them to mpv's
+# http-header-fields.
+# ---------------------------------------------------------------------------
+
+def _playable_window(cookies=""):
+    window = _routable_window()
+    window._browser_cookies_for = MagicMock(return_value=cookies)
+    window._play_signals = MagicMock()
+    return window
+
+
+def test_channel_play_forwards_referrer_and_cookies(app):
+    window = _playable_window(cookies="session=abc")
+    bridge = BrowserChannelBridge(window, parent=window)
+
+    assert bridge.sendPlay(
+        "https://cdn.example/uuid/playlist.m3u8", "hls", "Video") is True
+    window._play_signals.play_stream.emit.assert_called_once()
+    payload = window._play_signals.play_stream.emit.call_args[0][0]
+    assert payload["url"] == "https://cdn.example/uuid/playlist.m3u8"
+    assert payload["type"] == "hls"
+    assert payload["title"] == "Video"
+    # The source page rides along as the referrer (the CDN 403s without it).
+    assert payload["referrer"] == "https://source.example/page"
+    assert payload["cookies"] == "session=abc"
+    window._browser_cookies_for.assert_called_once_with(
+        "https://cdn.example/uuid/playlist.m3u8", "https://source.example/page")
+
+
+def test_channel_play_passes_source_url_to_the_confirmation_dialog(app):
+    window = _playable_window()
+    bridge = BrowserChannelBridge(window, parent=window)
+
+    assert bridge.sendPlay("https://cdn.example/a.m3u8", "hls", "A") is True
+    window._confirm_browser_action.assert_called_once_with(
+        "play", "https://cdn.example/a.m3u8", "A", "https://source.example/page")
+
+
+def test_channel_play_requires_browser_authorization(app):
+    window = _playable_window()
+    window._confirm_browser_action = MagicMock(return_value=False)
+    bridge = BrowserChannelBridge(window, parent=window)
+
+    assert bridge.sendPlay("https://cdn.example/a.m3u8", "hls", "A") is False
+    window._play_signals.play_stream.emit.assert_not_called()

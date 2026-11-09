@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "7.6"
+APP_VERSION = "7.6.1"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -570,6 +570,11 @@ class IPTVConfig:
     # category, yearless entries under "Others") or "category" (flat
     # provider groups).
     vod_group_mode: str = "year"
+    # Multiview grid layout on the Play tab: "4x4" (16 tiles), "2x2"
+    # (quadrants), "1x2" (dual split, side by side), "2x1" (dual split,
+    # stacked). Remembered across restarts; stale/hand-edited values fall
+    # back to 4x4 at use (registry in gui/multiview.py).
+    multiview_layout: str = "4x4"
 
 
 @dataclass
@@ -1034,6 +1039,8 @@ class DeeptorrentConfig:
                 overscan_pct=float(data.get("iptv", {}).get("overscan_pct", 0.5)),
                 audio_delay=float(data.get("iptv", {}).get("audio_delay", 0.0)),
                 vod_group_mode=data.get("iptv", {}).get("vod_group_mode", "year"),
+                multiview_layout=data.get("iptv", {}).get(
+                    "multiview_layout", "4x4"),
             ),
             voice=VoiceConfig(**{k: v for k, v in data.get("voice", {}).items()
                                  if k in VoiceConfig.__dataclass_fields__}),

@@ -415,25 +415,32 @@ your confirmation.</p>
       for the full file name and path when a long title is shortened.</li>
 </ul>
 
-<h3>Multiview — 4×4 grid</h3>
-<p>The <b>▦ 4×4</b> button on the player's tool row replaces the video area
-with a 4×4 grid of independent tiles. Each tile plays its own clip with its
-own audio — every tile starts <b>muted</b>, so nothing blasts when you fill
-the grid; unmute the ones you want with the 🔇 in the tile's strip.</p>
+<h3>Multiview — grid (4×4 / 2×2 / dual split)</h3>
+<p>The <b>▦</b> button on the player's tool row (its label shows the active
+layout) replaces the video area with a grid of independent tiles. Each tile
+plays its own clip with its own audio — every tile starts <b>muted</b>, so
+nothing blasts when you fill the grid; unmute the ones you want with the 🔇
+in the tile's strip.</p>
 <ul>
+  <li><b>Layouts:</b> <b>4×4</b> (sixteen tiles), <b>2×2</b> (four
+      quadrants), <b>1×2 ↔</b> (two tiles side by side) and <b>2×1 ↕</b>
+      (two tiles stacked). Pick one from the layout box at the left of the
+      bar under the grid — switching rebuilds the grid immediately (all
+      tiles stop) and the choice is remembered across restarts.</li>
   <li><b>Load a tile:</b> right-click an empty tile → <i>Assign local
       file…</i>, or <i>Assign IPTV channel…</i> (searches your playlists).
-      Only <b>one</b> tile can carry a live stream at a time — providers
-      reject multiple simultaneous connections; the other 15 are local
-      files.</li>
+      Only <b>one</b> tile can carry a live stream at a time (in every
+      layout) — providers reject multiple simultaneous connections; the
+      other tiles are local files.</li>
   <li><b>Bulk fill:</b> right-click an empty tile → <i>Fill empty tiles with
       files…</i> — multi-select files and they're dealt to the empty squares
       in alphabetical order (numbered episodes line up).</li>
   <li><b>Folder auto-rotate:</b> right-click any tile → <i>Play folder
-      (auto-rotate)…</i> — the folder's first 16 videos fill the grid, and
-      whenever a tile's clip ends it automatically starts the next unplayed
-      video from the folder. Every video plays exactly once; when the folder
-      is exhausted, each tile frees itself as its last clip ends.</li>
+      (auto-rotate)…</i> — the folder's first videos fill the grid (as many
+      as there are tiles), and whenever a tile's clip ends it automatically
+      starts the next unplayed video from the folder. Every video plays
+      exactly once; when the folder is exhausted, each tile frees itself as
+      its last clip ends.</li>
   <li><b>Per-tile controls</b> (the strip under each tile): ⏸/▶ play/pause,
       🔇 mute, a volume slider, ⛶ to move that clip to the main player
       (full controls: tracks, subtitles, recording), and ✕ to clear the
@@ -443,10 +450,10 @@ the grid; unmute the ones you want with the 🔇 in the tile's strip.</p>
       ⏩ +10s / ⏩ +60s buttons — every loaded clip jumps by that amount,
       and repeated presses keep going (each clip is clamped to its own
       start/end).</li>
-  <li>Tiles run with no post-processing and minimal buffering, so sixteen
-      play at once without weighing each other down. Starting playback in
-      the main player (or promoting a tile) leaves grid mode and stops all
-      tiles.</li>
+  <li>Tiles run with no post-processing and minimal buffering, so a full
+      grid plays at once without weighing each other down. Starting
+      playback in the main player (or promoting a tile) leaves grid mode
+      and stops all tiles.</li>
 </ul>
 
 <ul>

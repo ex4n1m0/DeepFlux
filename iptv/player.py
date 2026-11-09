@@ -795,12 +795,19 @@ class LibVLCBackend(PlayerBackend):
                 self.on_error("Playback backend unavailable")
             return
         try:
-            # Custom User-Agent/Referer for VLC is set via instance options.
+            # User-Agent is an instance-level option; the Referer must be a
+            # per-media option ("http-referrer", VLC 3.x+ — unknown options
+            # are ignored). Without it, hotlink-protected CDNs behind
+            # Cloudflare 403 the stream (same failure the mpv backend guards
+            # against; see MpvBackend.play).
             if headers:
                 ua = headers.get("User-Agent", "")
                 if ua:
                     self._instance.set_user_agent("DeepFlux-IPTV", ua)
             self._media = self._instance.media_new(url)
+            ref = (headers or {}).get("Referer", "")
+            if ref:
+                self._media.add_option(f"http-referrer={ref}")
             self._player.set_media(self._media)
             self._player.play()
             if self.on_state:

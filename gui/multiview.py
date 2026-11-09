@@ -1,24 +1,26 @@
-"""4×4 multiview grid for the Play tab.
+"""Multiview grid for the Play tab — 4×4, 2×2 or a dual split (1×2 / 2×1).
 
-Sixteen tiles, each playing either a local file or (at most ONE tile at a
-time) an IPTV stream. Deliberately minimal playback plumbing — the full
-PlayerWidget control set (tracks, subtitles, recording, retry watchdog)
-stays on the main single player; a tile is just surface + backend + audio.
+Up to sixteen tiles (16 / 4 / 2 depending on the layout), each playing
+either a local file or (at most ONE tile at a time) an IPTV stream.
+Deliberately minimal playback plumbing — the full PlayerWidget control set
+(tracks, subtitles, recording, retry watchdog) stays on the main single
+player; a tile is just surface + backend + audio.
 
 Design constraints (do not "fix" these):
 - Tiles always use the in-process MpvBackend path with SVP disabled — the
   out-of-process SVP backend's fixed ``mpvpipe`` IPC name can host only one
   instance, and grid tiles want no post-processing anyway.
 - No post-processing: smooth video/interpolation are forced off and the
-  per-tile cache is tiny so sixteen instances don't each hold a 150 MiB
-  demuxer cache.
+  per-tile cache is tiny so a full grid of instances doesn't each hold a
+  150 MiB demuxer cache.
 - All tiles start muted; audio is opt-in per tile.
 - IPTV providers cap concurrent connections (one extra player already
   triggers WSAECONNRESET resets), so at most ONE tile may carry a network
-  stream. The other 15 are local files only.
+  stream — regardless of layout; the rest are local files only.
 - Each tile's surface widget is created up-front and NEVER reparented —
   reparenting recreates the native winId the backend embeds into and kills
-  it (same rule as the MilkDrop view in PlayerWidget).
+  it (same rule as the MilkDrop view in PlayerWidget). Switching layouts
+  therefore rebuilds the whole grid widget instead of reshaping tiles.
 """
 from __future__ import annotations
 
@@ -28,11 +30,11 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QMenu, QMessageBox, QPushButton, QSizePolicy,
-    QSlider, QVBoxLayout, QWidget,
+    QComboBox, QDialog, QFileDialog, QFrame, QGridLayout, QHBoxLayout,
+    QLabel, QLineEdit, QListWidget, QMenu, QMessageBox, QPushButton,
+    QSizePolicy, QSlider, QVBoxLayout, QWidget,
 )
 
 from config import DeeptorrentConfig
@@ -45,13 +47,13 @@ from gui.fonts import scale_qss
 
 logger = logging.getLogger(__name__)
 
-# Per-tile playback tuning: keep sixteen concurrent decodes light.
+# Per-tile playback tuning: keep a full grid of concurrent decodes light.
 TILE_CACHE_SECS = 2
 TILE_CACHE_BYTES = 8 * 1024 * 1024
 
-# Grid teardown waits at most this long for all sixteen mpv cores to
-# terminate (in parallel) before the app exits anyway — a stuck core must
-# never hold window close hostage.
+# Grid teardown waits at most this long for every mpv core to terminate
+# (in parallel) before the app exits anyway — a stuck core must never hold
+# window close hostage.
 DESTROY_DEADLINE_SECS = 4.0
 
 # Shared file-picker filter (single pick + bulk fill).
@@ -60,6 +62,33 @@ MEDIA_FILTER = (
     "*.mpg *.mpeg *.ts *.m2ts *.vob *.3gp *.ogv *.mp3 *.flac *.m4a "
     "*.aac *.ogg *.opus *.wav);;All Files (*)"
 )
+
+# Multiview layouts: name -> (rows, cols, player-button label). "1x2" is the
+# dual split side by side (left|right), "2x1" stacked (top/down). One flat
+# registry — switching between any two shapes is the same code path, and the
+# persisted config value is a single string.
+MULTIVIEW_LAYOUTS: Dict[str, Any] = {
+    "4x4": (4, 4, "▦ 4×4"),
+    "2x2": (2, 2, "▦ 2×2"),
+    "1x2": (1, 2, "▦ 1×2 ↔"),
+    "2x1": (2, 1, "▦ 2×1 ↕"),
+}
+DEFAULT_LAYOUT = "4x4"
+
+
+def multiview_layout(name: str) -> Any:
+    """(rows, cols) for a layout name; unknown/stale values fall back to
+    the 4×4 so a hand-edited config never crashes the grid."""
+    rows, cols, _label = MULTIVIEW_LAYOUTS.get(
+        name, MULTIVIEW_LAYOUTS[DEFAULT_LAYOUT])
+    return rows, cols
+
+
+def multiview_label(name: str) -> str:
+    """The mv_btn label for a layout name (fallback: the 4×4 label)."""
+    _rows, _cols, label = MULTIVIEW_LAYOUTS.get(
+        name, MULTIVIEW_LAYOUTS[DEFAULT_LAYOUT])
+    return label
 
 
 def build_playback_headers(item: Any, source: Any = None) -> Dict[str, str]:
@@ -402,16 +431,20 @@ class ChannelPickDialog(QDialog):
 
 
 class MultiViewGrid(QWidget):
-    """The 4×4 tile grid — one optional IPTV stream, the rest local files."""
+    """An R×C tile grid (4×4 / 2×2 / dual split) — one optional IPTV
+    stream, the rest local files."""
 
-    GRID = 4
     sig_promote_requested = Signal(object)  # Channel → main player
+    sig_layout_requested = Signal(str)      # layout name → PlayerWidget
 
     def __init__(self, manager: Any, config: DeeptorrentConfig,
+                 layout: str = DEFAULT_LAYOUT,
                  parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._manager = manager
         self._config = config
+        self.layout_name = layout if layout in MULTIVIEW_LAYOUTS else DEFAULT_LAYOUT
+        self.rows, self.cols = multiview_layout(self.layout_name)
         # Folder auto-rotate mode: files waiting for a freed tile, in order.
         self._folder_pending: List[str] = []
         self._folder_mode = False
@@ -419,12 +452,12 @@ class MultiViewGrid(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         grid_host = QWidget()
-        layout = QGridLayout(grid_host)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        grid_lay = QGridLayout(grid_host)
+        grid_lay.setContentsMargins(0, 0, 0, 0)
+        grid_lay.setSpacing(2)
         self.tiles: List[GridTile] = []
-        for r in range(self.GRID):
-            for c in range(self.GRID):
+        for r in range(self.rows):
+            for c in range(self.cols):
                 tile = GridTile(config)
                 tile._request_stream_cb = self._pick_stream_for
                 tile._pick_file_cb = self.pick_file_for
@@ -433,11 +466,12 @@ class MultiViewGrid(QWidget):
                 tile.sig_promote.connect(self._promote)
                 tile.sig_state.connect(
                     lambda s, t=tile: self._on_tile_state(t, s))
-                layout.addWidget(tile, r, c)
+                grid_lay.addWidget(tile, r, c)
                 self.tiles.append(tile)
-        for i in range(self.GRID):
-            layout.setRowStretch(i, 1)
-            layout.setColumnStretch(i, 1)
+        for i in range(self.rows):
+            grid_lay.setRowStretch(i, 1)
+        for i in range(self.cols):
+            grid_lay.setColumnStretch(i, 1)
         outer.addWidget(grid_host, 1)
 
         # Slim control bar under the tiles (grid-wide actions).
@@ -445,6 +479,22 @@ class MultiViewGrid(QWidget):
         bar.setStyleSheet("background-color: rgba(5,7,12,0.9);")
         row = QHBoxLayout(bar)
         row.setContentsMargins(6, 2, 6, 2)
+        # Layout switcher first: emits sig_layout_requested — PlayerWidget
+        # tears this grid down and builds the new shape (tiles are never
+        # reparented, see the module docstring). Initialized to this grid's
+        # own layout BEFORE the signal is connected, so construction is
+        # silent.
+        self.layout_combo = QComboBox()
+        self.layout_combo.setToolTip(tr(
+            'Grid layout — switch live (stops and rebuilds all tiles)'))
+        for name, (_r, _c, label) in MULTIVIEW_LAYOUTS.items():
+            self.layout_combo.addItem(tr(label), name)
+        self.layout_combo.setCurrentIndex(
+            self.layout_combo.findData(self.layout_name))
+        self.layout_combo.currentIndexChanged.connect(
+            lambda idx: self.sig_layout_requested.emit(
+                self.layout_combo.itemData(idx)))
+        row.addWidget(self.layout_combo)
         self.skip_buttons: List[QPushButton] = []
         for delta, label in ((-60, "⏪ −60s"), (-10, "⏪ −10s"),
                              (10, "⏩ +10s"), (60, "⏩ +60s")):
@@ -572,9 +622,10 @@ class MultiViewGrid(QWidget):
             self.start_folder(folder)
 
     def start_folder(self, folder: str) -> int:
-        """Fill the grid with the folder's first 16 videos and auto-rotate:
-        whenever a tile's video ends naturally, that tile plays the next
-        unplayed file from the folder, until every video has played once.
+        """Fill the grid with the folder's first N videos (N = tile count
+        of the current layout) and auto-rotate: whenever a tile's video
+        ends naturally, that tile plays the next unplayed file from the
+        folder, until every video has played once.
 
         Folder mode replaces the grid's content (the stream tile included).
         Returns how many tiles were filled; 0 when the folder has no videos
@@ -585,10 +636,11 @@ class MultiViewGrid(QWidget):
         self._folder_mode = False  # inert while we clear (stop events suppressed anyway)
         for t in self.tiles:
             t.clear()
-        self._folder_pending = files[self.GRID * self.GRID:]
+        n = len(self.tiles)
+        self._folder_pending = files[n:]
         self._folder_mode = True
         filled = 0
-        for tile, path in zip(self.tiles, files[:self.GRID * self.GRID]):
+        for tile, path in zip(self.tiles, files[:n]):
             if self.assign_file(tile, path):
                 filled += 1
         return filled
@@ -621,9 +673,32 @@ class MultiViewGrid(QWidget):
         threads under a hard deadline.
 
         Sequential destroy made app close take forever: each mpv terminate()
-        blocks until its core tears down the decoder and stream, and sixteen
-        of those on the GUI thread compound to many seconds. Daemon threads
-        mean even a core that refuses to die cannot block process exit."""
+        blocks until its core tears down the decoder and stream, and a grid
+        of those on the GUI thread compounds to many seconds. Daemon threads
+        mean even a core that refuses to die cannot block process exit.
+        The WIDGET survives this call (callers may keep it around as an
+        emptied hidden page) — use dispose() to also delete it."""
+        threads = self._stop_and_destroy_backends()
+        self._join_bounded(threads)
+
+    def dispose(self) -> None:
+        """shutdown() + delete this widget once every destroy has finished.
+
+        A tile surface is a native HWND an mpv core embeds into; deleting
+        the widget while a destroy thread is still inside terminate() —
+        possible past the shutdown deadline, stuck cores exist — tears the
+        window down under the live core. Deletion is therefore deferred
+        until the threads have actually exited (polled cheaply on a timer
+        parented to this widget, so it never fires on a dead object); a
+        truly wedged core keeps one hidden empty widget alive instead of
+        crashing."""
+        threads = self._stop_and_destroy_backends()
+        self._join_bounded(threads)
+        self._delete_once_quiet(threads)
+
+    def _stop_and_destroy_backends(self) -> List[threading.Thread]:
+        """Stop all tiles and start parallel daemon destroys; returns the
+        threads (NOT joined — callers decide how long to wait)."""
         self._folder_mode = False
         self._folder_pending = []
         backends = [t._backend for t in self.tiles if t._backend is not None]
@@ -641,6 +716,19 @@ class MultiViewGrid(QWidget):
                    for b in backends]
         for th in threads:
             th.start()
+        return threads
+
+    @staticmethod
+    def _join_bounded(threads: List[threading.Thread]) -> None:
         deadline = time.monotonic() + DESTROY_DEADLINE_SECS
         for th in threads:
             th.join(max(0.0, deadline - time.monotonic()))
+
+    def _delete_once_quiet(self, threads: List[threading.Thread]) -> None:
+        if not any(th.is_alive() for th in threads):
+            self.deleteLater()
+            return
+        poll = QTimer(self)  # dies with the widget — no callback on a corpse
+        poll.setSingleShot(True)
+        poll.timeout.connect(lambda: self._delete_once_quiet(threads))
+        poll.start(200)

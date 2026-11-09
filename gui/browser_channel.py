@@ -202,14 +202,23 @@ class BrowserChannelBridge(QObject):
     def sendPlay(self, url: str, stream_type: str, title: str) -> bool:
         """Send a stream URL to the in-app mpv player.
 
-        Equivalent to POST /api/play on the control API."""
+        Equivalent to POST /api/play on the control API. The page URL rides
+        along as the referrer (plus any same-site cookies): hotlink-protected
+        CDNs behind Cloudflare (e.g. surrit.com) 403 a media request that
+        carries no Referer, which made extension "▶ Play" fail with an
+        instant mpv error while sendDownload worked. play_web_stream
+        forwards these to mpv's http-header-fields/referrer options."""
         try:
-            if not self._window._confirm_browser_action("play", url, title):
+            source_url = self._window._current_browser_view().url().toString()
+            if not self._window._confirm_browser_action("play", url, title, source_url):
                 return False
+            cookies = self._window._browser_cookies_for(url, source_url)
             self._window._play_signals.play_stream.emit({
                 "url": url,
                 "type": stream_type or "",
                 "title": title or "",
+                "referrer": source_url,
+                "cookies": cookies,
             })
             return True
         except Exception as exc:

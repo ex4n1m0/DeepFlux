@@ -4152,6 +4152,51 @@ def test_vlc_track_normalization():
     assert LibVLCBackend._vlc_tracks(None) == []
 
 
+def test_vlc_play_forwards_referer_as_media_option():
+    """Regression (2026-11-08 missav study): hotlink CDNs behind Cloudflare
+    403 a stream request with no Referer. The VLC fallback must forward it
+    as the per-media "http-referrer" option, mirroring MpvBackend.play."""
+    from unittest.mock import MagicMock
+    from iptv.player import LibVLCBackend
+
+    backend = LibVLCBackend(None)
+    backend._player = MagicMock()   # skip create()/real vlc import
+    backend._instance = MagicMock()
+    backend._media = None
+    states = []
+    backend.on_state = lambda s: states.append(s)
+
+    backend.play(
+        "https://cdn.example/uuid/playlist.m3u8",
+        headers={"Referer": "https://source.example/page",
+                 "User-Agent": "DeepFlux-Test"},
+    )
+
+    backend._instance.media_new.assert_called_once_with(
+        "https://cdn.example/uuid/playlist.m3u8")
+    backend._media.add_option.assert_called_once_with(
+        "http-referrer=https://source.example/page")
+    backend._instance.set_user_agent.assert_called_once_with(
+        "DeepFlux-IPTV", "DeepFlux-Test")
+    backend._player.set_media.assert_called_once_with(backend._media)
+    backend._player.play.assert_called_once()
+    assert states == ["playing"]
+
+
+def test_vlc_play_without_headers_sets_no_options():
+    from unittest.mock import MagicMock
+    from iptv.player import LibVLCBackend
+
+    backend = LibVLCBackend(None)
+    backend._player = MagicMock()
+    backend._instance = MagicMock()
+    backend._media = None
+
+    backend.play("https://cdn.example/file.mp4")
+    backend._media.add_option.assert_not_called()
+    backend._instance.set_user_agent.assert_not_called()
+
+
 def test_probe_duration_missing_file():
     """probe_duration never raises — a missing/unreadable file yields 0.0."""
     from dlmgr.ffmpeg import probe_duration

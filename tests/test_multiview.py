@@ -1,4 +1,5 @@
-"""Tests for the 4×4 multiview grid (gui/multiview.py + PlayerWidget glue).
+"""Tests for the multiview grid (gui/multiview.py + PlayerWidget glue):
+the 4×4 classic plus the 2×2 and dual-split (1×2 / 2×1) layouts.
 
 Real mpv backends are replaced with a recording fake so the tests can assert
 on the tuning calls (muted start, small caches, no post-processing) without
@@ -545,3 +546,290 @@ def test_force_stop_all_streams_shuts_down_grid_and_player(qapp, fake_backends):
         assert ("destroy",) in backend.calls
     assert player._current_item is None
     assert player._playback_active is False
+
+
+# -- layouts -----------------------------------------------------------------
+
+def _grid_layout(qapp, fake_backends, name):
+    from config import DeeptorrentConfig
+    from gui.multiview import MultiViewGrid
+    return MultiViewGrid(FakeManager(), DeeptorrentConfig(), layout=name)
+
+
+def test_layout_registry_and_fallback():
+    from gui.multiview import (DEFAULT_LAYOUT, MULTIVIEW_LAYOUTS,
+                               multiview_label, multiview_layout)
+    assert DEFAULT_LAYOUT == "4x4"
+    assert multiview_layout("4x4") == (4, 4)
+    assert multiview_layout("2x2") == (2, 2)
+    assert multiview_layout("1x2") == (1, 2)   # dual split, side by side
+    assert multiview_layout("2x1") == (2, 1)   # dual split, stacked
+    # Stale/hand-edited config values degrade to the 4×4, never crash.
+    assert multiview_layout("nope") == (4, 4)
+    assert multiview_layout("") == (4, 4)
+    assert multiview_label("2x2") == MULTIVIEW_LAYOUTS["2x2"][2]
+    assert multiview_label("nope") == MULTIVIEW_LAYOUTS["4x4"][2]
+
+
+@pytest.mark.parametrize("name,count", [
+    ("4x4", 16), ("2x2", 4), ("1x2", 2), ("2x1", 2),
+])
+def test_grid_tile_counts_and_geometry(qapp, fake_backends, name, count):
+    """Every layout builds the right tile count, and the QGridLayout seats
+    tiles in reading order: tile i at (i // cols, i % cols)."""
+    from gui.multiview import multiview_layout
+    grid = _grid_layout(qapp, fake_backends, name)
+    assert len(grid.tiles) == count
+    assert grid.layout_name == name
+    rows, cols = multiview_layout(name)
+    assert (grid.rows, grid.cols) == (rows, cols)
+    lay = grid.tiles[0].parentWidget().layout()
+    for i, tile in enumerate(grid.tiles):
+        r, c = divmod(i, cols)
+        assert lay.getItemPosition(lay.indexOf(tile)) == (r, c, 1, 1)
+
+
+def test_grid_bar_combo_lists_layouts_and_emits(qapp, fake_backends):
+    """The combo in the bar under the grid lists every layout (registry
+    order), starts silent on the grid's own shape, and a user pick emits
+    sig_layout_requested with the layout NAME."""
+    from gui.multiview import MULTIVIEW_LAYOUTS
+    grid = _grid_layout(qapp, fake_backends, "2x2")
+    names = [grid.layout_combo.itemData(i)
+             for i in range(grid.layout_combo.count())]
+    assert names == list(MULTIVIEW_LAYOUTS)
+    assert grid.layout_combo.currentData() == "2x2"
+
+    got: list = []
+    grid.sig_layout_requested.connect(got.append)
+    grid.layout_combo.setCurrentIndex(names.index("1x2"))
+    assert got == ["1x2"]
+
+
+def test_one_stream_rule_in_dual_mode(qapp, fake_backends):
+    """The provider connection cap is about connections, not geometry: even
+    a two-tile grid hosts at most one IPTV stream."""
+    from iptv.models import Channel
+    grid = _grid_layout(qapp, fake_backends, "1x2")
+    a, b = grid.tiles
+    assert grid.assign_stream(
+        a, Channel(id="s", name="CNN", url="http://x/cnn.m3u8")) is True
+    assert grid.assign_stream(
+        b, Channel(id="s2", name="BBC", url="http://x/bbc.m3u8")) is False
+    assert grid.stream_tile is a
+    a.clear()
+    assert grid.assign_stream(
+        b, Channel(id="s2", name="BBC", url="http://x/bbc.m3u8")) is True
+
+
+def test_folder_mode_caps_at_tile_count_2x2(qapp, fake_backends, tmp_path):
+    """Folder auto-rotate fills at most as many tiles as the layout has and
+    keeps rotating the overflow in — count-agnostic, same as the 4×4."""
+    for i in range(6):
+        (tmp_path / f"v{i:02d}.mp4").write_bytes(b"0" * 8)
+    grid = _grid_layout(qapp, fake_backends, "2x2")
+    assert grid.start_folder(str(tmp_path)) == 4
+    assert [t.channel.name for t in grid.tiles] == [
+        "v00.mp4", "v01.mp4", "v02.mp4", "v03.mp4"]
+    grid.tiles[0].backend.on_state("stopped")  # EOF → next unplayed file
+    assert grid.tiles[0].channel.name == "v04.mp4"
+    grid.tiles[0].backend.on_state("stopped")
+    assert grid.tiles[0].channel.name == "v05.mp4"
+    grid.tiles[0].backend.on_state("stopped")  # exhausted → tile freed
+    assert grid.tiles[0].channel is None
+    assert grid.tiles[1].channel.name == "v01.mp4"
+
+
+def test_bulk_fill_caps_at_tile_count_2x2(qapp, fake_backends, tmp_path):
+    files = []
+    for i in range(6):
+        f = tmp_path / f"v{i}.mp4"
+        f.write_bytes(b"0" * 8)
+        files.append(str(f))
+    grid = _grid_layout(qapp, fake_backends, "2x2")
+    assert grid.fill_from_files(files) == 4
+    assert all(t.channel is not None for t in grid.tiles)
+    assert grid.tiles[0].channel.name == "v0.mp4"
+    assert grid.tiles[3].channel.name == "v3.mp4"
+
+
+def _player(qapp, fake_backends, config=None):
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+    cfg = config if config is not None else DeeptorrentConfig()
+    return PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""), cfg)
+
+
+def test_set_multiview_layout_switches_live(qapp, fake_backends):
+    """Switching layout while a grid is showing: every old tile backend is
+    stopped AND destroyed, the old page leaves the video stack (no page
+    accumulation, surfaces never reparented), a fresh grid of the new shape
+    is shown, the ▦ button STAYS checked and its label moves, and the
+    choice persists into the config."""
+    from iptv.models import Channel
+
+    made, _ = fake_backends
+    from config import DeeptorrentConfig
+    cfg = DeeptorrentConfig()
+    player = _player(qapp, fake_backends, config=cfg)
+    old = player._ensure_multiview()
+    player.mv_btn.setChecked(True)
+    assert player.video_stack.currentWidget() is old
+    old.tiles[0].assign(Channel(id="a", name="A", url="a.mkv"), False)
+
+    player._set_multiview_layout("2x2")
+
+    for b in made:
+        assert ("stop",) in b.calls
+        assert ("destroy",) in b.calls
+    assert player.video_stack.indexOf(old) == -1
+    new = player._multiview_grid
+    assert new is not None and new is not old
+    assert len(new.tiles) == 4
+    assert player.video_stack.currentWidget() is new
+    assert player.mv_btn.isChecked() is True  # still in multiview
+    assert "2×2" in player.mv_btn.text()
+    assert cfg.iptv.multiview_layout == "2x2"
+
+
+def test_set_multiview_layout_while_off_only_remembers(qapp, fake_backends):
+    """With no grid up, a layout switch must not build anything — the next
+    toggle opens the chosen shape. Unknown names are ignored entirely."""
+    player = _player(qapp, fake_backends)
+    player._set_multiview_layout("1x2")
+    assert player._multiview_grid is None
+    assert "1×2" in player.mv_btn.text()
+    player.mv_btn.setChecked(True)
+    assert player._multiview_grid is not None
+    assert len(player._multiview_grid.tiles) == 2
+
+    # Unknown names never change anything.
+    before = player._multiview_layout
+    player._set_multiview_layout("nonsense")
+    assert player._multiview_layout == before
+
+
+def test_layout_change_disposes_hidden_grid_page(qapp, fake_backends):
+    """Leaving multiview keeps the emptied widget as a hidden stack page
+    (today's behavior); a later layout change must drop it, so the next
+    toggle builds the NEW shape instead of resurrecting the old one."""
+    player = _player(qapp, fake_backends)
+    grid = player._ensure_multiview()
+    player.mv_btn.setChecked(True)
+    player.mv_btn.setChecked(False)
+    assert player._multiview_grid is grid
+
+    player._set_multiview_layout("1x2")
+    assert player._multiview_grid is None
+    player.mv_btn.setChecked(True)
+    assert player._multiview_grid is not grid
+    assert len(player._multiview_grid.tiles) == 2
+
+
+def test_repeated_layout_switches_do_not_accumulate_pages(qapp, fake_backends):
+    player = _player(qapp, fake_backends)
+    player.mv_btn.setChecked(True)
+    n0 = player.video_stack.count()
+    for name in ("2x2", "1x2", "2x1", "4x4"):
+        player._set_multiview_layout(name)
+        assert player.video_stack.count() == n0
+        assert player.video_stack.currentWidget() is player._multiview_grid
+    assert len(player._multiview_grid.tiles) == 16
+
+
+def test_config_multiview_layout_default_and_stale_boot():
+    """Fresh configs default to 4×4; a stale persisted value boots into the
+    4×4 via the registry fallback instead of crashing."""
+    from config import DeeptorrentConfig
+    from gui.multiview import multiview_layout
+    assert DeeptorrentConfig().iptv.multiview_layout == "4x4"
+    assert multiview_layout("bogus") == (4, 4)
+
+
+def test_config_round_trips_multiview_layout(tmp_path):
+    """to_file/from_file must carry the layout across restarts. Regression:
+    the field was once written by to_file but never read back by from_file,
+    so every restart silently reset to 4×4."""
+    from config import DeeptorrentConfig
+    p = tmp_path / "config.json"
+    cfg = DeeptorrentConfig()
+    cfg.iptv.multiview_layout = "1x2"
+    cfg.to_file(str(p))
+    loaded = DeeptorrentConfig.from_file(str(p))
+    assert loaded.iptv.multiview_layout == "1x2"
+
+
+def test_combo_pick_reaches_player_and_switches_grid(qapp, fake_backends):
+    """End-to-end wiring: the bar combo's signal is the ONLY wire to the
+    player — picking 2×2 in a live 4×4 must rebuild the grid."""
+    player = _player(qapp, fake_backends)
+    player.mv_btn.setChecked(True)
+    grid = player._multiview_grid
+    assert grid is not None
+
+    grid.layout_combo.setCurrentIndex(grid.layout_combo.findData("2x2"))
+
+    assert player._multiview_layout == "2x2"
+    assert player._multiview_grid is not grid
+    assert len(player._multiview_grid.tiles) == 4
+    assert player.video_stack.currentWidget() is player._multiview_grid
+    assert player.mv_btn.isChecked() is True
+
+
+def test_stale_config_layout_falls_back_at_every_guard(qapp, fake_backends):
+    """A bogus persisted value is clamped at BOTH read sites: the
+    PlayerWidget init expression and the MultiViewGrid constructor."""
+    from config import DeeptorrentConfig
+    from gui.multiview import MultiViewGrid
+    cfg = DeeptorrentConfig()
+    cfg.iptv.multiview_layout = "bogus"
+    player = _player(qapp, fake_backends, config=cfg)
+    assert player._multiview_layout == "4x4"
+    assert "4×4" in player.mv_btn.text()
+    player.mv_btn.setChecked(True)
+    assert len(player._multiview_grid.tiles) == 16
+
+    grid = MultiViewGrid(FakeManager(), DeeptorrentConfig(), layout="junk")
+    assert grid.layout_name == "4x4"
+    assert len(grid.tiles) == 16
+
+
+def test_dispose_defers_widget_deletion_until_destroys_finish(
+        qapp, fake_backends, monkeypatch):
+    """dispose() = shutdown + SELF-DELETE only after the destroy threads
+    exit: a stuck mpv terminate() must not have its tile surface HWND torn
+    down underneath it (deleteLater before the threads die would)."""
+    import time as _time
+    import gui.multiview as mv
+
+    class SlowBackend(FakeBackend):
+        def destroy(self) -> None:
+            self.calls.append(("destroy",))
+            _time.sleep(0.4)
+
+    # The bounded join gives up fast, so dispose() returns while the
+    # destroys are still mid-flight — exactly the window the deferral
+    # covers.
+    monkeypatch.setattr(mv, "DESTROY_DEADLINE_SECS", 0.05)
+    grid = _grid(qapp, fake_backends)
+    for tile in grid.tiles[:3]:
+        tile._backend = SlowBackend(None)
+
+    deleted: list = []
+    orig_delete = grid.deleteLater
+
+    def _spy_delete() -> None:
+        deleted.append(True)
+        orig_delete()
+
+    grid.deleteLater = _spy_delete  # type: ignore[method-assign]
+    grid.dispose()
+    assert not deleted  # threads still inside terminate()
+
+    for _ in range(60):  # ≤3s: 0.4s destroys + 200ms poll cadence
+        if deleted:
+            break
+        _time.sleep(0.05)
+        qapp.processEvents()
+    assert deleted  # deferred delete fired once the threads exited
