@@ -1,8 +1,8 @@
-Jackett v0.24.3025 — https://github.com/Jackett/Jackett
-Bundled unmodified as Jackett.Installer.Windows.exe (sha256 80d08610926100eda63248daccc8e81f3dd57868d5454ba90dc88c3152dea013).
+Jackett v0.24.3036 — https://github.com/Jackett/Jackett
+Bundled unmodified as Jackett.Installer.Windows.exe (sha256 7e5e19f5f38d6f21e8338c252e17a3650e8193685197ed7cc88d0c1710230530).
 Jackett is licensed under GPL-2.0; source for this exact release:
-https://raw.githubusercontent.com/Jackett/Jackett/v0.24.3025/LICENSE
-Retrieved 2026-11-07.
+https://raw.githubusercontent.com/Jackett/Jackett/v0.24.3036/LICENSE
+Retrieved 2026-11-09.
 ----------------------------------------------------------------------
 
                     GNU GENERAL PUBLIC LICENSE

@@ -1847,8 +1847,8 @@ class MainWindow(QMainWindow):
             os.path.join(sys._MEIPASS, "DeepFluxNovBanner.webp") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "DeepFluxNeonBanner.webp"),
             os.path.join(sys._MEIPASS, "DeepFluxNeonBanner.webp") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(os.path.dirname(__file__), "..", "website", "deepflux", "DeepFluxBanner.webp"),
-            os.path.join(sys._MEIPASS, "DeepFluxBanner.webp") if hasattr(sys, "_MEIPASS") else "",
+            os.path.join(os.path.dirname(__file__), "..", "website", "deepflux", "DeepFluxNov2026.webp"),
+            os.path.join(sys._MEIPASS, "DeepFluxNov2026.webp") if hasattr(sys, "_MEIPASS") else "",
             os.path.join(os.path.dirname(__file__), "..", "DeepFlux.png"),
             os.path.join(sys._MEIPASS, "DeepFlux.png") if hasattr(sys, "_MEIPASS") else "",
         ]

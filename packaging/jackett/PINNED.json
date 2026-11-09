@@ -1,14 +1,14 @@
 {
-  "version": "v0.24.3025",
+  "version": "v0.24.3036",
   "asset": "Jackett.Installer.Windows.exe",
-  "size": 42537459,
-  "sha256": "80d08610926100eda63248daccc8e81f3dd57868d5454ba90dc88c3152dea013",
-  "downloaded": "2026-11-07",
+  "size": 42541703,
+  "sha256": "7e5e19f5f38d6f21e8338c252e17a3650e8193685197ed7cc88d0c1710230530",
+  "downloaded": "2026-11-09",
   "linux": {
-    "version": "v0.24.3025",
+    "version": "v0.24.3036",
     "asset": "Jackett.Binaries.LinuxAMDx64.tar.gz",
-    "size": 50987500,
-    "sha256": "c91fafb614a1619c3fe1bc1c9019df857591f7f75d2598dd2a70f76c2252cec6",
+    "size": 50984738,
+    "sha256": "41136d68fb41b65784150e7a09eff681a22c836a3f74af78d44b43582da8eb2a",
     "source": "github-api-digest"
   }
 }

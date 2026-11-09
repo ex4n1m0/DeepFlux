@@ -134,7 +134,7 @@ _wanted_datas = [
     # with the website hero banner as a fallback asset.
     (os.path.join(project_root, "DeepFluxNovBanner.webp"), "."),
     (os.path.join(project_root, "DeepFluxNeonBanner.webp"), "."),
-    (os.path.join(project_root, "website", "deepflux", "DeepFluxBanner.webp"), "."),
+    (os.path.join(project_root, "website", "deepflux", "DeepFluxNov2026.webp"), "."),
     (os.path.join(project_root, "packaging", "icons", "back.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "forward.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "reload.svg"), "packaging/icons"),

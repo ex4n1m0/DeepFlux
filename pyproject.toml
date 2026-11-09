@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deeptorrent"
-version = "7.6.1"
+version = "7.7"
 description = "LLM-Assisted Torrent Download Manager"
 requires-python = ">=3.11"
 dependencies = [

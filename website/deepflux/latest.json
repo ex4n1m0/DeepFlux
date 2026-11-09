@@ -1,8 +1,8 @@
 {
-  "version": "7.6.1",
-  "file": "DeepFlux7.6.1Setup.exe",
-  "size": 435207852,
-  "sha256": "1b6a15e915770400c552630a4e654c0fb91b400085d72cedb018dff51a919fa2",
+  "version": "7.7",
+  "file": "DeepFlux7.7Setup.exe",
+  "size": 436741789,
+  "sha256": "5a6c514456116f72cbca4c8d120f0bd2503cf6845acefe49b31e8832f70d3bba",
   "released": "2026-11-09",
-  "notes": "DeepFlux 7.6.1 - the multiview grid grows: besides 4x4 you now get a 2x2 quad view and a two-pane split (side by side or stacked); pick a layout from the bar under the grid, switch it live, and your choice is remembered. Browser-extension Play now sends the page as referrer, fixing instant 403 errors on hotlink-protected video sites, and the VLC fallback player forwards the stream referrer correctly."
+  "notes": "DeepFlux 7.7 - the multiview grid now plays as many IPTV streams as your provider allows: assign a channel to every tile in any layout. This release also lands a full-codebase stability and security audit: local-AI model switching no longer deadlocks, downloads no longer stall at low bandwidth limits, hostile web pages can no longer freeze the app, IPTV playlist and guide downloads are size-capped, and the Linux Jackett setup verifies its download against a pinned checksum."
 }
