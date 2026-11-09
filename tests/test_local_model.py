@@ -411,6 +411,40 @@ def test_start_server_model_switch_does_not_deadlock_the_lock(monkeypatch, tmp_p
     assert len(spawns) == 1  # the replacement spawn happened after the real stop
 
 
+def test_start_server_replaces_loading_server_of_different_model(monkeypatch, tmp_path):
+    """Regression (2026-11-09 review, M7): a server still LOADING model A
+    answers /health 503, so the is_running() branch skipped the deliberate
+    stop — B spawned next to loading A, the port race killed one of them,
+    and the state file named B while A kept serving. A mid-load pid serving
+    a DIFFERENT model must be stopped (for real) before the replacement
+    spawn. subprocess.run is faked — no real taskkill."""
+    entry = dict(next(iter(local_model.load_manifest())))
+    gguf = local_model.model_path(entry)
+    os.makedirs(os.path.dirname(gguf), exist_ok=True)
+    with open(gguf, "wb") as fh:
+        fh.write(b"x" * 8)
+    import time as _time
+    local_model._server_pid = None  # module global — an earlier test's spawn leaks here
+    local_model._write_state({"pid": 4711, "port": 8199, "model_id": "older-model",
+                              "started": _time.time() - 5, "exe": "x"})
+    monkeypatch.setattr(local_model, "is_running", lambda timeout=2.5: False)  # mid-load
+    monkeypatch.setattr(local_model, "_pid_is_our_server", lambda pid, exe=None: True)
+    monkeypatch.setattr(local_model, "find_server_exe",
+                        lambda variant="vulkan": f"C:/ll/{variant}/llama-server.exe")
+    kills = []
+    monkeypatch.setattr(local_model.subprocess, "run",
+                        lambda *a, **k: kills.append(a) or type("R", (), {"returncode": 0})())
+    spawns = []
+    monkeypatch.setattr(local_model, "_spawn", lambda exe, args: spawns.append(exe) or 333)
+    hw = local_model.HardwareInfo(cpu_cores=8, ram_mb=32768, vram_mb=0)
+
+    assert local_model.start_server(entry, hw=hw) is True
+    # the loading pid was stopped (taskkill /PID 4711 /T /F) BEFORE spawning B
+    assert kills and "4711" in kills[0][0]
+    assert len(spawns) == 1
+    assert local_model._state().get("model_id") == entry["id"]
+
+
 def test_start_server_waits_on_in_flight_load(monkeypatch, tmp_path):
     """A same-model load already in progress (spawned moments ago, port not
     bound yet) must be WAITED ON, not double-spawned onto the same port —

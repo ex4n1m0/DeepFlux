@@ -137,6 +137,29 @@ def test_taskbar_progress_inert_offscreen():
     tb.set_progress(10, 100)
     tb.set_indeterminate()
     tb.clear()
+    tb.release()  # idempotent no-op on an inert instance
+
+
+def test_taskbar_com_abi_pins():
+    """Source pins (2026-11-09 review, M9): the original wrapper passed
+    uuid.UUID to ctypes.byref (TypeError — the feature silently never worked)
+    and used vtable slots 11/12 (RegisterTab/UnregisterTab) for the progress
+    calls. Pin the real GUID construction and the frozen ITaskbarList3 slots."""
+    import ctypes
+    import uuid
+    import gui.win_taskbar as wt
+
+    assert wt._SET_PROGRESS_VALUE == 9
+    assert wt._SET_PROGRESS_STATE == 10
+    assert wt._HR_INIT == 3
+    assert wt._RELEASE == 2
+
+    for spec in ("{56FDF344-FD6D-11d0-958A-006097C9A090}",
+                 "{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}"):
+        g = wt._guid(spec)
+        assert isinstance(g, ctypes.Structure)
+        # bytes_le IS the in-memory GUID layout — CoCreateInstance reads these
+        assert ctypes.string_at(ctypes.byref(g), 16) == uuid.UUID(spec).bytes_le
 
 
 def _hub_entries():

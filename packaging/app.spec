@@ -164,6 +164,10 @@ _wanted_datas = [
     # per-file cap); --setup-flaresolverr fetches the pinned release and
     # verifies the digest against this file at runtime.
     (os.path.join(project_root, "packaging", "flaresolverr", "PINNED.json"), "flaresolverr"),
+    # Jackett pin — the WINDOWS installer ships via installer.iss [Files];
+    # the `linux` entry inside pins the RUNTIME-DOWNLOADED Linux tarball
+    # (digest-verified by --setup-jackett on Linux; review 2026-11-09 M6).
+    (os.path.join(project_root, "packaging", "jackett", "PINNED.json"), "jackett"),
 ]
 datas = [(src, dst) for src, dst in _wanted_datas if os.path.exists(src)]
 if len(datas) != len(_wanted_datas):

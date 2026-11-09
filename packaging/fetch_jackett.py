@@ -30,6 +30,7 @@ import requests
 
 REPO = "Jackett/Jackett"
 ASSET_NAME = "Jackett.Installer.Windows.exe"
+LINUX_ASSET_NAME = "Jackett.Binaries.LinuxAMDx64.tar.gz"
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(HERE, "jackett")
 MAX_BYTES = 250 * 1024 * 1024  # sanity cap; the installer is ~42 MB
@@ -93,6 +94,37 @@ def main() -> int:
         "sha256": sha.hexdigest(),
         "downloaded": date.today().isoformat(),
     }
+    # Linux tarball pin (2026-11-09 review, M6): the Linux setup step
+    # downloads this tarball at RUNTIME and verifies it against the
+    # `linux` entry — prefer the GitHub asset digest (no download); fall
+    # back to streaming the tarball once and hashing it (build machine
+    # only; the tarball itself is never bundled, only this pin is).
+    linux_asset = next((a for a in release.get("assets", [])
+                        if a.get("name") == LINUX_ASSET_NAME), None)
+    if linux_asset is not None:
+        ldigest = (linux_asset.get("digest") or "").split(":", 1)[-1]
+        if len(ldigest) != 64:
+            print(f"API carried no digest for {LINUX_ASSET_NAME} — "
+                  f"hashing by download…")
+            with requests.get(linux_asset["browser_download_url"], stream=True,
+                              timeout=300) as dl:
+                dl.raise_for_status()
+                lsha = hashlib.sha256()
+                with open(os.path.join(OUT_DIR, LINUX_ASSET_NAME), "wb") as fh:
+                    for chunk in dl.iter_content(chunk_size=1024 * 256):
+                        if chunk:
+                            lsha.update(chunk)
+                            fh.write(chunk)
+            os.remove(os.path.join(OUT_DIR, LINUX_ASSET_NAME))
+            ldigest = lsha.hexdigest()
+        pinned["linux"] = {
+            "version": tag,
+            "asset": LINUX_ASSET_NAME,
+            "size": linux_asset.get("size", 0),
+            "sha256": ldigest,
+            "source": "github-api-digest" if linux_asset.get("digest") else "downloaded-hash",
+        }
+        print(f"Pinned {LINUX_ASSET_NAME} {tag}: sha256 {ldigest[:16]}…")
     with open(os.path.join(OUT_DIR, "PINNED.json"), "w", encoding="utf-8") as fh:
         json.dump(pinned, fh, indent=2)
         fh.write("\n")

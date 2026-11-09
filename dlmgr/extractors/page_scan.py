@@ -99,6 +99,12 @@ def unpack_packed_js(source: str, depth: int = 0) -> List[str]:
 # --- stream discovery ------------------------------------------------------
 
 _MEDIA_EXTS = ("m3u8", "mpd", "mp4", "webm", "mkv", "mov", "m4v")
+# AUDITED 2026-11-09 (review M1, downgraded to false positive): the lazy
+# token has NO nested quantifier, so expansion is incremental and findall is
+# LINEAR — measured 0.11–0.31 s on 5 MB adversarial pages (single huge
+# token / dense dots / 5000 occurrences / near-miss extensions). A bound
+# here would change behavior (2048+ char URLs) for no measured benefit; do
+# not re-flag without new evidence.
 _STREAM_URL_RE = re.compile(
     r"""https?://[^\s"'<>\\()\[\]{}]+?\.(?:%s)(?:\?[^\s"'<>\\()\[\]{}]*)?""" % "|".join(_MEDIA_EXTS),
     re.I,

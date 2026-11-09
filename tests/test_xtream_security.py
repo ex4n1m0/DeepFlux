@@ -46,9 +46,12 @@ def test_request_log_redacts_raw_and_percent_encoded_credentials(monkeypatch, ca
         def json(self):
             return []
 
+        def close(self):
+            pass
+
     requested = []
 
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, headers=None, timeout=None, **_kw):
         requested.append(url)
         return Response()
 

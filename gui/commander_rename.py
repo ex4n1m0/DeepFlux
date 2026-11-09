@@ -126,7 +126,10 @@ def plan_renames(paths: List[str], *,
                 candidate = candidate.upper()
             elif case == "title":
                 candidate = candidate.title()
-        except (ValueError, IndexError) as exc:
+        except (ValueError, IndexError, re.error) as exc:
+            # re.error: the REPLACE template is parsed at sub() time — a bad
+            # escape there (`x\p`, trailing `\`) must mark the item, not
+            # raise out of the live textChanged slot (2026-11-09 review, M4).
             items.append(RenamePlanItem(source=source, error=str(exc)))
             continue
 

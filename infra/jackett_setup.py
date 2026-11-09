@@ -42,6 +42,8 @@ indexers — the service is shared infrastructure (Sonarr & co. use it too).
 from __future__ import annotations
 
 import ctypes
+import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -82,8 +84,50 @@ _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # does (jackett_launcher.sh runs `jackett --NoRestart`).
 LINUX_TARBALL_ASSET = "Jackett.Binaries.LinuxAMDx64.tar.gz"
 LINUX_RELEASE_API = "https://api.github.com/repos/Jackett/Jackett/releases/latest"
+LINUX_RELEASE_TAG_API = "https://api.github.com/repos/Jackett/Jackett/releases/tags/{tag}"
 LINUX_DOWNLOAD_TIMEOUT = 600.0
 LINUX_DOWNLOAD_CAP = 512 * 1024 * 1024  # sanity ceiling; real asset ~51 MB
+
+
+def _pinned_linux_release() -> Optional[Dict[str, Any]]:
+    """The `linux` entry of the tracked packaging/jackett/PINNED.json
+    (written by fetch_jackett.py; ships into _internal/jackett/ via
+    app.spec) — version/size/sha256 of the official Linux tarball. The
+    Linux setup step downloads the tarball at RUNTIME; before 2026-11-09 it
+    took whatever 'releases/latest' served with no integrity check and
+    extracted it with unsanitized members (review M6). With a pin the setup
+    downloads the PINNED tag and verifies the streamed sha256; the pin's
+    absence (bundle built before) degrades to the GitHub asset digest,
+    then size-cap only."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        path = os.path.join(sys._MEIPASS, "jackett", "PINNED.json")
+    else:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "packaging", "jackett", "PINNED.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        entry = data.get("linux") or {}
+        return entry if entry.get("version") and entry.get("sha256") else None
+    except Exception:
+        return None
+
+
+def _validate_tar_members(tar: "tarfile.TarFile", root: str) -> None:
+    """Refuse members that escape the extraction root: absolute or `..`
+    paths, and symlinks/hardlinks pointing outside it (CPython 3.11's
+    tarfile predates filter='data'; this is its member rule)."""
+    base = os.path.realpath(root)
+    for member in tar.getmembers():
+        target = os.path.realpath(os.path.join(base, member.name))
+        if not target.startswith(base + os.sep):
+            raise ValueError(f"tar member escapes the install root: {member.name}")
+        if member.issym() or member.islnk():
+            link = member.linkname
+            link_target = os.path.realpath(
+                link if os.path.isabs(link) else os.path.join(base, link))
+            if not link_target.startswith(base + os.sep):
+                raise ValueError(f"tar link escapes the install root: {member.name}")
 
 
 def _linux_install_root() -> str:
@@ -276,21 +320,35 @@ def linux_jackett_binary() -> Optional[str]:
 
 
 def _download_linux_tarball(dest: str, say: Callable[[str], None]) -> bool:
-    """Fetch the official glibc x64 tarball from the latest GitHub release."""
+    """Fetch the official glibc x64 tarball — the PINNED tag when a pin
+    ships (default), else 'latest' — and verify integrity: the pin's
+    sha256 fails closed; without a pin the GitHub asset digest is checked
+    (catches corruption, not a compromised GitHub); without either, the
+    size cap is the only guard (pre-2026-11-09 bundles)."""
     try:
-        say("Downloading Jackett from the official GitHub release…")
-        api = requests.get(LINUX_RELEASE_API, timeout=30.0,
+        pin = _pinned_linux_release()
+        if pin:
+            api_url = LINUX_RELEASE_TAG_API.format(tag=pin["version"])
+            say(f"Downloading Jackett {pin['version']} (pinned)…")
+        else:
+            api_url = LINUX_RELEASE_API
+            say("Downloading Jackett from the official GitHub release…")
+        api = requests.get(api_url, timeout=30.0,
                            headers={"Accept": "application/vnd.github+json",
                                     "User-Agent": "DeepFlux"})
         api.raise_for_status()
         url = None
+        api_digest = None
         for asset in api.json().get("assets", []):
             if asset.get("name") == LINUX_TARBALL_ASSET:
                 url = asset.get("browser_download_url")
+                api_digest = (asset.get("digest") or "").split(":", 1)[-1] or None
                 break
         if not url:
             say(f"Release carries no {LINUX_TARBALL_ASSET} asset.")
             return False
+        expected = (pin or {}).get("sha256") or api_digest
+        sha = hashlib.sha256()
         with requests.get(url, stream=True, timeout=LINUX_DOWNLOAD_TIMEOUT) as resp:
             resp.raise_for_status()
             size = int(resp.headers.get("Content-Length") or 0)
@@ -306,7 +364,18 @@ def _download_linux_tarball(dest: str, say: Callable[[str], None]) -> bool:
                     if written > LINUX_DOWNLOAD_CAP:
                         say("Download larger than expected — aborted.")
                         return False
+                    sha.update(chunk)
                     f.write(chunk)
+        if expected and sha.hexdigest() != expected:
+            say("Downloaded Jackett tarball failed the integrity check — "
+                "aborted (pinned sha256 mismatch).")
+            logger.warning("Jackett Linux tarball digest mismatch: got %s, expected %s",
+                           sha.hexdigest()[:16], expected[:16])
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            return False
         return True
     except Exception as exc:
         logger.warning("Jackett Linux download failed: %s", exc)
@@ -332,7 +401,8 @@ def _install_linux_jackett(say: Callable[[str], None]) -> bool:
         try:
             say("Extracting…")
             with tarfile.open(dest, "r:gz") as tar:
-                tar.extractall(root)  # noqa: S202 — official asset
+                _validate_tar_members(tar, root)  # no .. / absolute / escaping links
+                tar.extractall(root)
         except Exception as exc:
             logger.warning("Jackett tarball extract failed: %s", exc)
             return False

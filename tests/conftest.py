@@ -39,6 +39,16 @@ def isolate_indexer_health(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def isolate_room_portal(monkeypatch, tmp_path):
+    """Never open the user's real ~/.deeptorrent/room-portal profile. The
+    one test that builds a real RoomTab view (test_oh_room delenvs
+    DF_NO_ROOM) constructs a QtWebEngine profile with persistent leveldb/
+    cookie storage — without this redirect it opened the SAME store the
+    installed app uses (2026-11-09 review, M8)."""
+    monkeypatch.setenv("DF_ROOM_DIR", str(tmp_path / "room-portal"))
+
+
+@pytest.fixture(autouse=True)
 def isolate_local_model(monkeypatch, tmp_path):
     """Never touch the real ~/.deeptorrent/models (whisper weights + real
     GGUFs, multi-GB) or ~/.deeptorrent/llama (extracted runtimes), and drop

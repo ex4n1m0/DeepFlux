@@ -3030,6 +3030,16 @@ class MainWindow(QMainWindow):
                     if total > 0:
                         done += float(t.get("progress", 0.0)) * total
                         den += total
+            # Direct downloads count too (2026-11-09 review): the jobs
+            # parameter used to be accepted and ignored, so a download-only
+            # session showed an indeterminate bar forever.
+            from dlmgr.job import JobStatus
+            for job in jobs:
+                if job.status in (JobStatus.DOWNLOADING, JobStatus.PROCESSING):
+                    total = float(job.file_size or 0)
+                    if total > 0:
+                        done += min(1.0, float(job.progress)) * total
+                        den += total
             if den > 0:
                 tb.set_progress(done, den)
             else:
@@ -7470,6 +7480,13 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         # Closing the window (X) quits the app — no background instance is
         # left running in the tray.
+        tb = getattr(self, "_taskbar", None)
+        if tb is not None:
+            try:
+                tb.release()
+            except Exception:
+                pass
+            self._taskbar = None
 
         # Confirm before quitting with active transfers — EXCEPT during an
         # update: the apply dialog already spelled out the consequences.

@@ -23,6 +23,13 @@ from .cache import IPTVCache
 
 logger = logging.getLogger(__name__)
 
+# Hard caps for EPG payloads (2026-11-09 review, M3): the download goes to
+# a temp file (disk) and the gzip path decompresses to RAM-adjacent disk —
+# both must be bounded against hostile EPG URLs. Legit 7-day multi-channel
+# guides reach tens of MB; 256 MiB is generous on both stages.
+_EPG_MAX_BYTES = 256 * 1024 * 1024
+_EPG_MAX_DECOMPRESSED = 256 * 1024 * 1024
+
 ProgressFn = Callable[[int, Optional[int]], None]
 
 
@@ -206,18 +213,39 @@ class EPGManager:
                     raise ValueError("EPG download failed after 4 attempts")
                 fd, tmp_path = tempfile.mkstemp(suffix=".xmltv")
                 with os.fdopen(fd, "wb") as f:
+                    total = 0
                     for chunk in r.iter_content(65536):
-                        if chunk:
-                            f.write(chunk)
+                        if not chunk:
+                            continue
+                        total += len(chunk)
+                        if total > _EPG_MAX_BYTES:
+                            # Disk/RAM DoS guard (2026-11-09 review, M3): a
+                            # hostile EPG URL must not fill the disk.
+                            raise ValueError(
+                                f"EPG body exceeds the {_EPG_MAX_BYTES // (1024 * 1024)} MiB cap")
+                        f.write(chunk)
+                r.close()
                 # Some providers serve gzipped XMLTV without a Content-Encoding
-                # header — detect the gzip magic bytes and decompress.
+                # header — detect the gzip magic bytes and decompress. The
+                # decompression is CAPPED: a gzip bomb's src.read() used to
+                # pull the whole expansion into RAM (2026-11-09 review, M3).
                 with open(tmp_path, "rb") as f:
                     magic = f.read(2)
                 if magic == b"\x1f\x8b":
                     import gzip
                     gz_path = tmp_path + ".xml"
                     with gzip.open(tmp_path, "rb") as src, open(gz_path, "wb") as dst:
-                        dst.write(src.read())
+                        total = 0
+                        while True:
+                            block = src.read(1024 * 1024)
+                            if not block:
+                                break
+                            total += len(block)
+                            if total > _EPG_MAX_DECOMPRESSED:
+                                raise ValueError(
+                                    "EPG gzip expands past the "
+                                    f"{_EPG_MAX_DECOMPRESSED // (1024 * 1024)} MiB cap (bomb?)")
+                            dst.write(block)
                     os.remove(tmp_path)
                     tmp_path = gz_path
                 programs, channels = parse_xmltv(tmp_path, on_progress=on_progress,

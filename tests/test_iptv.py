@@ -849,6 +849,14 @@ def test_artwork_cache_enforce_size_limit_evicts_lru_groups(tmp_path):
                 f.write(b"x" * 1000)
     total = cache.stats()["total_bytes"]
     assert total == 8000
+    # Stagger the group timestamps (the four writes above can land inside
+    # one FS timestamp tick, making "oldest two" a coin flip — this test
+    # flaked 2-in-5 solo before the stagger; eviction orders by st_atime).
+    import time as _t
+    base = _t.time() - 100
+    for i, url in enumerate(urls):
+        for path in (cache.full_path(url), cache.thumb_path(url)):
+            os.utime(path, (base + i, base + i))
     # Touch p2/p3 so they are the most recently used.
     cache.get_cached(urls[2])
     cache.get_thumb(urls[3])
@@ -2438,7 +2446,7 @@ def test_xtream_load_playlist_mocked():
     src = PlaylistSource(id="x1", name="X", kind="xtream", url="http://host:8080",
                          username="u", password="p")
     with mock.patch("iptv.xtream.requests.get") as g:
-        def _fake_get(url, headers=None, timeout=30):
+        def _fake_get(url, headers=None, timeout=30, **_kw):
             resp = mock.Mock()
             resp.raise_for_status = mock.Mock()
             # Parse action from query string.
@@ -2704,7 +2712,7 @@ def test_download_m3u_retries_and_decodes_utf8():
 
     calls = {"n": 0}
 
-    def _fake_get(url, headers=None, timeout=30):
+    def _fake_get(url, headers=None, timeout=30, **_kw):
         calls["n"] += 1
         if calls["n"] < 3:
             raise ConnectionError("reset")
@@ -5812,3 +5820,81 @@ def test_now_playing_hidden_in_compact_mode():
     assert not player.np_title_lbl.isHidden()
     assert player.np_title_lbl.text() == "Another Movie"
 
+
+
+# ---------------------------------------------------------------------------
+# Remote-body caps (2026-11-09 review, M3)
+# ---------------------------------------------------------------------------
+
+class _StreamResp:
+    def __init__(self, chunks):
+        self._chunks = list(chunks)
+        self.closed = False
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size=65536):
+        yield from self._chunks
+
+    def close(self):
+        self.closed = True
+
+
+def test_download_m3u_caps_hostile_playlist(monkeypatch):
+    """A playlist body past the cap must be dropped WITHOUT retrying (the
+    old code buffered the whole body into the GUI process at startup)."""
+    from iptv import manager as M
+
+    src = PlaylistSource(id="s", name="S", kind="m3u_url", url="http://x/big.m3u")
+    monkeypatch.setattr(M, "_M3U_MAX_BYTES", 1000)
+    resp = _StreamResp([b"#EXTM3U\n" + b"x" * 5000])
+    with mock.patch("iptv.manager.requests.get", return_value=resp) as get:
+        assert M.IPTVManager._download_m3u(src, {}, None) is None
+    assert get.call_count == 1  # no pointless retries on a cap violation
+    assert resp.closed
+
+    # under the cap the same body streams through fine
+    ok = _StreamResp([b"#EXTM3U\nhttp://s/1.ts\n"])
+    with mock.patch("iptv.manager.requests.get", return_value=ok):
+        text = M.IPTVManager._download_m3u(src, {}, None)
+    assert text is not None and text.startswith("#EXTM3U")
+
+
+def test_epg_update_survives_gzip_bomb(monkeypatch, tmp_path):
+    """A small gzip that expands past the cap must fail the update cleanly
+    (the old src.read() pulled the whole expansion into RAM)."""
+    import gzip as _gz
+    from iptv.cache import IPTVCache
+    from iptv.epg import EPGManager
+
+    monkeypatch.setattr("iptv.epg._EPG_MAX_DECOMPRESSED", 1024)
+    bomb = tmp_path / "bomb.xmltv.gz"
+    with _gz.open(bomb, "wb") as fh:  # small on disk, huge expanded
+        fh.write(b"<tv>" + b"<programme>x</programme>" * 5000 + b"</tv>")
+    cache = IPTVCache(str(tmp_path))
+    mgr = EPGManager(cache)
+    resp = _StreamResp([bomb.read_bytes()])
+    done = []
+    with mock.patch("iptv.epg.requests.get", return_value=resp):
+        t = mgr.update_async("http://x/e.xmltv", on_done=lambda ok, n: done.append((ok, n)))
+        t.join(timeout=10)
+    # graceful rejection: worker finished, reported failure, cached nothing
+    assert not t.is_alive()
+    assert done == [(False, 0)]
+    assert cache.epg_age("http://x/e.xmltv") is None  # nothing cached
+
+
+def test_xtream_request_caps_hostile_panel(monkeypatch):
+    """A panel reply past the cap must raise instead of buffering."""
+    import pytest as _pytest
+    from iptv import xtream as X
+
+    monkeypatch.setattr(X, "_RESP_MAX_BYTES", 100)
+    src = PlaylistSource(id="s", name="S", kind="xtream",
+                         url="http://x:80/player_api.php?u=a&p=b")
+    resp = _StreamResp([b'{"big": "' + b"y" * 5000 + b'"}'])
+    with mock.patch("iptv.xtream.requests.get", return_value=resp):
+        with _pytest.raises(ValueError):
+            X._request(src, "http://x:80/player_api.php?u=a&p=b&action=x")
+    assert resp.closed

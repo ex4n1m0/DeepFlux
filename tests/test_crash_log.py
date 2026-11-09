@@ -32,8 +32,13 @@ def _iter_py_files():
     for path in ROOT.rglob("*.py"):
         parts = path.relative_to(ROOT).parts
         # tests/website excluded; packaging INCLUDED — verify_boot.py is
-        # exactly the site the 2026-11-07 audit caught.
+        # exactly the site the 2026-11-07 audit caught. Dot-dirs (`.venv`,
+        # `.git`, …) excluded: the pin targets REPO code — site-packages
+        # carry third-party enable() calls (pytest's own plugin,
+        # win32ctypes' tests) that are none of our business.
         if parts[0] in ("tests", "website", "_site_shots_out"):
+            continue
+        if parts[0].startswith("."):
             continue
         yield path
 

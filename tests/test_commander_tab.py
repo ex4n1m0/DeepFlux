@@ -1039,6 +1039,15 @@ def test_folder_tabs_new_close_and_active_pane_tracking(tab, tmp_path):
     assert tab._sides["left"].count() == 1
     assert os.path.samefile(tab.left_pane.current_path(), first)
 
+    # M5 regression (2026-11-09): a programmatic close must re-anchor
+    # _active to the surviving pane — after the deleteLater is flushed the
+    # old wrapper is a dead C++ object and every shortcut would raise.
+    from PySide6.QtWidgets import QApplication
+    QApplication.processEvents()  # flush deleteLater
+    assert tab._active is tab.left_pane
+    assert tab._side_of(tab._active) == "left"
+    tab._active.selected_paths()  # must not raise RuntimeError
+
     # the last tab is never closable
     tab._close_tab("left", 0)
     assert tab._sides["left"].count() == 1
@@ -1124,6 +1133,14 @@ def test_plan_renames_flags_collisions_and_invalid_names(tmp_path):
 
     # invalid regex marks every item instead of raising
     plan = plan_renames(paths, find="(", replace="x", use_regex=True)
+    assert all(item.error for item in plan)
+
+    # a bad REPLACE template (re.error at sub() time) must also mark every
+    # item instead of raising out of the live textChanged slot
+    # (2026-11-09 review, M4)
+    plan = plan_renames(paths, find="a", replace="x\\p", use_regex=True)
+    assert all(item.error for item in plan)
+    plan = plan_renames(paths, find="a", replace="x\\", use_regex=True)
     assert all(item.error for item in plan)
 
     # a case-only change is legitimate (no "destination exists" error)

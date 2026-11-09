@@ -696,12 +696,15 @@ class TorrentEngine:
             total_up += status.get("upload_rate", 0)
         dht_nodes = 0
         try:
-            # session.status() is deprecated in libtorrent 2.x — read the
-            # counter from the session-stats API instead (review 2026-11-06).
-            metrics = self._session.session_stats_metrics()
-            if "dht.dht_nodes" in metrics:
-                dht_nodes = int(self._session.session_stats()[metrics["dht.dht_nodes"]])
-            else:
+            # session.status() is deprecated in libtorrent 2.x but still the
+            # only synchronous source for the live DHT node count — the
+            # module-level session_stats_metrics() API is alert-driven
+            # (post_session_stats + wait for the alert), not a session
+            # method: the 2026-11-06 rewrite called a nonexistent method,
+            # the AttributeError was swallowed, and dht_nodes was always 0
+            # (2026-11-09 review, M10). Same pattern as _get_swarm_stats.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
                 dht_nodes = self._session.status().dht_nodes
         except Exception:
             pass

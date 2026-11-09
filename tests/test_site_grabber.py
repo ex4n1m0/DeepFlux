@@ -443,3 +443,77 @@ def test_config_roundtrip_grabber_options(tmp_path):
     assert fresh.browser.grabber_auto_limit == 5
     assert fresh.browser.grabber_last_site == ""
     assert fresh.browser.grabber_search_templates == {}
+
+
+# ---------------------------------------------------------------------------
+# read_capped hardening (2026-11-09 review, M11)
+# ---------------------------------------------------------------------------
+
+class _CappedResponse:
+    """Minimal streamed-response fake for read_capped tests."""
+
+    def __init__(self, chunks, fail_after=None, encoding=None):
+        self._chunks = list(chunks)
+        self._fail_after = fail_after
+        self.encoding = encoding
+        self.url = "https://cap.test/body"
+        self.closed = False
+
+    def iter_content(self, chunk_size=65536):
+        for i, chunk in enumerate(self._chunks):
+            if self._fail_after is not None and i >= self._fail_after:
+                raise OSError("connection reset mid-stream")
+            yield chunk
+
+    def close(self):
+        self.closed = True
+
+
+def test_read_capped_closes_response_on_every_path():
+    body = b"x" * 200
+    ok = _CappedResponse([body])
+    assert http_client.read_capped(ok, max_bytes=1000) == "x" * 200
+    assert ok.closed
+
+    over = _CappedResponse([b"x" * 200])
+    assert http_client.read_capped(over, max_bytes=100) == ""
+    # Regression M11: the over-cap early return used to LEAK the response.
+    assert over.closed
+
+
+def test_read_capped_raises_on_midstream_truncation():
+    resp = _CappedResponse([b"<html><body>partial", b" more"],
+                           fail_after=1)
+    with pytest.raises(OSError):
+        http_client.read_capped(resp, max_bytes=1000)
+    assert resp.closed
+    # a failure BEFORE any data arrived still falls back (mock contract)
+    empty = _CappedResponse([b"x"], fail_after=0)
+    empty.content = None
+    empty.text = "buffered"
+    assert http_client.read_capped(empty, max_bytes=100) == "buffered"
+    assert empty.closed
+
+
+def test_find_stream_urls_survives_redos_page():
+    """Hostile-input pin (2026-11-09 review M1 — downgraded to FALSE
+    POSITIVE after measurement): the lazy token has no nested quantifier,
+    so findall is linear (0.1-0.3 s on 5 MB adversarial pages). This pin
+    keeps it that way — if a future pattern edit reintroduces unbounded
+    nesting, this test hangs/fails instead of the app freezing."""
+    import threading
+    import time as _time
+    from dlmgr.extractors.page_scan import find_stream_urls as fsu
+
+    hostile = 'https://' + 'a' * 5_000_000 + '"'
+    done = threading.Event()
+
+    def _scan():
+        fsu(hostile)
+        done.set()
+
+    t = threading.Thread(target=_scan, daemon=True)
+    t0 = _time.monotonic()
+    t.start()
+    assert done.wait(timeout=5.0), "find_stream_urls hung on a ReDoS page"
+    assert _time.monotonic() - t0 < 3.0

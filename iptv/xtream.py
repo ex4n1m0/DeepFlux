@@ -24,6 +24,7 @@ Stream URLs are constructed from server_info + stream_type:
 """
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -53,6 +54,9 @@ logger = logging.getLogger(__name__)
 
 # Never log credentials — mask them in every debug URL.
 _TIMEOUT = 30
+# Hard cap for panel API replies (2026-11-09 review, M3) — legit replies are
+# small JSON; a hostile panel must never buffer an unbounded body.
+_RESP_MAX_BYTES = 8 * 1024 * 1024
 _DEFAULT_SERIES_CONCURRENCY = 2
 _MAX_SERIES_CONCURRENCY = 6
 _SERIES_INFO_ATTEMPTS = 3
@@ -130,9 +134,27 @@ def _request(src: PlaylistSource, url: str) -> Any:
     if src.referer:
         headers["Referer"] = src.referer
     logger.debug("Xtream request: %s", _safe_api_url(url))
-    resp = requests.get(url, headers=headers, timeout=_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
+    # Streamed under a hard cap (2026-11-09 review, M3): panel API replies
+    # are small JSON; a hostile panel must never buffer an unbounded body.
+    resp = requests.get(url, headers=headers, timeout=_TIMEOUT, stream=True)
+    try:
+        resp.raise_for_status()
+        buf = bytearray()
+        try:
+            for chunk in resp.iter_content(65536):
+                if not chunk:
+                    continue
+                buf += chunk
+                if len(buf) > _RESP_MAX_BYTES:
+                    raise ValueError(
+                        f"Xtream response exceeds {_RESP_MAX_BYTES // (1024 * 1024)} MiB cap")
+        except Exception:
+            if buf:
+                raise
+            return resp.json()  # non-streamed response / test mock
+        return json.loads(bytes(buf).decode("utf-8", errors="replace"))
+    finally:
+        resp.close()
 
 
 def _get(src: PlaylistSource, action: str, **extra: str) -> Any:

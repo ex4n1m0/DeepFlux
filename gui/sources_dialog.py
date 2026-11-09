@@ -257,7 +257,18 @@ class SourcesDialog(QDialog):
         )
 
     def _save_and_accept(self) -> None:
-        """Save the table contents back to config and accept."""
+        """Save the table contents back to config and accept.
+
+        The table shows only the five editable columns; the provenance and
+        ranking fields (origin, torznab_caps, popularity, categories) are
+        load-bearing for the Jackett tiers — carry them over from the
+        existing source with the same id instead of wiping them (wiping
+        origin made manual sources Jackett-queried/zombie-struck and broke
+        the sync's zombie auto-removal; 2026-11-09 review, M2). Rows whose
+        id is not already in the list are NEW manual adds -> origin="manual"
+        (same as the agent's add_torrent_source).
+        """
+        existing = {src.id: src for src in self.config.sources.sources}
         sources = []
         for row in range(self.table.rowCount()):
             enabled_item = self.table.item(row, 0)
@@ -270,12 +281,18 @@ class SourcesDialog(QDialog):
             if not name:
                 continue
 
+            src_id = (id_item.text().strip() if id_item else "") or name.lower().replace(" ", "-")
+            prev = existing.get(src_id)
             sources.append(SourceConfig(
-                id=(id_item.text().strip() if id_item else "") or name.lower().replace(" ", "-"),
+                id=src_id,
                 name=name,
                 url=(url_item.text().strip() if url_item else ""),
                 type=(type_item.text().strip() if type_item else "public"),
                 enabled=bool(enabled_item and enabled_item.checkState() == Qt.Checked),
+                origin=prev.origin if prev else "manual",
+                torznab_caps=list(prev.torznab_caps) if prev else [],
+                popularity=prev.popularity if prev else 0,
+                categories=list(prev.categories) if prev else [],
             ))
 
         self.config.sources.sources = sources

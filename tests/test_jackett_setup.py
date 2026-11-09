@@ -345,3 +345,127 @@ def test_setup_dialog_streams_lines_and_finishes(tmp_path):
         assert "12 torrent sources" in dialog.log.toPlainText()
         dialog.close()
         dialog.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Linux tarball integrity (2026-11-09 review, M6)
+# ---------------------------------------------------------------------------
+
+class _ApiResp:
+    def __init__(self, payload):
+        self._payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+
+class _StreamResp:
+    def __init__(self, body: bytes):
+        self._body = body
+        self.headers = {"Content-Length": str(len(body))}
+        self.status_code = 200
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, chunk_size):
+        for i in range(0, len(self._body), chunk_size):
+            yield self._body[i:i + chunk_size]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _linux_release_asset(digest="sha256:" + "ab" * 32, url="http://dl/jackett.tar.gz"):
+    return {"tag_name": "v9.9.9", "assets": [
+        {"name": "Jackett.Binaries.LinuxAMDx64.tar.gz",
+         "browser_download_url": url, "size": 10, "digest": digest}]}
+
+
+def test_linux_tarball_download_verifies_pinned_digest(tmp_path, monkeypatch):
+    """With a shipped pin, the tarball's streamed sha256 must be verified
+    and a mismatch must REFUSE (the old code executed whatever
+    'releases/latest' served, unpinned)."""
+    pin = {"version": "v9.9.9", "asset": "Jackett.Binaries.LinuxAMDx64.tar.gz",
+           "size": 10, "sha256": "cc" * 32}
+    monkeypatch.setattr(jackett_setup, "_pinned_linux_release", lambda: pin)
+    dest = str(tmp_path / "t.tar.gz")
+
+    calls = {"api": 0}
+
+    def fake_get(url, **kw):
+        if "releases/tags/" in url:
+            calls["api"] += 1  # the PINNED tag, not releases/latest
+            assert "v9.9.9" in url
+            return _ApiResp(_linux_release_asset())
+        return _StreamResp(b"not the pinned bytes")
+
+    with patch.object(jackett_setup.requests, "get", side_effect=fake_get):
+        msgs = []
+        assert jackett_setup._download_linux_tarball(dest, msgs.append) is False
+    assert calls["api"] == 1
+    assert any("integrity" in m.lower() for m in msgs)
+    assert not os.path.exists(dest)  # the bad download was removed
+
+
+def test_linux_tarball_download_accepts_pinned_bytes(tmp_path, monkeypatch):
+    import hashlib
+    body = b"the official tarball bytes"
+    pin = {"version": "v1.2.3", "sha256": hashlib.sha256(body).hexdigest()}
+    monkeypatch.setattr(jackett_setup, "_pinned_linux_release", lambda: pin)
+
+    def fake_get(url, **kw):
+        if "releases/tags/" in url:
+            assert "v1.2.3" in url
+            return _ApiResp(_linux_release_asset())
+        return _StreamResp(body)
+
+    dest = str(tmp_path / "t.tar.gz")
+    with patch.object(jackett_setup.requests, "get", side_effect=fake_get):
+        assert jackett_setup._download_linux_tarball(dest, lambda m: None) is True
+    assert open(dest, "rb").read() == body
+
+
+def test_linux_tarball_extraction_rejects_escaping_members(tmp_path):
+    """A tarball with ../ or absolute or escaping-link members must be
+    refused before extractall (CPython 3.11 tarfile has no filter=)."""
+    import io
+    import tarfile
+
+    def _tar_with(name, linkname=None, symlink=False):
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name)
+            data = b"x"
+            if linkname is not None:
+                info.type = tarfile.SYMTYPE if symlink else tarfile.LNKTYPE
+                info.linkname = linkname
+            else:
+                info.size = len(data)
+            tar.addfile(info, io.BytesIO(data) if linkname is None else None)
+        return buf.getvalue()
+
+    root = tmp_path / "root"
+    root.mkdir()
+    for name, link, sym in [
+        ("../evil.txt", None, False),
+        ("/abs/evil.txt", None, False),
+        ("Jackett/link", "../outside", False),
+        ("Jackett/sym", "/etc/passwd", True),
+    ]:
+        path = tmp_path / "t.tar.gz"
+        path.write_bytes(_tar_with(name, link, sym))
+        with tarfile.open(path, "r:gz") as tar:
+            with pytest.raises(ValueError):
+                jackett_setup._validate_tar_members(tar, str(root))
+    # a clean layout passes
+    path = tmp_path / "ok.tar.gz"
+    path.write_bytes(_tar_with("Jackett/jackett"))
+    with tarfile.open(path, "r:gz") as tar:
+        jackett_setup._validate_tar_members(tar, str(root))  # no raise

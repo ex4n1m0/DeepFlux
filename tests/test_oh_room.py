@@ -565,6 +565,14 @@ class TestRoomTab:
             # with the Browser tab's profile.
             assert not tab.web_profile.isOffTheRecord()
             assert tab.web_profile.storageName() == "deeptorrent-room"
+            # M8 (2026-11-09): the storage root must be the conftest
+            # DF_ROOM_DIR redirect — NEVER the user's real
+            # ~/.deeptorrent/room-portal leveldb/cookie store.
+            import os
+            real_root = os.path.join(os.path.expanduser("~"),
+                                     ".deeptorrent", "room-portal")
+            storage = tab.web_profile.persistentStoragePath()
+            assert storage != real_root and "room-portal" in storage
             # The download hook is attachable (MainWindow wires the
             # browser save flow through it).
             assert tab.attach_download_handler(lambda *a: None) is True

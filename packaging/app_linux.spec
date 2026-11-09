@@ -128,6 +128,11 @@ _wanted_datas = [
     (os.path.join(project_root, "packaging", "milkdrop"), "milkdrop"),
     (os.path.join(project_root, "MilkDrop"), "milkdrop/presets"),
     (os.path.join(project_root, "chrome_extension"), "chrome_extension"),
+    # Jackett Linux tarball pin: --setup-jackett downloads the tarball at
+    # RUNTIME on Linux and verifies its sha256 against this file (review
+    # 2026-11-09 M6) — without it the setup degrades to the GitHub asset
+    # digest and finally to a size cap only.
+    (os.path.join(project_root, "packaging", "jackett", "PINNED.json"), "jackett"),
 ]
 datas = [(src, dst) for src, dst in _wanted_datas if os.path.exists(src)]
 if len(datas) != len(_wanted_datas):

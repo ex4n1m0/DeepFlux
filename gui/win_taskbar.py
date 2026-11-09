@@ -20,12 +20,35 @@ _WIN32 = sys.platform == "win32"
 if _WIN32:
     from ctypes import wintypes  # noqa: F401  (prototypes below)
 
-# ITaskbarList3 vtable slots (after IUnknown 0-2): HrInit=3 ... SetProgressValue=11,
-# SetProgressState=12. Slot numbers are ABI-stable (the interface is frozen).
+# ITaskbarList3 vtable slots (after IUnknown 0-2): HrInit=3, AddTab=4,
+# DeleteTab=5, ActivateTab=6, SetActiveAlt=7, MarkFullscreenWindow=8,
+# SetProgressValue=9, SetProgressState=10, RegisterTab=11, UnregisterTab=12.
+# Slot numbers are ABI-stable (the interface is frozen) — 11/12 are
+# Register/UnregisterTab and were wrongly used for the progress calls
+# (2026-11-09 review, M9).
 _HR_INIT = 3
-_SET_PROGRESS_VALUE = 11
-_SET_PROGRESS_STATE = 12
+_SET_PROGRESS_VALUE = 9
+_SET_PROGRESS_STATE = 10
 _RELEASE = 2
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("Data1", wintypes.DWORD),
+                ("Data2", wintypes.WORD),
+                ("Data3", wintypes.WORD),
+                ("Data4", ctypes.c_ubyte * 8)]
+
+
+def _guid(spec: str) -> _GUID:
+    """Build a real ctypes GUID from a registry-format string. The original
+    code passed uuid.UUID straight to ctypes.byref() — byref demands a ctypes
+    instance and raised TypeError, so CoCreateInstance was never reached and
+    the whole feature silently died (2026-11-09 review, M9)."""
+    from uuid import UUID
+    g = _GUID()
+    # UUID.bytes_le is exactly the in-memory GUID layout.
+    ctypes.memmove(ctypes.byref(g), UUID(spec).bytes_le, 16)
+    return g
 
 _TBPF_NOPROGRESS = 0
 _TBPF_INDETERMINATE = 1
@@ -52,19 +75,18 @@ class TaskbarProgress:
         if not _WIN32 or not hwnd:
             return
         try:
-            from uuid import UUID
-
-            clsid = UUID("{56FDF344-FD6D-11d0-958A-006097C9A090}")  # TaskbarList
-            iid = UUID("{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}")   # ITaskbarList3
+            clsid = _guid("{56FDF344-FD6D-11d0-958A-006097C9A090}")  # TaskbarList
+            iid = _guid("{EA1AFB91-9E28-4B86-90E9-9E9F8A5EEFAF}")   # ITaskbarList3
             ptr = ctypes.c_void_p()
-            # CLSCTX_INPROC_SERVER = 1. QApplication already initialized COM STA.
-            hr = ctypes.windll.ole32.CoCreateInstance(
-                ctypes.cast(ctypes.byref(clsid), ctypes.c_void_p),
-                None,
-                1,
-                ctypes.cast(ctypes.byref(iid), ctypes.c_void_p),
-                ctypes.byref(ptr),
+            co_create = ctypes.windll.ole32.CoCreateInstance
+            co_create.argtypes = (
+                ctypes.POINTER(_GUID), ctypes.c_void_p, wintypes.DWORD,
+                ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p),
             )
+            co_create.restype = ctypes.HRESULT
+            # CLSCTX_INPROC_SERVER = 1. QApplication already initialized COM STA.
+            hr = co_create(ctypes.byref(clsid), None, 1,
+                           ctypes.byref(iid), ctypes.byref(ptr))
             if hr != 0 or not ptr.value:
                 return
             self._ptr = ptr.value
@@ -95,6 +117,21 @@ class TaskbarProgress:
 
     def clear(self) -> None:
         self._set_state(_TBPF_NOPROGRESS)
+
+    def release(self) -> None:
+        """Drop our COM reference (best-effort; the app holds one instance
+        for its lifetime, so this is hygiene, not a leak fix)."""
+        if not self._ptr:
+            return
+        try:
+            fn = ctypes.WINFUNCTYPE(ctypes.HRESULT, ctypes.c_void_p)(
+                _vtable_entry(self._ptr, _RELEASE)
+            )
+            fn(self._ptr)
+        except Exception:
+            logger.debug("taskbar Release failed", exc_info=True)
+        finally:
+            self._ptr = 0
 
     # -- internals ---------------------------------------------------------
     def _set_state(self, flag: int) -> None:

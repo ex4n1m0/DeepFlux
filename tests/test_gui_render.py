@@ -116,6 +116,52 @@ def test_rss_and_sources_dialogs_construct_offscreen():
     app.processEvents()
 
 
+def test_sources_dialog_save_preserves_provenance_fields():
+    """Regression (2026-11-09 review, M2): _save_and_accept rebuilt every row
+    from the five visible table columns, silently wiping origin/torznab_caps/
+    popularity/categories — wiping origin made manual sources Jackett-queried
+    and zombie-struck, and broke the sync's zombie auto-removal for jackett
+    sources. Existing fields must survive an OK; brand-new rows are manual."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication, QTableWidgetItem
+    from config import DeeptorrentConfig, SourceConfig
+    from gui.sources_dialog import SourcesDialog
+
+    app = QApplication.instance() or QApplication([])
+    cfg = DeeptorrentConfig()
+    cfg.sources.sources = [
+        SourceConfig(id="1337x", name="1337x", url="https://x.test", type="public",
+                     enabled=True, origin="jackett", popularity=95,
+                     torznab_caps=[2000, 2030], categories=["Movies"]),
+        SourceConfig(id="manual-site", name="Manual", url="https://m.test", type="public",
+                     enabled=False, origin="manual", popularity=5,
+                     torznab_caps=[], categories=["TV"]),
+    ]
+    dlg = SourcesDialog(cfg)
+    dlg._save_and_accept()
+    app.processEvents()
+    saved = {s.id: s for s in cfg.sources.sources}
+    assert set(saved) == {"1337x", "manual-site"}
+    j = saved["1337x"]
+    assert j.origin == "jackett" and j.popularity == 95
+    assert j.torznab_caps == [2000, 2030] and j.categories == ["Movies"]
+    m = saved["manual-site"]
+    assert m.origin == "manual" and not m.enabled and m.popularity == 5
+
+    # a NEW row (id not previously known) becomes a manual source
+    dlg2 = SourcesDialog(cfg)
+    row = dlg2.table.rowCount()
+    dlg2.table.insertRow(row)
+    dlg2.table.setItem(row, 1, QTableWidgetItem("Fresh Site"))
+    dlg2.table.setItem(row, 2, QTableWidgetItem("fresh-site"))
+    dlg2.table.setItem(row, 3, QTableWidgetItem("public"))
+    dlg2.table.setItem(row, 4, QTableWidgetItem("https://f.test"))
+    dlg2._save_and_accept()
+    app.processEvents()
+    fresh = {s.id: s for s in cfg.sources.sources}["fresh-site"]
+    assert fresh.origin == "manual"
+
+
 def test_atomic_config_write_leaves_no_temp_and_replaces(tmp_path):
     from gui.main_window import _write_bytes_atomic
     p = str(tmp_path / "config.json")

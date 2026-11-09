@@ -39,6 +39,12 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# Hard cap for playlist bodies (2026-11-09 review, M3): playlist downloads
+# run at startup for every enabled source and must never buffer an
+# unbounded remote body into the GUI process (the biggest legit playlists
+# are a few MB; 32 MiB is generous).
+_M3U_MAX_BYTES = 32 * 1024 * 1024
+
 # Sidebar bucket for VOD entries whose release year is unknown (no year in
 # the name and no metadata lookup yet). Lives here so the GUI and the manager
 # share one spelling; a 4-digit year can never collide with it.
@@ -382,14 +388,47 @@ class IPTVManager:
 
         Decoding is forced to UTF-8: most providers omit the charset header,
         which makes requests fall back to ISO-8859-1 and garble non-ASCII
-        channel names."""
+        channel names. The body is STREAMED under a hard cap (2026-11-09
+        review, M3): a hostile/broken provider must never buffer an
+        unbounded body into the GUI process — this runs at startup for
+        every enabled source."""
         for attempt in range(attempts):
             if is_cancelled and is_cancelled():
                 return None
             try:
-                r = requests.get(source.url, headers=headers or None, timeout=30)
-                r.raise_for_status()
-                text = r.content.decode("utf-8", errors="replace")
+                r = requests.get(source.url, headers=headers or None, timeout=30,
+                                 stream=True)
+                try:
+                    r.raise_for_status()
+                    buf = bytearray()
+                    over = False
+                    try:
+                        for chunk in r.iter_content(65536):
+                            if not chunk:
+                                continue
+                            buf += chunk
+                            if len(buf) > _M3U_MAX_BYTES:
+                                logger.warning(
+                                    "M3U download for %s exceeded the %d MiB cap — "
+                                    "aborted (hostile or broken provider)",
+                                    source.name, _M3U_MAX_BYTES // (1024 * 1024))
+                                over = True
+                                break
+                    except Exception:
+                        if buf:
+                            raise
+                        buf = None  # non-streamed response / test mock below
+                    if over:
+                        return None  # retrying a cap violation is pointless
+                    if buf is None:
+                        content = r.content or b""
+                        if len(content) > _M3U_MAX_BYTES:
+                            return None
+                        text = content.decode("utf-8", errors="replace")
+                    else:
+                        text = bytes(buf).decode("utf-8", errors="replace")
+                finally:
+                    r.close()
                 if not m3u_parser.looks_like_m3u(text):
                     # Not a playlist at all (HTML error page or an XMLTV EPG
                     # endpoint pasted as the playlist URL). Retrying won't

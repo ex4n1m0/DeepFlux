@@ -1064,6 +1064,19 @@ def start_server(entry: Dict[str, Any],
             if _pid_is_our_server(int(state["pid"]), state.get("exe")):
                 return True
 
+        # A load of a DIFFERENT model may ALSO be in flight — mid-load the
+        # health probe answers 503, so the is_running() branch above skipped
+        # it, and B spawned next to loading A raced the port (the loser dies
+        # on bind, typically A) while the state file named B: the user picked
+        # B but kept getting A's weights (2026-11-09 review, M7). Stop the
+        # loading server before spawning the replacement.
+        if (state.get("pid") and state.get("model_id") != entry["id"]
+                and time.time() - (state.get("started") or 0) < _load_budget(hw)
+                and _pid_is_our_server(int(state["pid"]), state.get("exe"))):
+            logger.info("stopping in-flight load of %s for switch to %s",
+                        state.get("model_id"), entry["id"])
+            stop_server()
+
         # Always prefer the Vulkan runtime when present: the hardware probe
         # is ADVISORY (a transient --list-devices failure once forced the
         # CPU build on a 16 GB GPU machine — the vulkan binary also runs

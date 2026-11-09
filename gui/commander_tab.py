@@ -1208,6 +1208,14 @@ class CommanderTab(QWidget):
         pane = tabs.widget(index)
         tabs.removeTab(index)
         if pane is not None:
+            # Re-anchor BEFORE the deferred destroy (2026-11-09 review, M5):
+            # _on_side_tab_changed only re-anchors on user-driven (focused)
+            # strip switches, so a programmatic close (Ctrl+W / close-X with
+            # no focus change) left _active pointing at a deleteLater'd
+            # FilePane — every subsequent commander shortcut then raised
+            # RuntimeError (Internal C++ object already deleted).
+            if pane is getattr(self, "_active", None):
+                self._set_active(tabs.currentWidget())
             pane.deleteLater()
 
     def _close_current_tab(self) -> None:

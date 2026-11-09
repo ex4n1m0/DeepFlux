@@ -158,25 +158,35 @@ def read_capped(response, max_bytes: int = DEFAULT_PAGE_BODY_LIMIT) -> str:
 
     Returns the decoded text; '' when the body exceeds the cap. Callers
     that need the HTTP status or URL must read those BEFORE calling this
-    (the response is closed afterwards). Test mocks that only carry
-    `.text` (iter_content yields nothing) fall back to that buffered text,
-    still capped."""
+    (the response is ALWAYS closed afterwards — the over-cap path used to
+    leak the connection, 2026-11-09 review, M11). Test mocks that only
+    carry `.text` (iter_content yields nothing) fall back to that buffered
+    text, still capped. A MID-STREAM network failure after partial data
+    RAISES — callers must never parse a silently truncated body as a
+    complete page (the old swallow-then-join turned dead links into
+    phantom 'no results')."""
     chunks = []
     total = 0
+    over_cap = False
     try:
-        for chunk in response.iter_content(chunk_size=64 * 1024):
-            if not chunk:
-                continue
-            total += len(chunk)
-            if total > max_bytes:
-                logger.warning("response body over %d bytes dropped: %s",
-                               max_bytes, getattr(response, "url", "?"))
-                return ""
-            chunks.append(chunk)
-    except Exception:
-        logger.debug("streamed body read failed — using buffered body",
-                     exc_info=True)
-    try:
+        try:
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > max_bytes:
+                    logger.warning("response body over %d bytes dropped: %s",
+                                   max_bytes, getattr(response, "url", "?"))
+                    over_cap = True
+                    break
+                chunks.append(chunk)
+        except Exception:
+            if chunks:
+                raise  # partial body — truncated pages must not parse as OK
+            logger.debug("streamed body read failed before any data — "
+                         "using buffered body", exc_info=True)
+        if over_cap:
+            return ""
         if not chunks:
             # Test mocks / non-streamed responses carry the body in
             # `.content`/`.text` instead of iter_content.

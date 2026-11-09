@@ -123,8 +123,11 @@ class RoomTab(QWidget):
         # Dedicated persistent profile (NOT the Browser tab's): the
         # portal's identity key + remembered name live in its localStorage
         # and must survive app restarts — and must NOT be wiped when the
-        # user clears browsing data in the Browser tab.
-        storage = str(Path.home() / ".deeptorrent" / "room-portal")
+        # user clears browsing data in the Browser tab. DF_ROOM_DIR
+        # redirects the storage root (tests MUST never open the user's
+        # real leveldb/cookie store — 2026-11-09 review, M8).
+        storage = os.environ.get("DF_ROOM_DIR") or str(
+            Path.home() / ".deeptorrent" / "room-portal")
         os.makedirs(storage, exist_ok=True)
         self.web_profile = QWebEngineProfile("deeptorrent-room", self)
         self.web_profile.setPersistentStoragePath(storage)
