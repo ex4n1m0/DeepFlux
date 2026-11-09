@@ -1529,7 +1529,7 @@
   field-by-field; a new field must be added to BOTH the dataclass and the
   from_file enumeration or it silently resets on restart (that exact bug
   shipped for one review cycle). Everything except the ctor loop is
-  count-agnostic (single-stream rule, bulk fill, folder rotate, skip-all,
+  count-agnostic (multi-stream allowance, bulk fill, folder rotate, skip-all,
   promote, parallel shutdown). Layout switching (combo in the bar under the
   grid → sig_layout_requested → PlayerWidget._set_multiview_layout):
   teardown + REBUILD a fresh grid widget — tile surfaces must never be
@@ -1540,8 +1540,12 @@
   checkable QPushButton (OverflowRow candidate) whose label follows the
   layout; leaving multiview STILL keeps the hidden emptied page, but a
   later layout change drops it so the next toggle builds the new shape.
-  One IPTV stream per grid in EVERY layout (provider connection cap is
-  about connections, not geometry). Tests: tests/test_multiview.py.
+  MULTI-STREAM since 2026-11-09 (owner decision, same day as the 2×2/dual
+  layouts): the old one-IPTV-stream-per-grid cap is REMOVED — any number of
+  tiles may stream in every layout; a provider that caps concurrent
+  connections resets what it resets and the affected tile shows its own
+  error (the ⛔ force-stop-all path is the escape hatch). Tests:
+  tests/test_multiview.py.
 - Force-stop all provider streams (2026-11-01, providers cap concurrent
   streams): `PlayerWidget.force_stop_all_streams` ("⛔ Stop All" tools-row
   button + "⛔ Close All Streams" on stream-LIMIT errors in `_show_error`)

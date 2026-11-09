@@ -368,7 +368,6 @@ ZH_CN: dict[str, str] = {
     "Nothing selected": "未选择任何内容",
     "Now Playing": "正在播放",
     "OMDb (Movie/Series Fallback)": "OMDb（电影/剧集兜底）",
-    "One stream per grid": "每格最多一路流",
     "Open Chromium developer tools for the current tab (F12)": "打开当前标签页的开发者工具 (F12)",
     "Open File": "打开文件",
     "Open Folder": "打开文件夹",
@@ -761,8 +760,6 @@ ZH_CN: dict[str, str] = {
         "只搜索树中所选文件夹（含子文件夹）。关闭 = 搜索整个播放列表。",
     "Installing and linking the Jackett service, then adding its public indexers. You may see one Windows permission prompt.":
         "正在安装并关联 Jackett 服务，随后添加其公共索引器。期间可能出现一次 Windows 权限提示。",
-    "Another tile is already playing an IPTV stream.\nProviders reject multiple simultaneous connections — clear that tile first.":
-        "已有另一格在播放 IPTV 流。\n服务商不接受多个并发连接 —— 请先清空那一格。",
     "The download manager uses segmented downloading with dynamic rebalancing\nfor maximum speed, similar to Internet Download Manager.":
         "下载管理器采用动态均衡的分段下载以获得最高速度，\n类似 Internet Download Manager。",
     "These sources are used by the agent when searching for torrents. Sources marked as configured in Jackett are searched via the Torznab API. You can add custom sources or remove ones you don't want the agent to use.":

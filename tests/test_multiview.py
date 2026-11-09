@@ -138,26 +138,32 @@ def test_tiles_start_muted_with_lightweight_tuning(qapp, fake_backends):
     assert calls.index(("mute", True)) < calls.index(("play", "C:/v.mkv", {}))
 
 
-def test_only_one_stream_tile_at_a_time(qapp, fake_backends):
+def test_multiple_stream_tiles_allowed(qapp, fake_backends):
+    """Owner decision 2026-11-09: the old one-stream-per-grid cap is GONE —
+    any number of tiles may carry IPTV streams simultaneously (a provider
+    that caps concurrent connections resets what it resets; the affected
+    tile surfaces its own error). Same-tile channel switching still works."""
     from iptv.models import Channel
     grid = _grid(qapp, fake_backends)
-    a, b = grid.tiles[0], grid.tiles[1]
-    stream = Channel(id="s", name="CNN", url="http://x/cnn.m3u8")
+    a, b, c = grid.tiles[0], grid.tiles[1], grid.tiles[2]
+    cnn = Channel(id="s", name="CNN", url="http://x/cnn.m3u8")
+    bbc = Channel(id="s2", name="BBC", url="http://x/bbc.m3u8")
+    sky = Channel(id="s3", name="Sky", url="http://x/sky.m3u8")
 
-    assert grid.assign_stream(a, stream) is True
+    assert grid.assign_stream(a, cnn) is True
+    # a second and third stream tile are accepted now
+    assert grid.assign_stream(b, bbc) is True
+    assert grid.assign_stream(c, sky) is True
+    assert a.channel is not None and b.channel is not None and c.channel is not None
+    # stream_tile reports the FIRST stream tile (diagnostics convenience)
     assert grid.stream_tile is a
-    # A second stream on another tile is refused — providers cap concurrent
-    # connections and would reset one of the two.
-    other = Channel(id="s2", name="BBC", url="http://x/bbc.m3u8")
-    assert grid.assign_stream(b, other) is False
-    assert grid.stream_tile is a
-    assert b.channel is None
-    # Re-assigning on the SAME tile is allowed (channel switch).
-    assert grid.assign_stream(a, other) is True
-    # Clearing the stream tile frees the slot.
+    # same-tile switch still replaces the channel in place
+    assert grid.assign_stream(b, cnn) is True
+    assert b.channel.id == "s"
+    # clearing one stream tile leaves the others playing
     a.clear()
-    assert grid.stream_tile is None
-    assert grid.assign_stream(b, other) is True
+    assert grid.stream_tile is b
+    assert c.is_stream
 
 
 def test_assign_file_builds_channel_and_missing_file_refused(qapp, fake_backends, tmp_path):
@@ -606,20 +612,17 @@ def test_grid_bar_combo_lists_layouts_and_emits(qapp, fake_backends):
     assert got == ["1x2"]
 
 
-def test_one_stream_rule_in_dual_mode(qapp, fake_backends):
-    """The provider connection cap is about connections, not geometry: even
-    a two-tile grid hosts at most one IPTV stream."""
+def test_dual_mode_hosts_two_simultaneous_streams(qapp, fake_backends):
+    """Owner decision 2026-11-09: the multi-stream allowance is geometry-
+    independent — even a two-tile dual split can host two IPTV streams."""
     from iptv.models import Channel
     grid = _grid_layout(qapp, fake_backends, "1x2")
     a, b = grid.tiles
     assert grid.assign_stream(
         a, Channel(id="s", name="CNN", url="http://x/cnn.m3u8")) is True
     assert grid.assign_stream(
-        b, Channel(id="s2", name="BBC", url="http://x/bbc.m3u8")) is False
-    assert grid.stream_tile is a
-    a.clear()
-    assert grid.assign_stream(
         b, Channel(id="s2", name="BBC", url="http://x/bbc.m3u8")) is True
+    assert a.is_stream and b.is_stream
 
 
 def test_folder_mode_caps_at_tile_count_2x2(qapp, fake_backends, tmp_path):

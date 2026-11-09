@@ -1,7 +1,10 @@
 """Multiview grid for the Play tab — 4×4, 2×2 or a dual split (1×2 / 2×1).
 
-Up to sixteen tiles (16 / 4 / 2 depending on the layout), each playing
-either a local file or (at most ONE tile at a time) an IPTV stream.
+Up to sixteen tiles (16 / 4 / 2 depending on layout), each playing a local
+file or an IPTV stream — ANY number of tiles may carry network streams
+(owner decision 2026-11-09: the old one-stream-per-grid cap was removed;
+providers that cap concurrent connections may reset some of them — that is
+the user's trade-off to make, and a reset tile surfaces its own error).
 Deliberately minimal playback plumbing — the full PlayerWidget control set
 (tracks, subtitles, recording, retry watchdog) stays on the main single
 player; a tile is just surface + backend + audio.
@@ -14,9 +17,6 @@ Design constraints (do not "fix" these):
   per-tile cache is tiny so a full grid of instances doesn't each hold a
   150 MiB demuxer cache.
 - All tiles start muted; audio is opt-in per tile.
-- IPTV providers cap concurrent connections (one extra player already
-  triggers WSAECONNRESET resets), so at most ONE tile may carry a network
-  stream — regardless of layout; the rest are local files only.
 - Each tile's surface widget is created up-front and NEVER reparented —
   reparenting recreates the native winId the backend embeds into and kills
   it (same rule as the MilkDrop view in PlayerWidget). Switching layouts
@@ -431,8 +431,9 @@ class ChannelPickDialog(QDialog):
 
 
 class MultiViewGrid(QWidget):
-    """An R×C tile grid (4×4 / 2×2 / dual split) — one optional IPTV
-    stream, the rest local files."""
+    """An R×C tile grid (4×4 / 2×2 / dual split) — tiles play local files
+    or IPTV streams, any mix (multi-stream since the 2026-11-09 owner
+    decision)."""
 
     sig_promote_requested = Signal(object)  # Channel → main player
     sig_layout_requested = Signal(str)      # layout name → PlayerWidget
@@ -526,25 +527,24 @@ class MultiViewGrid(QWidget):
             except Exception:
                 logger.debug("tile seek failed", exc_info=True)
 
-    # -- single-stream rule --------------------------------------------------
+    # -- stream tiles --------------------------------------------------
     @property
     def stream_tile(self) -> Optional[GridTile]:
+        """The FIRST stream tile (diagnostics/telemetry convenience) — since
+        the 2026-11-09 owner decision any number of tiles may stream."""
         for t in self.tiles:
             if t.is_stream:
                 return t
         return None
 
     def assign_stream(self, tile: GridTile, channel: Channel) -> bool:
-        """Assign an IPTV stream tile. Refuses while another tile streams —
-        providers count concurrent connections and reset them."""
-        current = self.stream_tile
-        if current is not None and current is not tile:
-            return False
+        """Assign an IPTV stream tile. Multiple simultaneous stream tiles are
+        allowed (owner decision 2026-11-09 — the old one-stream refusal is
+        gone); a provider that caps concurrent connections resets what it
+        resets, and the affected tile shows its own error."""
         headers = build_playback_headers(channel,
                                          self._manager.active_source())
-        if not tile.assign(channel, is_stream=True, headers=headers):
-            return False
-        return True
+        return tile.assign(channel, is_stream=True, headers=headers)
 
     def assign_file(self, tile: GridTile, path: str) -> bool:
         if not path or not os.path.isfile(path):
@@ -555,13 +555,6 @@ class MultiViewGrid(QWidget):
 
     # -- interactions --------------------------------------------------------
     def _pick_stream_for(self, tile: GridTile) -> None:
-        if self.stream_tile not in (None, tile):
-            QMessageBox.information(
-                self, tr('One stream per grid'),
-                tr("Another tile is already playing an IPTV stream.\n"
-                   "Providers reject multiple simultaneous connections — "
-                   "clear that tile first."))
-            return
         dlg = ChannelPickDialog(self._manager, self)
         if dlg.exec() == QDialog.Accepted:
             item = dlg.selected()
