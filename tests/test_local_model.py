@@ -374,6 +374,43 @@ def test_start_server_adopts_stateless_healthy_server(monkeypatch, tmp_path):
     assert len(spawns) == 1  # the replacement spawn DID happen
 
 
+def test_start_server_model_switch_does_not_deadlock_the_lock(monkeypatch, tmp_path):
+    """Regression (2026-11-09 review, H1): on the deliberate model-switch
+    path start_server calls stop_server() while holding _server_lock. With a
+    plain threading.Lock that re-acquisition deadlocks the worker forever —
+    and closeEvent's stop_server then blocks app quit. The REAL stop_server
+    (not a mock) must complete under the held lock; the thread+timeout shape
+    makes a regression FAIL instead of hanging the suite."""
+    import threading
+    entry = dict(next(iter(local_model.load_manifest())))
+    gguf = local_model.model_path(entry)
+    os.makedirs(os.path.dirname(gguf), exist_ok=True)
+    with open(gguf, "wb") as fh:
+        fh.write(b"x" * 8)
+    local_model._write_state({"pid": 4711, "port": 8199, "model_id": "another-model",
+                              "started": 1.0, "exe": "x"})
+    monkeypatch.setattr(local_model, "is_running", lambda timeout=2.5: True)
+    # No live process to kill — the real stop_server just has to take the
+    # lock, skip the taskkill, and clear the state file.
+    monkeypatch.setattr(local_model, "_pid_is_our_server", lambda pid, exe=None: False)
+    monkeypatch.setattr(local_model, "find_server_exe",
+                        lambda variant="vulkan": f"C:/ll/{variant}/llama-server.exe")
+    spawns = []
+    monkeypatch.setattr(local_model, "_spawn", lambda exe, args: spawns.append(exe) or 222)
+    hw = local_model.HardwareInfo(cpu_cores=8, ram_mb=32768, vram_mb=0)
+    result = {}
+
+    def _run():
+        result["ok"] = local_model.start_server(entry, hw=hw)
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=10.0)
+    assert not t.is_alive(), "start_server deadlocked re-acquiring _server_lock"
+    assert result.get("ok") is True
+    assert len(spawns) == 1  # the replacement spawn happened after the real stop
+
+
 def test_start_server_waits_on_in_flight_load(monkeypatch, tmp_path):
     """A same-model load already in progress (spawned moments ago, port not
     bound yet) must be WAITED ON, not double-spawned onto the same port —
@@ -993,6 +1030,39 @@ def test_probe_gguf_skips_tokenizer_arrays_and_nones_on_garbage(tmp_path):
     garbage = tmp_path / "garbage.gguf"
     garbage.write_bytes(b"not a gguf at all")
     assert local_model.probe_gguf(str(garbage)) is None
+
+
+def test_probe_gguf_rejects_hostile_string_array_count(tmp_path):
+    """Regression (2026-11-09 review, H3): a crafted GGUF whose string-array
+    metadata declares a huge element count made probe_gguf loop effectively
+    forever — at EOF every read returns b"" and raised nothing, and the count
+    had no cap. probe_gguf runs on the GUI thread (Settings AI page) and in
+    the chat worker, so a hostile/corrupt custom-HF model froze the app. The
+    probe must fail fast; the thread+timeout shape makes a regression FAIL
+    instead of hanging the suite."""
+    import struct
+    import threading
+    key = b"tokenizer.ggml.tokens"  # suffix-unmatched key -> skipped via skip_value
+    blob = (b"GGUF"
+            + struct.pack("<I", 3)          # version
+            + struct.pack("<Q", 0)          # tensor count
+            + struct.pack("<Q", 1)          # one metadata kv
+            + struct.pack("<Q", len(key)) + key
+            + struct.pack("<I", 9)          # type: array
+            + struct.pack("<I", 8)          #   element type: string
+            + struct.pack("<Q", 2 ** 62))   #   hostile element count, then EOF
+    path = tmp_path / "hostile.gguf"
+    path.write_bytes(blob)
+    result = {}
+
+    def _probe():
+        result["v"] = local_model.probe_gguf(str(path))
+
+    t = threading.Thread(target=_probe, daemon=True)
+    t.start()
+    t.join(timeout=5.0)
+    assert not t.is_alive(), "probe_gguf hung on a hostile string-array count"
+    assert result.get("v") is None  # format surprise -> graceful CONTEXT_SIZE fallback
 
 
 def test_kv_bytes_and_ctx_caps():

@@ -652,9 +652,11 @@
   Leftover: %LOCALAPPDATA%\DeepFlux\updates\DeepFlUX7.6Setup.exe.part
   (414 MB) is a dead interrupted download — deletable. Machine drift
   noticed 11-08: git AND Python are gone machine-wide (registry, Appx
-  packages, PATH all empty) — the verify/test commands in this file
-  cannot run until a Python is reinstalled (the 11-07 python.org-3.11
-  follow-up).
+  packages, PATH all empty). RESOLVED 11-09: git works again and a
+  python.org 3.11.9 + the repo venv (.venv\Scripts\python.exe, pytest
+  9.2.0) run the verify/test commands in this file fine — only the BARE
+  `python`/`py` PATH shim is missing, so the README pre-commit hook needs
+  the venv on PATH: `PATH=".venv/Scripts:$PATH" git commit ...`.
 - 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,
   ~30 fixed, all with file-level rationale comments + regression tests).
   Durable rules that came out of it — do not regress:

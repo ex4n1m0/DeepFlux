@@ -274,6 +274,11 @@ class MpvBackend(PlayerBackend):
         # backend teardown and has produced a real AV (faulthandler.log
         # 2026-11: _cache_stall -> _get_property). Read this instead.
         self._paused_state = False
+        # Duration as seen by the "duration" observer — same rule: the
+        # time-pos observer used to read self._mpv.duration natively on
+        # EVERY position tick, the identical re-entry hazard (2026-11-09
+        # review, H4). None until mpv reports a duration.
+        self._duration_state: Optional[float] = None
 
     def _creation_kwargs(self, wid: str, vo: str) -> dict:
         """mpv.MPV constructor kwargs.
@@ -319,11 +324,17 @@ class MpvBackend(PlayerBackend):
                 logger.warning("vo=gpu-next failed to init; falling back to vo=gpu")
                 self._mpv = _make("gpu")
 
+            @self._mpv.property_observer("duration")
+            def _dur(_name, value):
+                # Mirror the observed duration into a Python attr — the
+                # time-pos observer must never read it back natively
+                # (same re-entry rule as _paused_state; 2026-11-09 H4).
+                self._duration_state = float(value) if value is not None else None
+
             @self._mpv.property_observer("time-pos")
             def _pos(_name, value):
                 if value is not None and self.on_position:
-                    dur = self._mpv.duration or 0.0
-                    self.on_position(float(value), float(dur))
+                    self.on_position(float(value), float(self._duration_state or 0.0))
 
             @self._mpv.property_observer("pause")
             def _pause(_name, value):

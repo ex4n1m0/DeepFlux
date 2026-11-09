@@ -5241,6 +5241,63 @@ def test_mpv_applies_bounded_live_pause_buffer_options():
     assert values["demuxer-max-bytes"] == 300 * 1024 * 1024
 
 
+def test_mpv_time_pos_observer_never_reenters_libmpv_natively(monkeypatch):
+    """Regression (2026-11-09 review, H4): the time-pos observer read
+    self._mpv.duration — a native mpv_get_property — inside the observer, on
+    mpv's event thread, on EVERY position tick. That is the exact re-entry
+    hazard AGENTS.md bans (the _cache_stall AV came from the same pattern).
+    The duration must arrive via a "duration" property observer mirrored
+    into a Python attr; the fake's .duration raises if anything reads it."""
+    import sys
+    import types
+    from iptv.player import MpvBackend
+
+    class FakeMpvInstance:
+        def __init__(self, **kwargs):
+            self.observers = {}
+
+        def property_observer(self, name):
+            def deco(fn):
+                self.observers[name] = fn
+                return fn
+            return deco
+
+        def event_callback(self, name):
+            def deco(fn):
+                return fn
+            return deco
+
+        @property
+        def duration(self):
+            raise AssertionError(
+                "native .duration read inside the observer path (re-entry)")
+
+    monkeypatch.setitem(sys.modules, "mpv",
+                        types.SimpleNamespace(MPV=FakeMpvInstance))
+    monkeypatch.setattr("iptv.player.ensure_mpv_dll_on_path", lambda: None)
+
+    class _Parent:
+        @staticmethod
+        def winId():
+            return 12345
+
+    backend = MpvBackend(_Parent())
+    assert backend.create() is True
+    seen = []
+    backend.on_position = lambda pos, dur: seen.append((pos, dur))
+
+    # duration observer fires first (mpv reports it once the file loads)
+    backend._mpv.observers["duration"]("duration", 1234.5)
+    backend._mpv.observers["time-pos"]("time-pos", 12.0)
+    assert seen == [(12.0, 1234.5)]
+
+    # Live/no-duration: observer reports None -> position carries 0.0
+    backend._mpv.observers["duration"]("duration", None)
+    backend._mpv.observers["time-pos"]("time-pos", 13.0)
+    assert seen[-1] == (13.0, 0.0)
+    backend.destroy()
+
+
 def test_player_applies_pause_buffer_only_to_live_playback(tmp_path):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication

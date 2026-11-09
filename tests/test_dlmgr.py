@@ -459,6 +459,28 @@ def test_bandwidth_limiter_throttles():
     assert time.monotonic() - t0 >= 0.8
 
 
+def test_bandwidth_limiter_oversized_request_does_not_hang():
+    """Regression (2026-11-09 review, H2): a chunk larger than the configured
+    limit (engine chunk = 64 KiB, GUI accepts 1–63 KB/s) can never accumulate
+    enough allowance — acquire() used to spin forever, silently freezing every
+    file download. The oversized request must be granted once the bucket is
+    full; the thread+event shape makes a regression FAIL instead of hanging
+    the suite."""
+    import threading
+    limiter = _BandwidthLimiter(32_768)  # 32 KB/s < one 64 KiB chunk
+    limiter._allowance = float(limiter._limit)  # bucket full
+    done = threading.Event()
+
+    def _acquire():
+        limiter.acquire(65_536)
+        done.set()
+
+    t = threading.Thread(target=_acquire, daemon=True)
+    t.start()
+    assert done.wait(timeout=5.0), "acquire(65536) hung with a 32768 bps limit"
+    assert limiter._allowance == 0.0  # the full bucket was drained by the grant
+
+
 def test_bandwidth_limiter_disabled():
     limiter = _BandwidthLimiter(0)
     t0 = time.monotonic()

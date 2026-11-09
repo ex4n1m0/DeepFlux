@@ -67,8 +67,17 @@ class _BandwidthLimiter:
                 now = time.monotonic()
                 self._allowance = min(float(self._limit), self._allowance + (now - self._last) * self._limit)
                 self._last = now
-                if self._allowance >= nbytes:
-                    self._allowance -= nbytes
+                # A request LARGER than the configured limit can never
+                # accumulate enough allowance (refill caps at limit) — grant
+                # it once the bucket is full instead of waiting forever.
+                # Without this every file download froze on its first 64 KiB
+                # chunk whenever the limit was set below CHUNK_SIZE (the GUI
+                # accepts 1–63 KB/s); the 2026-11-06 fix landed in
+                # scheduler.py's TokenBucketThrottler, which the engine never
+                # used (2026-11-09 review, H2).
+                if self._allowance >= nbytes or (nbytes > self._limit
+                                                 and self._allowance >= self._limit):
+                    self._allowance -= min(nbytes, self._allowance)
                     return
                 need = (nbytes - self._allowance) / self._limit
             time.sleep(min(need, 0.05))

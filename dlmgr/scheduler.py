@@ -47,8 +47,9 @@ class TokenBucketThrottler:
         tokens (the refill caps at capacity), so it is granted once the bucket
         is full — without this the old ``tokens >= n`` check never fired and
         acquire() deadlocked forever on oversized requests (review
-        2026-11-06; the engine's chunk writes hit this whenever a chunk
-        exceeded the configured rate)."""
+        2026-11-06). NOTE: nothing routes through this class today — the
+        engine's chunk writes go through engine._BandwidthLimiter, which
+        carries the same oversized-grant fix since the 2026-11-09 review."""
         if self._rate <= 0:
             return
         while True:

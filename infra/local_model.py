@@ -60,7 +60,11 @@ MAX_DOWNLOAD_BYTES = 20 * 1024 ** 3  # sanity cap; largest ladder entry ~9.5 GB
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _server_pid: Optional[int] = None
-_server_lock = threading.Lock()
+# RLock, NOT Lock: start_server calls stop_server() on the deliberate
+# model-switch path while still holding this lock — a plain Lock deadlocks
+# right there (and closeEvent's stop_server then blocks app quit forever).
+# Found by the 2026-11-09 full review (H1).
+_server_lock = threading.RLock()
 _hw_cache: Optional["HardwareInfo"] = None
 
 
@@ -464,10 +468,20 @@ def probe_gguf(path: str) -> Optional[Dict[str, Any]]:
             got: Dict[str, Any] = {}
 
             def read_string() -> str:
-                n = int.from_bytes(fh.read(8), "little")
+                raw = fh.read(8)
+                if len(raw) != 8:
+                    # At EOF every read returns b"" WITHOUT raising, so a
+                    # crafted string-array count used to spin here for the
+                    # full declared count (2026-11-09 review, H3) — a short
+                    # length read means the metadata is truncated, fail now.
+                    raise ValueError("truncated GGUF metadata")
+                n = int.from_bytes(raw, "little")
                 if n > 64 * 1024 * 1024:
                     raise ValueError("implausible string length")
-                return fh.read(n).decode("utf-8", errors="replace")
+                data = fh.read(n)
+                if len(data) != n:
+                    raise ValueError("truncated GGUF metadata")
+                return data.decode("utf-8", errors="replace")
 
             def skip_value(vtype: int) -> None:
                 if vtype == 8:  # string
@@ -477,6 +491,13 @@ def probe_gguf(path: str) -> Optional[Dict[str, Any]]:
                     elem = int.from_bytes(fh.read(4), "little")
                     count = int.from_bytes(fh.read(8), "little")
                     if elem == 8:
+                        # Defense-in-depth on top of the EOF check above: the
+                        # count is walked element-by-element, so reject
+                        # implausible headers up front. Real vocabularies
+                        # stay under ~1M strings; a rejected probe degrades
+                        # gracefully to CONTEXT_SIZE.
+                        if count > 2 ** 22:
+                            raise ValueError("implausible string-array count")
                         for _ in range(count):
                             read_string()
                         return
