@@ -41,9 +41,11 @@ logger = logging.getLogger(__name__)
 
 # Hard cap for playlist bodies (2026-11-09 review, M3): playlist downloads
 # run at startup for every enabled source and must never buffer an
-# unbounded remote body into the GUI process (the biggest legit playlists
-# are a few MB; 32 MiB is generous).
-_M3U_MAX_BYTES = 32 * 1024 * 1024
+# unbounded remote body into the GUI process. LIVE measurement the same
+# day: a real subscribed source ("ALL", 77,906 cached entries) serves a
+# 35.0 MiB body — 32 MiB was too tight and froze its refresh; 64 MiB keeps
+# the bound with ~80% headroom over the largest observed real playlist.
+_M3U_MAX_BYTES = 64 * 1024 * 1024
 
 # Sidebar bucket for VOD entries whose release year is unknown (no year in
 # the name and no metadata lookup yet). Lives here so the GUI and the manager
