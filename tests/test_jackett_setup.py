@@ -254,7 +254,10 @@ def test_run_setup_no_installer_available(tmp_path):
     assert saved["indexer"]["api_key"] == ""
 
 
-def test_run_setup_installs_and_links(tmp_path):
+def test_run_setup_installs_and_links(tmp_path, monkeypatch):
+    # no-pin bundle: the digest gate has its own test; these pin
+    # the install/link flow (2026-11-09).
+    monkeypatch.setattr(jackett_setup, "_pinned_data", lambda: {})
     installer_path = str(tmp_path / "Jackett.Installer.Windows.exe")
     open(installer_path, "wb").write(b"x")
     runas = MagicMock(return_value=(True, 0))
@@ -281,7 +284,10 @@ def test_run_setup_installs_and_links(tmp_path):
     assert saved["indexer"]["api_key"] == "fresh-key"
 
 
-def test_run_setup_uac_declined(tmp_path):
+def test_run_setup_uac_declined(tmp_path, monkeypatch):
+    # no-pin bundle: the digest gate has its own test; these pin
+    # the install/link flow (2026-11-09).
+    monkeypatch.setattr(jackett_setup, "_pinned_data", lambda: {})
     installer_path = str(tmp_path / "Jackett.Installer.Windows.exe")
     open(installer_path, "wb").write(b"x")
     config_path, setup_patches, jkt_patches = _patched_setup(
@@ -297,7 +303,10 @@ def test_run_setup_uac_declined(tmp_path):
     assert result["error"] == "uac-declined"
 
 
-def test_run_setup_installer_failure(tmp_path):
+def test_run_setup_installer_failure(tmp_path, monkeypatch):
+    # no-pin bundle: the digest gate has its own test; these pin
+    # the install/link flow (2026-11-09).
+    monkeypatch.setattr(jackett_setup, "_pinned_data", lambda: {})
     installer_path = str(tmp_path / "Jackett.Installer.Windows.exe")
     open(installer_path, "wb").write(b"x")
     config_path, setup_patches, jkt_patches = _patched_setup(
@@ -469,3 +478,29 @@ def test_linux_tarball_extraction_rejects_escaping_members(tmp_path):
     path.write_bytes(_tar_with("Jackett/jackett"))
     with tarfile.open(path, "r:gz") as tar:
         jackett_setup._validate_tar_members(tar, str(root))  # no raise
+
+
+def test_bundled_installer_digest_gate(tmp_path, monkeypatch):
+    """Regression (2026-11-09 review): the bundled installer is executed
+    ELEVATED straight from the per-user install dir (or the env override) —
+    with a shipped pin, a swapped file must be REFUSED before the UAC run."""
+    import hashlib
+    good = tmp_path / "installer.exe"
+    good.write_bytes(b"official installer bytes")
+    pin = {"version": "v9.9.9", "asset": "Jackett.Installer.Windows.exe",
+           "sha256": hashlib.sha256(good.read_bytes()).hexdigest()}
+    monkeypatch.setattr(jackett_setup, "_pinned_data", lambda: pin)
+
+    msgs = []
+    assert jackett_setup._installer_digest_ok(str(good), msgs.append) is True
+    assert msgs == []
+
+    tampered = tmp_path / "tampered.exe"
+    tampered.write_bytes(b"trojan bytes")
+    msgs = []
+    assert jackett_setup._installer_digest_ok(str(tampered), msgs.append) is False
+    assert any("integrity" in m.lower() for m in msgs)
+
+    # no pin shipped (pre-2026-11-09 bundle) -> executes as before
+    monkeypatch.setattr(jackett_setup, "_pinned_data", lambda: {})
+    assert jackett_setup._installer_digest_ok(str(tampered), lambda m: None) is True

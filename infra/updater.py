@@ -413,6 +413,13 @@ def _download_segmented(
     layout = _segment_layout(info.size)
     sidecar = _sidecar_path(part)
     completed = _load_sidecar(sidecar, info.size, layout, if_range)
+    if completed is not None and (not part.exists()
+                                  or part.stat().st_size != info.size):
+        # The sidecar describes bytes that are no longer on disk (the user
+        # deleted a dead .part — the documented cleanup). Trusting it
+        # produced a sparse file that only failed at the FINAL hash check,
+        # burning a whole ~750 MB transfer (2026-11-09 review).
+        completed = None
     if completed is None:
         completed = [0] * len(layout)
         # Sparse preallocation: ONE truncation up front, before any worker

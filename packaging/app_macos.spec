@@ -93,6 +93,9 @@ _wanted_datas = [
     (os.path.join(project_root, "DeepFlux.png"), "."),
     # Agent-tab watermark: the website hero banner (same file as deepflux.space).
     (os.path.join(project_root, "DeepFluxNeonBanner.webp"), "."),
+    # Nov 2026 banner: FIRST in the agent-background fallback chain
+    # (app.spec ships it; Linux/mac builds had only the older art — review 2026-11-09).
+    (os.path.join(project_root, "DeepFluxNovBanner.webp"), "."),
 (os.path.join(project_root, "website", "deepflux", "DeepFluxBanner.webp"), "."),
     (os.path.join(project_root, "packaging", "icons", "back.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "forward.svg"), "packaging/icons"),

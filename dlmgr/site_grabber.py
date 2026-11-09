@@ -92,13 +92,42 @@ _SKIP_PATH_WORDS = {
     "collection", "collections", "sitemap", "feed", "rss",
 }
 _LANG_RE = re.compile(r"^[a-z]{2}(?:-[a-z]{2})?$", re.I)
-_ANCHOR_RE = re.compile(r"<a\b([^>]*)>(.*?)</a>", re.I | re.S)
+# Anchor/form pairing is SEGMENTED (2026-11-09 review): a page full of
+# unclosed <a>/<form> tags made the old single lazy regex rescan to the
+# next close tag from EVERY start position - O(N*L), hours on a hostile
+# 5 MiB page. _iter_pairs below splits on the close tag first, so total
+# work is linear; the attr scans here stay head-only.
+_ANCHOR_HEAD_RE = re.compile(r"<a\b([^<>]{0,2048})>", re.I)
+_FORM_HEAD_RE = re.compile(r"<form\b([^<>]{0,2048})>", re.I)
 _ATTR_RE = re.compile(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))""", re.S)
-_IMG_RE = re.compile(r"<img\b([^>]*)>", re.I | re.S)
+# Attr scans are BOUNDED: on a page with NO '>' at all, an unbounded [^>]*
+# walks to the end of the string from every start position (the same
+# O(N*L) blowup _iter_pairs fixes for the paired tags; 2026-11-09 review).
+_IMG_RE = re.compile(r"<img\b([^<>]{0,2048})>", re.I | re.S)
 _DURATION_RE = re.compile(r"(?<![\d:])(\d{1,2}:)?\d{1,2}:\d{2}(?![\d:])")
-_TAG_RE = re.compile(r"<[^>]+>")
-_FORM_RE = re.compile(r"<form\b([^>]*)>(.*?)</form>", re.I | re.S)
-_INPUT_RE = re.compile(r"<input\b([^>]*)>", re.I | re.S)
+_TAG_RE = re.compile(r"<[^<>]{1,2048}>")
+
+
+def _iter_pairs(html: str, head_re, close_tag: str):
+    """Linear-time (attrs, inner) iteration over open/close tag pairs.
+
+    Equivalent to finditer on '<x\b([^>]*)>(.*?)</x>' for well-formed
+    pages, but immune to the unclosed-opener rescan blowup. A trailing
+    opener with no close tag pairs with nothing, same as the old regex."""
+    pos = 0
+    n = len(html)
+    clen = len(close_tag)
+    while pos < n:
+        close = html.find(close_tag, pos)
+        if close == -1:
+            return
+        m = head_re.search(html, pos, close)
+        if m is not None:
+            yield m.group(1), html[m.end():close]
+        pos = close + clen
+
+
+_INPUT_RE = re.compile(r"<input\b([^<>]{0,2048})>", re.I | re.S)
 _SEARCH_INPUT_NAMES = ("q", "s", "search", "query", "keyword", "keywords", "term", "k")
 _THUMB_ATTRS = ("data-src", "data-original", "data-lazy-src", "data-lazy", "data-thumb", "src")
 
@@ -176,11 +205,11 @@ class SiteGrabber:
     def _form_templates(self, page_html: str, page_url: str) -> List[str]:
         """Search-URL templates derived from GET search forms on the page."""
         templates: List[str] = []
-        for form_match in _FORM_RE.finditer(page_html or ""):
-            form = _attrs(form_match.group(1))
+        for form_attrs, form_inner in _iter_pairs(page_html or "", _FORM_HEAD_RE, "</form>"):
+            form = _attrs(form_attrs)
             if form.get("method", "get").lower() != "get":
                 continue
-            for input_match in _INPUT_RE.finditer(form_match.group(2)):
+            for input_match in _INPUT_RE.finditer(form_inner):
                 inp = _attrs(input_match.group(1))
                 name = inp.get("name", "")
                 kind = inp.get("type", "text").lower()
@@ -272,8 +301,9 @@ class SiteGrabber:
         page_path = urlparse(page_url).path.rstrip("/")
         groups: Dict[str, Dict[str, str]] = {}
         order: List[str] = []
-        for match in _ANCHOR_RE.finditer(page_html or ""):
-            attrs = _attrs(match.group(1))
+        for anchor_attrs, anchor_inner in _iter_pairs(
+                page_html or "", _ANCHOR_HEAD_RE, "</a>"):
+            attrs = _attrs(anchor_attrs)
             href = attrs.get("href", "").strip()
             if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
                 continue
@@ -291,7 +321,7 @@ class SiteGrabber:
                 continue
             if _LANG_RE.match(segments[-1]) and len(segments) == 1:
                 continue  # a bare language root like /en
-            inner = match.group(2)
+            inner = anchor_inner
             group = groups.get(url)
             if group is None:
                 group = groups[url] = {"thumb": "", "title": "", "duration": "", "text": "", "has_img": ""}

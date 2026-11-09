@@ -908,7 +908,7 @@ class FilePane(QWidget):
 
     def _context_menu(self, pos) -> None:
         menu = QMenu(self)
-        menu.setStyleSheet(_MENU_STYLE)
+        menu.setStyleSheet(scale_qss(_MENU_STYLE))  # themed white text (2026-11-09)
         paths = self.selected_paths()
         if paths:
             menu.addAction(tr('Open'), lambda: self._on_activated(
@@ -1333,7 +1333,7 @@ class CommanderTab(QWidget):
 
     def _show_favorites_menu(self, pane: FilePane) -> None:
         menu = QMenu(self)
-        menu.setStyleSheet(_MENU_STYLE)
+        menu.setStyleSheet(scale_qss(_MENU_STYLE))  # themed white text (2026-11-09)
         current = pane.current_path()
         if self._is_favorite(current):
             menu.addAction(tr('Remove current folder from favorites'),
@@ -2706,13 +2706,19 @@ class CommanderTab(QWidget):
             is_current = operation is self._active_operation
             if is_current:
                 self._active_operation = None
+        if not is_current:
+            # Headless operations release the guard and record their outcome
+            # inline on their own thread; this signal is GUI cosmetics only.
+            # It must not touch the progress dialog — the stale-queued
+            # signal used to reset the LIVE dialog of a NEWER operation
+            # that had already grabbed the guard (2026-11-09 review). The
+            # status line still updates so agent-driven transfers appear
+            # in "Last operation".
+            self._status.setText(message)
+            return
         if self._progress_dlg is not None:
             self._progress_dlg.reset()
             self._progress_dlg = None
-        if not is_current:
-            # Headless operations release the guard and record their outcome
-            # on their own thread; this signal is GUI cosmetics only.
-            return
         self._status.setText(message)
         if (ok and operation.mode == "move" and self._file_clipboard
                 and self._file_clipboard[0] == "cut"):

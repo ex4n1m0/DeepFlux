@@ -120,8 +120,11 @@ def _make_child_no_activate(host_wid: int, tries: int = 25,
             return False  # video window not created yet
         GWL_EXSTYLE = -20
         style = user32.GetWindowLongPtrW(ctypes.c_void_p(hwnd), GWL_EXSTYLE)
-        if not style:
-            return False
+        # Failure is signaled by 0 WITH GetLastError set — but a plain
+        # WS_CHILD video window legitimately has EXSTYLE 0, and treating
+        # that as "not ready" made the retry loop spin out and never apply
+        # the patch on exactly the common case (2026-11-09 review). Only
+        # the window handle gates readiness; a 0 style is just 0.
         if style & _WS_EX_NOACTIVATE:
             return True
         user32.SetWindowLongPtrW(

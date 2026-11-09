@@ -90,7 +90,17 @@ def unpack_packed_js(source: str, depth: int = 0) -> List[str]:
                 return word
             return keywords[index]
 
+        # Output-amplification cap (2026-11-09 review): every payload word
+        # can expand to a whole keyword — a hostile page whose words all map
+        # to multi-KB keywords would blow the 5 MiB body cap into hundreds
+        # of MiB, recursed and re-scanned at the next depth. Drop the block
+        # instead of unpacking it.
+        _MAX_UNPACKED_BYTES = 8 * 1024 * 1024
+        if len(payload) * max((len(k) for k in keywords), default=1) > _MAX_UNPACKED_BYTES:
+            continue
         unpacked = _WORD_RE.sub(repl, payload)
+        if len(unpacked) > _MAX_UNPACKED_BYTES:
+            continue
         results.append(unpacked)
         results.extend(unpack_packed_js(unpacked, depth + 1))
     return results
@@ -109,11 +119,15 @@ _STREAM_URL_RE = re.compile(
     r"""https?://[^\s"'<>\\()\[\]{}]+?\.(?:%s)(?:\?[^\s"'<>\\()\[\]{}]*)?""" % "|".join(_MEDIA_EXTS),
     re.I,
 )
+# Attr/tag scans EXCLUDE '<' and are BOUNDED: an unbounded [^>]* on a page
+# with no '>' at all walks to the string end from every start position
+# (O(N*L) — the same hostile-shape blowup site_grabber's _iter_pairs fixed;
+# 2026-11-09 review). Real attributes never contain an unescaped '<'.
 _MEDIA_SRC_RE = re.compile(
-    r"""<(?:video|source|audio)\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']""", re.I | re.S)
+    r"""<(?:video|source|audio)\b[^<>]{0,2048}?\bsrc\s*=\s*["']([^"']+)["']""", re.I | re.S)
 _OG_TITLE_RE = re.compile(
-    r"""<meta\s+[^>]*property\s*=\s*["']og:title["'][^>]*content\s*=\s*["']([^"']+)["']""", re.I)
-_H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.I | re.S)
+    r"""<meta\s+[^<>]{0,2048}property\s*=\s*["']og:title["'][^<>]{0,2048}content\s*=\s*["']([^"']+)["']""", re.I)
+_H1_RE = re.compile(r"<h1[^<>]{0,2048}>(.{0,2048}?)</h1>", re.I | re.S)
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 _SITE_SUFFIX_RE = re.compile(r"\s+[-|–—]\s+(?=[^-|–—]{2,40}$)")
 _MASTER_HINTS = ("master", "playlist", "index")

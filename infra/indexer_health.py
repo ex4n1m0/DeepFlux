@@ -218,7 +218,13 @@ class IndexerHealthStore:
                 "failures": 0, "kind": "", "last_error": "",
                 "cooldown_until": 0.0, "last_success": 0.0,
             }
-            if kind not in KIND_JACKETT:
+            # Count only the indexer's own fault kinds (the documented set —
+            # a parse hiccup says nothing about the indexer, and Jackett-outage
+            # kinds never land here). This used to be `kind not in
+            # KIND_JACKETT`, which is SUBSTRING membership against the string
+            # "jackett" — coincidentally correct today, a trap tomorrow
+            # (2026-11-09 review).
+            if kind in INDEXER_FAULT_KINDS:
                 entry["failures"] = int(entry.get("failures", 0)) + 1
                 # "Unknown indexer" is Jackett's own deterministic answer, not
                 # an intermittent site problem: NO cooldown, so the failure

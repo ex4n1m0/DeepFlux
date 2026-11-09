@@ -8,8 +8,12 @@
 // redirect happens uncounted — the download itself must never break.
 // (The retired macOS dmg pattern was dropped 2026-11-06 — macOS left the
 // site on 2026-09-24 and its artifacts are gone; keep it out of FILE_RE.)
+// The UX-vs-x brand spelling is accepted BOTH ways: the 7.6 setup exe was
+// accidentally deployed as "DeepFlUX7.6Setup.exe" and the strict regex 400'd
+// the counted download button for that entire release window (2026-11-09
+// review) — existence of the file remains the real gate.
 
-const FILE_RE = /^DeepFlux(?:[0-9.]+Setup\.exe|-[0-9.]+-Linux-x86_64\.(?:AppImage|tar\.gz))$/;
+const FILE_RE = /^DeepFl(ux|UX)(?:[0-9.]+Setup\.exe|-[0-9.]+-Linux-x86_64\.(?:AppImage|tar\.gz))$/;
 const TOTAL_KEY = 'df:dl:total';
 
 // Accept both naming schemes: UPSTASH_REDIS_REST_* (a manual Upstash token)

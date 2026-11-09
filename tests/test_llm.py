@@ -58,10 +58,16 @@ def test_retry_exhausted_raises(mock_post, mock_sleep):
 
 @patch("agent.llm.time.sleep")
 @patch("agent.llm.requests.post")
-def test_local_provider_waits_out_model_load(mock_post, mock_sleep):
+def test_local_provider_waits_out_model_load(mock_post, mock_sleep, monkeypatch):
     """The local server binds its port only after the model loads (8-60+s
     cold). Connection refusals during that window must be retried FAR
-    longer than the cloud 3-attempt window, not surfaced as an error."""
+    longer than the cloud 3-attempt window, not surfaced as an error.
+    (A model IS installed and the server is not manually off — otherwise
+    the 2026-11-09 fast-fail path correctly bails on refusal #1.)"""
+    import infra.local_model as lm
+    monkeypatch.setattr(lm, "server_manually_off", lambda: False)
+    monkeypatch.setattr(lm, "is_running", lambda timeout=2.5: False)
+    monkeypatch.setattr(lm, "installed_models", lambda: [{"id": "m"}])
     ok = _ok_response(_chat_payload("finally"))
     refusals = [requests.ConnectionError("refused")] * 6
     mock_post.side_effect = refusals + [ok]
@@ -307,3 +313,43 @@ def test_http_error_includes_server_body(mock_post):
 
     assert "32768" in str(excinfo.value)
     assert "available context size" in str(excinfo.value)
+
+
+def test_local_provider_fails_fast_when_server_impossible(monkeypatch):
+    """Regression (2026-11-09 review): with provider=local and the server
+    OFF (or no model installed), every chat used to burn the full
+    ~3.5-minute retry window before surfacing ConnectionError. The retry
+    loop must bail on the FIRST refusal when the server can never answer."""
+    import infra.local_model as lm
+    from agent.llm import DeepSeekClient
+    from config import LLM_PROVIDER_PRESETS
+
+    calls = {"n": 0}
+
+    def refused(url, **kw):
+        calls["n"] += 1
+        raise __import__("requests").ConnectionError("refused")
+
+    monkeypatch.setattr("agent.llm.requests.post", refused)
+    monkeypatch.setattr("agent.llm.time.sleep", lambda s: None)
+    monkeypatch.setattr(lm, "server_manually_off", lambda: True)
+    monkeypatch.setattr(lm, "is_running", lambda timeout=2.5: False)
+    monkeypatch.setattr(lm, "installed_models", lambda: [])
+    from config import LLMConfig
+    client = DeepSeekClient(LLMConfig(provider="local"))
+    import pytest as _pytest
+    import requests as _rq
+    with _pytest.raises(_rq.ConnectionError):
+        client._post_with_retry("http://127.0.0.1:8199/v1/chat/completions",
+                                 {}, {"stream": False})
+    assert calls["n"] == 1  # no retry window burned
+
+    # a load that CAN happen keeps the window: not manually off, model
+    # installed -> second attempt occurs
+    monkeypatch.setattr(lm, "server_manually_off", lambda: False)
+    monkeypatch.setattr(lm, "installed_models", lambda: [{"id": "m"}])
+    calls["n"] = 0
+    with _pytest.raises(_rq.ConnectionError):
+        client._post_with_retry("http://127.0.0.1:8199/v1/chat/completions",
+                                 {}, {"stream": False})
+    assert calls["n"] > 1

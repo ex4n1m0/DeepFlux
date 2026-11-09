@@ -1200,3 +1200,22 @@ def test_stop_server_manual_pins_flag(monkeypatch):
     monkeypatch.setattr(local_model, "stop_server", lambda force=False: True)
     assert local_model.stop_server_manual() is True
     assert local_model.server_manually_off() is True
+
+
+def test_custom_entry_rejects_windows_absolute_and_backslash_paths():
+    r"""Regression (2026-11-09 review): a repo filename like `C:\evil.gguf` or `\Users\x\e.gguf` passed the old dotdot-only check, and on Windows an absolute final component RESETS the os.path.join out of models_root (arbitrary-location write of attacker bytes)."""
+    import pytest as _pytest
+    bad_names = [
+        'C:\\evil.gguf',
+        '\\Users\\x\\e.gguf',
+        '../up.gguf',
+        '/abs/e.gguf',
+        'sub\\dir\\x.gguf',
+        '',
+        'x.gguf\n',
+    ]
+    for bad in bad_names:
+        with _pytest.raises(ValueError):
+            local_model.custom_entry('some/repo', bad, 123, 'ab' * 32)
+    ok = local_model.custom_entry('some/repo', 'Model-Q4_K_M.gguf', 123, 'ab' * 32)
+    assert ok['id'].startswith('hf-') and ok['custom'] is True

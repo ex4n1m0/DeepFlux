@@ -4525,6 +4525,11 @@ class ToolRegistry:
         if name is not None:
             feed.name = name.strip() or url
         if mode is not None:
+            # Same validation as _add_rss_feed (2026-11-09 review): a bad
+            # string silently degraded auto-download feeds to monitor.
+            if mode not in ("monitor", "auto_download"):
+                return {"success": False,
+                        "error": "mode must be 'monitor' or 'auto_download'"}
             feed.mode = mode
         if category is not None:
             feed.category = category.strip() or "Other"

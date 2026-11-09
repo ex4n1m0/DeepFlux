@@ -296,11 +296,28 @@ class SiteGrabberDialog(QDialog):
             from dlmgr.http_client import BROWSER_HEADERS
             for url, thumb in targets:  # sequential — CDN friendly
                 try:
+                    # Streamed under a hard cap (2026-11-09 review): thumb
+                    # URLs come from the searched page's <img> attributes —
+                    # attacker-influenced, and the old non-streamed
+                    # resp.content buffered the whole body into the GUI
+                    # process.
                     resp = http_client.get(
                         thumb, headers={"User-Agent": BROWSER_HEADERS["User-Agent"], "Referer": url},
-                        timeout=15)
-                    if resp.status_code == 200 and resp.content:
-                        self._thumb_loaded.emit(url, resp.content)
+                        timeout=15, stream=True)
+                    try:
+                        if resp.status_code != 200:
+                            continue
+                        buf = bytearray()
+                        for chunk in resp.iter_content(65536):
+                            if not chunk:
+                                continue
+                            buf += chunk
+                            if len(buf) > 2 * 1024 * 1024:
+                                break  # decorative — drop oversized payloads
+                        if buf:
+                            self._thumb_loaded.emit(url, bytes(buf))
+                    finally:
+                        resp.close()
                 except RuntimeError:
                     return  # dialog closed — stop loading
                 except Exception:

@@ -318,33 +318,22 @@ class RSSViewer(QDialog):
                             })
                             downloaded += 1
                         elif torrent_url:
-                            import tempfile
-                            import os
-                            resp = requests.get(torrent_url, timeout=30, headers={"User-Agent": "Deeptorrent/0.1"})
-                            resp.raise_for_status()
-                            tmp_path = None
-                            try:
-                                with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as tmp:
-                                    tmp.write(resp.content)
-                                    tmp_path = tmp.name
-                                result = self.tools.call("add_torrent_file", {
-                                    "path": tmp_path,
-                                    "save_path": self.config.default_save_path,
-                                    "category": category,
-                                })
-                                # Keep a persistent copy so the torrent can be
-                                # restored after restart, then drop the temp file.
-                                state_mgr = getattr(self.parent(), "_state_manager", None)
-                                info_hash = result.get("info_hash", "") if isinstance(result, dict) else ""
-                                if state_mgr and info_hash:
-                                    state_mgr.store_torrent_file(tmp_path, info_hash)
+                            # Route through the tool's validated URL path
+                            # (per-hop redirect checks, private-target
+                            # rejection, 32 MiB cap) — the bare requests.get
+                            # here was the one RSS sink without them
+                            # (2026-11-09 review). Persistence comes free:
+                            # the tool stores the .torrent under
+                            # ~/.deeptorrent/torrents/<hash>.torrent.
+                            result = self.tools.call("add_torrent_file", {
+                                "path": torrent_url,
+                                "save_path": self.config.default_save_path,
+                                "category": category,
+                            })
+                            if isinstance(result, dict) and result.get("success"):
                                 downloaded += 1
-                            finally:
-                                if tmp_path and os.path.exists(tmp_path):
-                                    try:
-                                        os.unlink(tmp_path)
-                                    except OSError:
-                                        pass
+                            else:
+                                failed += 1
                         else:
                             failed += 1
                     except Exception as exc:

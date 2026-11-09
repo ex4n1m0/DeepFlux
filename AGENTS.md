@@ -657,6 +657,37 @@
   9.2.0) run the verify/test commands in this file fine — only the BARE
   `python`/`py` PATH shim is missing, so the README pre-commit hook needs
   the venv on PATH: `PATH=".venv/Scripts:$PATH" git commit ...`.
+- 2026-11-09 full-codebase review (8 reviewers over the churn since
+  3c9d492: 134 commits, 181 files, +31k/−7k lines). Findings + fix status
+  live in REVIEW-2026-11-09.md (tracked). All 4 HIGH + 11 MED + Tier 3
+  fixed the same day, each with teeth-verified regression tests (stash →
+  fail → restore → pass). Durable lessons — do not regress:
+  * local_model's `_server_lock` MUST stay an RLock (start_server calls
+    stop_server under it on the model-switch path).
+  * `engine._BandwidthLimiter.acquire` must grant oversized requests once
+    the bucket is full (chunk 64 KiB > a 1–63 KB/s limit hung every
+    download); scheduler.py's TokenBucketThrottler is DEAD CODE — the
+    engine never used it.
+  * GGUF/remote-body parsers: at EOF reads return b"" WITHOUT raising —
+    every count/length needs a cap and short reads must fail closed.
+  * python-mpv observers NEVER read native properties (not even
+    `self._mpv.duration`) — mirror observed state into Python attrs.
+  * Lazy `X+?\.Y` regexes WITHOUT nested quantifiers are LINEAR (measured:
+    the "page_scan ReDoS" was a false positive, 0.1–0.3 s on 5 MB pages).
+    The REAL hostile-shape hazard is tag-pairing regexes (`<a…>(.*?)</a>`)
+    and no-`>` attr bombs — site_grabber now scans SEGMENTED
+    (`_iter_pairs`, split on the close tag) and every attr class excludes
+    `<` and is bounded; keep new HTML regexes in that shape.
+  * The Sources dialog's table shows 5 columns but the config carries
+    origin/torznab_caps/popularity/categories — `_save_and_accept` must
+    carry them over by id (wiping origin zombified manual sources).
+  * Windows ctypes: `ctypes.byref` needs a real ctypes struct (uuid.UUID
+    raised TypeError and silently killed the taskbar feature for a
+    release); ITaskbarList3 progress = vtable slots 9/10, NOT 11/12.
+  * Runtime-downloaded payloads are digest-pinned: Linux Jackett reads
+    packaging/jackett/PINNED.json's `linux` entry (shipped via app.spec +
+    app_linux.spec), and the Windows bundled installer is sha256-gated
+    before its elevated run. fetch_jackett.py writes both entries.
 - 2026-09-15 total-codebase review (6 parallel reviewer agents; 37 findings,
   ~30 fixed, all with file-level rationale comments + regression tests).
   Durable rules that came out of it — do not regress:

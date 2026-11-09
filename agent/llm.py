@@ -172,6 +172,24 @@ class DeepSeekClient(LLMClient):
             reasoning=message.get("reasoning_content") or message.get("reasoning"),
         )
 
+    @staticmethod
+    def _local_server_impossible() -> bool:
+        """True when the local llama-server can NEVER answer this request:
+        the user turned it off, or no model is installed at all. Burning the
+        ~3.5-minute retry window on that hung every chat turn after a
+        keyless/local misconfiguration (2026-11-09 review). Conservative by
+        design: a server that is up, or any installed model (a lazy load may
+        be in flight), keeps the long window."""
+        try:
+            from infra import local_model
+            if local_model.server_manually_off():
+                return True
+            if local_model.is_running(timeout=0.5):
+                return False
+            return not local_model.installed_models()
+        except Exception:
+            return False
+
     def _post_with_retry(self, url: str, headers: Dict[str, str], payload: Dict[str, Any]) -> requests.Response:
         """POST with exponential backoff on transient network/5xx/429 failures.
 
@@ -182,7 +200,8 @@ class DeepSeekClient(LLMClient):
         server is lazily started by the app and a cold model load takes
         8-60+ s before the port answers — the first chat after launch must
         WAIT for it, not error out (backoff capped so the total window
-        stays under the loader's 240 s CPU budget).
+        stays under the loader's 240 s CPU budget). The window is skipped
+        entirely when the server can never come up (off / no model).
         """
         if self.provider == "local":
             max_attempts, max_wait = 12, 30.0
@@ -212,6 +231,9 @@ class DeepSeekClient(LLMClient):
                 last_exc = exc
                 if attempt >= max_attempts:
                     break
+                if self.provider == "local" and self._local_server_impossible():
+                    logger.warning("local server is off/not installed — failing fast")
+                    raise
                 wait = min(max_wait, (2 ** (attempt - 1))) + random.random()
                 logger.warning("DeepSeek request failed (attempt %d/%d): %s — retrying in %.1fs",
                                attempt, max_attempts, exc, wait)

@@ -44,7 +44,9 @@ faulthandler.enable(all_threads=False)
 
 def _watchdog() -> None:
     time.sleep(120)
-    faulthandler.dump_traceback()
+    # all_threads defaults to True and would re-enable the exact walk
+    # that killed the boot smoke in the 2026-11-07 audit.
+    faulthandler.dump_traceback(all_threads=False)
     os._exit(3)
 
 

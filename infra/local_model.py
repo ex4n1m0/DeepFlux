@@ -223,12 +223,19 @@ def custom_entry(repo_id: str, filename: str, size: int, sha256: str) -> Dict[st
     that serves the curated ladder serves it unchanged."""
     if not HF_REPO_RE.match(repo_id or ""):
         raise ValueError("invalid Hugging Face repository id")
-    if not filename or filename.startswith("/") or ".." in filename:
+    # The filename becomes a path component under models_root/<id>/ — on
+    # Windows an absolute ('C:\\x.gguf') or backslash ('\x\\y.gguf') final
+    # component RESETS the os.path.join onto an arbitrary path, so reject
+    # anything outside a strict charset instead of blacklisting dots
+    # (2026-11-09 review; defense-in-depth against a hostile HF repo).
+    if (not filename or filename.startswith("/")
+            or ".." in filename or "\\" in filename
+            or not re.fullmatch(r"[A-Za-z0-9._\- ]+", filename)):
         raise ValueError("invalid file name")
     quant = _quant_from_filename(filename)
     ident = (f"hf-{_slug(repo_id)[:28]}-{quant}-"
              f"{hashlib.sha1(f'{repo_id}/{filename}'.encode('utf-8')).hexdigest()[:6]}")
-    return {
+    entry = {
         "id": ident,
         "label": f"{repo_id.split('/')[-1]} ({quant})",
         "repo": repo_id,
@@ -238,6 +245,13 @@ def custom_entry(repo_id: str, filename: str, size: int, sha256: str) -> Dict[st
         "sha256": sha256 or "",
         "custom": True,
     }
+    # Containment belt-and-braces: the resolved model path must stay inside
+    # models_root/<id>/ no matter what slipped past the charset gate.
+    resolved = os.path.realpath(model_path(entry))
+    expected_root = os.path.realpath(os.path.join(models_root(), ident))
+    if not resolved.startswith(expected_root + os.sep):
+        raise ValueError("file name escapes the models directory")
+    return entry
 
 
 def hf_search(query: str, limit: int = HF_SEARCH_LIMIT) -> List[Dict[str, Any]]:

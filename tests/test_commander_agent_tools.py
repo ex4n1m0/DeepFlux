@@ -328,3 +328,37 @@ def test_headless_failure_records_outcome_without_dialog(
     outcomes = env.tab.operation_outcomes()
     assert outcomes and outcomes[-1]["mode"] == "copy"
     assert outcomes[-1]["ok"] is False
+
+
+def test_commander_bridge_marshals_from_a_real_worker_thread(commander_env, qapp, tmp_path):
+    """The queued-signal hop is the mechanism every commander tool depends
+    on when called from an AGENT thread — but every other test runs on the
+    QApplication thread and always takes the direct-call short-circuit
+    (2026-11-09 review gap). Drive navigate() from a real thread and pump
+    the event loop until it answers."""
+    import threading as _threading
+
+    left = tmp_path / "marsh-left"
+    left.mkdir()
+    env = commander_env
+    env.tab.set_pane_paths(str(left), str(left))
+    qapp.processEvents()
+
+    result = {}
+    done = _threading.Event()
+
+    def _from_worker():
+        result["r"] = env.bridge.navigate("left", str(left))
+        done.set()
+
+    t = _threading.Thread(target=_from_worker, daemon=True)
+    t.start()
+    # pump until the worker's request round-trips through the queued signal
+    for _ in range(300):  # ≤15s, mirroring the bridge's own wait budget
+        if done.wait(0.05):
+            break
+        qapp.processEvents()
+    assert done.wait(1.0), "bridge call from a worker thread never returned"
+    assert result["r"].get("ok") is True
+    assert os.path.normcase(env.tab.left_pane.current_path()) == \
+        os.path.normcase(str(left))

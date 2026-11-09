@@ -2961,6 +2961,10 @@ class MainWindow(QMainWindow):
 
     def _show_event_log(self) -> None:
         menu = QMenu(self)
+        # exec() keeps the menu parented to the window forever — delete it
+        # with the dialog or every bell click leaks a QMenu child
+        # (2026-11-09 review).
+        menu.setAttribute(Qt.WA_DeleteOnClose)
         if not self._events:
             act = menu.addAction(tr('(nothing yet)'))
             act.setEnabled(False)
@@ -3204,16 +3208,6 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, tr("Text Color"),
             tr("The new text color applies after DeepFlux restarts."))
-
-    def _popup_settings_menu(self) -> None:
-        """Ctrl+,,: open the Settings menu pinned under its menu-bar title."""
-        bar = self.menuBar()
-        act = next((a for a in bar.actions()
-                    if a.text().replace("&", "") == tr("Settings")), None)
-        if act is None or self._settings_menu is None:
-            return
-        rect = bar.actionGeometry(act)
-        self._settings_menu.popup(bar.mapToGlobal(rect.bottomLeft()))
 
     def _apply_dark_titlebar(self) -> None:
         """Match the OS title bar to the dark theme (Windows-only, v5)."""
@@ -4947,6 +4941,11 @@ class MainWindow(QMainWindow):
     def _update_check_worker(self, force: bool) -> None:
         from infra import updater
         if self._update_check_running:
+            if force:
+                # A manual click during the startup probe used to return
+                # SILENTLY — no dialog at all (2026-11-09 review).
+                self._update_signals.status.emit(
+                    "An update check is already running — one moment.")
             return
         self._update_check_running = True
         try:
@@ -5017,8 +5016,12 @@ class MainWindow(QMainWindow):
     def _on_update_downloaded(self, path) -> None:
         info = self._pending_update
         self._pending_update = None
-        if info is not None:
-            self._confirm_and_apply(info, path)
+        if info is None or not path:
+            # None path = cancelled (the X-close also cancels since
+            # 2026-11-09) — no install prompt may appear after the user
+            # dismissed the dialog.
+            return
+        self._confirm_and_apply(info, path)
 
     def _on_update_download_failed(self, message: str) -> None:
         self._pending_update = None
@@ -7302,19 +7305,18 @@ class MainWindow(QMainWindow):
                                     })
                                     ok_items.append(item)
                                 elif torrent_url:
-                                    # Download the .torrent file from URL.
-                                    import tempfile
-                                    resp = requests.get(torrent_url, timeout=30, headers={"User-Agent": "Deeptorrent/0.1"})
-                                    resp.raise_for_status()
-                                    with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as tmp:
-                                        tmp.write(resp.content)
-                                        tmp_path = tmp.name
-                                    self.tools.call("add_torrent_file", {
-                                        "path": tmp_path,
+                                    # Route the URL through the tool's own
+                                    # validated path (per-hop redirect checks,
+                                    # private-target rejection, 32 MiB cap) —
+                                    # the bare requests.get here was the one
+                                    # RSS sink without them (2026-11-09 review).
+                                    res = self.tools.call("add_torrent_file", {
+                                        "path": torrent_url,
                                         "save_path": self.config.default_save_path,
                                         "category": feed.category,
                                     })
-                                    ok_items.append(item)
+                                    if isinstance(res, dict) and res.get("success"):
+                                        ok_items.append(item)
                             except Exception as exc:
                                 logger.warning("Auto-download failed for %s: %s", item.get("title", ""), exc)
 

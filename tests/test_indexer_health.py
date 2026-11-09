@@ -552,3 +552,16 @@ def test_set_flaresolverr_url_admin_blocked():
         result = jackett.set_flaresolverr_url(config, "http://127.0.0.1:8191/")
     assert result["success"] is False
     assert "admin" in result["message"].lower()
+
+
+def test_parse_kind_does_not_count_toward_cooldown(tmp_path):
+    """Regression (2026-11-09 review): record_failure counted KIND_PARSE
+    toward cooldown (the INDEXER_FAULT_KINDS set existed but was dead code)
+    — a Jackett 200-HTML hiccup for ONE indexer twice cooled it 30 min."""
+    from infra.indexer_health import KIND_PARSE, IndexerHealthStore
+
+    store = IndexerHealthStore(str(tmp_path / "h.json"))
+    store.record_failure("a", KIND_PARSE, "odd body")
+    entry = store.record_failure("a", KIND_PARSE, "odd body again")
+    assert entry["failures"] == 0  # parse hiccups never count
+    assert entry["cooldown_until"] == 0.0

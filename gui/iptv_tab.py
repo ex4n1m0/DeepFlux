@@ -471,11 +471,12 @@ class PlayerWidget(QWidget):
         self._narrow_controls = False
         self._ctrl_wide_min = 0
         # Secondary tools overflow into a "⋯" menu when the pane is narrow.
-        # (record/sleep buttons are excluded: compact PiP mode hides them
+        # (record/sleep AND pure are excluded: compact PiP mode hides them
         # itself, and OverflowRow must be the only thing managing its
-        # candidates' visibility.)
+        # candidates' visibility — pure in the list re-showed a dead Pure
+        # button inside compact's mini chrome; 2026-11-09 review.)
         self._tools_overflow = OverflowRow(
-            self.controls, (self.pure_btn, self.mv_btn, self.compact_btn), self,
+            self.controls, (self.mv_btn, self.compact_btn), self,
             layout=tools)
 
         layout.addWidget(self.controls)
@@ -2227,9 +2228,18 @@ class PlayerWidget(QWidget):
         if self._compact:
             self._toggle_compact()
         if self._backend is not None:
+            if self._backend is self._media_backend:
+                self._media_backend = None  # destroyed below — no double stop
             self._backend.stop()
             self._backend.destroy()
             self._backend = None
+        if self._media_backend is not None:
+            # audio→MilkDrop path: play() creates the mpv media backend
+            # FIRST, then hands _backend to Butterchurn — the idle mpv core
+            # then survived shutdown undestroyed (exit-time crash noise
+            # with a live libmpv handle; 2026-11-09 review). Mirror
+            # force_stop_all_streams: tear the media backend down too.
+            self._teardown_media_backend()
         self._playback_active = False
         self._set_window_media_title("")  # restore the static branding title
 

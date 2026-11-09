@@ -607,6 +607,7 @@ class DownloadsTab(QWidget):
         details_layout.setSpacing(2)
         self.details_label = QLabel(tr('Select a download to see segment details.'))
         self.details_label.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px;"))
+        shrink_label(self.details_label)  # live job filenames must not grow the window min (2026-11-09)
         details_layout.addWidget(self.details_label)
 
         self.segment_table = QTableWidget()

@@ -150,5 +150,13 @@ class UpdateProgressDialog(QDialog):
         self._cancel.set()
         self._label.setText(tr('Cancelling…'))
 
+    def reject(self) -> None:
+        # X-close must CANCEL the transfer too (2026-11-09 review): the
+        # daemon thread used to keep downloading and the done-signal then
+        # popped the install prompt minutes after the user closed the
+        # dialog. The partial file + sidecar are kept — a retry resumes.
+        self._cancel.set()
+        super().reject()
+
     def error_message(self) -> str:
         return getattr(self, "_error", "")

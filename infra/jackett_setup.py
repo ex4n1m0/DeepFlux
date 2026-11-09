@@ -89,6 +89,22 @@ LINUX_DOWNLOAD_TIMEOUT = 600.0
 LINUX_DOWNLOAD_CAP = 512 * 1024 * 1024  # sanity ceiling; real asset ~51 MB
 
 
+def _pinned_data() -> Dict[str, Any]:
+    """The tracked packaging/jackett/PINNED.json (top-level = the Windows
+    installer pin written by fetch_jackett.py; `linux` = the Linux tarball
+    pin). Ships into _internal/jackett/ via app.spec."""
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        path = os.path.join(sys._MEIPASS, "jackett", "PINNED.json")
+    else:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "packaging", "jackett", "PINNED.json")
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
 def _pinned_linux_release() -> Optional[Dict[str, Any]]:
     """The `linux` entry of the tracked packaging/jackett/PINNED.json
     (written by fetch_jackett.py; ships into _internal/jackett/ via
@@ -99,18 +115,36 @@ def _pinned_linux_release() -> Optional[Dict[str, Any]]:
     downloads the PINNED tag and verifies the streamed sha256; the pin's
     absence (bundle built before) degrades to the GitHub asset digest,
     then size-cap only."""
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        path = os.path.join(sys._MEIPASS, "jackett", "PINNED.json")
-    else:
-        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "packaging", "jackett", "PINNED.json")
+    entry = _pinned_data().get("linux") or {}
+    return entry if entry.get("version") and entry.get("sha256") else None
+
+
+def _installer_digest_ok(installer: str, say: Callable[[str], None]) -> bool:
+    """sha256 the installer against the tracked pin BEFORE elevating it
+    (review 2026-11-09): the installer ships inside the per-user install
+    dir (and DEEPFLUX_JACKETT_INSTALLER overrides it), so same-user malware
+    could swap the bytes and ride the UAC prompt the user just learned to
+    accept right after installing. A bundle without a pin (built before
+    this change) executes as before — the pin only tightens new builds."""
+    pin = _pinned_data()
+    expected = pin.get("sha256")
+    if not expected:
+        logger.info("no Jackett installer pin shipped — skipping digest check")
+        return True
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        entry = data.get("linux") or {}
-        return entry if entry.get("version") and entry.get("sha256") else None
-    except Exception:
-        return None
+        sha = hashlib.sha256()
+        with open(installer, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                sha.update(chunk)
+    except OSError as exc:
+        say(f"Could not read the bundled Jackett installer ({exc}).")
+        return False
+    if sha.hexdigest() != expected:
+        say("The bundled Jackett installer failed its integrity check — "
+            "aborting (it does not match the pinned sha256).")
+        logger.warning("Jackett installer digest mismatch for %s", installer)
+        return False
+    return True
 
 
 def _validate_tar_members(tar: "tarfile.TarFile", root: str) -> None:
@@ -636,6 +670,9 @@ def run_setup(config_path: Optional[str] = None,
                     "DeepFlux will pick it up automatically on the next start.")
                 return result
             say("Installing the Jackett service — accept the Windows prompt…")
+            if not _installer_digest_ok(installer, say):
+                result["error"] = "installer-digest-mismatch"
+                return result
             ok, code = _shell_execute_runas(installer, INSTALLER_SILENT_FLAGS)
             if code == UAC_CANCELLED:
                 result["error"] = "uac-declined"
