@@ -33,9 +33,13 @@ _RELEASE = 2
 
 
 class _GUID(ctypes.Structure):
-    _fields_ = [("Data1", wintypes.DWORD),
-                ("Data2", wintypes.WORD),
-                ("Data3", wintypes.WORD),
+    # Plain ctypes primitives, NOT wintypes: this module imports on every
+    # platform, and wintypes only exists under the _WIN32 guard above — the
+    # wintypes version crashed the Linux/macOS builds AT IMPORT ("NameError:
+    # wintypes is not defined", CI run 42809567604). Layout is identical.
+    _fields_ = [("Data1", ctypes.c_uint32),
+                ("Data2", ctypes.c_uint16),
+                ("Data3", ctypes.c_uint16),
                 ("Data4", ctypes.c_ubyte * 8)]
 
 

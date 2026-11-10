@@ -196,3 +196,18 @@ def test_settings_hub_search_filters(qapp):
     assert calls == ["jkt"]
     hub._populate("")
     assert hub._list.count() == 6
+
+
+def test_win_taskbar_module_imports_on_posix():
+    """The 2026-11-10 CI incident: win_taskbar's _GUID used wintypes at
+    module level, which only exists under `if _WIN32:` — the Linux build
+    crashed AT IMPORT (NameError) in the offscreen boot smoke. Import the
+    module fresh under a faked POSIX platform in a subprocess."""
+    import subprocess
+    import sys
+    code = ("import sys; sys.platform = 'linux'; "
+            "sys.modules['ctypes.WinDLL'] = None; "
+            "import gui.win_taskbar")
+    r = subprocess.run([sys.executable, "-c", code],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-500:]
