@@ -657,6 +657,29 @@
   9.2.0) run the verify/test commands in this file fine — only the BARE
   `python`/`py` PATH shim is missing, so the README pre-commit hook needs
   the venv on PATH: `PATH=".venv/Scripts:$PATH" git commit ...`.
+- 2026-11-10 RELEASE 7.7 + two incidents, durable lessons:
+  * 7.6.1 SHIPPED BOOT-BROKEN: its bundle carried backports/zstd/ with ONLY
+    the .pyd (namespace dir) — urllib3 2.8's `backports.zstd.ZstdError`
+    lookup crashed AT IMPORT ("Failed to execute script 'main'"), before
+    any logging. Compounding: installer.iss had NO [InstallDelete], so the
+    stale dir SURVIVED upgrades and poisoned 7.7-installed-over-7.6.1 too.
+    FIX (shipped in 7.7's setup): [InstallDelete] wipes {app}\_internal on
+    every install (safe — per-user data is in ~/.deeptorrent, the
+    flaresolverr/ tree sits NEXT TO the app, PINNED.json re-ships). RULE:
+    any bundle-content change across releases NEEDS this wipe; a boot
+    crash leaves NO log — reproduce with the frozen exe, read the dialog.
+  * git-push + artifact downloads from this machine's network CRAWL
+    (~50 KiB/s, hours for 600 MB) while RELEASE assets are fast (9+ MB/s).
+    linux-build.yml gained an optional dispatch input `upload_release`
+    that uploads the AppImage to a DRAFT `linux-staging` release —
+    download that, then DELETE the release (transport lane only). The
+    GITHUB_TOKEN needs `permissions: contents: write` (added).
+  * The deploy PAT is fine-grained: needs Contents+Workflows+Actions
+    (read and write) on this repo — one toggle each, or push/dispatch
+    403s with confusing messages.
+  * win_taskbar's _GUID must stay on plain ctypes primitives — a
+    module-level wintypes reference crashes the Linux/mac builds AT
+    IMPORT (CI run 42809567604); pinned by a POSIX-import subprocess test.
 - 2026-11-09 full-codebase review (8 reviewers over the churn since
   3c9d492: 134 commits, 181 files, +31k/−7k lines). Findings + fix status
   live in REVIEW-2026-11-09.md (tracked). All 4 HIGH + 11 MED + Tier 3

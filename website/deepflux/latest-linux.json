@@ -1,8 +1,8 @@
 {
-  "version": "7.6",
-  "file": "DeepFlux-7.6-Linux-x86_64.AppImage",
-  "size": 613829112,
-  "sha256": "3edca6a7a4716d3fda61d5ce8367d8802f8d90a9c617652ab7efc8e34445beaa",
-  "released": "2026-11-07",
-  "notes": "DeepFlux 7.6 - redesigned navigation: one-click tab icons in the menu bar; browser tabs shrink to fit instead of stretching the window; right-click any bookmark or folder to delete it (folders take their bookmarks with them, and the bookmarks menu stays open and updates on the spot); the browser toolbar lingers 2 seconds before hiding; stability fixes (the background hardware monitor strip is removed) and tools now run without confirmation pop-ups by default (YOLO mode, toggle next to the agent input)."
+  "version": "7.7",
+  "file": "DeepFlux-7.7-Linux-x86_64.AppImage",
+  "size": 614017528,
+  "sha256": "4a3b54a051a867a50c87791ee1da68be8587fab2b2742deb5b0c4604ed87e869",
+  "released": "2026-11-10",
+  "notes": "DeepFlux 7.7 for Linux - the multiview grid now plays as many IPTV streams as your provider allows, plus a full-codebase stability and security hardening pass (see the Windows notes)."
 }
