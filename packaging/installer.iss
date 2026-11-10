@@ -80,6 +80,18 @@ FinishedLabel=DeepFlux has been installed successfully.%n%nThe Chrome native mes
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
+; UPGRADE HYGIENE (2026-11-10 incident): PyInstaller's _internal changes
+; shape between builds, and Inno only replaces files it ships — anything
+; the new bundle no longer carries LINGERS. 7.6.1's leftover
+; _internal\backports\zstd\ (namespace dir with only the .pyd) made
+; urllib3 2.8's `backports.zstd.ZstdError` lookup crash EVERY later build
+; at boot ("Failed to execute script 'main'"). Wipe _internal before the
+; fresh bundle lands; nothing runtime-writable lives in there (per-user
+; data is in ~/.deeptorrent; the extracted flaresolverr/ tree sits NEXT TO
+; the app; jackett/ and flaresolverr/ PINNED.json are re-shipped below).
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "{#BuildDir}\DeepFlux\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs overwritereadonly
 ; Jackett final step payload: the official installer (GPL-2.0, unmodified)

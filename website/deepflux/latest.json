@@ -1,8 +1,8 @@
 {
   "version": "7.7",
   "file": "DeepFlux7.7Setup.exe",
-  "size": 436741789,
-  "sha256": "5a6c514456116f72cbca4c8d120f0bd2503cf6845acefe49b31e8832f70d3bba",
+  "size": 436741775,
+  "sha256": "972251112ebce3fe6b696194b9bfb3e18b604a08d20b11a7a9a44a6611c1dd42",
   "released": "2026-11-09",
-  "notes": "DeepFlux 7.7 - the multiview grid now plays as many IPTV streams as your provider allows: assign a channel to every tile in any layout. This release also lands a full-codebase stability and security audit: local-AI model switching no longer deadlocks, downloads no longer stall at low bandwidth limits, hostile web pages can no longer freeze the app, IPTV playlist and guide downloads are size-capped, and the Linux Jackett setup verifies its download against a pinned checksum."
+  "notes": "DeepFlux 7.7 - the multiview grid now plays as many IPTV streams as your provider allows: assign a channel to every tile in any layout. This release also lands a full-codebase stability and security audit: local-AI model switching no longer deadlocks, downloads no longer stall at low bandwidth limits, hostile web pages can no longer freeze the app, IPTV playlist and guide downloads are size-capped, and the Linux Jackett setup verifies its download against a pinned checksum. Fix: upgrades over 7.6.1 now clean stale internals (7.6.1 could crash at startup on some machines)."
 }
