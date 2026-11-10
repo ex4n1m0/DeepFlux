@@ -26,6 +26,9 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: write  # the draft linux-staging release upload lane (GITHUB_TOKEN is read-only by default)
+
 jobs:
   build:
     runs-on: ubuntu-24.04
