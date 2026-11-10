@@ -231,6 +231,8 @@ jobs:
           path: |
             dist/*.AppImage
             dist/*.tar.gz
+          retention-days: 30
+          if-no-files-found: error
       - name: Upload AppImage to draft linux-staging release
         if: ${{ inputs.upload_release }}
         env:
@@ -238,5 +240,3 @@ jobs:
         run: |
           gh release view linux-staging -R "$GITHUB_REPOSITORY" >/dev/null 2>&1             || gh release create linux-staging -R "$GITHUB_REPOSITORY" --draft --title "Linux staging" --notes "CI upload lane (draft, not announced)"
           gh release upload linux-staging -R "$GITHUB_REPOSITORY" dist/*.AppImage --clobber
-          retention-days: 30
-          if-no-files-found: error
