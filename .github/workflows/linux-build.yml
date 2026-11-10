@@ -20,6 +20,11 @@ name: Linux build
 # the retired linux-port branch; CI builds are release-gated by hand).
 on:
   workflow_dispatch:
+    inputs:
+      upload_release:
+        description: 'Also upload the AppImage to the draft linux-staging release (fast download lane — artifact-API downloads crawl from some networks)'
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -223,5 +228,12 @@ jobs:
           path: |
             dist/*.AppImage
             dist/*.tar.gz
+      - name: Upload AppImage to draft linux-staging release
+        if: ${{ inputs.upload_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view linux-staging -R "$GITHUB_REPOSITORY" >/dev/null 2>&1             || gh release create linux-staging -R "$GITHUB_REPOSITORY" --draft --title "Linux staging" --note "CI upload lane (draft, not announced)"
+          gh release upload linux-staging -R "$GITHUB_REPOSITORY" dist/*.AppImage --clobber
           retention-days: 30
           if-no-files-found: error
