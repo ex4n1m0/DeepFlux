@@ -233,7 +233,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view linux-staging -R "$GITHUB_REPOSITORY" >/dev/null 2>&1             || gh release create linux-staging -R "$GITHUB_REPOSITORY" --draft --title "Linux staging" --note "CI upload lane (draft, not announced)"
+          gh release view linux-staging -R "$GITHUB_REPOSITORY" >/dev/null 2>&1             || gh release create linux-staging -R "$GITHUB_REPOSITORY" --draft --title "Linux staging" --notes "CI upload lane (draft, not announced)"
           gh release upload linux-staging -R "$GITHUB_REPOSITORY" dist/*.AppImage --clobber
           retention-days: 30
           if-no-files-found: error
