@@ -550,6 +550,64 @@
 
 ## Conventions
 
+- MINI PLAYER BOOT + TWO-WAY MORPH (7.8, 2026-11-10; design + measurements
+  in FAST_VIDEO_OPEN_STUDY.md, implemented same day after an independent
+  review): the app's DEFAULT boot surface is the Qt-light mini player
+  (`gui/mini_player.py`) — plain shortcut launches AND video/audio
+  association opens (owner decision: "the first to open is always the mini
+  player"). Its idle state paints the owner banner (same art as the Agent
+  tab — shared resolver in `gui/brand_assets.py`, the single source of
+  truth). Durable rules — do not regress:
+  * `main.py` imports NOTHING heavy at module level (engine/agent/gui load
+    lazily per branch), and `gui/__init__.py` is LAZY (PEP 562 __getattr__
+    for run_gui/MainWindow) — importing `gui.mini_player` must never drag
+    `gui.main_window`/QtWebEngine/libtorrent (measured: 244 ms vs ~670 ms;
+    pinned by tests/test_mini_player.py::test_gui_package_stays_light_for_
+    mini_boot). NEVER add a module-level import to gui/__init__.py.
+  * `_decide_boot` (main.py): every target media-extension-or-none → mini;
+    ANY scheme target (`magnet:`, `://`) or non-media ext → full app
+    (scheme check is BEFORE the extension check — `magnet:?…&dn=movie.mp4`
+    and `https://…/v.mp4` must go full). `_MINI_BOOT_SUPPORTED` duplicates
+    `_PLAY_TAB_SUPPORTED`'s platform tuple ON PURPOSE (main.py must not
+    import the heavy chain to ask); keep them in sync.
+  * Morph contract = STOPPED PLAYBACK (owner-accepted). Mini→full ("⤢ Full
+    app"): heavy imports on a worker thread (marshaled back via a Qt
+    SIGNAL — QTimer.singleShot from a thread with no event loop never
+    fires), MainWindow built in STAGES on the GUI thread
+    (`MainWindow(progress=cb)` — `_stage()` hooks; the cb pumps
+    processEvents), behind a progress bar with measured stage weights. When
+    `progress` is set, MainWindow DEFERS `_dl_api.start()` to the end of
+    __init__ — a queued control-API open must never land in a half-built
+    window. Full→mini ("◱ Mini" button in the Play toolbar next to Compact,
+    overflow-first): stops playback INCLUDING multiview grid streams
+    (`force_stop_all_streams` — plain stop() leaves grid tiles playing),
+    persists UI state, hides; engines/agent/downloads KEEP RUNNING hidden.
+  * Control-API port 53742 handoff: the mini player stops ITS ControlAPI
+    (started post-show, ~2 ms with a dormant DownloadEngine) before
+    MainWindow constructs its own; on full→mini the MainWindow's API stays
+    up with handlers RE-ROUTED. Handlers are ALWAYS signal EMITS
+    (`openRequested.emit` / `_open_signals.open_target.emit`) — the raw
+    methods touch QWidgets and the handler runs on the HTTP thread (pinned
+    by test_open_handler_stays_signal_marshaled_after_roundtrip). Backend
+    callbacks (on_state/on_position) fire on mpv's EVENT thread — the mini
+    player marshals them through its backendState/backendPosition signals,
+    exactly like PlayerWidget's sig_* in the full app.
+  * Quit semantics: closing the mini window when a MainWindow exists (even
+    hidden) calls `main.close()` FIRST — the declined active-transfers
+    prompt cancels the whole quit (`if not close(): event.ignore()`); a
+    mini-only session destroys the backend (live libmpv at interpreter
+    shutdown = exit-crash class) and stops the telemetry heartbeat.
+  * Morph-built MainWindows run the same gc.collect()+gc.freeze() ritual as
+    run_gui after construction; run_gui's association dispatch timer is
+    0 ms (was 500 ms in ≤7.7).
+  * Version 7.8 sites bumped (config.APP_VERSION, installer.iss,
+    README) — the WEBSITE/latest.json ritual is release-time work, NOT done
+    yet.
+  * Tests: tests/test_mini_player.py (18) — boot decision incl. scheme-
+    suffixed magnets/URLs, lazy package, config section, idle/play states,
+    full morph cycle (monotonic stages, routing, graceful close),
+    instant re-morph, full-boot-first routing, declined-quit cancel,
+    media queue, missing-file warning.
 - MENU BAR + NAVIGATION (7.6 restructure, owner decision 2026-11-07):
   the v5 left activity rail is GONE (gui/activity_rail.py deleted). Tab
   navigation = small icon-only checkable QActions LEFT of File

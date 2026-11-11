@@ -6,16 +6,21 @@ import logging
 import os
 import re
 import sys
-import threading
 from typing import Any, Dict, List, Optional
 
-from agent.loop import AgentLoop
-from agent.tools import ToolRegistry
-from config import DeeptorrentConfig, LLM_PROVIDER_PRESETS
-from engine import TorrentEngine
-from gui import run_gui
-
 logger = logging.getLogger(__name__)
+
+# 7.8: main.py deliberately imports NOTHING heavy at module level. The
+# default boot is the Qt-light mini player (gui/mini_player.py — measured
+# ~215 ms to play() vs 3–6 s for the full app; FAST_VIDEO_OPEN_STUDY.md);
+# the engine/agent/gui.main_window chains load lazily inside the branch
+# that needs them. This also makes --register-associations, the installer
+# steps and second-instance forwarding near-instant.
+# Platforms where the embedded player exists — the mini player's home.
+# MUST stay in sync with gui.main_window._PLAY_TAB_SUPPORTED (macOS has no
+# embedded player there either); duplicated only so this module never has
+# to import the heavy chain to ask.
+_MINI_BOOT_SUPPORTED = sys.platform in ("win32", "linux")
 
 
 def _enable_crash_log() -> None:
@@ -90,6 +95,15 @@ def print_torrent_table(torrents: List[Dict[str, Any]]) -> None:
 
 class Repl:
     def __init__(self, config_path: Optional[str] = None) -> None:
+        # Heavy imports live here (not at module level) so the default
+        # mini-player boot never pays for the CLI stack (7.8).
+        import threading
+
+        from agent.loop import AgentLoop
+        from agent.tools import ToolRegistry
+        from config import DeeptorrentConfig, LLM_PROVIDER_PRESETS
+        from engine import TorrentEngine
+
         self.config_path = config_path or DeeptorrentConfig.default_config_path()
         self.config = DeeptorrentConfig.from_file(self.config_path)
         # "local" (bundled llama.cpp server) is keyless by design — like
@@ -363,6 +377,20 @@ def _configure_logging(level: str) -> None:
     logging.getLogger(__name__).info("Logging initialized; log file: %s", log_path)
 
 
+def _load_control_token() -> str:
+    """Read the control-API token with stdlib only (mirrors
+    dlmgr.control_api.load_control_api_token's reader) — importing dlmgr
+    would drag the curl_cffi chain into the fast forward path (7.8)."""
+    try:
+        path = os.path.join(os.path.expanduser("~"), ".deeptorrent",
+                            "control_api.token")
+        with open(path, "r", encoding="ascii") as f:
+            token = f.read().strip()
+        return token if len(token) >= 32 else ""
+    except OSError:
+        return ""
+
+
 def _forward_to_running_instance(targets: List[str]) -> bool:
     """Send open targets to an already-running DeepFlux via its control API.
 
@@ -370,9 +398,8 @@ def _forward_to_running_instance(targets: List[str]) -> bool:
     exit); False if no instance is running (start the GUI normally)."""
     import json as _json
     from urllib.request import Request, urlopen
-    from dlmgr.control_api import load_control_api_token
 
-    token = load_control_api_token()
+    token = _load_control_token()
     if not token:
         return False
     auth = {"Authorization": f"Bearer {token}"}
@@ -403,6 +430,33 @@ def _forward_to_running_instance(targets: List[str]) -> bool:
                 ok = False
         return ok
     return False
+
+
+def _decide_boot(targets: List[str], mini_supported: bool) -> str:
+    """Pick the boot surface: "mini" (the lightweight player window) or
+    "full" (the whole app).
+
+    The mini player is the DEFAULT for plain launches and for video/audio
+    association opens (owner decision 7.8). Any target that is not a local
+    media file — magnet:, .torrent, http(s), html, a missing file with a
+    non-media name — needs the engines/agent/browser and boots the full
+    app directly, exactly as before."""
+    if not mini_supported:
+        return "full"  # macOS: no embedded player in that build
+    from infra.file_associations import AUDIO_EXTS, VIDEO_EXTS
+    media_exts = tuple(VIDEO_EXTS) + tuple(AUDIO_EXTS)
+    for t in targets or []:
+        t = (t or "").strip().strip('"')
+        if not t:
+            continue
+        # Scheme targets go to the full app even when their STRING ends in
+        # a media extension — magnet dn= names ("magnet:?…&dn=movie.mp4")
+        # and direct URLs ("https://host/v.mp4") are common shapes.
+        if t.startswith("magnet:") or "://" in t:
+            return "full"
+        if not t.lower().endswith(media_exts):
+            return "full"
+    return "mini"
 
 
 def main() -> None:
@@ -505,6 +559,7 @@ def main() -> None:
 
     # --- Native messaging host mode (stdio, no GUI) ---
     if args.native_messaging:
+        from config import DeeptorrentConfig
         from native_messaging.host import NativeMessagingHost
         native_config = DeeptorrentConfig.from_file(
             args.config or DeeptorrentConfig.default_config_path())
@@ -557,6 +612,17 @@ def main() -> None:
     # available via --cli for debugging/automation, but the packaged build
     # runs windowed (no console) so the REPL is effectively hidden.
     if not args.cli:
+        if _decide_boot(args.targets, _MINI_BOOT_SUPPORTED) == "mini":
+            # 7.8 fast path: the mini player IS the app's face — a compact
+            # player (idle state = owner banner + Open file) with the full
+            # app one ⤢ morph away (staged build behind a progress bar).
+            from gui.mini_player import run_mini_player
+            media_targets = [t.strip().strip('"') for t in args.targets
+                             if t and t.strip()]
+            sys.exit(run_mini_player(config_path=args.config,
+                                     media=media_targets[0] if media_targets else None,
+                                     queue=media_targets[1:]))
+        from gui import run_gui
         sys.exit(run_gui(config_path=args.config, open_targets=args.targets))
 
     repl = Repl(config_path=args.config)

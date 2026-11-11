@@ -6,6 +6,18 @@ today when Windows launches DeepFlux via file association on a local
 video/audio file, why it feels "super heavy", and how to make it open fast
 directly in a compact player that can transform into the full app.
 
+> **STATUS: IMPLEMENTED in 7.8 (2026-11-10), same day, after an independent
+> review whose findings 1–10 are all fixed and pinned by tests.** Scope
+> grew beyond this study per owner decision: the mini player is the default
+> boot surface for EVERY launch (not just media opens), showing the owner
+> banner in idle state. Implementation: `gui/mini_player.py` +
+> `gui/brand_assets.py` + lazy `gui/__init__.py` + `main.py::_decide_boot` +
+> staged `MainWindow(progress=…)` + ◱ Mini button in the Play toolbar +
+> `tests/test_mini_player.py` (18 tests; full 8-chunk split + verify_boot
+> green). Measured: `import gui.mini_player` = 244 ms with zero heavy
+> modules (was ~670–850 ms through the eager package init). Release-time
+> website/latest.json ritual still pending.
+
 ## 1. Problem
 
 Double-clicking a video file that opens with DeepFlux (ProgID

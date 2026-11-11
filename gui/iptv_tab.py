@@ -439,6 +439,15 @@ class PlayerWidget(QWidget):
         self.compact_btn.clicked.connect(self._toggle_compact)
         tools.addWidget(self.compact_btn)
 
+        # 7.8: switch the whole visible surface to the lightweight mini
+        # player (playback stops; engines/downloads keep running hidden).
+        self.mini_btn = QPushButton(tr('◱ Mini'))
+        self.mini_btn.setToolTip(tr(
+            'Switch to the mini player — playback stops, downloads keep '
+            'running; the ⤢ button in the mini player brings the full app back'))
+        self.mini_btn.clicked.connect(self._on_mini_requested)
+        tools.addWidget(self.mini_btn)
+
         self.mv_btn = QPushButton()
         self.mv_btn.setCheckable(True)
         self.mv_btn.toggled.connect(self._on_multiview_toggled)
@@ -474,10 +483,11 @@ class PlayerWidget(QWidget):
         # (record/sleep AND pure are excluded: compact PiP mode hides them
         # itself, and OverflowRow must be the only thing managing its
         # candidates' visibility — pure in the list re-showed a dead Pure
-        # button inside compact's mini chrome; 2026-11-09 review.)
+        # button inside compact's mini chrome; 2026-11-09 review. mini_btn
+        # hides FIRST — compact/full-app both stay reachable longest.)
         self._tools_overflow = OverflowRow(
-            self.controls, (self.mv_btn, self.compact_btn), self,
-            layout=tools)
+            self.controls, (self.mini_btn, self.mv_btn, self.compact_btn),
+            self, layout=tools)
 
         layout.addWidget(self.controls)
 
@@ -1396,6 +1406,15 @@ class PlayerWidget(QWidget):
             self.aspect_btn.setMaximumWidth(_MAX_WIDGET_SIZE)
             self.preset_btn.setMaximumWidth(_MAX_WIDGET_SIZE)
             self.fs_btn.show()
+
+    def set_mini_callback(self, cb) -> None:
+        """7.8: MainWindow.morph_to_mini, fired by the ◱ Mini toolbar button."""
+        self._mini_cb = cb
+
+    def _on_mini_requested(self) -> None:
+        cb = getattr(self, "_mini_cb", None)
+        if cb is not None:
+            cb()
 
     def _toggle_compact(self) -> None:
         on = not self._compact
@@ -4970,6 +4989,10 @@ class IPTVTab(QWidget):
 
     def set_settings_callback(self, cb) -> None:
         self._settings_btn.clicked.connect(cb)
+
+    def set_mini_callback(self, cb) -> None:
+        """7.8: forward to the player's ◱ Mini toolbar button."""
+        self._player.set_mini_callback(cb)
 
     def set_engine(self, engine: Any) -> None:
         """Give the player access to the torrent engine for QoS throttling."""

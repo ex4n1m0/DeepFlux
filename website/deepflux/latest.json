@@ -1,8 +1,8 @@
 {
-  "version": "7.7",
-  "file": "DeepFlux7.7Setup.exe",
-  "size": 436741775,
-  "sha256": "972251112ebce3fe6b696194b9bfb3e18b604a08d20b11a7a9a44a6611c1dd42",
-  "released": "2026-11-09",
-  "notes": "DeepFlux 7.7 - the multiview grid now plays as many IPTV streams as your provider allows: assign a channel to every tile in any layout. This release also lands a full-codebase stability and security audit: local-AI model switching no longer deadlocks, downloads no longer stall at low bandwidth limits, hostile web pages can no longer freeze the app, IPTV playlist and guide downloads are size-capped, and the Linux Jackett setup verifies its download against a pinned checksum. Fix: upgrades over 7.6.1 now clean stale internals (7.6.1 could crash at startup on some machines)."
+  "version": "7.8",
+  "file": "DeepFlux7.8Setup.exe",
+  "size": 436798208,
+  "sha256": "f0311b800f1affb7ba40222f6f81141ecb65e5c18f4c64811373a8a85e9a7834",
+  "released": "2026-11-11",
+  "notes": "DeepFlux 7.8 - the mini player. DeepFlux now opens as a compact, lightning-fast player instead of the full app: double-click a video (or just launch the app) and the player is ready in under a second, showing the DeepFlux banner until you drop a file. The full app is one click away - the new button stops playback and transforms the window behind an honest progress bar, and the Play tab's Mini button shrinks back anytime while your downloads keep running. Videos opened from Explorer always land in the compact player; magnets and torrent files still open the full app."
 }

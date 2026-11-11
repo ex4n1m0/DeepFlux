@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "7.7"
+APP_VERSION = "7.8"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -646,6 +646,21 @@ def _gpu_pref_of(browser: dict) -> str:
 
 
 @dataclass
+class MiniPlayerConfig:
+    """The mini player — DeepFlux's default lightweight boot surface (7.8,
+    FAST_VIDEO_OPEN_STUDY.md). Small always-ready player window; the full
+    app is one morph button away. This section holds only UI state; playback
+    preferences (hwdec, preferred backend) stay in ``iptv`` so the mini
+    player and the Play tab share them."""
+    # Window geometry (base64 QWidget.saveGeometry) — persisted on close.
+    geometry: str = ""
+    volume: int = 80
+    muted: bool = False
+    # Last folder browsed by "Open file…" — QFileDialog reopens there.
+    last_folder: str = ""
+
+
+@dataclass
 class DeeptorrentConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     indexer: IndexerConfig = field(default_factory=IndexerConfig)
@@ -656,6 +671,7 @@ class DeeptorrentConfig:
     download: DownloadConfig = field(default_factory=DownloadConfig)
     torrents: TorrentsConfig = field(default_factory=TorrentsConfig)
     iptv: IPTVConfig = field(default_factory=IPTVConfig)
+    mini_player: MiniPlayerConfig = field(default_factory=MiniPlayerConfig)
     voice: VoiceConfig = field(default_factory=VoiceConfig)
     chat: ChatConfig = field(default_factory=ChatConfig)
     stats: StatsConfig = field(default_factory=StatsConfig)
@@ -1044,6 +1060,14 @@ class DeeptorrentConfig:
             ),
             voice=VoiceConfig(**{k: v for k, v in data.get("voice", {}).items()
                                  if k in VoiceConfig.__dataclass_fields__}),
+            mini_player=MiniPlayerConfig(
+                geometry=str(data.get("mini_player", {}).get("geometry", "") or ""),
+                volume=max(0, min(100, int(data.get("mini_player", {}).get(
+                    "volume", 80) or 0))),
+                muted=bool(data.get("mini_player", {}).get("muted", False)),
+                last_folder=str(data.get("mini_player", {}).get(
+                    "last_folder", "") or "")[:400],
+            ),
             chat=ChatConfig(
                 nickname=str(data.get("chat", {}).get("nickname", "") or "")[:32],
                 auto_join=bool(data.get("chat", {}).get("auto_join", True)),

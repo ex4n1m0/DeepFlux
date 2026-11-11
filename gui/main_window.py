@@ -1208,8 +1208,15 @@ class MainWindow(QMainWindow):
     # banner vanished while you were still aiming around it).
     _CHROME_HIDE_GRACE_MS = 2000
 
-    def __init__(self, config_path: Optional[str] = None) -> None:
+    def __init__(self, config_path: Optional[str] = None,
+                 progress=None) -> None:
+        """``progress`` (7.8): optional callback ``(stage_key, fraction)``
+        invoked between construction stages so the mini player's morph can
+        show an honest progress bar (the callback pumps the event loop).
+        None (every existing caller) = zero overhead, identical behavior."""
         super().__init__()
+        self._progress_cb = progress
+        self._mini_view = False  # True while the mini player owns the surface
         self.config_path = config_path or DeeptorrentConfig.default_config_path()
         self.config = DeeptorrentConfig.from_file(self.config_path)
         # "local" (bundled llama.cpp server) is keyless by design — it must
@@ -1282,7 +1289,13 @@ class MainWindow(QMainWindow):
         self._play_signals = _PlaySignals()
         self._play_signals.play_stream.connect(self.play_web_stream)
         self._dl_api.set_play_handler(self._play_signals.play_stream.emit)
-        self._dl_api.start()
+        if progress is None:
+            self._dl_api.start()
+        # During a staged morph (progress set) the server starts at the END
+        # of __init__ instead: the progress hook pumps the event loop between
+        # stages, and a queued /api/open delivered mid-build would reach
+        # widgets that don't exist yet (chat error sink lives in a later
+        # stage) — the AttributeError would abort the whole morph.
 
         self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine,
                                   enable_iptv_tools=_PLAY_TAB_SUPPORTED)
@@ -1293,6 +1306,7 @@ class MainWindow(QMainWindow):
         if self.config.watchdog.enabled:
             self.agent.start_watchdog()
         self._rss_monitor = RSSMonitor(self.config.rss)
+        self._stage("engines", 35.0)
 
         # Jackett integration: auto-start the service when needed and keep the
         # sources list synced with Jackett's configured indexers. Checked at
@@ -1356,6 +1370,7 @@ class MainWindow(QMainWindow):
                                       data_dir=os.path.dirname(self.config_path))
         except Exception:
             logger.debug("telemetry heartbeat failed to start", exc_info=True)
+        self._stage("services", 38.0)
 
         # --- Branding ---
         self.setWindowTitle(f"DeepFlux {APP_VERSION} - {tr('AI Deep Search')}")
@@ -1733,6 +1748,11 @@ class MainWindow(QMainWindow):
 
         # System tray icon (minimize-to-tray + completion toasts).
         self._setup_tray()
+        if progress is not None:
+            # Staged morph: the control API was withheld above — now every
+            # widget exists and queued opens are safe.
+            self._dl_api.start()
+        self._stage("done", 100.0)
 
     def changeEvent(self, event) -> None:  # noqa: N802
         # Single source of truth for video-fullscreen chrome: the window can
@@ -1836,39 +1856,28 @@ class MainWindow(QMainWindow):
                 return os.path.abspath(path)
         return ""
 
+    def _stage(self, stage: str, fraction: float) -> None:
+        """Report a construction milestone to the morph progress bar (no-op
+        when MainWindow was built the normal way)."""
+        cb = getattr(self, "_progress_cb", None)
+        if cb is not None:
+            try:
+                cb(stage, fraction)
+            except Exception:
+                logger.debug("progress callback failed", exc_info=True)
+
     def _resolve_banner_path(self) -> str:
-        """Find the wordmark banner for the Agent tab background (owner art,
-        2026-11-07: DeepFluxNovBanner.webp — the chrome wordmark with lens
-        flare + purple swoosh; succeeded the 2026-10-13 neon banner). The
-        website hero banner and a square icon stay as fallbacks so the tab
-        keeps working if the art is ever removed."""
-        candidates = [
-            os.path.join(os.path.dirname(__file__), "..", "DeepFluxNovBanner.webp"),
-            os.path.join(sys._MEIPASS, "DeepFluxNovBanner.webp") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(os.path.dirname(__file__), "..", "DeepFluxNeonBanner.webp"),
-            os.path.join(sys._MEIPASS, "DeepFluxNeonBanner.webp") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(os.path.dirname(__file__), "..", "website", "deepflux", "DeepFluxNov2026.webp"),
-            os.path.join(sys._MEIPASS, "DeepFluxNov2026.webp") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux.png"),
-            os.path.join(sys._MEIPASS, "DeepFlux.png") if hasattr(sys, "_MEIPASS") else "",
-        ]
-        for path in candidates:
-            if path and os.path.isfile(path):
-                return os.path.abspath(path)
-        return ""
+        """Wordmark banner for the Agent tab background — resolved by the
+        Qt-free shared resolver (7.8: also the mini player's idle background;
+        single source of truth in gui/brand_assets.py)."""
+        from gui.brand_assets import resolve_banner_path
+        return resolve_banner_path()
 
     def _resolve_watermark_path(self) -> str:
-        """Find the full-size logo PNG for the chat watermark (prefers high-res)."""
-        candidates = [
-            os.path.join(os.path.dirname(__file__), "..", "DeepFlux.png"),
-            os.path.join(sys._MEIPASS, "DeepFlux.png") if hasattr(sys, "_MEIPASS") else "",
-            os.path.join(os.path.dirname(__file__), "..", "packaging", "logo_48.png"),
-            os.path.join(sys._MEIPASS, "packaging", "logo_48.png") if hasattr(sys, "_MEIPASS") else "",
-        ]
-        for path in candidates:
-            if path and os.path.isfile(path):
-                return os.path.abspath(path)
-        return ""
+        """Full-size logo PNG for the chat watermark (prefers high-res) —
+        shared resolver, see gui/brand_assets.py."""
+        from gui.brand_assets import resolve_logo_path
+        return resolve_logo_path()
 
     def _load_browser_icon(self, name: str) -> QIcon:
         """Load an SVG or PNG icon for the browser nav bar."""
@@ -1918,10 +1927,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.main_tabs)
 
         # --- Agents tab: one merged deep-search window ---------------------
-        # A single history + input serving both pipelines:
+        # A single history + input row serving both pipelines:
         #   Enter / [Agent]         -> the conversational torrent agent
         #   Ctrl+Enter / [Search]   -> instant web sweep (no agent turn)
         # The DeepFlux logo shows centered until the first message is sent.
+        self._stage("agent", 48.0)
         agents_tab = QWidget()
         agents_tab.setStyleSheet("background-color: #000000;")
         agents_tab_layout = QVBoxLayout(agents_tab)
@@ -2137,6 +2147,7 @@ class MainWindow(QMainWindow):
         # hints; enforce the 50/50 split once the real height is known.
         self._agent_ratio_applied = False
         self.main_tabs.addTab(page, tr("Download"))
+        self._stage("downloads", 50.0)
         # Drag & drop and other flows surface this tab to show the torrent list.
         self._torrents_tab = page
         # Enforce 50/50 when the Download tab becomes visible (it's not the
@@ -2592,6 +2603,7 @@ class MainWindow(QMainWindow):
         self.main_tabs.insertTab(0, agents_tab, tr("Agent"))
         self._browser_tab = browser_tab
         self._agents_tab = agents_tab
+        self._stage("browser", 82.0)
 
         # --- IPTV tab (M3U/Xtream player + metadata) ---
         if _PLAY_TAB_SUPPORTED:
@@ -2607,6 +2619,10 @@ class MainWindow(QMainWindow):
             self.tools.set_iptv_bridge(self._iptv_bridge)
             # Player position feeds the torrent-stream frontier cap.
             self.iptv_tab._player.sig_position.connect(self._on_player_position)
+            # 7.8: the ◱ Mini button hands the visible surface to the mini
+            # player (stop playback → hide full app → show mini window).
+            self.iptv_tab.set_mini_callback(self.morph_to_mini)
+        self._stage("play", 90.0)
 
         # --- Commander tab (dual-pane file manager) ---
         self.commander_tab = CommanderTab(self.config, self)
@@ -2874,6 +2890,7 @@ class MainWindow(QMainWindow):
         # Right-click context menu on the torrent table
         self.torrent_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.torrent_table.customContextMenuRequested.connect(self._torrent_context_menu)
+        self._stage("chrome", 96.0)
 
     def _start_refresh_timer(self) -> None:
         self.timer = QTimer(self)
@@ -5844,6 +5861,8 @@ class MainWindow(QMainWindow):
         target = target.strip().strip('"')
         if not target:
             return
+        # Leaving the mini view (an open that needs the full UI un-hides us).
+        self._return_from_mini()
         # Bring the window to the front — the user just "opened" something.
         self.showNormal()
         self.raise_()
@@ -6548,6 +6567,101 @@ class MainWindow(QMainWindow):
             return
         self.main_tabs.setCurrentWidget(self.iptv_tab)
         self.iptv_tab.play_file(path)
+
+    # -- mini player morph (7.8) ----------------------------------------------
+    def morph_to_mini(self) -> None:
+        """Become invisible and hand the surface to the mini player.
+
+        The full app keeps RUNNING hidden — engines, agent and downloads
+        continue (that's a feature: watch in mini while transfers finish).
+        Closing the mini window later routes through OUR closeEvent, so the
+        graceful shutdown (fast-resume, config, telemetry leave) still
+        happens exactly once."""
+        if getattr(self, "_mini_view", False):
+            return
+        iptv = getattr(self, "iptv_tab", None)
+        if iptv is not None:
+            try:
+                iptv._player.stop()
+            except Exception:
+                logger.debug("player stop before mini morph failed",
+                             exc_info=True)
+            # stop() leaves the multiview GRID streams playing (tiles are
+            # separate backends) — audio + bandwidth + provider connection
+            # caps would keep burning behind the hidden window.
+            try:
+                iptv._player.force_stop_all_streams()
+            except Exception:
+                logger.debug("grid force-stop before mini morph failed",
+                             exc_info=True)
+        # Persist UI state as closeEvent would — a crash while hidden must
+        # not lose the session's geometry/splitters.
+        try:
+            if not getattr(self, "_skip_config_save", False):
+                self.config.ui_geometry = bytes(
+                    self.saveGeometry().toBase64()).decode("ascii")
+                self._save_splitters()
+                self.config.to_file(self.config_path)
+        except Exception:
+            logger.debug("pre-morph UI save failed", exc_info=True)
+        # Create/show the mini window FIRST: a session that booted the full
+        # app directly has no mini window yet, and the routing below needs
+        # it to exist (media opens must land in the mini window, not here).
+        from gui.mini_player import show_mini_player
+        show_mini_player(self)
+        self._mini_view = True
+        self._set_mini_view_routing(True)
+        self.hide()
+
+    def _return_from_mini(self) -> None:
+        """The mini player morphed back to us (or an open-target needed the
+        full UI): restore normal routing. Called on the GUI thread."""
+        if not getattr(self, "_mini_view", False):
+            return
+        self._mini_view = False
+        self._set_mini_view_routing(False)
+
+    def _set_mini_view_routing(self, mini: bool) -> None:
+        """Point the control API's open/play handlers at the active surface.
+        In mini view, media opens go to the mini window; everything else
+        (and browser-captured streams) un-hides the full app first."""
+        from gui.mini_player import get_mini_window
+        mini_win = get_mini_window()
+        if mini:
+            if mini_win is not None:
+                # Signal emit only — the handler runs on the HTTP thread and
+                # the slot touches QWidgets (queued to the GUI thread).
+                self._dl_api.set_open_handler(mini_win.openRequested.emit)
+            try:
+                self._play_signals.play_stream.disconnect(self.play_web_stream)
+            except Exception:
+                pass
+            try:
+                self._play_signals.play_stream.connect(
+                    self._play_stream_from_mini)
+            except Exception:
+                pass
+        else:
+            # SIGNAL EMIT, never the raw open_target — the handler runs on
+            # the API's HTTP thread and open_target touches QWidgets (the
+            # original wiring contract, see _OpenSignals above).
+            self._dl_api.set_open_handler(self._open_signals.open_target.emit)
+            try:
+                self._play_signals.play_stream.disconnect(
+                    self._play_stream_from_mini)
+            except Exception:
+                pass
+            try:
+                self._play_signals.play_stream.connect(self.play_web_stream)
+            except Exception:
+                pass
+
+    def _play_stream_from_mini(self, payload: dict) -> None:
+        """A browser-captured stream arrived while the mini window was the
+        visible surface — bring the full app back, then play as usual."""
+        self._return_from_mini()
+        self.show()
+        self.play_web_stream(payload)
 
     # -- stream while downloading ------------------------------------------
     def _stream_torrent(self, info_hash: str) -> None:
@@ -7648,6 +7762,9 @@ def run_gui(config_path: Optional[str] = None, open_targets: Optional[List[str]]
         logger.debug("gc.freeze skipped", exc_info=True)
     window.show()
     # Targets passed on the command line (file associations / "Open with").
+    # 0 ms (was a fixed 500 ms in ≤7.7): the window is up after show(); the
+    # dispatch itself raises/activates, so no settle delay is needed — every
+    # association-open saves half a second (FAST_VIDEO_OPEN_STUDY.md C2).
     for t in (open_targets or []):
-        QTimer.singleShot(500, lambda t=t: window.open_target(t))
+        QTimer.singleShot(0, lambda t=t: window.open_target(t))
     return app.exec()
