@@ -1,8 +1,8 @@
 {
-  "version": "7.7",
-  "file": "DeepFlux-7.7-Linux-x86_64.AppImage",
-  "size": 614017528,
-  "sha256": "4a3b54a051a867a50c87791ee1da68be8587fab2b2742deb5b0c4604ed87e869",
-  "released": "2026-11-10",
-  "notes": "DeepFlux 7.7 for Linux - the multiview grid now plays as many IPTV streams as your provider allows, plus a full-codebase stability and security hardening pass (see the Windows notes)."
+  "version": "7.8",
+  "file": "DeepFlux-7.8-Linux-x86_64.AppImage",
+  "size": 614005240,
+  "sha256": "f04b6c66237baccb257edec8785959a31c3015e1556acc5baa643d64cbe19f1e",
+  "released": "2026-11-11",
+  "notes": "DeepFlux 7.8 - the mini player comes to Linux: the app opens as a compact, fast player (banner idle state, drag-drop a file to play), with the full app one ⤢ click away behind a progress bar and the ◱ Mini button to shrink back anytime. Arrow keys seek ±10 s. Updated in the same release: Jackett search pin refreshed."
 }
