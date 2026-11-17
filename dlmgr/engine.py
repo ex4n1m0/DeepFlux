@@ -576,6 +576,9 @@ class DownloadEngine:
                     with self._lock:
                         self._stream_controllers.pop(job.id, None)
                 job.downloaded = len(segment_files)
+                # Dead-segment tolerance (2026-11-17): gaps within tolerance
+                # complete the job; surface the skipped count on it.
+                gap_count = len(getattr(downloader, "failed_segments", None) or [])
 
                 if downloader._stop_flag.is_set():
                     job.status = JobStatus.PAUSED
@@ -609,6 +612,7 @@ class DownloadEngine:
                     finally:
                         with self._lock:
                             self._stream_controllers.pop(job.id, None)
+                    gap_count += len(getattr(audio_downloader, "failed_segments", None) or [])
                     if audio_downloader._stop_flag.is_set():
                         job.status = JobStatus.PAUSED
                         return
@@ -653,6 +657,12 @@ class DownloadEngine:
                     if success:
                         job.status = JobStatus.COMPLETED
                         job.downloaded = len(segment_files)
+                        if gap_count:
+                            # Shown in the Downloads table's message column on
+                            # the completed row (status stays Completed).
+                            job.error_message = (
+                                f"Completed with {gap_count} dead segment(s) "
+                                "skipped — minor playback gap(s)")
                         logger.info("Stream job %s completed: %s", job.id, job.filename)
                     else:
                         job.status = JobStatus.ERROR
@@ -668,6 +678,10 @@ class DownloadEngine:
                                 with open(seg, "rb") as f:
                                     out.write(f.read())
                         job.status = JobStatus.COMPLETED
+                        if gap_count:
+                            job.error_message = (
+                                f"Completed with {gap_count} dead segment(s) "
+                                "skipped — minor playback gap(s)")
                         job.downloaded = len(segment_files)
                         logger.info("Stream job %s completed (no remux): %s", job.id, job.filename)
 

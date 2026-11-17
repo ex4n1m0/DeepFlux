@@ -25,6 +25,15 @@ logger = logging.getLogger(__name__)
 # Maximum segment download retries before giving up. Some CDNs reset whole
 # bursts of connections intermittently — retry generously with backoff.
 MAX_RETRIES = 10
+# Dead-segment tolerance (owner 2026-11-17): a CDN that 403/404s a HANDFUL of
+# segments deterministically (measured live on surrit: 1 dead object out of
+# 1920, failing every retry) no longer kills the whole capture — up to 0.5%
+# of segments are skipped, the remux concatenates around the gap, and the
+# job completes with the count surfaced on it. Strictly proportional (no
+# floor): half of a short stream missing must still fail the job, so
+# streams under 200 segments get zero tolerance.
+def failed_segment_tolerance(total_segments: int) -> int:
+    return total_segments // 200
 # Retries for manifest/key fetches. Connections to some CDNs are reset
 # intermittently (middlebox RST injection), so keep retrying with backoff —
 # the same stream typically succeeds within a few attempts.
@@ -663,6 +672,9 @@ class HLSDownloader:
         self._key_lock = threading.Lock()
         self._stop_flag = threading.Event()
         self._accounting_lock = threading.Lock()
+        # Segments that failed all retries but were within the dead-segment
+        # tolerance — the caller surfaces them on the job (download gap).
+        self.failed_segments: List[Tuple[int, str]] = []
         self._progress = 0
         self._bytes_downloaded = 0  # real byte total, for speed reporting
         self._total = max(1, len(stream_info.segment_urls))
@@ -758,11 +770,20 @@ class HLSDownloader:
                     failed.append((futures[future], str(exc)[:120]))
 
         if failed:
-            sample = "; ".join(f"seg {i}: {e}" for i, e in failed[:3])
-            raise RuntimeError(
-                f"{len(failed)}/{len(self._info.segment_urls)} segments failed "
-                f"after {MAX_RETRIES} retries ({sample})"
-            )
+            if len(failed) > failed_segment_tolerance(len(self._info.segment_urls)):
+                sample = "; ".join(f"seg {i}: {e}" for i, e in failed[:3])
+                raise RuntimeError(
+                    f"{len(failed)}/{len(self._info.segment_urls)} segments failed "
+                    f"after {MAX_RETRIES} retries ({sample})"
+                )
+            # Within tolerance: complete with the gaps skipped. The ordered
+            # list below simply omits them; concat-based remux bridges the
+            # hole (a ~2 s glitch instead of a dead job).
+            sample = ", ".join(str(i) for i, _ in failed[:5])
+            logger.warning(
+                "HLS: completing with %d dead segment(s) skipped (seg %s)",
+                len(failed), sample)
+            self.failed_segments = failed
 
         # Return segments in order.
         ordered = [segment_paths[i] for i in range(len(self._info.segment_urls)) if i in segment_paths]

@@ -668,7 +668,17 @@
   Video-grabbing section says ALWAYS call it first on a page full of
   videos. Tests: test_tools.py video
   section, test_site_grabber.py alternates, test_dlmgr.py rendition
-  caps.
+  caps. DEAD-SEGMENT TOLERANCE (owner 2026-11-17, same day): a CDN that
+  403/404s a handful of segments DETERMINISTICALLY (measured live: 1 dead
+  object of 1920 on surrit, failing all 10 retries) no longer kills the
+  whole capture — up to 0.5% of segments (strictly proportional, NO floor:
+  streams < 200 segments get zero tolerance; half a short video missing
+  must still fail) are skipped, the remux concatenates around the gap, and
+  the job COMPLETES with "Completed with N dead segment(s) skipped" in
+  error_message (the Downloads table message column shows it on the
+  completed row; status stays Completed). HLSDownloader.failed_segments
+  carries the (index, error) list; beyond tolerance raises the old
+  "N/M segments failed" error.
 - FAULTHANDLER CRASH LOG (main.py::_enable_crash_log, added 7.4 2026-11-06;
   fixed 2026-11-07 after it KILLED the app 11x that night): on Windows
   `faulthandler.enable()` registers a VECTORED exception handler that fires

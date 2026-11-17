@@ -525,3 +525,57 @@ def test_add_stream_job_per_call_cap_reaches_selector_and_job(engine):
     # The cap is recorded so restarts (manifest re-parse) keep it.
     assert job.max_height == 720
 
+
+# ---------------------------------------------------------------------------
+# Dead-segment tolerance (owner 2026-11-17): a CDN that 403s a handful of
+# segments deterministically (measured live: 1 dead object out of 1920 on
+# surrit) completes the capture with the gaps skipped instead of failing
+# the whole job; beyond the tolerance it still fails loudly.
+# ---------------------------------------------------------------------------
+
+def _fake_hls_info(n):
+    from dlmgr.hls_dash import StreamInfo
+    return StreamInfo(stream_type="hls", manifest_url="https://x.example/m.m3u8",
+                      segment_urls=[f"https://x.example/s{i}.ts" for i in range(n)])
+
+
+def test_hls_dead_segment_within_tolerance_completes(tmp_path, monkeypatch):
+    from dlmgr.hls_dash import HLSDownloader
+
+    def fake_dl(self, url, path, index, decrypt=True):
+        if index == 3:
+            raise RuntimeError("HTTP Error 403")
+        with open(path, "wb") as f:
+            f.write(b"x" * 8)
+
+    # 300 segments -> tolerance 1 (0.5%): one dead segment completes.
+    monkeypatch.setattr(HLSDownloader, "_download_segment", fake_dl)
+    dl = HLSDownloader(stream_info=_fake_hls_info(300), temp_dir=str(tmp_path / "segs"))
+    paths = dl.download()
+    assert len(paths) == 299  # seg 3 skipped, the rest returned in order
+    assert len(dl.failed_segments) == 1 and dl.failed_segments[0][0] == 3
+
+
+def test_hls_dead_segments_beyond_tolerance_still_fail(tmp_path, monkeypatch):
+    from dlmgr.hls_dash import HLSDownloader
+
+    def fake_dl(self, url, path, index, decrypt=True):
+        if index in (2, 7):
+            raise RuntimeError("HTTP Error 403")
+        with open(path, "wb") as f:
+            f.write(b"x" * 8)
+
+    # 300 segments, 2 dead -> beyond the 0.5% tolerance: still a hard error.
+    monkeypatch.setattr(HLSDownloader, "_download_segment", fake_dl)
+    dl = HLSDownloader(stream_info=_fake_hls_info(300), temp_dir=str(tmp_path / "segs"))
+    with pytest.raises(RuntimeError, match="segments failed"):
+        dl.download()
+
+
+def test_hls_tolerance_is_zero_for_short_streams():
+    from dlmgr.hls_dash import failed_segment_tolerance
+    assert failed_segment_tolerance(2) == 0    # half a short video must fail
+    assert failed_segment_tolerance(199) == 0
+    assert failed_segment_tolerance(200) == 1
+    assert failed_segment_tolerance(1920) == 9
+

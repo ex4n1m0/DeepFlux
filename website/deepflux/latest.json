@@ -1,8 +1,8 @@
 {
-  "version": "8.0",
-  "file": "DeepFlux8.0Setup.exe",
-  "size": 436815051,
-  "sha256": "43fcb5da042072d82ff80a62973c0dfbebd8b9bf679293f624f5ad356ee6a331",
+  "version": "8.1",
+  "file": "DeepFlux8.1Setup.exe",
+  "size": 436873852,
+  "sha256": "220173f65a51a624bda2e8d82f66032524c46fc1f4b73eed7d1d3f5397e44215",
   "released": "2026-11-17",
-  "notes": "DeepFlux 8.0 - the agent learns to grab videos. Two new agent tools: scan_video_page sees every stream a video page embeds (recommended stream with quality renditions, ranked alternates) and download_video downloads from any page, stream or YouTube link in one confirmed step - with the Referer context hotlink CDNs require and a max_height quality cap. YouTube links route through yt-dlp instead of saving the HTML page, and the app no longer jumps between tabs on its own while the agent works (downloads and navigation stay where you are looking)."
+  "notes": "DeepFlux 8.1 - the agent grabs videos better. New: list_page_videos enumerates every video on a listing page (title, duration, link) so the agent can pick from a studio or search page instead of guessing; dead-segment tolerance completes an HLS capture when the CDN breaks a handful of segments (up to 0.5%) instead of failing the whole download - the finished file notes the skipped segments; the agent no longer asks permission to keep working (it runs autonomously until done, Stop button still interrupts); per-message limits doubled to 80 turns / 100 model calls / 200 tool calls. Existing installs adopt all of this automatically."
 }
