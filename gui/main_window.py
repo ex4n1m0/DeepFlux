@@ -5122,6 +5122,8 @@ class MainWindow(QMainWindow):
     _TOOL_LABELS = {
         "web_search": ("🔍", "Searching the web"),
         "web_fetch": ("🌐", "Fetching web page"),
+        "scan_video_page": ("🎬", "Scanning video page"),
+        "download_video": ("🎬", "Downloading video"),
         "search_indexers": ("🔍", "Searching indexers"),
         "find_alt_trackers": ("🔎", "Finding alternative trackers"),
         "find_alt_release": ("🔎", "Finding alternative releases"),

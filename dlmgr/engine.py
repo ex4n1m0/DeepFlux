@@ -418,9 +418,14 @@ class DownloadEngine:
         if self._auto_start:
             self._try_start_jobs()
 
-    def _select_stream_rendition(self, renditions):
-        max_height = max(0, int(getattr(self._config, "stream_max_height", 0) or 0))
-        eligible = [item for item in renditions if not max_height or not item.height or item.height <= max_height]
+    def _select_stream_rendition(self, renditions, max_height=None):
+        # Per-call cap (download_video's max_height) wins over the config's
+        # engine-wide stream_max_height; both 0 = uncapped.
+        if max_height:
+            cap = max(0, int(max_height))
+        else:
+            cap = max(0, int(getattr(self._config, "stream_max_height", 0) or 0))
+        eligible = [item for item in renditions if not cap or not item.height or item.height <= cap]
         return max(eligible or renditions, key=lambda item: item.bandwidth)
 
     def add_stream_job(
@@ -433,6 +438,7 @@ class DownloadEngine:
         referrer: str = "",
         source_url: str = "",
         category: str = "",
+        max_height: int = 0,
     ) -> DownloadJob:
         """Create a new HLS/DASH stream capture job.
 
@@ -443,9 +449,12 @@ class DownloadEngine:
         from .ffmpeg import KNOWN_CONTAINER_EXTS
 
         # Parse the manifest.
+        selector = self._select_stream_rendition
+        if max_height:
+            selector = lambda renditions: self._select_stream_rendition(renditions, max_height)  # noqa: E731
         info = parse_manifest(
             url, headers=headers, cookies=cookies, referrer=referrer,
-            rendition_selector=self._select_stream_rendition,
+            rendition_selector=selector,
         )
         if info.error:
             # Create an errored job so the UI can show it.
@@ -486,6 +495,7 @@ class DownloadEngine:
             cookies=cookies,
             referrer=referrer,
             category=category,
+            max_height=max(0, int(max_height or 0)),
         )
 
         with self._lock:
@@ -515,7 +525,10 @@ class DownloadEngine:
             try:
                 info = parse_manifest(
                     job.url, headers=job.headers, cookies=job.cookies, referrer=job.referrer,
-                    rendition_selector=self._select_stream_rendition,
+                    # Restart: keep the per-job cap the caller asked for
+                    # (0 falls back to the config's stream_max_height).
+                    rendition_selector=lambda renditions: self._select_stream_rendition(
+                        renditions, getattr(job, "max_height", 0) or None),
                 )
                 if info.error:
                     job.status = JobStatus.ERROR

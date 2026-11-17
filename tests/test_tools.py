@@ -2049,6 +2049,189 @@ def test_gapfill_tools_classified():
     assert {"cancel_download", "add_rss_feed", "update_rss_feed", "remove_rss_feed", "download_from_feed", "edit_memory", "forget_memory", "apply_organization_plan"} <= DESTRUCTIVE_TOOLS
     assert {"propose_rename_and_category", "analyze_organization", "list_memories", "agent_diagnostics"} <= READ_ONLY_TOOLS
     for t in ("pause_download", "resume_download", "retry_download", "remove_download",
-              "set_torrent_rate_limits", "set_sequential_download",
+              "set_torrent_rate_limits", "set_torrent_sequential_download",
               "force_recheck", "force_reannounce"):
         assert t not in READ_ONLY_TOOLS and t not in DESTRUCTIVE_TOOLS
+
+
+# ---------------------------------------------------------------------------
+# Video tools: scan_video_page / download_video (study P0/P1, 2026-11-17).
+# The scan/download lane reuses the GUI Site Grabber's GenericExtractor —
+# these tests pin the agent-side plumbing: ranking surfaced as a
+# recommendation + alternates, Referer context, YouTube routing, rendition
+# peek, and the policy classes.
+# ---------------------------------------------------------------------------
+
+_SCAN_HTML = (
+    "<html><head><title>My Test Video</title></head><body>"
+    '<script>var player={hls:"https://cdn.example/hls/master.m3u8"};</script>'
+    '<a href="https://cdn.example/hls/480/index.m3u8">480p</a>'
+    '<a href="https://cdn.example/preview.mp4">preview</a>'
+    "</body></html>"
+)
+
+_MASTER_PLAYLIST = (
+    "#EXTM3U\n"
+    '#EXT-X-STREAM-INF:BANDWIDTH=5000000,RESOLUTION=1920x1080,CODECS="avc1.640028"\n'
+    "1080/index.m3u8\n"
+    '#EXT-X-STREAM-INF:BANDWIDTH=2000000,RESOLUTION=1280x720,CODECS="avc1.64001f"\n'
+    "720/index.m3u8\n"
+)
+
+
+def _fake_video_page(monkeypatch, html, page_url):
+    """Route the generic extractor's HTTP through a canned page response.
+
+    Also neutralizes the agent-side public-URL guard — its DNS resolution
+    would hit the network for the fake .example hosts (the guard itself is
+    covered by test_scan_video_page_rejects_private_urls)."""
+    from dlmgr.extractors import generic
+    monkeypatch.setattr("agent.tools.validate_public_http_url", lambda u: u)
+    resp = MagicMock()
+    resp.url = page_url
+    http = MagicMock()
+    http.get.return_value = resp
+    http.head.side_effect = RuntimeError("head rejected")  # some hosts do
+    http.read_capped.return_value = html
+    monkeypatch.setattr(generic, "http_client", http)
+    return http
+
+
+def _hermetic_urls(monkeypatch):
+    """Skip public-URL DNS checks for fake-host tests (no network)."""
+    monkeypatch.setattr("agent.tools.validate_public_http_url", lambda u: u)
+
+
+def test_video_tools_policy_classes():
+    from agent.tools import (CONFIRMATION_TOOL_NAMES, READ_ONLY_TOOL_NAMES,
+                             UNTRUSTED_RESULT_TOOLS)
+    assert "scan_video_page" in READ_ONLY_TOOL_NAMES
+    assert "scan_video_page" in UNTRUSTED_RESULT_TOOLS
+    assert "download_video" in CONFIRMATION_TOOL_NAMES
+
+
+def test_scan_video_page_youtube_short_circuits(mock_engine, monkeypatch):
+    _hermetic_urls(monkeypatch)
+    with patch("agent.tools.public_http_get") as peek:
+        tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+        result = tools.call("scan_video_page", {"url": "https://www.youtube.com/watch?v=abc123"})
+    assert result["success"] is True
+    assert result["recommended"]["type"] == "youtube"
+    peek.assert_not_called()
+
+
+def test_scan_video_page_ranks_master_and_alternates(mock_engine, monkeypatch):
+    _fake_video_page(monkeypatch, _SCAN_HTML, "https://site.example/watch/1")
+    with patch("agent.tools.public_http_get", side_effect=RuntimeError("no peek")):
+        tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+        result = tools.call("scan_video_page", {"url": "https://site.example/watch/1"})
+    assert result["success"] is True
+    assert result["_trust"] == "untrusted_external_content"
+    assert result["title"] == "My Test Video"
+    assert result["page_url"] == "https://site.example/watch/1"
+    assert result["recommended"]["url"] == "https://cdn.example/hls/master.m3u8"
+    assert result["recommended"]["type"] == "hls"
+    types = {a["url"]: a["type"] for a in result["alternates"]}
+    assert types["https://cdn.example/hls/480/index.m3u8"] == "hls"
+    assert types["https://cdn.example/preview.mp4"] == "file"
+    assert "https://cdn.example/hls/master.m3u8" not in types
+
+
+def test_scan_video_page_lists_master_renditions(mock_engine, monkeypatch):
+    _fake_video_page(monkeypatch, _SCAN_HTML, "https://site.example/watch/1")
+    resp = MagicMock(text=_MASTER_PLAYLIST, status_code=200)
+    with patch("agent.tools.public_http_get", return_value=resp) as get:
+        tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+        result = tools.call("scan_video_page", {"url": "https://site.example/watch/1"})
+    assert result["renditions"][0] == {"bandwidth": 5000000,
+                                        "resolution": "1920x1080",
+                                        "codecs": "avc1.640028"}
+    assert result["renditions"][1]["resolution"] == "1280x720"
+    # The peek carries the page as Referer — master CDNs hotlink-protect too.
+    assert get.call_args.kwargs["headers"]["Referer"] == "https://site.example/watch/1"
+    assert "MASTER" in result["note"]
+
+
+def test_scan_video_page_no_stream_hint(mock_engine, monkeypatch):
+    _fake_video_page(monkeypatch, "<html><body>just text</body></html>",
+                     "https://site.example/x")
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+    result = tools.call("scan_video_page", {"url": "https://site.example/x"})
+    assert result["success"] is False
+    assert "browser_navigate" in result["hint"]
+
+
+def test_scan_video_page_rejects_private_urls(mock_engine):
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+    with pytest.raises(ToolError):
+        tools.call("scan_video_page", {"url": "http://127.0.0.1/secret"})
+
+
+def test_download_video_page_passes_full_context(mock_engine, monkeypatch):
+    _fake_video_page(monkeypatch, _SCAN_HTML, "https://site.example/watch/1")
+    dl = MagicMock()
+    dl.add_stream_job.return_value = MagicMock(
+        id="v1", filename="My Test Video.mp4",
+        save_path="/dl/My Test Video.mp4", job_type="hls")
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig(), dl_engine=dl)
+
+    result = tools.call("download_video",
+                        {"url": "https://site.example/watch/1", "max_height": 720})
+
+    kwargs = dl.add_stream_job.call_args.kwargs
+    assert kwargs["url"] == "https://cdn.example/hls/master.m3u8"
+    assert kwargs["filename"] == "My Test Video.mp4"
+    assert kwargs["referrer"] == "https://site.example/watch/1"
+    assert kwargs["headers"]["Referer"] == "https://site.example/watch/1"
+    assert kwargs["source_url"] == "https://site.example/watch/1"
+    assert kwargs["max_height"] == 720
+    assert result["job_id"] == "v1"
+    assert "rendition" in result["note"]
+
+
+def test_download_video_youtube_routing(mock_engine, monkeypatch):
+    _hermetic_urls(monkeypatch)
+    dl = MagicMock()
+    dl.add_youtube_job.return_value = MagicMock(
+        id="y1", filename="v", save_path="/dl/v", job_type="youtube")
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig(), dl_engine=dl)
+
+    result = tools.call("download_video", {"url": "https://youtu.be/abc123"})
+
+    dl.add_youtube_job.assert_called_once()
+    assert dl.add_youtube_job.call_args.kwargs["source_url"] == "https://youtu.be/abc123"
+    dl.add_stream_job.assert_not_called()
+    dl.add_job.assert_not_called()
+    assert result["job_type"] == "youtube"
+
+
+def test_download_video_direct_file_needs_no_fetch(mock_engine, monkeypatch):
+    _hermetic_urls(monkeypatch)
+    dl = MagicMock()
+    dl.add_job.return_value = MagicMock(
+        id="f1", filename="clip.mp4", save_path="/dl/clip.mp4", job_type="file")
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig(), dl_engine=dl)
+
+    with patch("agent.tools.public_http_get") as peek:  # nothing may fetch
+        result = tools.call("download_video", {"url": "https://cdn.example/clip.mp4"})
+
+    peek.assert_not_called()
+    kwargs = dl.add_job.call_args.kwargs
+    assert kwargs["url"] == "https://cdn.example/clip.mp4"
+    assert kwargs["headers"] == {} and kwargs["referrer"] == ""
+    assert result["job_type"] == "file"
+
+
+def test_add_download_routes_youtube_to_ytdlp(mock_engine, monkeypatch):
+    """The plain add_download no longer HTML-saves YouTube watch URLs."""
+    _hermetic_urls(monkeypatch)
+    dl = MagicMock()
+    dl.add_youtube_job.return_value = MagicMock(
+        id="y2", filename="v", save_path="/dl/v", job_type="youtube")
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig(), dl_engine=dl)
+
+    tools.call("add_download", {"url": "https://www.youtube.com/watch?v=abc"})
+
+    dl.add_youtube_job.assert_called_once()
+    dl.add_job.assert_not_called()
+    dl.add_stream_job.assert_not_called()

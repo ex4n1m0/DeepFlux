@@ -70,7 +70,7 @@ READ_ONLY_TOOL_NAMES = frozenset({
     "browser_wait", "browser_list_bookmarks", "list_downloads", "propose_rename_and_category",
     "analyze_organization", "list_memories", "agent_diagnostics",
     "iptv_list_sources", "list_api_keys", "list_settings", "list_torrent_sources",
-    "commander_state",
+    "commander_state", "scan_video_page",
 })
 
 CONFIRMATION_TOOL_NAMES = frozenset({
@@ -91,6 +91,8 @@ CONFIRMATION_TOOL_NAMES = frozenset({
     "run_shell",
     # GUI commander transfers mutate the filesystem through the Command tab.
     "commander_transfer",
+    # Video downloads (P1 2026-11-17): same confirmation class as add_download.
+    "download_video",
 })
 
 WATCHDOG_AUTO_HEAL_TOOL_NAMES = frozenset({
@@ -112,6 +114,7 @@ SENSITIVE_TOOL_FIELDS = {
 UNTRUSTED_RESULT_TOOLS = frozenset({
     "web_search", "web_fetch", "search_indexers", "find_alt_trackers",
     "find_alt_release", "get_rss_feed_items", "refresh_tracker_list",
+    "scan_video_page",  # page-derived stream URLs/titles are external data
     "browser_get_content", "browser_snapshot", "browser_wait",
     "run_shell",  # command output can echo arbitrary external text
     "commander_state",  # local filenames routinely originate from web downloads
@@ -674,6 +677,27 @@ class ToolRegistry:
                 ),
                 "handler": self._add_download,
             },
+            "download_video": {
+                "schema": self._tool_schema(
+                    name="download_video",
+                    description="Download a video from a PAGE or stream URL in one step: resolves the "
+                        "page (same generic scanner as scan_video_page — player configs, packed "
+                        "scripts, <video> tags), attaches the Referer/User-Agent context hotlink "
+                        "CDNs require, routes YouTube watch URLs through yt-dlp, and queues the job "
+                        "in the download manager (HLS/DASH are remuxed to MP4). Master playlists "
+                        "get the best rendition automatically. ALWAYS prefer this over picking a "
+                        "stream URL by hand — a bare add_download drops the Referer and fails on "
+                        "hotlink-protected CDNs. Requires the same confirmation as add_download.",
+                    properties={
+                        "url": {"type": "string", "description": "Video page URL, direct stream (.m3u8/.mpd) or file URL, or a YouTube watch/short URL."},
+                        "filename": {"type": "string", "description": "Optional output filename — streams default to the page title + .mp4, files to the URL basename.", "default": ""},
+                        "save_path": {"type": "string", "description": "Optional destination folder; defaults to Download Manager settings.", "default": ""},
+                        "max_height": {"type": "integer", "description": "Optional HLS rendition height cap in pixels (e.g. 720 for 720p). 0 = the configured stream_max_height.", "default": 0, "minimum": 0, "maximum": 4320},
+                    },
+                    required=["url"],
+                ),
+                "handler": self._download_video,
+            },
             "list_downloads": {
                 "schema": self._tool_schema(
                     name="list_downloads",
@@ -1061,6 +1085,23 @@ class ToolRegistry:
                     any_of=[["url"], ["urls"]],
                 ),
                 "handler": self._web_fetch_tool,
+            },
+            "scan_video_page": {
+                "schema": self._tool_schema(
+                    name="scan_video_page",
+                    description="Resolve ANY video page (or direct stream URL) into the stream it "
+                        "embeds — no per-site code: player configuration scripts, packed/"
+                        "obfuscated JavaScript and <video>/<source> tags are all scanned, then the "
+                        "candidates are RANKED (HLS master playlists first, previews/trailers "
+                        "demoted). Returns the recommended stream, up to 5 alternates, and — for "
+                        "HLS masters — the rendition table (resolution/bandwidth/codecs). Read-"
+                        "only; use download_video to download what it found.",
+                    properties={
+                        "url": {"type": "string", "description": "Video page URL or direct stream/file URL."},
+                    },
+                    required=["url"],
+                ),
+                "handler": self._scan_video_page,
             },
             "list_rss_feeds": {
                 "schema": self._tool_schema(
@@ -2129,7 +2170,12 @@ class ToolRegistry:
             save_path = os.path.join(os.path.abspath(os.path.expanduser(save_path)), "")
         engine = self._get_dl_engine()
         low = url.lower().split("?", 1)[0]
-        if low.endswith((".m3u8", ".mpd")):
+        if self._is_youtube_url(url):
+            # yt-dlp resolves watch URLs into real media streams — the plain
+            # HTTP downloader would just save the HTML page (a small
+            # unplayable "video"); same routing as every GUI lane.
+            job = engine.add_youtube_job(url=url, filename=filename, save_path=save_path, source_url=url)
+        elif low.endswith((".m3u8", ".mpd")):
             job = engine.add_stream_job(url=url, filename=filename, save_path=save_path)
         else:
             job = engine.add_job(url=url, filename=filename, save_path=save_path)
@@ -2141,6 +2187,187 @@ class ToolRegistry:
             "save_path": job.save_path,
             "job_type": job.job_type,
             "note": "Queued in the download manager — visible in the Download tab's Downloads panel.",
+        }
+
+    # ------------------------------------------------------------------
+    # Video page scanning / one-shot video downloads (study P0/P1, 2026-11-17)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_youtube_url(url: str) -> bool:
+        low = (url or "").lower()
+        return ("youtube.com/watch" in low or "youtu.be/" in low
+                or "youtube.com/shorts/" in low)
+
+    def _scan_video_page(self, url: str) -> Dict[str, Any]:
+        """Resolve a video page (or direct stream URL) into its best stream.
+
+        Read-only wrapper over the same GenericExtractor the GUI's Site
+        Grabber uses — packed-JS unpacking, ranking, preview demotion and
+        master-playlist detection all come along for free."""
+        url = validate_public_http_url(url)
+        self._progress(f"Scanning video page {url}…")
+        if self._is_youtube_url(url):
+            return {
+                "success": True,
+                "url": url,
+                "type": "youtube",
+                "recommended": {"url": url, "type": "youtube",
+                                "reason": "YouTube page — yt-dlp resolves the formats"},
+                "note": "Pass this URL to download_video; it routes YouTube through yt-dlp.",
+            }
+        from dlmgr.extractors.generic import GenericExtractor, NoStreamFound
+        try:
+            info = GenericExtractor().extract(url)
+        except NoStreamFound as exc:
+            return {
+                "success": False,
+                "url": url,
+                "error": str(exc),
+                "hint": "No embedded stream found in the page HTML. If the site is "
+                        "Cloudflare-walled or login-gated, its stream is invisible to a "
+                        "plain HTTP fetch — open it in the built-in browser instead "
+                        "(browser_navigate) and work from there.",
+            }
+        except Exception as exc:
+            logger.warning("scan_video_page failed for %s: %s", url, exc)
+            return {"success": False, "url": url, "error": f"Could not resolve page: {exc}"}
+
+        result: Dict[str, Any] = {
+            "success": True,
+            "url": url,
+            "title": info.get("title", ""),
+            "page_url": info.get("page_url", url),
+            "recommended": {
+                "url": info["manifest_url"],
+                "type": info["type"],
+                "reason": "ranked best by the generic page scan (HLS master playlists "
+                          "first, previews/trailers demoted)",
+            },
+            "note": "download_video accepts this page URL (or the recommended stream URL) "
+                    "and attaches the Referer hotlink CDNs require automatically.",
+        }
+        if info.get("alternates"):
+            result["alternates"] = info["alternates"]
+        if info["type"] == "hls":
+            renditions = self._peek_hls_renditions(
+                info["manifest_url"], referer=info.get("page_url", ""))
+            if renditions:
+                result["renditions"] = renditions
+                result["note"] += (" This is a MASTER playlist — the engine picks the best "
+                                   "rendition (≤ the user's quality preference).")
+        self._progress(f"Found {info['type']} stream: {info.get('title') or info['manifest_url']}")
+        return result
+
+    def _peek_hls_renditions(self, manifest_url: str, referer: str = "") -> List[Dict[str, Any]]:
+        """Best-effort HLS master variant listing (bandwidth/resolution/codecs).
+
+        Failures return [] — the peek only enriches scan_video_page output,
+        it never gates anything."""
+        try:
+            headers = {"User-Agent": BROWSER_UA}
+            if referer:
+                headers["Referer"] = referer
+            resp = public_http_get(manifest_url, timeout=15, headers=headers,
+                                   max_bytes=512 * 1024)
+            resp.raise_for_status()
+            import m3u8
+            playlist = m3u8.loads(resp.text, uri=manifest_url)
+            out: List[Dict[str, Any]] = []
+            variants = sorted(playlist.playlists or [],
+                              key=lambda v: (v.stream_info.bandwidth or 0), reverse=True)
+            for variant in variants:
+                si = variant.stream_info
+                res = getattr(si, "resolution", None)
+                if isinstance(res, (tuple, list)) and len(res) == 2:
+                    resolution = f"{int(res[0])}x{int(res[1])}"
+                elif isinstance(res, str) and res:
+                    resolution = res
+                else:
+                    resolution = ""
+                out.append({
+                    "bandwidth": int(si.bandwidth or 0),
+                    "resolution": resolution,
+                    "codecs": si.codecs or "",
+                })
+                if len(out) >= 8:
+                    break
+            return out
+        except Exception:
+            logger.debug("HLS rendition peek failed for %s", manifest_url, exc_info=True)
+            return []
+
+    @staticmethod
+    def _video_filename(title: str, stream_type: str) -> str:
+        """Title → safe filename base; streams get .mp4 (HLS/DASH remux output)."""
+        base = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", (title or "").strip())
+        base = re.sub(r"\s+", " ", base).strip(" .")[:80]
+        if not base:
+            return ""
+        if stream_type in ("hls", "dash"):
+            return base + ".mp4"
+        return ""
+
+    def _download_video(self, url: str, filename: str = "", save_path: str = "",
+                        max_height: int = 0) -> Dict[str, Any]:
+        """Resolve a video page/stream URL and queue it with full page context.
+
+        Mirrors the GUI Site Grabber's queue path (grabber_dialog._queue_video)
+        and the browser channel's sendDownload: the page rides along as the
+        Referer, and YouTube URLs go to yt-dlp instead of the HTML-saving
+        plain downloader."""
+        url = validate_public_http_url(url)
+        max_height = max(0, min(int(max_height or 0), 4320))
+        if save_path:
+            save_path = os.path.join(os.path.abspath(os.path.expanduser(save_path)), "")
+        engine = self._get_dl_engine()
+        if self._is_youtube_url(url):
+            job = engine.add_youtube_job(url=url, filename=filename, save_path=save_path,
+                                         source_url=url)
+            self._progress(f"YouTube download queued: {job.filename}")
+            return {
+                "success": True,
+                "job_id": job.id,
+                "filename": job.filename,
+                "save_path": job.save_path,
+                "job_type": job.job_type,
+                "stream": {"url": url, "type": "youtube"},
+                "note": "Queued via yt-dlp — visible in the Download tab's Downloads panel.",
+            }
+        from dlmgr.extractors.generic import GenericExtractor, NoStreamFound
+        try:
+            info = GenericExtractor().extract(url)
+        except NoStreamFound as exc:
+            raise ToolError(f"No video stream found on {url}: {exc}") from exc
+        except Exception as exc:
+            raise ToolError(f"Could not resolve {url}: {exc}") from exc
+        stream_url, stream_kind = info["manifest_url"], info["type"]
+        headers = info.get("headers") or {}
+        page_url = info.get("page_url") or ""
+        if not filename:
+            filename = self._video_filename(info.get("title", ""), stream_kind)
+        self._progress(f"Resolved {stream_kind} stream — queueing: {filename or stream_url}")
+        if stream_kind in ("hls", "dash"):
+            job = engine.add_stream_job(
+                url=stream_url, filename=filename, save_path=save_path,
+                headers=headers, referrer=page_url, source_url=url,
+                max_height=max_height)
+        else:
+            job = engine.add_job(
+                url=stream_url, filename=filename, save_path=save_path,
+                headers=headers, referrer=page_url, source_url=url)
+        note = "Queued in the download manager — visible in the Download tab's Downloads panel."
+        if stream_kind == "hls":
+            cap = f"≤ {max_height}p" if max_height else "per stream_max_height"
+            note += f" Master playlist: the engine picks the best rendition ({cap})."
+        return {
+            "success": True,
+            "job_id": job.id,
+            "filename": job.filename,
+            "save_path": job.save_path,
+            "job_type": job.job_type,
+            "stream": {"url": stream_url, "type": stream_kind, "page_url": page_url},
+            "note": note,
         }
 
     @staticmethod

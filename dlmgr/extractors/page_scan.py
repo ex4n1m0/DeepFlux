@@ -152,6 +152,11 @@ def _stream_type(url: str) -> str:
     return "file"
 
 
+# Public alias — callers outside this module (the generic extractor's
+# alternates, the agent's scan_video_page tool) label candidate URLs too.
+stream_type = _stream_type
+
+
 def _rank(url: str) -> tuple:
     kind = _stream_type(url)
     path = urlparse(url).path.lower()

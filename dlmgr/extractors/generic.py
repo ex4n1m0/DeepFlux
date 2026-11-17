@@ -26,7 +26,7 @@ from .. import http_client
 from ..http_client import BROWSER_HEADERS
 
 from . import ExtractorBase
-from .page_scan import find_stream
+from .page_scan import find_stream, find_stream_urls, stream_type
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,8 @@ class GenericExtractor(ExtractorBase):
         page_url = getattr(resp, "url", None) or url
         # Streamed + hard-capped read — a video site page must never be
         # buffered unbounded into the GUI process (review 2026-11-06).
-        found = find_stream(http_client.read_capped(resp), page_url)
+        html = http_client.read_capped(resp)
+        found = find_stream(html, page_url)
         if not found:
             raise NoStreamFound(f"No video stream found on {url}")
         found["page_url"] = page_url
@@ -111,6 +112,18 @@ class GenericExtractor(ExtractorBase):
             "Referer": page_url,
             "User-Agent": req_headers.get("User-Agent", BROWSER_HEADERS["User-Agent"]),
         }
+        # Ranked runner-ups for callers that offer a choice (the agent's
+        # scan_video_page tool): the HTML is already in hand, so the extra
+        # find_stream_urls pass costs one linear scan.
+        alternates = []
+        for candidate in find_stream_urls(html, page_url):
+            if candidate == found["manifest_url"]:
+                continue
+            alternates.append({"url": candidate, "type": stream_type(candidate)})
+            if len(alternates) >= 5:
+                break
+        if alternates:
+            found["alternates"] = alternates
         logger.info("Page scan: %s -> %s (%s)", url, found["manifest_url"], found["type"])
         return found
 

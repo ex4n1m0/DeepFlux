@@ -487,3 +487,41 @@ def test_bandwidth_limiter_disabled():
     limiter.acquire(10_000_000)
     assert time.monotonic() - t0 < 0.2
 
+
+# ---------------------------------------------------------------------------
+# Per-call HLS rendition caps (download_video's max_height, 2026-11-17).
+# ---------------------------------------------------------------------------
+
+def _renditions():
+    from types import SimpleNamespace
+    return [SimpleNamespace(height=1080, bandwidth=5_000_000),
+            SimpleNamespace(height=720, bandwidth=2_000_000),
+            SimpleNamespace(height=0, bandwidth=900_000)]
+
+
+def test_stream_rendition_cap_per_call_beats_config():
+    from types import SimpleNamespace
+    stub = SimpleNamespace(_config=SimpleNamespace(stream_max_height=1080))
+    # No per-call cap: the engine-wide config cap rules.
+    assert DownloadEngine._select_stream_rendition(stub, _renditions()).height == 1080
+    # Per-call cap wins over the config.
+    assert DownloadEngine._select_stream_rendition(stub, _renditions(), 720).height == 720
+    # Unknown-height renditions stay eligible under any cap (existing
+    # semantics); a cap nothing else satisfies never returns an empty pick.
+    picked = DownloadEngine._select_stream_rendition(stub, _renditions(), 480)
+    assert picked.height == 0 and picked.bandwidth == 900_000
+
+
+def test_add_stream_job_per_call_cap_reaches_selector_and_job(engine):
+    info = mock.MagicMock()
+    info.error = ""
+    info.segment_urls = ["https://example.com/1.ts"]
+    info.stream_type = "hls"
+    engine._auto_start = False
+    with mock.patch("dlmgr.hls_dash.parse_manifest", return_value=info) as pm:
+        job = engine.add_stream_job("https://example.com/master.m3u8", max_height=720)
+    selector = pm.call_args.kwargs["rendition_selector"]
+    assert selector(_renditions()).height == 720
+    # The cap is recorded so restarts (manifest re-parse) keep it.
+    assert job.max_height == 720
+

@@ -327,9 +327,45 @@ transfer forced the Torrents tab. Removed (teeth-verified regression tests):
 | `_on_downloaded_torrent_file` auto-add → Torrents | `gui/main_window.py` | completion-time jump |
 | `sendDownload` → Torrents | `gui/browser_channel.py` | extension click left the video page (toast remains) |
 
-Kept (direct user intent): menus/shortcuts/tab icons, Ctrl+L/find,
-drag&drop, chat-link clicks, Add-Magnet dialog, external `open_target`
-(raises the window), IPTV play focus. Pinned by
-`tests/test_browser_bridge.py` (4 no-steal tests) and
-`tests/test_v5_ui.py::test_agent_event_tool_end_does_not_jump_tabs`;
-durable rule recorded in AGENTS.md.
+  Kept (direct user intent): menus/shortcuts/tab icons, Ctrl+L/find,
+  drag&drop, chat-link clicks, Add-Magnet dialog, external `open_target`
+  (raises the window), IPTV play focus. Pinned by
+  `tests/test_browser_bridge.py` (4 no-steal tests) and
+  `tests/test_v5_ui.py::test_agent_event_tool_end_does_not_jump_tabs`;
+  durable rule recorded in AGENTS.md.
+
+---
+
+## 9. P0 + P1 SHIPPED (same session, 2026-11-17)
+
+**`scan_video_page`** (read-only, untrusted-marked): wraps
+`GenericExtractor.extract` — recommended stream + ≤5 ranked alternates
+(new `alternates` field on `extract_from_page`) + HLS master rendition
+peek (top 8, Referer-aware, fail-soft) + YouTube short-circuit + a
+CF/login failure hint pointing at the browser lane.
+
+**`download_video`** (confirmation class of add_download): resolves →
+queues with `headers={Referer, UA}` + `referrer` + `source_url` (the GUI
+grabber's exact semantics); YouTube → `add_youtube_job`; per-request
+`max_height` caps HLS rendition choice (new `add_stream_job(max_height=)`
++ `DownloadJob.max_height` so restarts keep the cap; per-call beats
+`config.stream_max_height`). `add_download` itself now also routes
+YouTube URLs to yt-dlp (was: HTML-page save while the prompt advertised
+YouTube). Prompt gained a "Video grabbing" doctrine section; `_TOOL_LABELS`
+entries added. Tests: 12 new in tests/test_tools.py, alternates pinned in
+tests/test_site_grabber.py, rendition caps in tests/test_dlmgr.py —
+chunks t / d–g / r–z / loop+memory all green (595 tests).
+
+**LIVE VERIFICATION (owner-requested, missav test site):**
+- `missav.ai` (the classic): `scan_video_page` resolves the page → surrit
+  MASTER playlist ranked first, 720p/1080p variants as alternates, full
+  rendition table (1080/720/480/360 with bandwidths), correct titles.
+  `download_video` (max_height=720) then pulled 3 full videos through the
+  REAL DownloadEngine at 10–38 MB/s and remuxed to MP4 — the Referer
+  context is what surrit demands (the old add_download lane 403s there).
+- `missavtv.com` (the clone the owner tried): fully JS-gated — the video
+  page and its `embedUrl` player host both serve JS shells with NO m3u8/
+  UUID/packed-JS in the static HTML, and the mirror `/t/` links 403 any
+  non-browser client even with curl_cffi's Chrome fingerprint. This site
+  class is exactly what P2 (extension detections → agent) must cover;
+  P0's failure hint already steers the agent there.

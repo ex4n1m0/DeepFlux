@@ -639,6 +639,27 @@
   Pinned by tests/test_browser_bridge.py (navigate/go-home/switch/channel
   no-steal tests) + tests/test_v5_ui.py::test_agent_event_tool_end_does_
   not_jump_tabs. Re-adding a jump anywhere needs a new owner decision.
+- AGENT VIDEO LANE (P0/P1 of AGENT_VIDEO_STUDY.md, shipped 2026-11-17):
+  `scan_video_page` (read-only, UNTRUSTED_RESULT_TOOLS) wraps
+  GenericExtractor.extract — the SAME resolver the GUI Site Grabber uses
+  (packed-JS unpack, ranking, preview demotion); extract_from_page now
+  also returns `alternates` (≤5 ranked runner-ups). `download_video`
+  (CONFIRMATION class, like add_download) resolves a page/stream/YouTube
+  URL and queues with headers={Referer, UA} + referrer + source_url —
+  NEVER queue a page-found stream via bare add_download (drops Referer →
+  hotlink CDN 403; surrit verified live). YouTube routing lives in
+  download_video AND add_download now (yt-dlp, not the HTML-saving HTTP
+  downloader). Per-request `max_height` caps HLS renditions:
+  add_stream_job(max_height=) + DownloadJob.max_height (restart-safe),
+  per-call cap beats config stream_max_height; unknown-height renditions
+  stay eligible (existing semantics). HLS masters auto-select the best
+  rendition in the engine — the prompt doctrine tells the model to prefer
+  masters. MissAV class split, verified live 2026-11-17: missav.ai works
+  end-to-end through the plain-HTTP lane; missavtv.com (and its embedUrl
+  player hosts) is fully JS-gated — scanner-invisible, needs the browser
+  detection lane (study P2, not yet built). Tests: test_tools.py video
+  section (12), test_site_grabber.py alternates, test_dlmgr.py rendition
+  caps.
 - FAULTHANDLER CRASH LOG (main.py::_enable_crash_log, added 7.4 2026-11-06;
   fixed 2026-11-07 after it KILLED the app 11x that night): on Windows
   `faulthandler.enable()` registers a VECTORED exception handler that fires

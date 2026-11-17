@@ -112,6 +112,10 @@ class DownloadJob:
     created_at: float = field(default_factory=time.time)
     priority: int = 0
     category: str = ""
+    # Per-job HLS rendition height cap (0 = use config stream_max_height).
+    # Recorded so restarts (_start_stream_job re-parses the manifest) keep
+    # the cap the caller asked for.
+    max_height: int = 0
 
     @property
     def progress(self) -> float:

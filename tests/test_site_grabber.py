@@ -297,6 +297,13 @@ def test_resolve_wraps_extractor_errors(fake_http):
     fake_http.table[WATCH_URL] = _FakeResponse(WATCH_HTML, url=WATCH_URL)
     info = SiteGrabber().resolve(WATCH_URL)
     assert info["manifest_url"] == MASTER and info["headers"]["Referer"] == WATCH_URL
+    # Runner-up streams ride along for choice-offering callers (the agent's
+    # scan_video_page tool) — ranked after the recommended one, typed.
+    alts = info.get("alternates", [])
+    types = {alt["url"]: alt["type"] for alt in alts}
+    assert MASTER not in types
+    assert types.get("https://cdn.example/v/abc/720p/video.m3u8") == "hls"
+    assert types.get("https://img.example/xyz/preview.mp4") == "file"
     fake_http.table[WATCH_URL] = _FakeResponse("<html>none</html>", url=WATCH_URL)
     with pytest.raises(GrabberError):
         SiteGrabber().resolve(WATCH_URL)
