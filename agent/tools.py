@@ -70,7 +70,7 @@ READ_ONLY_TOOL_NAMES = frozenset({
     "browser_wait", "browser_list_bookmarks", "list_downloads", "propose_rename_and_category",
     "analyze_organization", "list_memories", "agent_diagnostics",
     "iptv_list_sources", "list_api_keys", "list_settings", "list_torrent_sources",
-    "commander_state", "scan_video_page",
+    "commander_state", "scan_video_page", "list_page_videos",
 })
 
 CONFIRMATION_TOOL_NAMES = frozenset({
@@ -115,6 +115,7 @@ UNTRUSTED_RESULT_TOOLS = frozenset({
     "web_search", "web_fetch", "search_indexers", "find_alt_trackers",
     "find_alt_release", "get_rss_feed_items", "refresh_tracker_list",
     "scan_video_page",  # page-derived stream URLs/titles are external data
+    "list_page_videos",  # listing-page cards (titles/urls) are external data
     "browser_get_content", "browser_snapshot", "browser_wait",
     "run_shell",  # command output can echo arbitrary external text
     "commander_state",  # local filenames routinely originate from web downloads
@@ -1102,6 +1103,24 @@ class ToolRegistry:
                     required=["url"],
                 ),
                 "handler": self._scan_video_page,
+            },
+            "list_page_videos": {
+                "schema": self._tool_schema(
+                    name="list_page_videos",
+                    description="List the videos on a LISTING page (new releases, a studio/maker "
+                        "collection, a category, or search results) of any video site: each card's "
+                        "title, page URL and duration. Use this to enumerate what a site offers "
+                        "before downloading — then pass the video PAGE urls to download_video (or "
+                        "scan_video_page to see streams/qualities first). Read-only. When the page "
+                        "is a search page, prefer passing the site + query to a Site Grabber "
+                        "search instead of guessing URL patterns.",
+                    properties={
+                        "url": {"type": "string", "description": "Listing page URL (collection, category, new/search results)."},
+                        "limit": {"type": "integer", "description": "Max videos to return (default 30).", "default": 30, "minimum": 1, "maximum": 100},
+                    },
+                    required=["url"],
+                ),
+                "handler": self._list_page_videos,
             },
             "list_rss_feeds": {
                 "schema": self._tool_schema(
@@ -2198,6 +2217,59 @@ class ToolRegistry:
         low = (url or "").lower()
         return ("youtube.com/watch" in low or "youtu.be/" in low
                 or "youtube.com/shorts/" in low)
+
+    def _list_page_videos(self, url: str, limit: int = 30) -> Dict[str, Any]:
+        """Enumerate the video cards on a listing/collection/search page.
+
+        The agent's other lenses (web_fetch download_links) only see direct
+        media/torrent hrefs — a listing page has none, which left the model
+        guessing page URLs from truncated text (owner report 2026-11-17,
+        missav.live studio page). This is the GUI Site Grabber's card parser
+        as a read-only tool."""
+        url = validate_public_http_url(url)
+        limit = max(1, min(int(limit or 30), 100))
+        self._progress(f"Listing videos on {url}…")
+        from dlmgr import http_client as grabber_http
+        from dlmgr.http_client import BROWSER_HEADERS
+        from dlmgr.site_grabber import SiteGrabber
+        try:
+            resp = grabber_http.get(url, headers=dict(BROWSER_HEADERS), timeout=25, stream=True)
+            if resp.status_code >= 400:
+                resp.close()
+                return {"success": False, "url": url,
+                        "error": f"HTTP {resp.status_code} fetching the page"}
+            page_url = getattr(resp, "url", None) or url
+            html = grabber_http.read_capped(resp)
+        except Exception as exc:
+            logger.warning("list_page_videos failed for %s: %s", url, exc)
+            return {"success": False, "url": url, "error": f"Could not fetch page: {exc}"}
+        cards = SiteGrabber().parse_cards(html, page_url)
+        if not cards:
+            return {
+                "success": False,
+                "url": url,
+                "error": "No video cards found on the page.",
+                "hint": "The listing may be rendered by JavaScript — the plain HTTP "
+                        "lane cannot see it. Open the page in the built-in browser "
+                        "(browser_navigate) and work from there, or try the site's "
+                        "search URL with {query} via the user.",
+            }
+        site_host = cards[0].site or ""
+        return {
+            "success": True,
+            "url": url,
+            "page_url": page_url,
+            "site": site_host,
+            "count": min(len(cards), limit),
+            "total_on_page": len(cards),
+            "videos": [
+                {"title": c.title, "url": c.url, "duration": c.duration}
+                for c in cards[:limit]
+            ],
+            "note": "Pass any video page url to download_video to download it "
+                    "(scan_video_page first if you need the qualities).",
+            "_more_available": len(cards) > limit,
+        }
 
     def _scan_video_page(self, url: str) -> Dict[str, Any]:
         """Resolve a video page (or direct stream URL) into its best stream.

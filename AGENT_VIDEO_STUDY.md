@@ -369,3 +369,27 @@ chunks t / d–g / r–z / loop+memory all green (595 tests).
   non-browser client even with curl_cffi's Chrome fingerprint. This site
   class is exactly what P2 (extension detections → agent) must cover;
   P0's failure hint already steers the agent there.
+
+---
+
+## 10. Listing-page discovery — the SECOND owner report, same day (missav.live)
+
+Owner: "the agent is still having a hard time to pick videos from
+https://missav.live/dm265/en" (the browser extension sees the streams,
+screenshot shows the quality-labelled detections). Live forensics:
+
+- `scan_video_page` on `https://missav.live/en/yan-040` WORKS (surrit
+  master found — missav.live behaves like missav.ai, not missavtv.com).
+- The listing page loads fine and `SiteGrabber.parse_cards` finds **54
+  video cards** (title + `/en/<code>` + duration).
+- But the AGENT has no lens for that: `web_fetch` extracts only media/
+  torrent HREFs (`download_links`) — a listing page has none — and its
+  text view is truncated soup. The model was guessing video URLs.
+
+**Fix shipped (P4-partial): `list_page_videos(url, limit=30)`** — the GUI
+grabber's card parser as a read-only untrusted-marked tool; JS-shell pages
+get a browser-lane hint. Prompt doctrine updated ("ALWAYS call this first
+on a page full of videos"). Live-verified on the dm265 listing (54 cards)
++ the screenshot's yan-040 downloaded end-to-end at 720p. The full agent
+flow on a listing page is now: `list_page_videos` → (user picks / quality
+memory) → `download_video` per page — 2 tool kinds total.

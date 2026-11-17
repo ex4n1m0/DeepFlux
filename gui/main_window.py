@@ -5123,6 +5123,7 @@ class MainWindow(QMainWindow):
         "web_search": ("🔍", "Searching the web"),
         "web_fetch": ("🌐", "Fetching web page"),
         "scan_video_page": ("🎬", "Scanning video page"),
+        "list_page_videos": ("🎬", "Listing page videos"),
         "download_video": ("🎬", "Downloading video"),
         "search_indexers": ("🔍", "Searching indexers"),
         "find_alt_trackers": ("🔎", "Finding alternative trackers"),

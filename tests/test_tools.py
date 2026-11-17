@@ -2107,7 +2107,53 @@ def test_video_tools_policy_classes():
                              UNTRUSTED_RESULT_TOOLS)
     assert "scan_video_page" in READ_ONLY_TOOL_NAMES
     assert "scan_video_page" in UNTRUSTED_RESULT_TOOLS
+    assert "list_page_videos" in READ_ONLY_TOOL_NAMES
+    assert "list_page_videos" in UNTRUSTED_RESULT_TOOLS
     assert "download_video" in CONFIRMATION_TOOL_NAMES
+
+
+_LISTING_HTML = (
+    "<html><body>"
+    '<a href="/en/abc-001"><img src="/thumb/1.jpg" alt="First Video"><span>59:59</span></a>'
+    '<a href="/en/abc-002"><img data-src="/thumb/2.jpg" alt="Second Video"></a>'
+    '<a href="/en/tags"><img src="/x.jpg" alt="tags"></a>'
+    "</body></html>"
+)
+
+
+def test_list_page_videos_returns_cards(mock_engine, monkeypatch):
+    from dlmgr import http_client as hc
+    monkeypatch.setattr("agent.tools.validate_public_http_url", lambda u: u)
+    resp = MagicMock(status_code=200, url="https://site.example/en/new")
+    http = MagicMock()
+    http.get.return_value = resp
+    http.read_capped.return_value = _LISTING_HTML
+    monkeypatch.setattr(hc, "get", http.get)
+    monkeypatch.setattr(hc, "read_capped", http.read_capped)
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+    result = tools.call("list_page_videos", {"url": "https://site.example/en/new"})
+    assert result["success"] is True
+    assert result["_trust"] == "untrusted_external_content"
+    urls = [v["url"] for v in result["videos"]]
+    assert urls == ["https://site.example/en/abc-001", "https://site.example/en/abc-002"]
+    assert result["videos"][0]["title"] == "First Video"
+    assert result["videos"][0]["duration"] == "59:59"
+    assert all("/tags" not in u for u in urls)  # taxonomy pages skipped
+
+
+def test_list_page_videos_hint_when_no_cards(mock_engine, monkeypatch):
+    from dlmgr import http_client as hc
+    monkeypatch.setattr("agent.tools.validate_public_http_url", lambda u: u)
+    resp = MagicMock(status_code=200, url="https://site.example/x")
+    http = MagicMock()
+    http.get.return_value = resp
+    http.read_capped.return_value = "<html><body>JS shell</body></html>"
+    monkeypatch.setattr(hc, "get", http.get)
+    monkeypatch.setattr(hc, "read_capped", http.read_capped)
+    tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+    result = tools.call("list_page_videos", {"url": "https://site.example/x"})
+    assert result["success"] is False
+    assert "browser_navigate" in result["hint"]
 
 
 def test_scan_video_page_youtube_short_circuits(mock_engine, monkeypatch):

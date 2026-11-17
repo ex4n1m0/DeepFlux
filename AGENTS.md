@@ -654,11 +654,20 @@
   per-call cap beats config stream_max_height; unknown-height renditions
   stay eligible (existing semantics). HLS masters auto-select the best
   rendition in the engine — the prompt doctrine tells the model to prefer
-  masters. MissAV class split, verified live 2026-11-17: missav.ai works
-  end-to-end through the plain-HTTP lane; missavtv.com (and its embedUrl
-  player hosts) is fully JS-gated — scanner-invisible, needs the browser
-  detection lane (study P2, not yet built). Tests: test_tools.py video
-  section (12), test_site_grabber.py alternates, test_dlmgr.py rendition
+  masters. MissAV class split, verified live 2026-11-17: missav.ai AND
+  missav.live work end-to-end through the plain-HTTP lane (surrit master in
+  packed JS; missav.live listing pages like /dm265/en enumerate cleanly);
+  missavtv.com (and its embedUrl player hosts) is fully JS-gated —
+  scanner-invisible, needs the browser detection lane (study P2, not yet
+  built). LISTING-PAGE DISCOVERY (owner report "agent has a hard time to
+  pick videos from <listing url>", 2026-11-17): the agent's web_fetch lens
+  only sees media/torrent HREFS — a listing page has none, so the model
+  guessed page URLs from truncated text. `list_page_videos` (read-only,
+  untrusted-marked) wraps SiteGrabber.parse_cards → title/url/duration per
+  card, limit 30/100, JS-shell hint when no cards parse; the prompt's
+  Video-grabbing section says ALWAYS call it first on a page full of
+  videos. Tests: test_tools.py video
+  section, test_site_grabber.py alternates, test_dlmgr.py rendition
   caps.
 - FAULTHANDLER CRASH LOG (main.py::_enable_crash_log, added 7.4 2026-11-06;
   fixed 2026-11-07 after it KILLED the app 11x that night): on Windows
