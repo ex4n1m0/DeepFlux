@@ -1,8 +1,8 @@
 {
-  "version": "8.1",
-  "file": "DeepFlux8.1Setup.exe",
-  "size": 436873852,
-  "sha256": "220173f65a51a624bda2e8d82f66032524c46fc1f4b73eed7d1d3f5397e44215",
+  "version": "8.2",
+  "file": "DeepFlux8.2Setup.exe",
+  "size": 436824957,
+  "sha256": "4b085a328e0d505ad3970a3a3a08b05167259f325dd2529751a50b3c897cd15d",
   "released": "2026-11-17",
-  "notes": "DeepFlux 8.1 - the agent grabs videos better. New: list_page_videos enumerates every video on a listing page (title, duration, link) so the agent can pick from a studio or search page instead of guessing; dead-segment tolerance completes an HLS capture when the CDN breaks a handful of segments (up to 0.5%) instead of failing the whole download - the finished file notes the skipped segments; the agent no longer asks permission to keep working (it runs autonomously until done, Stop button still interrupts); per-message limits doubled to 80 turns / 100 model calls / 200 tool calls. Existing installs adopt all of this automatically."
+  "notes": "DeepFlux 8.2 - player keys fixed, blue rain. Arrow-key seeking (plus Space, F and the other player shortcuts) now works in the full player even when the video never takes keyboard focus - previously, with SVP's out-of-process playback, clicking the video focused nothing and every player key died; focus is now seated on playback and stranded keys are forwarded from the tab. The Agent tab's idle screen gets a blue Matrix-style digital rain behind the banner (runs only before the first message, stops when hidden)."
 }
