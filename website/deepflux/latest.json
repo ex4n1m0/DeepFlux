@@ -1,8 +1,8 @@
 {
-  "version": "8.3",
-  "file": "DeepFlux8.3Setup.exe",
-  "size": 508675435,
-  "sha256": "74bd265c613cbe0e6e3c00bd6ae881bb7ba4e9600b9534f086b70be01a2388b7",
+  "version": "8.4",
+  "file": "DeepFlux8.4Setup.exe",
+  "size": 508609531,
+  "sha256": "955ab2571278c05ab837ec1981d2407578575a2afb80261320f8b3ee2e1b0f70",
   "released": "2026-11-18",
-  "notes": "DeepFlux 8.3 - instant close, faster video open, background music, new defaults. Closing the app was a 1-2 second freeze; it is now immediate (about 0.1s) on every path. Opening a video from Explorer shows an Opening label and reaches the first frame faster, and the mini player pre-warms playback while idle. The Agent tab gains a looping background-music track (bundled, about 75 minutes) that starts with the app, can be toggled from the Agent tab or the mini player, and pauses whenever you play anything else - the setup grew to 485 MB because of it. The Matrix-style agent rain falls slower. Defaults refresh: Micro font, Dark Blue text, one download at a time (change any of it back in Settings). The second-instance open fix also covers custom control ports."
+  "notes": "DeepFlux 8.4 - background music, refined. The Agent tab's looping background track now starts when the full app opens (the mini player stays silent and button-free; the toggle lives in the Agent tab next to YOLO). While the music plays the toggle turns WHITE; when idle it is blue. Opening any media still stops the music and your on/off choice is remembered across launches."
 }

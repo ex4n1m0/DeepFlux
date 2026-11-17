@@ -1623,6 +1623,25 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
             }
 
+            /* === ♫ Music toggle WHILE PLAYING (owner 2026-11-18: white
+               when playing, accent blue when idle) — a white FILL with
+               deliberately DARK text (themeable white would vanish on it;
+               same keep-white-exception family, inverted). === */
+            QPushButton#btn_music_on {
+                background-color: #ffffff;
+                border-left: 6px solid #05070c;
+                border-right: 6px solid #05070c;
+                border-top: 2px solid #05070c;
+                border-bottom: 2px solid #05070c;
+                border-radius: 9px;
+                padding: 2px 10px;
+                color: #0a1a2e;
+            }
+            QPushButton#btn_music_on:hover {
+                background-color: #dbe9f8;
+                color: #0a1a2e;
+            }
+
             /* === Inputs === */
             QLineEdit {
                 background-color: #080b12;
@@ -2056,7 +2075,7 @@ class MainWindow(QMainWindow):
         self.music_btn = None
         if MUSIC_SUPPORTED:
             music_btn = QPushButton(tr('♫'))
-            music_btn.setObjectName("btn_secondary")
+            music_btn.setObjectName("btn_accent")   # blue when not playing
             music_btn.setCheckable(True)
             music_btn.setFixedWidth(44)
             music_btn.setToolTip(tr(
@@ -3665,13 +3684,21 @@ class MainWindow(QMainWindow):
 
     def _sync_music_button(self, playing: bool) -> None:
         """Reflect the music controller's state on the ♫ toggle (also fires
-        when a media-open hook stopped the music — the button must uncheck
-        itself even though nobody clicked it)."""
+        when a media-open hook stopped the music — the button must revert
+        even though nobody clicked it). Owner 2026-11-18 color contract:
+        WHITE fill while playing, accent BLUE when idle (the YOLO-style
+        objectName swap + repolish)."""
         btn = getattr(self, "music_btn", None)
-        if btn is not None:
-            btn.blockSignals(True)
-            btn.setChecked(playing)
-            btn.blockSignals(False)
+        if btn is None:
+            return
+        btn.blockSignals(True)
+        btn.setChecked(playing)
+        btn.blockSignals(False)
+        wanted = "btn_music_on" if playing else "btn_accent"
+        if btn.objectName() != wanted:
+            btn.setObjectName(wanted)
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
 
     def _on_music_toggle(self) -> None:
         """User toggled the Agent-tab background music (owner 2026-11-18).

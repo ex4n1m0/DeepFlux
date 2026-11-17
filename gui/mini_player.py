@@ -312,25 +312,10 @@ class MiniPlayerWindow(QWidget):
             "playback stops during the switch"))
         self._morph_btn_idle.clicked.connect(self.morph_to_full)
         btn_row.addWidget(self._morph_btn_idle)
-        # ♫ Background music toggle (owner 2026-11-18: starts ON) — the mini
-        # player needs its own switch: music can be playing while only this
-        # window exists, and turning it off must never require a morph.
-        self._music_btn = None
-        from gui.agent_music import MUSIC_SUPPORTED
-        if MUSIC_SUPPORTED:
-            from gui import agent_music
-            music_btn = QPushButton("♫")
-            music_btn.setObjectName("btn_secondary")
-            music_btn.setCheckable(True)
-            music_btn.setFixedWidth(40)
-            music_btn.setToolTip(tr(
-                'Background music on/off — loops until you turn it off;\n'
-                'stops automatically when other media opens'))
-            music_btn.clicked.connect(self._on_music_toggle)
-            self._music_btn = music_btn
-            agent_music.controller().add_state_listener(self._sync_music_btn)
-            btn_row.addWidget(music_btn)
         btn_row.addStretch(1)
+        # NO music button here (owner 2026-11-18): the ♫ toggle lives ONLY
+        # in the full app's Agent tab, and the music starts when the full
+        # app opens — a mini-only session is silent by design.
         lay.addLayout(btn_row)
         self._idle_page = page
         self._idle_bg = page
@@ -418,43 +403,13 @@ class MiniPlayerWindow(QWidget):
         # A clicked button KEEPS keyboard focus — Space would re-trigger it
         # and ←/→ would never reach the window. Hand focus back after every
         # transport interaction (same lesson as PlayerWidget's re-seating).
-        btns = [self._open_btn, self._play_btn, self._rw_btn,
-                self._ff_btn, self._mute_btn, self._fs_btn]
-        if getattr(self, "_music_btn", None) is not None:
-            btns.append(self._music_btn)
-        for btn in btns:
+        for btn in (self._open_btn, self._play_btn, self._rw_btn,
+                    self._ff_btn, self._mute_btn, self._fs_btn):
             btn.clicked.connect(self._reseat_focus)
 
     def _reseat_focus(self, *args) -> None:
         """Return keyboard focus to the window after button/slider use."""
         self.setFocus()
-
-    # ------------------------------------------------------- background music
-    def _sync_music_btn(self, playing: bool) -> None:
-        btn = getattr(self, "_music_btn", None)
-        if btn is not None:
-            btn.blockSignals(True)
-            btn.setChecked(playing)
-            btn.blockSignals(False)
-
-    def _on_music_toggle(self) -> None:
-        """Toggle the looping background music and PERSIST the choice — the
-        boot autostart reads it (owner 2026-11-18: starts ON by default)."""
-        from gui import agent_music
-        ctl = agent_music.controller()
-        was_playing = ctl.is_playing()
-        now_playing = ctl.toggle()
-        self._config.ui_background_music = now_playing
-        try:
-            self._config.to_file(self._config_path)
-        except Exception:
-            logger.debug("music preference save failed", exc_info=True)
-        if was_playing == now_playing:   # start failed (no track / no player)
-            self._sync_music_btn(False)
-            QMessageBox.warning(
-                self, tr("DeepFlux Mini"),
-                tr("Background music is unavailable on this install "
-                   "(bundled track or audio backend missing)."))
 
     def _build_morph_overlay(self) -> None:
         self._morph_overlay = QWidget(self)
@@ -781,6 +736,13 @@ class MiniPlayerWindow(QWidget):
             # Land on the Play tab with the file queued at the last position.
             media, pos = self._last_media, max(0.0, float(self.seek.value()))
             QTimer.singleShot(0, lambda: self._resume_in_play_tab(media, pos))
+        else:
+            # Nothing to route, nothing to resume — the freshly opened full
+            # app is where the music starts (owner 2026-11-18). A beat later
+            # so the window paints first; the branches above suppress it
+            # because media (routed or resumed) always wins over music.
+            cfg = self._config
+            QTimer.singleShot(300, lambda: _maybe_start_music(cfg))
 
     def _resume_in_play_tab(self, media: str, pos: float) -> None:
         try:
@@ -888,13 +850,6 @@ class MiniPlayerWindow(QWidget):
         self._main = main
         self._stack.setCurrentWidget(self._idle_page)
         self.surface.hide_opening()
-        # Music may already be playing (kept alive across the morph) — the
-        # idle-row toggle must show it.
-        try:
-            from gui import agent_music
-            self._sync_music_btn(agent_music.controller().is_playing())
-        except Exception:
-            pass
         self.setWindowTitle(f"DeepFlux Mini {APP_VERSION}")
         self._play_btn.setText("▶")
         self.seek.setValue(0)
@@ -1029,29 +984,20 @@ def run_mini_player(config_path: Optional[str] = None,
         threading.Thread(target=_prewarm_mpv_dll, daemon=True,
                          name="mini-mpv-prewarm").start()
         QTimer.singleShot(400, _MINI_WINDOW.prewarm_backend)
-        # Background music starts ON (owner 2026-11-18) unless the user has
-        # turned it off — a beat after first paint, and never over media the
-        # user already opened in these 600 ms.
-        QTimer.singleShot(600, _autostart_music_when_idle)
     # Delayed telemetry (off the paint path).
     QTimer.singleShot(2000, _start_telemetry_lazily)
     return app.exec()
 
 
-def _autostart_music_when_idle() -> None:
-    """Boot helper: start the background music unless media is already open
-    in the mini window (media wins — the music yields per its contract)."""
-    win = _MINI_WINDOW
-    if win is None:
-        return
-    if win._stack.currentWidget() is win._video_page:
-        return   # a file was dropped/forwarded in during the boot beat
+def _maybe_start_music(cfg) -> None:
+    """Full-app-open helper: the music's home is the full app (owner
+    2026-11-18 — "once we open the full player the music didn't start");
+    mini-only sessions stay silent."""
     try:
         from gui.agent_music import maybe_autostart
-        maybe_autostart(win._config)
+        maybe_autostart(cfg)
     except Exception:
-        logging.getLogger(__name__).debug("music autostart failed",
-                                          exc_info=True)
+        logger.debug("music autostart failed", exc_info=True)
 
 
 def _prewarm_mpv_dll() -> None:

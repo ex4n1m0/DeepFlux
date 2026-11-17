@@ -232,6 +232,10 @@ def mini(qapp, tmp_path):
     cfg_path = str(tmp_path / "config.json")
     cfg = DeeptorrentConfig()
     cfg.stats.ping_enabled = False
+    # Music is off in the shared fixture: completing a morph now AUTOSTARTS
+    # the background music when enabled (owner 2026-11-18) — tests that
+    # don't opt in must not spin up a real mpv instance.
+    cfg.ui_background_music = False
     cfg.to_file(cfg_path)
     stub = _StubBackend()
     win = MiniPlayerWindow(DeeptorrentConfig.from_file(cfg_path), cfg_path,
@@ -720,9 +724,12 @@ def test_agent_music_button_toggles_and_yields_to_media(mini, tmp_path, monkeypa
     # The button exists on player-stack platforms and toggles the track on.
     assert main.music_btn is not None
     assert not main.music_btn.isChecked()
+    assert main.music_btn.objectName() == "btn_accent"   # blue when idle
     main.music_btn.click()
     app.processEvents()
     assert main.music_btn.isChecked(), "button must reflect music started"
+    # Owner 2026-11-18 color contract: WHITE while playing, accent blue idle.
+    assert main.music_btn.objectName() == "btn_music_on"
     assert made and made[0].kw["loop_file"] == "inf"
     assert made[0].loads and made[0].loads[0].endswith("t.mp3")
 
@@ -737,6 +744,7 @@ def test_agent_music_button_toggles_and_yields_to_media(mini, tmp_path, monkeypa
     app.processEvents()
     assert made[0].term == 1, "media open must stop the background music"
     assert not main.music_btn.isChecked(), "button must uncheck itself"
+    assert main.music_btn.objectName() == "btn_accent"   # back to blue
 
     # Graceful teardown path also terminates the (restarted) player.
     main.music_btn.click()
@@ -749,22 +757,32 @@ def test_agent_music_button_toggles_and_yields_to_media(mini, tmp_path, monkeypa
     am._CONTROLLER = None
 
 
-def test_mini_idle_music_button_toggles_and_persists(mini, tmp_path, monkeypatch):
-    """Owner 2026-11-18: music starts ON — and the MINI window carries its
-    own ♫ switch (turning music off must never require morphing to the full
-    app). The choice persists: boot autostart reads it back."""
+def test_mini_has_no_music_button(mini):
+    """Owner 2026-11-18 (8.3 feedback): the mini player carries NO ♫ switch —
+    the toggle lives only in the full app's Agent tab, and mini-only
+    sessions are silent by design."""
+    win, _, _ = mini
+    win.show()
+    assert getattr(win, "_music_btn", None) is None
+
+
+def _music_mpv_seam(monkeypatch, tmp_path):
+    """Fake the mpv module for the background-music controller; returns the
+    list of created fake players."""
     import sys as _sys
     import types as _types
     import gui.agent_music as am
-
-    if not am.MUSIC_SUPPORTED:
-        pytest.skip("no bundled player stack on this platform")
 
     made = []
     mod = _types.ModuleType("mpv")
 
     class _P:
+        """Music fake that ALSO survives MpvBackend.create (the video-resume
+        path creates a real backend with the same module) — decorator/item
+        protocol stubs make it usable there, and `kw["loop_file"]` tells the
+        music instance apart from a video one."""
         def __init__(self, **kw):
+            self.kw = kw
             self.loads = []
             self.term = 0
 
@@ -773,6 +791,22 @@ def test_mini_idle_music_button_toggles_and_persists(mini, tmp_path, monkeypatch
 
         def terminate(self):
             self.term += 1
+
+        def property_observer(self, name):
+            def deco(fn):
+                return fn
+            return deco
+
+        def event_callback(self, name):
+            def deco(fn):
+                return fn
+            return deco
+
+        def __setitem__(self, k, v):
+            pass
+
+        def __getitem__(self, k):
+            return None
 
     def _mpv(**kw):
         p = _P(**kw)
@@ -785,21 +819,86 @@ def test_mini_idle_music_button_toggles_and_persists(mini, tmp_path, monkeypatch
     import iptv.player as pm
     monkeypatch.setattr(pm, "ensure_mpv_dll_on_path", lambda: None)
     am._CONTROLLER = None
+    return made
 
-    win, _, _ = mini
+
+def _drive_morph(win, app):
+    win.morph_to_full()
+    deadline = time.time() + 90
+    while not (win._main is not None and not win._morphing
+               and not win.isVisible()):
+        app.processEvents()
+        assert time.time() < deadline, "morph did not complete"
+    # Let post-morph 0/300 ms timers (target dispatch, music autostart) run.
+    end = time.time() + 1.2
+    while time.time() < end:
+        app.processEvents()
+        time.sleep(0.01)
+
+
+def test_morph_to_full_starts_background_music(qapp, tmp_path, monkeypatch):
+    """Owner 2026-11-18 (8.3 feedback: "once we open the full player the
+    music didn't start"): completing the morph starts the looping track when
+    the user hasn't turned it off and no media is being routed/resumed."""
+    import gui.agent_music as am
+    from gui.mini_player import MiniPlayerWindow
+
+    if not am.MUSIC_SUPPORTED:
+        pytest.skip("no bundled player stack on this platform")
+    made = _music_mpv_seam(monkeypatch, tmp_path)
+
+    cfg_path = str(tmp_path / "music_on.json")
+    cfg = DeeptorrentConfig()
+    cfg.stats.ping_enabled = False
+    cfg.ui_background_music = True
+    cfg.to_file(cfg_path)
+    win = MiniPlayerWindow(DeeptorrentConfig.from_file(cfg_path), cfg_path,
+                           backend_factory=lambda: _StubBackend())
     win.show()
-    assert win._music_btn is not None
-    assert not win._music_btn.isChecked()
+    _drive_morph(win, qapp)
+    assert made, "full app opened with nothing playing — music must start"
+    assert made[0].kw["loop_file"] == "inf"
+    assert made[0].loads and made[0].loads[0].endswith("m.mp3")
 
-    win._music_btn.click()            # ON
-    assert win._music_btn.isChecked()
-    assert win._config.ui_background_music is True
-    assert made and made[0].loads
-
-    win._music_btn.click()            # OFF — must persist
-    assert not win._music_btn.isChecked()
+    # Graceful teardown: closeEvent stops the music (no live libmpv at exit).
+    main = win._main
+    main._mini_view = False
+    main.close()
+    for _ in range(20):
+        qapp.processEvents()
     assert made[0].term == 1
-    assert win._config.ui_background_music is False
-    from config import DeeptorrentConfig as _C
-    assert _C.from_file(win._config_path).ui_background_music is False
+    am._CONTROLLER = None
+
+
+def test_morph_suppresses_music_when_media_resumes(qapp, tmp_path, monkeypatch):
+    """The morph's last-video auto-resume is media — media always wins over
+    music, so the track must NOT start."""
+    import gui.agent_music as am
+    from gui.mini_player import MiniPlayerWindow
+
+    if not am.MUSIC_SUPPORTED:
+        pytest.skip("no bundled player stack on this platform")
+    made = _music_mpv_seam(monkeypatch, tmp_path)
+
+    cfg_path = str(tmp_path / "music_on2.json")
+    cfg = DeeptorrentConfig()
+    cfg.stats.ping_enabled = False
+    cfg.ui_background_music = True
+    cfg.to_file(cfg_path)
+    stub = _StubBackend()
+    win = MiniPlayerWindow(DeeptorrentConfig.from_file(cfg_path), cfg_path,
+                           backend_factory=lambda: stub)
+    win.show()
+    media = str(tmp_path / "watched.mp4")
+    with open(media, "wb") as f:
+        f.write(b"v" * 512)
+    win.open_media(media)          # sets _last_media
+    _drive_morph(win, qapp)
+    music = [p for p in made if "loop_file" in p.kw]
+    assert not music, "video resumed in the Play tab — music must stay off"
+    main = win._main
+    main._mini_view = False
+    main.close()
+    for _ in range(20):
+        qapp.processEvents()
     am._CONTROLLER = None

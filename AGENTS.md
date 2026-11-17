@@ -623,24 +623,33 @@
   the hover poll is CHROME-ONLY now (`_rail_*` symbols all removed);
   pure fullscreen (`set_video_pure_chrome`) snapshots only the agent
   panel. Do not re-add a left rail or rail-adjacent pollers.
-- AGENT BACKGROUND MUSIC (8.3, owner 2026-11-18, `gui/agent_music.py`): a
-  ♫ toggle in the agent input row AND the mini player's idle row plays the
-  bundled repo-root `backgroundmusic.mp3` (owner file, 74.5 MB / 1h17m,
-  committed; ships via app.spec + app_linux.spec datas — macOS has NO
-  button, no file). Audio-only second libmpv (`video=False` so ID3 cover
-  art can never open a window, `loop_file="inf"`, volume knob =
-  `agent_music.VOLUME`). STARTS ON at boot (owner: "background music starts
-  on") via `maybe_autostart` — config `ui_background_music` (top-level
-  like ui_font_size: the agent can NEVER set it), default True, toggling
-  either button PERSISTS (an explicit OFF stays off). Contract: ANY media
-  opening stops it (`stop_agent_music()` hooks: mini open_media,
-  PlayerWidget.play, GridTile.assign — browser-tab web video does NOT
-  count) and it never auto-resumes; MainWindow.closeEvent terminates the
-  handle (live-libmpv-at-exit class). Buttons sync via controller
-  state listeners (BOTH windows can be alive across morphs). Setup exe
-  grows ~75 MB from the track (8.3 ≈ 511 MB, still under the ~750 MiB
-  Vercel cap). Tests: tests/test_agent_music.py (fake-mpv seam +
-  source-pinned hooks), tests/test_mini_player.py (button e2e + persist).
+- AGENT BACKGROUND MUSIC (8.3/8.4, owner 2026-11-18, `gui/agent_music.py`):
+  a ♫ toggle in the agent input row ONLY plays the bundled repo-root
+  `backgroundmusic.mp3` (owner file, 74.5 MB / 1h17m, committed; ships via
+  app.spec + app_linux.spec datas — macOS has NO button, no file; the mini
+  player has NO button either, owner removed it after 8.3 — mini-only
+  sessions are silent by design). Audio-only second libmpv (`video=False`
+  so ID3 cover art can never open a window, `loop_file="inf"`, volume knob
+  = `agent_music.VOLUME`). STARTS when the FULL app opens (owner: "once we
+  open the full player the music didn't start") — both entry points call
+  `maybe_autostart`: run_gui's post-show timer (skipped on association
+  launches) and the mini→full morph completion's else-branch (suppressed
+  when a target routes or the last video auto-resumes — media wins).
+  Config `ui_background_music` (top-level like ui_font_size: the agent can
+  NEVER set it), default True, the ♫ toggle PERSISTS (explicit OFF stays
+  off). Contract: ANY media opening stops it (`stop_agent_music()` hooks:
+  mini open_media, PlayerWidget.play, GridTile.assign — browser-tab web
+  video does NOT count) and it never auto-resumes; music playing when the
+  full app morphs back to mini KEEPS playing (no toggle there — the
+  contract hooks stop it on media); MainWindow.closeEvent terminates the
+  handle (live-libmpv-at-exit class). Button colors (owner 2026-11-18):
+  WHITE fill while playing (`QPushButton#btn_music_on`, dark #0a1a2e text
+  — the one non-white color literal, in SEMANTIC_TEXT_COLORS), accent
+  BLUE when idle (btn_accent); swapped via the YOLO objectName+repolish
+  pattern in `_sync_music_button`. Tests: tests/test_agent_music.py
+  (fake-mpv seam + source-pinned hooks), tests/test_mini_player.py (button
+  e2e incl. color contract, morph-autostart + media suppression,
+  no-mini-button pin).
 - MATRIX RAIN SPEED (owner 2026-11-18 "reduce the speed"):
   `gui/matrix_rain.py` SPEED_MIN/MAX 0.12–0.55 cells/tick (was 0.25–1.1
   at the same 18 fps); pinned by tests/test_matrix_rain.py.

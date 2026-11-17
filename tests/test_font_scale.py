@@ -395,6 +395,7 @@ SEMANTIC_TEXT_COLORS = {
     "#ff3366", "#ff6b6b", "#ff8080", "#ff5555", "#ff6666",  # error reds
     "#e67e22", "#f0b490",   # warning oranges (record, buffering, agent .e)
     "#5a7a6a",               # quiet-ok green
+    "#0a1a2e",               # dark text pinned on the ♫ music-on WHITE fill
 }
 
 
