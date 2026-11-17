@@ -177,6 +177,62 @@ def test_agent_navigation_is_blocked_in_private_tab(app):
     window._browser_new_tab.assert_not_called()
 
 
+def _navigable_window():
+    window = QObject()
+    current = MagicMock()
+    current.property.return_value = False  # not a private tab
+    window._current_browser_view = MagicMock(return_value=current)
+    window._browser_new_tab = MagicMock()
+    window._browser_go_home = MagicMock()
+    window.config = MagicMock()
+    window.config.browser.search_engine = "google"
+    window.main_tabs = MagicMock()
+    return window
+
+
+def test_agent_navigation_does_not_steal_the_main_tab(app):
+    # Owner request 2026-11-17: agent browsing runs in the background — the
+    # user keeps reading the Agent tab. _do_navigate used to call _focus()
+    # which forced the Browse tab forward on every agent search.
+    window = _navigable_window()
+    bridge = BrowserBridge(window)
+    pending = _PendingCall()
+
+    bridge._do_navigate(pending, "example.com", new_tab=True)
+
+    assert pending.result["success"] is True
+    window.main_tabs.setCurrentWidget.assert_not_called()
+
+
+def test_agent_go_home_does_not_steal_the_main_tab(app):
+    window = _navigable_window()
+    bridge = BrowserBridge(window)
+    pending = _PendingCall()
+
+    bridge._do_go(pending, action="home")
+
+    assert pending.result["success"] is True
+    window._browser_go_home.assert_called_once()
+    window.main_tabs.setCurrentWidget.assert_not_called()
+
+
+def test_agent_switch_tab_does_not_steal_the_main_tab(app):
+    window = _navigable_window()
+    tabs = MagicMock()
+    tabs.currentIndex.return_value = 0
+    tabs.count.return_value = 2
+    tabs.widget.return_value.url().toString.return_value = ""
+    window.browser_tabs = tabs
+    bridge = BrowserBridge(window)
+    pending = _PendingCall()
+
+    bridge._do_switch_tab(pending, index=0)
+
+    assert pending.result["success"] is True
+    tabs.setCurrentIndex.assert_called_once_with(0)
+    window.main_tabs.setCurrentWidget.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Real-page regression tests (no network: setHtml with a synthetic origin).
 #
@@ -350,6 +406,17 @@ def test_channel_download_plain_file_uses_http_job(app):
         "https://source.example/file.zip", "file", "File") is True
     window._dl_engine.add_job.assert_called_once()
     window._dl_engine.add_youtube_job.assert_not_called()
+
+
+def test_channel_download_does_not_steal_the_main_tab(app):
+    # Owner request 2026-11-17: page-initiated downloads must not yank the
+    # user off the page they are browsing — the toast reports the download.
+    window = _routable_window()
+    bridge = BrowserChannelBridge(window, parent=window)
+
+    assert bridge.sendDownload(
+        "https://source.example/file.zip", "file", "File") is True
+    window.main_tabs.setCurrentWidget.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

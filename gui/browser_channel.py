@@ -192,7 +192,8 @@ class BrowserChannelBridge(QObject):
                     referrer=referrer, source_url=referrer,
                 )
             self._window._notify("Download started", job.filename, path=job.save_path)
-            self._window.main_tabs.setCurrentWidget(self._window._torrents_tab)
+            # No tab jump: the toast already reports the download; the user
+            # keeps browsing the page they were on (owner request 2026-11-17).
             return True
         except Exception as exc:
             logger.warning("WebChannel sendDownload failed: %s", exc)

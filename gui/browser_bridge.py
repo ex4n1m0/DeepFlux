@@ -134,10 +134,6 @@ class BrowserBridge(QObject):
     def _view(self):
         return self._window._current_browser_view()
 
-    def _focus(self) -> None:
-        """Bring the Browse tab forward so the user sees agent navigation."""
-        self._window.main_tabs.setCurrentWidget(self._window._browser_tab)
-
     @staticmethod
     def _finish(pending: _PendingCall, result: Dict[str, Any]) -> None:
         with pending.lock:
@@ -241,7 +237,9 @@ class BrowserBridge(QObject):
             self._window._browser_new_tab(url=QUrl(target))
         else:
             self._view().load(QUrl(target))
-        self._focus()
+        # Deliberately NO main-tab focus: agent navigation runs in the
+        # background while the user keeps reading the Agent tab (owner
+        # request 2026-11-17 — automatic tab jumps are annoying).
         self._finish(pending, {
             "success": True,
             "navigation_started": True,
@@ -274,7 +272,6 @@ class BrowserBridge(QObject):
                                    "error": f"Tab index {idx} out of range (0-{tabs.count() - 1})."})
             return
         tabs.setCurrentIndex(idx)
-        self._focus()
         self._finish(pending, {"success": True, "active_index": idx})
 
     def _do_go(self, pending: _PendingCall, action: str = "") -> None:
@@ -293,7 +290,6 @@ class BrowserBridge(QObject):
             view.stop()
         elif action == "home":
             self._window._browser_go_home()
-            self._focus()
         else:
             self._finish(pending, {"success": False,
                                    "error": "action must be back|forward|reload|stop|home"})

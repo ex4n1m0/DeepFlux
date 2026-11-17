@@ -115,6 +115,27 @@ def test_agent_panel_submit_signal(qapp):
     assert panel.input.text() == ""  # cleared after submit
 
 
+def test_agent_event_tool_end_does_not_jump_tabs(qapp):
+    # Owner request 2026-11-17: the agent queuing a download must not switch
+    # the main tab — the user stays on the Agent tab; the event line reports
+    # the queued job. _on_agent_event used to jump to the Torrents tab.
+    import types
+    from unittest.mock import MagicMock
+    host = QWidget()
+    host.main_tabs = MagicMock()
+    host._torrents_tab = MagicMock()
+    host._append_event = MagicMock()
+    host._append_debug = MagicMock()
+    host._TOOL_LABELS = {}  # instance attr in MainWindow.__init__
+    host.config = MagicMock()
+    host.config.ui_agent_debug = False
+    handler = types.MethodType(MainWindow._on_agent_event, host)
+    handler({"type": "tool_end", "tool": "add_download",
+             "result": {"success": True, "job_id": "abc"}})
+    host.main_tabs.setCurrentWidget.assert_not_called()
+    host._append_event.assert_called()
+
+
 def test_agent_panel_mirrors_and_trims(qapp):
     from gui.agent_panel import _MAX_BLOCKS
     panel = AgentPanel()

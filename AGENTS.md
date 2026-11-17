@@ -623,6 +623,22 @@
   the hover poll is CHROME-ONLY now (`_rail_*` symbols all removed);
   pure fullscreen (`set_video_pure_chrome`) snapshots only the agent
   panel. Do not re-add a left rail or rail-adjacent pollers.
+- NO AUTOMATIC MAIN-TAB JUMPS (owner decision 2026-11-17, "automatic tabs
+  jumping are annoying"): background work must NEVER switch the main tab —
+  the user keeps reading whatever tab they are on. Removed that day:
+  BrowserBridge._focus (agent browser_navigate/browser_switch_tab/go-home
+  used to force the Browse tab forward on every agent search),
+  `_on_agent_event`'s add_download/add_magnet/add_torrent_file success jump,
+  `_route_browser_download`'s, `_on_browser_download_state`'s and
+  `_on_downloaded_torrent_file`'s jumps, and browser_channel.sendDownload's
+  jump (the toast/agent-message feedback stays). Deliberately KEPT (direct
+  user intent, do not "fix" these): menus/shortcuts/tab-icon actions,
+  Ctrl+L/find, drag&drop adds, chat search-result link clicks, the Add
+  Magnet dialog, `open_target` external opens (they also raise the window),
+  and IPTV play focus (iptv_tab `_focus_tab` — playing means watching).
+  Pinned by tests/test_browser_bridge.py (navigate/go-home/switch/channel
+  no-steal tests) + tests/test_v5_ui.py::test_agent_event_tool_end_does_
+  not_jump_tabs. Re-adding a jump anywhere needs a new owner decision.
 - FAULTHANDLER CRASH LOG (main.py::_enable_crash_log, added 7.4 2026-11-06;
   fixed 2026-11-07 after it KILLED the app 11x that night): on Windows
   `faulthandler.enable()` registers a VECTORED exception handler that fires

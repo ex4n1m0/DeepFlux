@@ -5353,12 +5353,9 @@ class MainWindow(QMainWindow):
                     self._append_event(f"  ✅ {label} done")
                 if self.config.ui_agent_debug and event.get("result") is not None:
                     self._append_debug(event["result"])
-                # Surface the Download tab when the agent queued a transfer,
-                # so the user sees where it went.
-                result = event.get("result")
-                if (tool in ("add_download", "add_magnet", "add_torrent_file")
-                        and isinstance(result, dict) and result.get("success")):
-                    self.main_tabs.setCurrentWidget(self._torrents_tab)
+                # No tab jump when the agent queues a transfer — the user
+                # stays on the Agent tab (owner request 2026-11-17: automatic
+                # tab jumps are annoying; the event line above reports it).
             elif etype == "watchdog":
                 message = event.get("message", "")
                 if message:
@@ -5714,8 +5711,8 @@ class MainWindow(QMainWindow):
                 )
             self._append_event(f"⬇ Download started: {name} → Download Manager")
             self._notify("Download started", name, path=job.save_path)
-            # Surface the Download tab so the user sees where the file went.
-            self.main_tabs.setCurrentWidget(self._torrents_tab)
+            # No tab jump: the toast + event line above already report where
+            # the file went (owner request 2026-11-17 — no automatic jumps).
         except Exception as exc:
             logger.warning("Browser download failed to start: %s", exc)
             self._append_error(f"Download failed to start: {name} ({exc})")
@@ -5751,8 +5748,8 @@ class MainWindow(QMainWindow):
                 f"- **Info hash:** `{info_hash}`\n"
                 f"- **Save path:** `{self.config.default_save_path}`"
             )
-            # Surface the Agent tab so the new torrent is visible.
-            self.main_tabs.setCurrentWidget(self._torrents_tab)
+            # No tab jump on the auto-added torrent (owner request
+            # 2026-11-17): the agent message above reports it.
             self._refresh()
             self._persist_torrent_state()
         except Exception as exc:
@@ -5928,7 +5925,8 @@ class MainWindow(QMainWindow):
                 os.unlink(path)
             except OSError:
                 pass
-            self.main_tabs.setCurrentWidget(self._torrents_tab)
+            # No tab jump on the auto-added torrent (owner request
+            # 2026-11-17): the agent message above reports it.
             self._refresh()
         except Exception as exc:
             self._append_error(f"Downloaded torrent could not be added: {exc}")
