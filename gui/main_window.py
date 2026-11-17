@@ -270,13 +270,43 @@ class _ChatHistoryEdit(QTextBrowser):
         self._scaled_logo = QPixmap()
         self._logo_visible = True
         self._rescale_logo()
+        # Matrix digital rain behind the idle banner (owner request
+        # 2026-11-17, modeled on the analyzed catch22.net matrix.scr). Runs
+        # ONLY while the logo is visible (pre-first-message) and the widget
+        # is on screen; the effect paints behind the banner's margins.
+        from gui.matrix_rain import FPS, MatrixRain
+        self._rain = MatrixRain()
+        self._rain_timer = QTimer(self)
+        self._rain_timer.setInterval(int(1000 / FPS))
+        self._rain_timer.timeout.connect(self._on_rain_tick)
+
+    def _on_rain_tick(self) -> None:
+        if self._logo_visible and not self.isHidden():
+            self._rain.tick()
+            self.viewport().update()
+
+    def _sync_rain_timer(self) -> None:
+        running = self._logo_visible and not self.isHidden()
+        if running and not self._rain_timer.isActive():
+            self._rain_timer.start()
+        elif not running and self._rain_timer.isActive():
+            self._rain_timer.stop()
 
     def set_logo_visible(self, visible: bool) -> None:
         """Show/hide the logo background (hidden once the conversation starts
         so the chat becomes plain black and text is always easy to read)."""
         if self._logo_visible != visible:
             self._logo_visible = visible
+            self._sync_rain_timer()
             self.viewport().update()
+
+    def showEvent(self, event) -> None:
+        self._sync_rain_timer()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:
+        self._sync_rain_timer()
+        super().hideEvent(event)
 
     def _rescale_logo(self) -> None:
         if self._logo.isNull():
@@ -310,6 +340,9 @@ class _ChatHistoryEdit(QTextBrowser):
             gradient.setColorAt(0, QColor(self.BG_GRADIENT_START))
             gradient.setColorAt(1, QColor(self.BG_GRADIENT_END))
             painter.fillRect(rect, gradient)
+            # Rain behind the logo: the banner's solid center stays crisp,
+            # the letterbox margins carry the effect.
+            self._rain.paint(painter, rect)
         else:
             painter.fillRect(rect, QColor("#000000"))
         if self._logo_visible and not self._scaled_logo.isNull():
