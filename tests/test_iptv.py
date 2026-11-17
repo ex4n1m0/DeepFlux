@@ -5898,3 +5898,39 @@ def test_xtream_request_caps_hostile_panel(monkeypatch):
         with _pytest.raises(ValueError):
             X._request(src, "http://x:80/player_api.php?u=a&p=b&action=x")
     assert resp.closed
+
+
+def test_player_keys_forward_from_tab_when_focus_stranded():
+    """←/→ seek works even when the player widget lacks keyboard focus.
+
+    Owner report 2026-11-17: arrow seeking "not working on the full player".
+    In SVP out-of-process mode the video is a foreign child window that never
+    takes Qt focus (WS_EX_NOACTIVATE), so focus stays stranded on the tab and
+    PlayerWidget.keyPressEvent never fires — the tab now forwards unhandled
+    keys to the player while no input/list owns the keyboard."""
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication, QLineEdit, QPushButton, QTableWidget, QWidget
+    from unittest.mock import MagicMock
+
+    from config import DeeptorrentConfig
+    from gui import iptv_tab as tab_mod
+    from gui.iptv_tab import player_keys_blocked_by_focus
+
+    QApplication.instance() or QApplication([])
+    # The focus guard: inputs/lists/buttons/sliders keep their own keys;
+    # plain widgets (and no focus at all) let the player keys through.
+    assert player_keys_blocked_by_focus(None) is False
+    assert player_keys_blocked_by_focus(QWidget()) is False
+    assert player_keys_blocked_by_focus(QLineEdit()) is True
+    assert player_keys_blocked_by_focus(QTableWidget()) is True
+    assert player_keys_blocked_by_focus(QPushButton()) is True
+
+    tab = tab_mod.IPTVTab(DeeptorrentConfig())
+    backend = MagicMock()
+    tab._player._backend = backend
+    # Offscreen QPA grants no focus -> focusWidget() is None -> forwarding on.
+    tab.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Right, Qt.NoModifier))
+    backend.seek_by.assert_called_once_with(10)
+    tab.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Left, Qt.NoModifier))
+    assert [c.args for c in backend.seek_by.call_args_list] == [(10,), (-10,)]

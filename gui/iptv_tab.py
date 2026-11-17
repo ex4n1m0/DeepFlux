@@ -37,7 +37,10 @@ from PySide6.QtCore import (Qt, QPoint, QTimer, QUrl, Signal, QObject, QSize,
 from PySide6.QtGui import (QColor, QCursor, QDesktopServices, QFontMetrics,
                            QPainter, QPen, QPixmap, QIcon)
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractItemView,
+    QAbstractSlider,
+    QApplication,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -49,6 +52,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -60,6 +64,7 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QToolTip,
     QTreeWidget,
     QTreeWidgetItem,
@@ -149,6 +154,24 @@ def _toggle_accent(btn: QPushButton, on: bool) -> None:
     """Show a checkable button's state — global QSS has no :checked rule."""
     btn.setObjectName("btn_accent" if on else "")
     btn.style().polish(btn)
+
+
+def player_keys_blocked_by_focus(widget) -> bool:
+    """True when the focused widget legitimately owns its arrows/space.
+
+    Player keys (←/→ seek, Space, F…) live in PlayerWidget.keyPressEvent and
+    only fire when the PLAYER holds keyboard focus. In SVP out-of-process
+    mode the video is a foreign child window that never takes Qt focus
+    (WS_EX_NOACTIVATE — clicks on the video leave focus wherever it was), so
+    the tab forwards unhandled keys to the player — except while the user is
+    typing in an input or navigating a list/grid/button/slider, which keep
+    their own key behavior."""
+    if widget is None:
+        return False
+    return isinstance(widget, (
+        QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QAbstractItemView,
+        QAbstractButton, QAbstractSlider,
+    ))
 
 
 class _IPTVSignals(QObject):
@@ -1145,6 +1168,11 @@ class PlayerWidget(QWidget):
         self._loading_started = time.monotonic()
         self._backend.play(
             getattr(item, "url", ""), headers=self._playback_headers(item))
+        # Seat keyboard focus on the player so ←/→/Space/F work immediately —
+        # in SVP out-of-process mode the video child window never takes Qt
+        # focus, so nothing else would put it here (owner report 2026-11-17:
+        # arrow seeking "not working on the full player").
+        self.setFocus()
 
     def _retry(self) -> None:
         if self._current_item:
@@ -4918,6 +4946,20 @@ class IPTVTab(QWidget):
             self._layout_detail_overlay()
         else:
             self._play_item(item)
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        # Forward unhandled keys to the player while something is playing and
+        # no input/list owns the keyboard (see player_keys_blocked_by_focus).
+        # Key events the focused child consumed never reach here, so channel
+        # list navigation keeps working; this only rescues the stranded case
+        # where focus sits on the tab/window itself.
+        player = self._player
+        if (player is not None and player._backend is not None
+                and not player_keys_blocked_by_focus(QApplication.focusWidget())):
+            player.keyPressEvent(event)
+            if event.isAccepted():
+                return
+        super().keyPressEvent(event)
 
     def _play_item(self, item: Any) -> None:
         # Metadata overlay is a separate zone over the idle player — once
