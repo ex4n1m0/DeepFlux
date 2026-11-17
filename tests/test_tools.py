@@ -1022,7 +1022,7 @@ def test_fresh_install_has_no_api_keys(monkeypatch):
 
     from config import (
         DeeptorrentConfig,
-        _SHARED_DEEPSEEK_API_KEY,
+        _SHARED_VENICE_API_KEY,
         _SHARED_PERPLEXITY_API_KEY,
         _SHARED_TMDB_API_KEY,
         _SHARED_OPENSUBTITLES_API_KEY,
@@ -1032,12 +1032,12 @@ def test_fresh_install_has_no_api_keys(monkeypatch):
         _SHARED_FANARTTV_API_KEY,
     )
 
-    for var in ("DEEPSEEK_API_KEY", "JACKETT_API_KEY", "BRAVE_API_KEY"):
+    for var in ("DEEPSEEK_API_KEY", "VENICE_API_KEY", "JACKETT_API_KEY", "BRAVE_API_KEY"):
         monkeypatch.delenv(var, raising=False)
 
     with tempfile.TemporaryDirectory() as td:
         cfg = DeeptorrentConfig.from_file(os.path.join(td, "missing.json"))
-    assert cfg.llm.api_key == _SHARED_DEEPSEEK_API_KEY
+    assert cfg.llm.api_key == _SHARED_VENICE_API_KEY
     assert cfg.web_search.api_key == _SHARED_PERPLEXITY_API_KEY
     assert cfg.iptv.tmdb_api_key == _SHARED_TMDB_API_KEY
     assert cfg.iptv.opensubtitles_api_key == _SHARED_OPENSUBTITLES_API_KEY

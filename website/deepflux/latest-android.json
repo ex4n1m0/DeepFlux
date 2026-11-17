@@ -1,0 +1,9 @@
+{
+  "version": "1.4.12",
+  "versionCode": 28,
+  "file": "DeepFlux-1.4.12-Android.apk",
+  "size": 58061341,
+  "sha256": "47d426e7df011dc3b399b79c18490ffec0bc050ef88581cebdbc5bd89fc1db4f",
+  "released": "2026-11-17",
+  "notes": "Uncensored agent: the built-in AI now runs on an uncensored DeepSeek (Venice AI) instead of the standard cloud model - same chat, same tools, no content-filtering guardrails, out of the box. If you saved your own API key in Settings, note it must now be a Venice AI key (the custom-key field overrides the built-in one)."
+}

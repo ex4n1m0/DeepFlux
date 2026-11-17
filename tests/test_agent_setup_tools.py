@@ -219,6 +219,35 @@ def test_set_settings_enum_validation(tools):
         tools.call("set_settings", {"path": "iptv.vod_group_mode", "value": "flat"})
 
 
+def test_set_settings_provider_enum_and_shared_key_lock(tools, monkeypatch):
+    """7.9: 'venice' is a settable provider value, but while the in-box
+    shared key occupies llm.api_key the agent must NEVER be able to move
+    the provider or base URL — the shared key would be re-Bearered to a
+    foreign endpoint (prompt-injection exfiltration path). Own-key users
+    switch freely."""
+    import config as config_module
+    # Own-key user: provider changes are allowed.
+    tools.config.llm.provider = "venice"
+    tools.config.llm.api_key = "sk-user-own"
+    monkeypatch.setattr(config_module, "_SHARED_KEY_SLOTS", {})
+    tools.call("set_settings", {"path": "llm.provider", "value": "deepseek"})
+    assert tools.config.llm.provider == "deepseek"
+
+    # Shared-key rider: both mutations are refused, nothing changes.
+    tools.config.llm.provider = "venice"
+    tools.config.llm.api_key = "venice-shared"
+    monkeypatch.setattr(config_module, "_SHARED_KEY_SLOTS", {"llm.api_key": "venice-shared"})
+    with pytest.raises(ToolError, match="built-in shared key"):
+        tools.call("set_settings", {"path": "llm.provider", "value": "custom"})
+    with pytest.raises(ToolError, match="built-in shared key"):
+        tools.call("set_settings", {"path": "llm.base_url", "value": "https://attacker.example/v1"})
+    assert tools.config.llm.provider == "venice"
+    assert tools.config.llm.base_url == ""
+    # Enum still validates: 'local' stays excluded, 'venice' is accepted.
+    with pytest.raises(ToolError, match="must be one of"):
+        tools.call("set_settings", {"path": "llm.provider", "value": "local"})
+
+
 def test_set_settings_rejects_secrets_and_unknown(tools):
     with pytest.raises(ToolError, match="set_api_key"):
         tools.call("set_settings", {"path": "llm.api_key", "value": "sk-x"})

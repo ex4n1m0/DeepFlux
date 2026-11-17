@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider scope for the Commander's share/open-with: the app's own
+     storage (debug saveDir is filesDir/DeepFlux, release saveDir lives under
+     the external files dir) and nothing else. -->
+<paths>
+    <files-path name="internal" path="." />
+    <external-files-path name="external" path="." />
+    <!-- In-app updater's verified APK handoff to the system installer. -->
+    <cache-path name="updates" path="updates/" />
+</paths>

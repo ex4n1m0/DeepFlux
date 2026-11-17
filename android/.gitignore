@@ -1,0 +1,7 @@
+# Extra safety on top of the ROOT .gitignore (which already ignores
+# build/ and *.exe globally). Local machine state only:
+.gradle/
+.kotlin/
+local.properties
+app/embedded_key.properties
+keystore.properties

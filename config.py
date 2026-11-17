@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "7.8"
+APP_VERSION = "7.9"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -92,6 +92,9 @@ def _remember_shared_slot(path: str, value: str, shared: str) -> None:
 
 
 _SHARED_DEEPSEEK_API_KEY = _load_shared_key("SHARED_DEEPSEEK_API_KEY")
+# Since 7.9 (owner 2026-11-17) the shipped DEFAULT agent is Venice AI's
+# uncensored DeepSeek V4.1 Flash — this key is the out-of-box one now.
+_SHARED_VENICE_API_KEY = _load_shared_key("SHARED_VENICE_API_KEY")
 _SHARED_PERPLEXITY_API_KEY = _load_shared_key("SHARED_PERPLEXITY_API_KEY")
 _SHARED_TMDB_API_KEY = _load_shared_key("SHARED_TMDB_API_KEY")
 _SHARED_OPENSUBTITLES_API_KEY = _load_shared_key("SHARED_OPENSUBTITLES_API_KEY")
@@ -125,6 +128,22 @@ def llm_key_is_shared() -> bool:
 # Provider capability metadata controls payload differences instead of assuming
 # every endpoint accepts DeepSeek-specific fields.
 LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
+    # DEFAULT since 7.9 (owner 2026-11-17): uncensored DeepSeek V4.1 Flash
+    # (abliterated variant) through Venice's OpenAI-compatible API. Verified
+    # live: function calling + reasoning effort (none/low/high/max — NO
+    # "medium", mapped away below) + SSE streaming all work; 1M ctx / 131K
+    # out; ~10% price premium over the censored direct model.
+    "venice": {
+        "label": "Venice AI (uncensored DeepSeek)",
+        "base_url": "https://api.venice.ai/api/v1",
+        "models": ["deepseek-v4-1-flash-uncensored"],
+        "reasoning_effort": True,
+        "effort_map": {"medium": "high"},
+        "streaming": True,
+        "tools": True,
+        "key_hint": "Get one at https://venice.ai/settings-api\n"
+                    "Uncensored DeepSeek V4.1 Flash, private inference.",
+    },
     "deepseek": {
         "label": "DeepSeek API (direct)",
         "base_url": "https://api.deepseek.com",
@@ -180,17 +199,23 @@ LLM_PROVIDER_PRESETS: Dict[str, Dict[str, Any]] = {
 
 @dataclass
 class LLMConfig:
-    provider: str = "deepseek"  # deepseek (direct API) or openrouter
+    # DEFAULT since 7.9 (owner 2026-11-17): venice = uncensored DeepSeek via
+    # Venice AI; deepseek/openrouter/custom/local remain explicit choices.
+    provider: str = "venice"  # venice (uncensored DeepSeek) / deepseek / openrouter / custom / local
     api_key: str = ""
     base_url: str = ""
-    # Model lineup per DeepSeek's pricing page (2026-09): deepseek-flash is
-    # V4.1-Flash — DeepSeek's own current default, surpassing the retiring
-    # deepseek-v4-pro in performance, cost and speed (v4-pro requests are
-    # auto-routed to Flash from 2026-09-14). Both slots default to flash.
-    model: str = "deepseek-flash"        # main agent model — locked to DeepSeek
+    # Model lineup: empty = the provider preset's default (venice ships
+    # deepseek-v4-1-flash-uncensored — Venice's abliterated DeepSeek V4.1
+    # Flash, verified live 2026-11-17: function calling + reasoning effort
+    # + SSE all work, 1M ctx). An explicit default MODEL name here would
+    # ride along when a config omits the field and 404 on other providers
+    # (openrouter needs vendor slugs), so "" is deliberate. The direct
+    # API's deepseek-flash is V4.1-Flash (2026-09 lineup). fast_model ""
+    # means summaries fall back to the main model.
+    model: str = ""                      # main agent model ("" = preset default)
     reasoning_effort: str = "high"       # planning turns; summaries always use "low"
     custom_reasoning_effort: bool = False
-    fast_model: str = "deepseek-flash"   # summaries/quick replies
+    fast_model: str = ""                 # summaries/quick replies ("" = main model)
     max_turns: int = 40             # ReAct loop cap per user message; the loop self-terminates when the model stops calling tools
     max_llm_calls: int = 50
     max_tool_calls: int = 100
@@ -753,6 +778,7 @@ class DeeptorrentConfig:
         # user-typed key never matches and is kept.
         for _path, _shared in (
             (("llm", "api_key"), _SHARED_DEEPSEEK_API_KEY),
+            (("llm", "api_key"), _SHARED_VENICE_API_KEY),
             (("web_search", "api_key"), _SHARED_PERPLEXITY_API_KEY),
             (("iptv", "tmdb_api_key"), _SHARED_TMDB_API_KEY),
             (("iptv", "opensubtitles_api_key"), _SHARED_OPENSUBTITLES_API_KEY),
@@ -790,17 +816,61 @@ class DeeptorrentConfig:
         # base URL too — a leftover 127.0.0.1:8199 base would make the
         # deepseek provider POST to the local server.
         if _llm.get("provider") == "local" and not _llm.get("local_chosen"):
-            _llm["provider"] = "deepseek"
-            _llm["model"] = "deepseek-flash"
-            _llm["fast_model"] = "deepseek-flash"
+            _llm["provider"] = "venice"
+            _llm["model"] = "deepseek-v4-1-flash-uncensored"
+            _llm["fast_model"] = ""
             _llm["base_url"] = ""
+        # 7.9 migration (owner 2026-11-17): the shipped default agent moved
+        # from the shared DeepSeek direct key to Venice AI's UNCENSORED
+        # DeepSeek V4.1 Flash. Installs still riding the shared key (the
+        # pre-scrub above already blanked it), keyless installs, and
+        # fossilized "dummy" configs flip to venice — but ONLY when a
+        # Venice key actually exists to move onto (keyless builds keep
+        # their demo mode instead of flip-flopping), and never when the
+        # user's OWN key (saved, or via the DEEPSEEK_API_KEY env var) or an
+        # explicit provider choice (openrouter/custom/stamped-local) is in
+        # play. Runs BEFORE the key injection so the flipped config gets
+        # the built-in Venice key; stale direct-API model names move to the
+        # venice default (a genuinely custom model id survives).
+        if (_llm.get("provider") in ("deepseek", "dummy")
+                and not _llm.get("api_key")
+                and not os.environ.get("DEEPSEEK_API_KEY")
+                and (_SHARED_VENICE_API_KEY or os.environ.get("VENICE_API_KEY"))):
+            _llm["provider"] = "venice"
+            if _llm.get("model") in (
+                    "deepseek-flash", "deepseek-v4-flash",
+                    "deepseek-v4-flash-vision-exp", "deepseek-chat",
+                    "deepseek-reasoner", "deepseek-v4-pro"):
+                _llm["model"] = "deepseek-v4-1-flash-uncensored"
+            _llm["fast_model"] = ""   # any direct-API fast name is invalid on venice
+            _llm["base_url"] = ""
+        # Key injection: venice is the shipped default since 7.9 — its
+        # shared key (or VENICE_API_KEY env) fills the slot for
+        # venice/keyless/dummy; the shared DeepSeek key still fills an
+        # EXPLICIT deepseek choice under the same rules.
         if (not _llm.get("api_key")
-                and _llm.get("provider", "deepseek") in ("", "deepseek", "dummy")):
+                and _llm.get("provider") == "deepseek"):
             _llm["api_key"] = (
                 os.environ.get("DEEPSEEK_API_KEY") or _SHARED_DEEPSEEK_API_KEY)
             _remember_shared_slot("llm.api_key", _llm["api_key"], _SHARED_DEEPSEEK_API_KEY)
-            if _llm.get("provider") == "dummy" and _llm["api_key"]:
-                _llm["provider"] = "deepseek"
+        elif (not _llm.get("api_key")
+                and os.environ.get("DEEPSEEK_API_KEY")
+                and _llm.get("provider") in (None, "", "dummy")):
+            # A machine-level DEEPSEEK_API_KEY env var is an explicit
+            # DeepSeek choice (fresh install or keyless dummy fossil) —
+            # heal with THAT key, not the venice default.
+            _llm["api_key"] = os.environ["DEEPSEEK_API_KEY"]
+            _llm["provider"] = "deepseek"
+        elif (not _llm.get("api_key")
+                and _llm.get("provider", "venice") in ("", "venice", "dummy")):
+            _llm["api_key"] = (
+                os.environ.get("VENICE_API_KEY") or _SHARED_VENICE_API_KEY)
+            _remember_shared_slot("llm.api_key", _llm["api_key"], _SHARED_VENICE_API_KEY)
+            # Heal both the keyless-boot dummy fossil and an explicitly
+            # EMPTY provider string (hand-edited config) to venice — an
+            # empty provider with a key would crash client construction.
+            if _llm.get("provider") in ("", "dummy") and _llm["api_key"]:
+                _llm["provider"] = "venice"
         if not data.get("indexer", {}).get("api_key") and os.environ.get("JACKETT_API_KEY"):
             data.setdefault("indexer", {})["api_key"] = os.environ["JACKETT_API_KEY"]
         if not data.get("web_search", {}).get("brave_api_key") and os.environ.get("BRAVE_API_KEY"):
@@ -918,7 +988,7 @@ class DeeptorrentConfig:
         # (written by <=3.5.8 settings saves) move to Flash now instead of
         # showing/being billed as the outgoing model. Custom endpoints are
         # never remapped — they may legitimately serve these exact names.
-        _provider_now = llm_clean.get("provider", "deepseek")
+        _provider_now = llm_clean.get("provider", "venice")
         _direct_aliases = {
             "deepseek-v4-flash": "deepseek-flash",
             "deepseek-v4-flash-vision-exp": "deepseek-flash",
@@ -937,11 +1007,17 @@ class DeeptorrentConfig:
                 llm_clean[_field] = _direct_aliases[_saved]
             elif _provider_now == "openrouter" and _saved in _openrouter_aliases:
                 llm_clean[_field] = _openrouter_aliases[_saved]
+            elif (_provider_now == "venice"
+                    and (_saved in _direct_aliases or _saved == "deepseek-flash")):
+                # A direct-API name on the venice provider would 404 — move
+                # it to the preset default ("" fast_model is meaningful, so
+                # only non-empty stale names are remapped).
+                llm_clean[_field] = "deepseek-v4-1-flash-uncensored"
 
-        # Migration: a switch to OpenRouter/custom/local keeps the DeepSeek
-        # fast-model default, which may not exist there — clear it so summary
-        # calls fall back to the main model instead of 404ing.
-        if llm_clean.get("provider") in ("openrouter", "custom", "local") and llm_clean.get("fast_model") in LLM_PROVIDER_PRESETS["deepseek"]["models"]:
+        # Migration: a switch to OpenRouter/custom/local/venice keeps the
+        # DeepSeek fast-model default, which may not exist there — clear it
+        # so summary calls fall back to the main model instead of 404ing.
+        if llm_clean.get("provider") in ("openrouter", "custom", "local", "venice") and llm_clean.get("fast_model") in LLM_PROVIDER_PRESETS["deepseek"]["models"]:
             llm_clean["fast_model"] = ""
 
         # Migration: the artwork cache cap was 500 MB and never enforced; the

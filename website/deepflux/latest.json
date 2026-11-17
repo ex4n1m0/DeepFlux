@@ -1,8 +1,8 @@
 {
-  "version": "7.8",
-  "file": "DeepFlux7.8Setup.exe",
-  "size": 436798208,
-  "sha256": "f0311b800f1affb7ba40222f6f81141ecb65e5c18f4c64811373a8a85e9a7834",
-  "released": "2026-11-11",
-  "notes": "DeepFlux 7.8 - the mini player. DeepFlux now opens as a compact, lightning-fast player instead of the full app: double-click a video (or just launch the app) and the player is ready in under a second, showing the DeepFlux banner until you drop a file. The full app is one click away - the new button stops playback and transforms the window behind an honest progress bar, and the Play tab's Mini button shrinks back anytime while your downloads keep running. Videos opened from Explorer always land in the compact player; magnets and torrent files still open the full app."
+  "version": "7.9",
+  "file": "DeepFlux7.9Setup.exe",
+  "size": 436796814,
+  "sha256": "c5d2de30e45c7fe6f8d9e1d0b07f2f3445c499476d817a8c93b883b8a10d3741",
+  "released": "2026-11-17",
+  "notes": "DeepFlux 7.9 - uncensored agent. The built-in AI agent now runs on an uncensored DeepSeek (Venice AI's deepseek-v4-1-flash-uncensored, private inference, 1M-token context) instead of the standard cloud model - out of the box, no account needed, on Windows, Linux and Android. Existing installs switch over automatically when they ride the built-in key; if you entered your own API key or picked a different provider, nothing changes. The Settings dialog no longer carries the built-in key across an endpoint switch, and the agent itself can no longer redirect the built-in key to another provider."
 }

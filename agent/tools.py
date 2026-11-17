@@ -190,8 +190,12 @@ _SETTINGS_DENY_PATHS = {
 # ("llm","provider") deliberately EXCLUDES "local": the bundled-model
 # provider is a user-GUI/installer choice only — a prompt injection must
 # not be able to point the agent's LLM traffic anywhere, even loopback.
+# "venice" (the 7.9 shipped default) IS settable for own-key users, but
+# _set_settings additionally REFUSES any provider/base_url change while
+# the in-box shared key occupies the slot — an injected key must never be
+# re-Bearered to a different endpoint.
 _SETTING_ENUMS: Dict[Tuple[str, str], Tuple[str, ...]] = {
-    ("llm", "provider"): ("deepseek", "openrouter", "custom"),
+    ("llm", "provider"): ("venice", "deepseek", "openrouter", "custom"),
     ("iptv", "vod_group_mode"): ("year", "category"),
     ("iptv", "preferred_player"): ("mpv", "vlc"),
     ("voice", "device"): ("auto", "cpu", "cuda"),
@@ -4139,6 +4143,21 @@ class ToolRegistry:
             raise ToolError(
                 f"'{path}' is a secret — set it with set_api_key instead (values are write-only).")
         new_value = _coerce_setting_value(parts, current, value)
+        # Shared-key provider lock (7.9): while the in-box shared key
+        # occupies llm.api_key, switching the provider or base URL would
+        # re-Bearer that key to a DIFFERENT endpoint on the next turn — a
+        # prompt injection must never be able to exfiltrate the shared key
+        # (and the venice/deepseek shared keys must never cross
+        # endpoints). Own-key users switch freely; the GUI is the
+        # sanctioned place for shared-key installs.
+        if parts in (("llm", "provider"), ("llm", "base_url")) and new_value != current:
+            from config import llm_key_is_shared
+            if llm_key_is_shared():
+                raise ToolError(
+                    "'llm.provider'/'llm.base_url' can't be changed while the "
+                    "built-in shared key is active — switch endpoints in "
+                    "Settings → API → AI Agent Key (your own key rides along "
+                    "freely).")
         node: Any = self.config
         for part in parts[:-1]:
             node = getattr(node, part)

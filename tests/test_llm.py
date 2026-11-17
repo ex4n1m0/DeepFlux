@@ -11,7 +11,9 @@ from config import LLMConfig
 
 
 def _client() -> DeepSeekClient:
-    return DeepSeekClient(LLMConfig(api_key="sk-test"))
+    # Explicit provider: the config default moved to venice in 7.9 — these
+    # mechanics tests pin the deepseek provider's payload shape.
+    return DeepSeekClient(LLMConfig(provider="deepseek", api_key="sk-test"))
 
 
 def _ok_response(payload: dict) -> MagicMock:
@@ -222,6 +224,31 @@ def test_openrouter_reasoning_field_captured(mock_post):
 def test_deepseek_env_key_not_used_for_other_providers(monkeypatch):
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-env")
     assert DeepSeekClient(LLMConfig(provider="deepseek")).api_key == "sk-env"
+    assert DeepSeekClient(LLMConfig(provider="openrouter")).api_key == ""
+
+
+@patch("agent.llm.requests.post")
+def test_venice_default_client_shape_and_effort_map(mock_post):
+    """7.9 shipped default: Venice AI's uncensored DeepSeek — preset URL,
+    preset model, reasoning effort on, and 'medium' (not a Venice option)
+    mapped to 'high' so a hand-edited config never 400s."""
+    mock_post.return_value = _ok_response(_chat_payload())
+    client = DeepSeekClient(LLMConfig(api_key="venice-test", reasoning_effort="medium"))
+    client.chat([{"role": "user", "content": "hi"}])
+    url = mock_post.call_args.args[0]
+    payload = mock_post.call_args.kwargs["json"]
+    assert url == "https://api.venice.ai/api/v1/chat/completions"
+    assert payload["model"] == "deepseek-v4-1-flash-uncensored"
+    assert payload["reasoning_effort"] == "high"
+    headers = mock_post.call_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer venice-test"
+
+
+def test_venice_env_key_used(monkeypatch):
+    monkeypatch.setenv("VENICE_API_KEY", "venice-env")
+    client = DeepSeekClient(LLMConfig(provider="venice"))
+    assert client.api_key == "venice-env"
+    # and it never leaks into other providers
     assert DeepSeekClient(LLMConfig(provider="openrouter")).api_key == ""
 
 

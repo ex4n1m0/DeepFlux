@@ -675,9 +675,9 @@ def test_run_setup_never_switches_provider(tmp_path, monkeypatch):
     result = local_model_setup.run_setup(config_path=p, on_progress=lines.append)
     assert result["ok"] and result["model_id"] == entry["id"]
     assert "provider_switched" not in result
-    assert started == []  # no server start — DeepSeek stays the default
+    assert started == []  # no server start — the built-in default stays
     cfg = DeeptorrentConfig.from_file(p)
-    assert cfg.llm.provider == "deepseek"  # untouched default
+    assert cfg.llm.provider == "venice"  # untouched default (7.9: venice)
     assert any("Recommended" in ln for ln in lines)
     assert any("REMAINS the default" in ln for ln in lines)
 
@@ -729,7 +729,7 @@ def test_run_setup_downloads_when_missing(tmp_path, monkeypatch):
     result = local_model_setup.run_setup(config_path=p, on_bytes=lambda d, t: None)
     assert result["downloaded"]
     cfg = DeeptorrentConfig.from_file(p)
-    assert cfg.llm.provider == "deepseek"  # 6.4.1: never auto-switched
+    assert cfg.llm.provider == "venice"  # 6.4.1: never auto-switched (7.9 default)
 
 
 # ---------------------------------------------------------------------------

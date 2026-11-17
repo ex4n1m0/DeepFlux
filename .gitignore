@@ -39,6 +39,7 @@ website/**/*.exe
 website/**/*.dmg
 website/**/*.AppImage
 website/**/*.tar.gz
+website/**/*.apk
 Git/
 *.exe
 
@@ -82,3 +83,12 @@ packaging/llama/*.zip
 # Session tool dirs (video plugins / harness artifacts)
 .v2c/
 .video_agent/
+
+# Android (Gradle) — build/ is already ignored globally above. Machine
+# state + the generated obfuscated key pair (see android/README.md).
+android/.gradle/
+android/.kotlin/
+android/local.properties
+android/app/embedded_key.properties
+*.jks
+*.keystore

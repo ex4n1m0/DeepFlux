@@ -1,4 +1,4 @@
-// Counted setup downloads.
+// Counted setup downloads (setup exes, Linux AppImages, Android APKs).
 //
 // The landing page's Download buttons point here (?f=DeepFlUX<X>Setup.exe
 // for Windows, ?f=DeepFlux-<X>-Linux-x86_64.AppImage for Linux). This
@@ -13,7 +13,7 @@
 // the counted download button for that entire release window (2026-11-09
 // review) — existence of the file remains the real gate.
 
-const FILE_RE = /^DeepFl(ux|UX)(?:[0-9.]+Setup\.exe|-[0-9.]+-Linux-x86_64\.(?:AppImage|tar\.gz))$/;
+const FILE_RE = /^DeepFl(ux|UX)(?:[0-9.]+Setup\.exe|-[0-9.]+-Linux-x86_64\.(?:AppImage|tar\.gz)|-[0-9.]+-Android\.apk)$/;
 const TOTAL_KEY = 'df:dl:total';
 
 // Accept both naming schemes: UPSTASH_REDIS_REST_* (a manual Upstash token)

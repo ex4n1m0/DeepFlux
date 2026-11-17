@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name" translatable="false">DeepFlux</string>
+    <string name="channel_progress">Download progress</string>
+    <string name="channel_progress_desc">Ongoing torrent download status</string>
+    <string name="channel_events">Download events</string>
+    <string name="channel_events_desc">Finished downloads and errors</string>
+    <string name="notif_idle">No active downloads</string>
+    <string name="notif_active">%1$d active · ↓ %2$s · %3$d%%</string>
+    <string name="notif_files">%1$d files · ↓ %2$s · %3$d%%</string>
+</resources>

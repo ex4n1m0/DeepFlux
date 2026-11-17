@@ -7,10 +7,10 @@ download), and leaves DeepFlux in a working state on every exit path.
 Pipeline: extract the bundled llama.cpp runtimes -> detect hardware ->
 recommend a model from the pinned ladder -> download it (resumable,
 sha256-verified) unless already installed. The provider is NEVER changed:
-the built-in DeepSeek key stays the default agent regardless (owner
-decision 6.4.1, 2026-10-21 — downloading a local model is installation
-only); users switch to local AI explicitly in File -> API Keys -> AI, and
-the server then starts on demand.
+the built-in agent key (Venice AI's uncensored DeepSeek since 7.9) stays
+the default regardless (owner decision 6.4.1, 2026-10-21 — downloading a
+local model is installation only); users switch to local AI explicitly in
+File -> API Keys -> AI, and the server then starts on demand.
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ def run_setup(config_path: Optional[str] = None,
         result["skipped"] = reason
         result["summary"] = f"Skipped: {reason}"
         say(f"No local model recommended — {reason}")
-        say("DeepFlux keeps its built-in DeepSeek AI as the default.")
+        say("DeepFlux keeps its built-in AI agent as the default.")
         return result
     result["model_id"] = entry["id"]
     say(f"Recommended for this PC: {reason}")
@@ -91,7 +91,7 @@ def run_setup(config_path: Optional[str] = None,
         result["downloaded"] = True
         say("Download verified (sha256 matches the pinned manifest).")
 
-    say("The model is installed. The built-in DeepSeek key REMAINS the "
+    say("The model is installed. The built-in AI key REMAINS the "
         "default agent — switch to 'Local AI (built-in, uncensored)' in "
         "Settings → AI & API Keys → AI Agent Key… whenever you want to use "
         "it; the local server then starts automatically.")
@@ -100,5 +100,5 @@ def run_setup(config_path: Optional[str] = None,
     result["summary"] = (f"{'Downloaded' if result['downloaded'] else 'Reused'} "
                          f"{entry['label']} — installed and selectable in "
                          "Settings → AI & API Keys → AI Agent Key… "
-                         "(DeepSeek stays the default).")
+                         "(the built-in AI stays the default).")
     return result

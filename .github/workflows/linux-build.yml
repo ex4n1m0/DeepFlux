@@ -5,8 +5,10 @@ name: Linux build
 # machine. FULL feature build since the 2026-10-11 port (owner decision):
 # Play/IPTV tab included via X11 embedding (the app forces
 # QT_QPA_PLATFORM=xcb → XWayland), libmpv + dependency closure bundled,
-# and the DeepSeek shared key embedded from the EMBED_SHARED_DEEPSEEK_API_KEY
-# secret (same exposure as the public Windows setup exe; git stays keyless).
+# and the shared agent keys embedded from secrets (VENICE = the built-in
+# uncensored-DeepSeek default since 7.9, DEEPSEEK = the explicit-choice
+# fallback; same exposure as the public Windows setup exe; git stays
+# keyless).
 # No signing exists on Linux at all — an AppImage runs as soon as it has
 # the exec bit (chmod +x), so there is no Gatekeeper/SmartScreen step.
 #
@@ -65,9 +67,10 @@ jobs:
           # system VLC).
           pip install PyInstaller
 
-      - name: Embed shared DeepSeek key (from secret, obfuscated)
+      - name: Embed shared agent keys (from secrets, obfuscated)
         env:
           EMBED_SHARED_DEEPSEEK_API_KEY: ${{ secrets.EMBED_SHARED_DEEPSEEK_API_KEY }}
+          EMBED_SHARED_VENICE_API_KEY: ${{ secrets.EMBED_SHARED_VENICE_API_KEY }}
         run: |
           # Writes an obfuscated _embedded_keys.py at the repo root ONLY when
           # the secret exists; values never appear in logs. app_linux.spec

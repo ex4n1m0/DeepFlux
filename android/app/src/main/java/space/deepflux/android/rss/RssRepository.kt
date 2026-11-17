@@ -1,0 +1,341 @@
+package space.deepflux.android.rss
+
+import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
+import org.json.JSONObject
+import space.deepflux.android.dlmgr.HttpDownloadRepository
+import space.deepflux.android.engine.MagnetParser
+import space.deepflux.android.engine.TorrentRepository
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.MessageDigest
+
+/**
+ * RSS feeds + auto-download (plan §13 #4) — the Android twin of the
+ * desktop's RSS tooling. Feeds live in a JSON sidecar; items are fetched
+ * on demand and by the service poll loop; an item whose title matches a
+ * feed's keywords is handed to the right engine (magnet → torrent engine,
+ * .torrent link → fetched + added, other http → the A1 HTTP engine).
+ *
+ * Desktop rules kept verbatim:
+ *  * an item is marked SEEN only when it was actually handed to an engine
+ *    (a failed auto-download retries on the next poll);
+ *  * ONE worker at a time (overlap guard) — polls never pile up;
+ *  * feed bodies are read with a hard 5 MiB cap (RssClient).
+ *
+ * Android reality differences: no always-on process — polling happens
+ * while the app/service is alive (TorrentService loop + app start) and on
+ * demand (UI refresh, agent tools). Adding a feed BASELINES the current
+ * items as seen, so auto-download applies only to items published from
+ * then on — no surprise backlog mass-download.
+ */
+class RssRepository(
+    private val context: Context,
+    private val torrents: TorrentRepository,
+    private val http: HttpDownloadRepository,
+) {
+
+    data class RssFeed(
+        val id: String,
+        val url: String,
+        val title: String,
+        val autoDownload: Boolean = false,
+        /** Title must contain one of these (case-insensitive) for auto-download. */
+        val keywords: List<String> = emptyList(),
+        val addedAt: Long = 0,
+        val lastFetchAt: Long = 0,
+        val lastError: String = "",
+    )
+
+    private val file = File(context.filesDir, "rss_feeds.json")
+    private val lock = Any()
+    private val polling = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private val _feeds = MutableStateFlow<List<RssFeed>>(emptyList())
+    val feeds: StateFlow<List<RssFeed>> = _feeds.asStateFlow()
+
+    /** Latest fetched items per feed id (empty until first refresh). */
+    private val _itemsByFeed = MutableStateFlow<Map<String, List<RssClient.RssItem>>>(emptyMap())
+    val itemsByFeed: StateFlow<Map<String, List<RssClient.RssItem>>> = _itemsByFeed.asStateFlow()
+
+    private val _refreshing = MutableStateFlow<Set<String>>(emptySet())
+    val refreshing: StateFlow<Set<String>> = _refreshing.asStateFlow()
+
+    /** Seen item guids per feed id, capped to the newest SEEN_CAP. */
+    private val seen = mutableMapOf<String, MutableSet<String>>()
+    @Volatile private var lastPollAt = 0L
+
+    /** User-visible notice (snackbar) — the app's shared channel. */
+    fun postNotice(message: String) = torrents.postNotice(message)
+
+    init {
+        runCatching {
+            if (file.exists()) {
+                val arr = JSONArray(file.readText())
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val id = o.optString("id")
+                    if (id.isBlank()) continue
+                    val feed = RssFeed(
+                        id = id,
+                        url = o.optString("url"),
+                        title = o.optString("title"),
+                        autoDownload = o.optBoolean("auto", false),
+                        keywords = o.optJSONArray("keywords")?.let { ks ->
+                            List(ks.length()) { ks.optString(it) }.filter { it.isNotBlank() }
+                        } ?: emptyList(),
+                        addedAt = o.optLong("at", 0),
+                        lastFetchAt = o.optLong("fetched", 0),
+                        lastError = o.optString("err", ""),
+                    )
+                    seen[id] = o.optJSONArray("seen")?.let { ss ->
+                        val linked = LinkedHashSet<String>()
+                        for (k in 0 until ss.length()) linked.add(ss.optString(k))
+                        linked
+                    } ?: LinkedHashSet()
+                    _feeds.value = _feeds.value + feed
+                }
+            }
+        }.onFailure { Log.w(TAG, "load failed: ${it.message}") }
+    }
+
+    /** Fetch once to validate + title the feed, baseline everything as seen. */
+    fun addFeed(rawUrl: String, keywords: List<String> = emptyList(), autoDownload: Boolean = false): Result<RssFeed> {
+        val url = rawUrl.trim()
+        if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) {
+            return Result.failure(IllegalArgumentException("not an http(s) URL"))
+        }
+        if (_feeds.value.any { it.url == url }) return Result.failure(IllegalArgumentException("feed already added"))
+        return runCatching {
+            val content = RssClient.fetch(url)
+            synchronized(lock) {
+            val feed = RssFeed(
+                id = idFor(url),
+                url = url,
+                title = content.title.ifBlank { URL(url).host ?: url },
+                autoDownload = autoDownload,
+                keywords = keywords.map { it.trim().lowercase() }.filter { it.isNotBlank() },
+                addedAt = System.currentTimeMillis(),
+                lastFetchAt = System.currentTimeMillis(),
+            )
+            _feeds.value = _feeds.value + feed
+            _itemsByFeed.value = _itemsByFeed.value + (feed.id to content.items)
+            // Baseline: everything currently in the feed is old news.
+            seen[feed.id] = LinkedHashSet(content.items.map { it.guid }.takeLast(SEEN_CAP))
+            persistLocked()
+            feed
+            }
+        }
+    }
+
+    fun removeFeed(id: String) = synchronized(lock) {
+        _feeds.value = _feeds.value.filterNot { it.id == id }
+        seen.remove(id)
+        _itemsByFeed.value = _itemsByFeed.value - id
+        persistLocked()
+    }
+
+    fun setFeedConfig(id: String, autoDownload: Boolean, keywords: List<String>) = synchronized(lock) {
+        val next = _feeds.value.map {
+            if (it.id == id) it.copy(
+                autoDownload = autoDownload,
+                keywords = keywords.map { k -> k.trim().lowercase() }.filter { k -> k.isNotBlank() },
+            ) else it
+        }
+        if (next != _feeds.value) {
+            _feeds.value = next
+            persistLocked()
+        }
+    }
+
+    /** Fetch one feed now; updates the item cache, the feed's error line,
+     *  and applies auto-download to newly-seen keyword matches. */
+    fun refresh(id: String): Result<Int> {
+        val feed = _feeds.value.find { it.id == id } ?: return Result.failure(IllegalArgumentException("no such feed"))
+        _refreshing.value = _refreshing.value + id
+        return try {
+            val content = RssClient.fetch(feed.url)
+            synchronized(lock) {
+                _itemsByFeed.value = _itemsByFeed.value + (id to content.items)
+                _feeds.value = _feeds.value.map {
+                    if (it.id == id) it.copy(
+                        lastFetchAt = System.currentTimeMillis(),
+                        lastError = "",
+                        // Keep the feed title honest if the source renames itself.
+                        title = it.title.ifBlank { content.title },
+                    ) else it
+                }
+                persistLocked()
+            }
+            // Manual refresh = an explicit "check now": apply the watcher.
+            if (feed.autoDownload && feed.keywords.isNotEmpty()) autoDownloadNew(feed)
+            Result.success(content.items.size)
+        } catch (e: Exception) {
+            synchronized(lock) {
+                _feeds.value = _feeds.value.map { if (it.id == id) it.copy(lastError = (e.message ?: "error").take(80)) else it }
+                persistLocked()
+            }
+            Result.failure(e)
+        } finally {
+            _refreshing.value = _refreshing.value - id
+        }
+    }
+
+    /**
+     * The poll loop entry (TorrentService every 15 min + app start):
+     * refresh every feed, auto-download keyword matches. Overlap-guarded
+     * and rate-limited — a call inside the interval only runs MANUAL
+     * refreshes' bookkeeping, no fetch storm.
+     */
+    fun pollIfDue(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastPollAt < POLL_INTERVAL_MS) return
+        if (!polling.compareAndSet(false, true)) return
+        try {
+            lastPollAt = now
+            // refresh() itself applies auto-download for matched new items.
+            _feeds.value.forEach { feed -> refresh(feed.id) }
+        } finally {
+            polling.set(false)
+        }
+    }
+
+    private fun autoDownloadNew(feed: RssFeed) {
+        val items = _itemsByFeed.value[feed.id] ?: return
+        val known = seen[feed.id] ?: LinkedHashSet()
+        items.filter { it.guid !in known && matches(it.title, feed.keywords) }
+            .forEach { item ->
+                if (handToEngine(item)) {
+                    synchronized(lock) {
+                        seen.getOrPut(feed.id) { LinkedHashSet() }.add(item.guid)
+                        trimSeenLocked(feed.id)
+                        persistLocked()
+                    }
+                    Log.i(TAG, "rss auto-download: ${item.title.take(60)}")
+                    torrents.postNotice("RSS: added ${item.title.take(60)}")
+                }
+            }
+    }
+
+    /** Manual download (UI row / agent tool). Marks seen on success too. */
+    fun downloadItem(feedId: String, guid: String): Boolean {
+        val item = _itemsByFeed.value[feedId]?.find { it.guid == guid } ?: return false
+        val ok = handToEngine(item)
+        if (ok) {
+            synchronized(lock) {
+                seen.getOrPut(feedId) { LinkedHashSet() }.add(guid)
+                trimSeenLocked(feedId)
+                persistLocked()
+            }
+        }
+        return ok
+    }
+
+    /** Route one item to the right engine; true = accepted (mark seen). */
+    private fun handToEngine(item: RssClient.RssItem): Boolean {
+        val target = item.magnet ?: item.link
+        return when {
+            target.startsWith("magnet:", true) -> {
+                // Pre-validate with the same parser addMagnet uses — an
+                // immediate rejection must NOT mark the item seen.
+                if (MagnetParser.infoHashHex(target) == null) false
+                else {
+                    torrents.addMagnet(target)
+                    true
+                }
+            }
+            target.substringBefore('?').endsWith(".torrent", true) -> fetchTorrent(target)
+            target.startsWith("http://", true) || target.startsWith("https://", true) ->
+                http.add(target) != null
+            else -> false
+        }
+    }
+
+    /** Mirror of the browser's torrent fetch: capped, bencode-sanity-checked. */
+    private fun fetchTorrent(url: String): Boolean = runCatching {
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 30_000
+        conn.setRequestProperty("User-Agent", HttpDownloadRepository.USER_AGENT)
+        try {
+            if (conn.responseCode != 200) return@runCatching false
+            val bytes = readCapped(conn.inputStream, MAX_TORRENT_BYTES + 1)
+            if (bytes.isEmpty() || bytes.size > MAX_TORRENT_BYTES) return@runCatching false
+            if (bytes[0] != 'd'.code.toByte()) return@runCatching false
+            val tmp = File(context.cacheDir, "rss-${System.currentTimeMillis()}.torrent")
+            tmp.writeBytes(bytes)
+            torrents.addTorrentFile(tmp) // consumes/deletes the file
+            true
+        } finally {
+            conn.disconnect()
+        }
+    }.getOrDefault(false)
+
+    private fun readCapped(input: InputStream, cap: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        val buf = ByteArray(16 * 1024)
+        input.use { src ->
+            while (true) {
+                val n = src.read(buf)
+                if (n == -1) break
+                if (out.size() + n > cap) return ByteArray(0)
+                out.write(buf, 0, n)
+            }
+        }
+        return out.toByteArray()
+    }
+
+    private fun matches(title: String, keywords: List<String>): Boolean {
+        val t = title.lowercase()
+        return keywords.any { t.contains(it) }
+    }
+
+    private fun trimSeenLocked(id: String) {
+        val s = seen[id] ?: return
+        if (s.size > SEEN_CAP) {
+            val keep = s.toList().takeLast(SEEN_CAP)
+            seen[id] = LinkedHashSet(keep)
+        }
+    }
+
+    private fun persistLocked() {
+        runCatching {
+            val arr = JSONArray()
+            _feeds.value.forEach { f ->
+                arr.put(
+                    JSONObject()
+                        .put("id", f.id).put("url", f.url).put("title", f.title)
+                        .put("auto", f.autoDownload)
+                        .put("keywords", JSONArray(f.keywords))
+                        .put("at", f.addedAt).put("fetched", f.lastFetchAt).put("err", f.lastError)
+                        .put("seen", JSONArray(seen[f.id].orEmpty().toList()))
+                )
+            }
+            val tmp = File(file.parentFile, file.name + ".tmp")
+            tmp.writeText(arr.toString())
+            if (!tmp.renameTo(file)) {
+                file.delete()
+                tmp.renameTo(file)
+            }
+        }.onFailure { Log.w(TAG, "persist failed: ${it.message}") }
+    }
+
+    companion object {
+        private const val TAG = "RssRepository"
+        private const val POLL_INTERVAL_MS = 15 * 60 * 1000L
+        private const val SEEN_CAP = 500
+        private const val MAX_TORRENT_BYTES = 32 * 1024 * 1024
+
+        fun idFor(url: String): String {
+            val d = MessageDigest.getInstance("SHA-1").digest(url.trim().toByteArray())
+            return d.joinToString("") { "%02x".format(it) }.take(8)
+        }
+    }
+}

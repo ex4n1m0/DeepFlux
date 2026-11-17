@@ -1434,16 +1434,34 @@
   2026 Google.)
 - Built-in keys: since 3.5.2 (owner decision 2026-09-09, extended and
   moved out of git 2026-09-10) a SET of shared keys ships in the SETUP FILE
-  ONLY — never in git: DeepSeek (agent), Perplexity (web search), TMDb,
-  OpenSubtitles, TPDB, StashDB, OMDb, Fanart.tv. Jackett and Brave stay
-  env-only by decision. The DIRECT DeepSeek key is the out-of-the-box
-  DEFAULT agent (owner decision 6.4, 2026-10-21): fresh installs boot
-  straight into a working agent with no account; local models are an
-  opt-in later choice (the installer's --setup-localmodel checkbox is
-  default-OFF since 6.4). Since 6.4.2, `from_file` ALSO migrates any
-  provider == "local" config WITHOUT the `local_chosen` stamp back to
-  deepseek (clearing the loopback base_url and model fields, BEFORE the
-  shared-key injection) — that is how auto-updated installs whose provider
+  ONLY — never in git: Venice (agent, since 7.9), DeepSeek (agent
+  fallback), Perplexity (web search), TMDb, OpenSubtitles, TPDB, StashDB,
+  OMDb, Fanart.tv. Jackett and Brave stay env-only by decision.
+  DEFAULT AGENT SINCE 7.9 (owner decision 2026-11-17): the "venice"
+  provider — Venice AI (`https://api.venice.ai/api/v1`, OpenAI-compatible)
+  serving `deepseek-v4-1-flash-uncensored`, an ABLITERATED DeepSeek V4.1
+  Flash (the SAME base model as the direct API's deepseek-flash; verified
+  live: function calling + reasoning effort none/low/high/max — NO
+  "medium", preset effort_map sends it to high — + SSE streaming; 1M ctx).
+  Out-of-the-box key = `_SHARED_VENICE_API_KEY` (same obfuscated
+  `_embedded_keys.py` ritual; env override `VENICE_API_KEY`). from_file's
+  7.9 migration flips provider deepseek/dummy → venice ONLY for
+  shared-key-riding/keyless-with-a-venice-key configs (a saved OWN key, a
+  `DEEPSEEK_API_KEY` env user, or an explicit openrouter/custom/stamped-
+  local choice is never touched); `LLMConfig.model` defaults to "" (= the
+  provider preset's default — an explicit model name as the DATACLASS
+  default would ride along in configs that omit the field and 404 on
+  openrouter's slugs). Android mirrors this: ChatClient's base
+  URL/model, `EmbeddedKey.veniceKey()` + `EMBEDDED_VENICE_*` BuildConfig
+  pair, `gen_android_key.py` embeds the Venice key (properties
+  `venice_salt_hex`/`venice_blob_hex`), CI secret
+  `EMBED_SHARED_VENICE_API_KEY`. Local models remain an opt-in later
+  choice (the installer's --setup-localmodel checkbox is default-OFF
+  since 6.4). Since 6.4.2, `from_file` ALSO migrates any
+  provider == "local" config WITHOUT the `local_chosen` stamp back to the
+  built-in default (venice since 7.9; clearing the loopback base_url and
+  model fields, BEFORE the shared-key injection) — that is how
+  auto-updated installs whose provider
   was auto-switched by a ≤6.4.0 build get forced onto the built-in key;
   the GUI stamps `local_chosen` when the user explicitly saves local, and
   that stamp is the ONLY thing that keeps a local config local. The agent
@@ -1454,10 +1472,10 @@
   app.spec's conditional hiddenimport); without the file every shared key is
   empty and nothing breaks. Each is injected by `from_file` as the
   LAST-resort fallback for its slot — a saved user key wins, then the slot's
-  env var (`DEEPSEEK_API_KEY`, `PERPLEXITY_API_KEY`, `TMDB_API_KEY`,
-  `OPENSUBTITLES_API_KEY`, `TPDB_API_KEY`, `STASHDB_API_KEY`, `OMDB_API_KEY`,
-  `FANARTTV_API_KEY`), then the shared key; DeepSeek additionally only when
-  the provider is deepseek. History was rewritten (git-filter-repo) to purge
+  env var (`VENICE_API_KEY`, `DEEPSEEK_API_KEY`, `PERPLEXITY_API_KEY`,
+  `TMDB_API_KEY`, `OPENSUBTITLES_API_KEY`, `TPDB_API_KEY`, `STASHDB_API_KEY`,
+  `OMDB_API_KEY`, `FANARTTV_API_KEY`), then the shared key; Venice/DeepSeek
+  additionally only when the provider matches. History was rewritten (git-filter-repo) to purge
   the literals from all pushed commits — NEVER paste a key value into any
   tracked file, commit message, or this file. Without an LLM key the GUI/CLI
   run the agent in dummy mode; missing metadata keys degrade gracefully. The
@@ -2718,3 +2736,298 @@ gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regre
   `repr()` produced double-backslash keys that never match the runtime (real
   tab) strings — tr() silently fell back to English. Diff tool: extract tr()
   literals with ast.literal_eval, compare against imported ZH_CN.
+
+## Android app (since 2026-11-12, Phase 1 — standalone Kotlin/Compose)
+- Owner decisions 2026-11-12 (recorded in ANDROID_STUDY.md): STANDALONE app
+  for phones + tablets, Kotlin + Jetpack Compose, the shared DeepSeek key
+  SHIPS in the app (same exposure stance as the Windows setup exe).
+  Distribution lane undecided — working default: own-site APK via
+  deepflux.space, Play optional later. Phase 0 (companion/ControlAPI LAN)
+  deferred, not cancelled.
+- Layout: `android/` Gradle project (like `website/` — shares only brand +
+  concepts with the Python tree) + `.github/workflows/android-build.yml`
+  (manual dispatch, debug + UNSIGNED release APKs, draft `android-staging`
+  release lane mirroring linux-build) + `packaging/gen_android_key.py`.
+  Study + roadmap: ANDROID_STUDY.md (tracked). Read android/README.md
+  before touching the Gradle files.
+- Toolchain on this dev machine (D:\android-toolchain, installed
+  2026-11-12): JDK 21 (jdk-21.0.13.0.2+1), Gradle 8.14.3, SDK at
+  D:\android-toolchain\sdk. Build: `cd android && JAVA_HOME="D:\android-
+  toolchain\jdk\jdk-21.0.13.0.2+1" ./gradlew assembleDebug`. local.properties
+  (gitignored) must carry `sdk.dir=D:/android-toolchain/sdk` — FORWARD
+  SLASHES; the backslash-escaped form made AGP die with "filename, directory
+  name, or volume label syntax is incorrect".
+- Pinned stack & WHY: AGP 8.13.0 + Gradle 8.14.3 + Kotlin 2.4.21 + Compose
+  BOM 2026.06.01 (Compose 1.11.4 / material3 1.4.0) + compileSdk/targetSdk
+  36 + minSdk 28 (libtorrent4j floor). BOM ≥2026.08 maps to Compose 1.12
+  whose AARs demand compileSdk 37 → AGP 9.1+ (the SDK 37 platform installs
+  as dir android-37.0 which AGP 8.x can't even resolve). Bumping the BOM and
+  the AGP 9 migration (built-in Kotlin) must happen TOGETHER as one change.
+  Do NOT bump either casually.
+- libtorrent4j 2.1.0-39 verified API facts (javap'd against the real jar —
+  do not re-derive by guessing):
+  * No `Sha1Hash(String)` — use `Sha1Hash.parseHex(hex)`.
+  * SessionManager has NO per-hash pause/resume/remove — use
+    `find(hash)?.pause() / ?.resume()`, and `remove(handle)` for remove.
+    Session-level pause()/resume() DO exist (the wifi/charging gates use
+    them).
+  * No `setSequentialDownload` on TorrentHandle — closest is
+    `setSequentialRange(n)`; whole-torrent sequential = pass the piece
+    count (only knowable AFTER metadata — the repository retries per poll).
+  * `download(magnet, saveDir, torrent_flags_t)` — the flags arg is
+    or_'d onto defaults; passing an EMPTY `new torrent_flags_t()` keeps
+    defaults, passing null NPEs inside the swig layer. There is NO 2-arg
+    magnet overload.
+  * TorrentStatus: NO paused() (pause is app-level state — the repository
+    tracks a paused-set), error is `errorCode(): ErrorCode` (Java-style
+    isError()/getMessage()), downloadRate()/uploadRate() return Int not
+    Long. State enum has NO ALLOCATING/QUEUED_CHECKS.
+  * Alerts: no torrentName() — name comes from
+    `(alert as TorrentAlert<*>).handle().status().name()`; only
+    TorrentErrorAlert has error().
+- Key ritual: `python packaging/gen_android_key.py` (reads the repo-root
+  _embedded_keys.py) or `--from-env` (CI secret EMBED_SHARED_DEEPSEEK_API_KEY,
+  same secret as the Linux build) → writes gitignored
+  `android/app/embedded_key.properties` (salt_hex/blob_hex, XOR-sha256
+  scheme SHARED with the desktop by importing gen_embedded_keys.py by
+  path). Overwrite guard DF_OVERWRITE_EMBEDDED_KEYS=1, values never
+  printed. Verified end-to-end: desktop-decoder round-trip OK + the salt
+  pair lands in the APK dex via BuildConfig (checked 2026-11-12).
+- Gradle version-catalog gotcha: accessor aliases must not contain a
+  segment starting with a DIGIT (`libtorrent4j-android-x86_64` →
+  `libs.libtorrent4j.android.x86.64` is not parseable Kotlin) — hence the
+  `x64` alias. Also: material-icons-core is NOT a transitive dep of
+  material3 1.4.0 (Icons.Filled.* needs the explicit artifact).
+- Design contracts: engine calls confined to a single-thread dispatcher
+  (desktop queue/facade twin); magnet-first persistence
+  (torrents_state.json, atomic temp+Files.move) re-fetches metadata via
+  DHT after restart; FGS dataSync stops itself after 20 s idle (Android
+  15's ~6 h cumulative dataSync cap makes phone seeding a non-goal);
+  launcher icons regenerate from DeepFlux.png (recipe in android/README.md).
+- NOT yet done (honest gaps): no unit tests, no on-device run, release APK
+  UNSIGNED (keystore + deepflux.space lane is the next release ritual),
+  agent chat/IPTV/Jackett-remote are Phase 2 (ANDROID_STUDY.md §6).
+
+## Android on Google Play (since 2026-11-12 — owner account ex4n1m0)
+- Play Console state: app DeepFlux (space.deepflux.android, internal
+  numeric app id 4973165332904172092 — app URLs use THIS id, package-name
+  URLs redirect home until the app is "entered" in the session). Internal
+  testing track id 4700282969798098607. RELEASE 2 (0.1.0) PUBLISHED
+  2026-11-12 (versionCode 1 is BURNED — a stuck synthetic upload claimed
+  it; every future release bumps versionCode). Opt-in link:
+  https://play.google.com/apps/internaltest/4700282969798098607
+  (email-list alternative exists; its chip input ignores synthetic Enter —
+  use the join link, or a real human types the list).
+- Setup state: ALL 11 store tasks green (listing copy + icon/feature
+  graphic live on lh3.googleusercontent.com; category Tools; contact
+  igorcarlier / deepflux.space; ads/data-safety/target-audience/content
+  rating (Everyone/PEGI 3/USK 16+) all declared; privacy policy DEPLOYED
+  at deepflux.space/deepflux/privacy.html — content must stay truthful:
+  no analytics/no ads/no collection, BitTorrent peers see your IP,
+  optional user AI key goes only to the chosen provider).
+- REMAINING owner items: Google's one-time new-app review must clear
+  before testers can install ("Not reviewed" status; temporary app name
+  'space.deepflux.android (unreviewed)' until then); trader-status
+  declaration by Feb 2027 (blocks publishing eventually); production
+  access needs closed testing with 12+ testers for 14+ days (dashboard
+  states 12, not the generic 20).
+- VERIFIED console-automation facts (do not re-derive):
+  * App-content declaration pages: drive via Dashboard task buttons
+    (View tasks for Provide app information...) or the app-content URLs;
+    each form ends in "Change saved. Send for review in Publishing
+    overview".
+  * Material radio groups: YES and NO live in SEPARATE sibling
+    material-radio-group elements with the SAME aria-label — scope by
+    label text content, click the native input inside.
+  * Upload drop-zones (graphics): a fan-out of dragenter/dragover/drop
+    DragEvents with a DataTransfer holding a File fetched from a local
+    CORS server (http://127.0.0.1:8765) onto the zone AND all its
+    descendants works (icon + feature graphic landed on Google's CDN).
+    The same technique does NOT stream large files — the 26.8 MB AAB sat
+    at 0/100 forever. Large artifacts need the REAL file picker: click
+    Upload in EDGE (ZCode IAB cannot open file choosers) and drive the
+    Windows #32770 dialog (File-name edit + Open button).
+  * Release notes MUST wrap each language with tags ON THEIR OWN LINES:
+    "\n<en-US>\nnotes text\n</en-US>\n" — single-line tags fail with
+    "tag not closed", and keystroke/fill paths STRIP the angle brackets
+    (sanitizer); the working path is a real clipboard paste (Windows
+    Set-Clipboard via a temp file, then Ctrl+V in Edge).
+  * Play's survey iframe (google-hats-survey) re-injects on every page
+    and covers buttons — remove it (IAB evaluate) or it blocks clicks.
+  * Publishing overview is where declarations + releases are finally
+    "sent for review".
+- EMULATOR DEMO SESSION 2026-11-12 (FGS video for Play) — two REAL bugs found
+  and fixed, plus durable environment facts:
+  * TorrentRepository.addMagnet raced: two rapid calls (VIEW intent redelivered
+    on activity recreation) both passed the dedupe check → duplicate entries →
+    LazyColumn duplicate-key CRASH on launch (persisted state poisoned!).
+    Fix: dedupe check + entries.add moved INSIDE the single-threaded
+    engineDispatcher; DownloadsScreen key now "${infoHash}-${addedAt}".
+  * libtorrent mmap on Android's scoped-storage FUSE crashes the system
+    MediaProvider (NodeTracker abort, "emulated;0" thread) on huge sparse
+    files — TWICE, even with mmap_file_size_cutoff semantics double-checked
+    (cutoff = files SMALLER are mapped; 0 did NOT disable; now set to 1) and
+    the posix path ALSO tripping it on the API-36 EMULATOR image. Release
+    builds keep external storage; DEBUG builds save to filesDir (no FUSE) —
+    see TorrentRepository.saveDir. Real devices may not share the emulator's
+    fuse-daemon bug, but watch for it.
+  * Emulator ritual that worked: system-images;android-36;default;x86_64 +
+  hand-written AVD config (avdmanager.bat rejected valid paths; the launcher
+  also misreads "arm" without abi.type=x86_64 in config.ini) → boot ~15 s.
+  screenrecord must run as its OWN background task and be stopped with
+  `pkill -INT screenrecord` (killing adb/shell loses the moov atom).
+  Emulator FUSE crashes wedge /sdcard ("Transport endpoint not connected")
+  AND corrupt window focus (launcher stuck on top) — restart the emulator,
+  don't fight it. Verify video takes by per-act frame luminance + the
+  analyze_image vision tool (app dark theme ≈ luminance 9-12, shade ≈ 69,
+  launcher ≈ 185).
+
+## Android app v0.8 (2026-11-13) — 5 milestones in one day
+- Full feature set now SHIPPED and on the emulator (versionCode 5, v0.8.0):
+  * v0.2: stream-while-downloading (ExoPlayer + NanoHTTPD loopback server
+    with tail-following InputStream for growing files). Owner-verified.
+  * v0.3: AI agent chat (DeepSeek SSE, reasoning dim, embedded key).
+  * v0.4: agent TOOLS (add_torrent, list_downloads) via OpenAI function
+    calling; tool execution loop up to 4 rounds; tool schemas sent with
+    each request. search_indexers added in v0.4b (Jackett remote via
+    torznab XML endpoint — QUICK TIER: eztv|1337x|thepiratebay, NOT "all"
+    which times out on 96 indexers).
+  * v0.5: IPTV/Live TV — M3U parser, playlist browser, HLS playback in
+    PlayerActivity (media3 handles HLS natively). 4th tab "Live TV".
+  * v0.6: chat persistence (DataStore, last 30 bubbles) + Stop button
+    mid-generation + web_search tool (DuckDuckGo HTML, keyless).
+  * v0.7: notification tap opens app (unique PendingIntent request code,
+    NEW_TASK|SINGLE_TOP); SAF save-dir setting infra (not yet wired to
+    engine — getExternalFilesDir still used; SAF wiring is the next
+    engine change).
+- Agent tool count: 5 (search_indexers, web_search, add_torrent,
+  list_downloads + implicit system prompt guidance).
+- Jackett quick-tier VERIFIED: eztv responds in ~2s, 1337x in ~3s;
+  "all" times out (>30s across 96 indexers, many dead/CF-walled).
+  adb reverse tcp:9117 tcp:9117 maps emulator localhost to host Jackett.
+- Chat persistence: DataStore stringPreferencesKey("chat_history_json"),
+  JSONArray of {role, content, reasoning}, max 30 bubbles, loaded on
+  ChatSession init in a daemon thread. Persisted after each assistant
+  reply (not during streaming).
+- Web search: DuckDuckGo HTML parsing (regex, no JSoup), results
+  deduped by URL, uddg redirect unwrapping, HTML entity stripping.
+  Keyless (same as desktop's ddgs DuckDuckGo provider).
+- Release AAB v5 (0.8.0) built and signed (jarsigner verified).
+  29.3 MB — bigger than vc4 (26.8 MB) due to media3 player + IPTV.
+
+## Android app v1.0 (2026-11-13) — FULL FEATURE SET
+- v1.0.0, versionCode 6. Release AAB 29.3 MB, jarsigner verified.
+- New in v0.9-v1.0 (on top of v0.2-v0.8):
+  * EPG: XMLTV parser (iptv/EPGParser.kt), EPGRepository with disk cache,
+    "now playing" line on each IPTV channel row (blue accent, times).
+  * Xtream Codes API: full client (iptv/XtreamClient.kt) — authenticate,
+    getLiveChannels, getVodChannels, getCategories, toM3UChannels.
+    IPTV tab now has a 2-mode source config: M3U URL or Xtream login
+    (server URL + username + password → live channels injected).
+  * MediaStore export: finished torrent video files auto-copied to the
+    public Downloads collection (dlmgr/MediaStoreExport.kt) so users
+    see them in any file manager.
+  * Agent deep-search: system prompt updated to combine search_indexers
+    AND web_search for broad requests.
+- Full feature inventory (v1.0):
+  * Torrents: libtorrent engine, magnets, .torrent, pause/resume/remove,
+    sequential stream-first, background FGS with notification, Wi-Fi/
+    charging gates, persistence across restarts, MediaStore export.
+  * Streaming: ExoPlayer + NanoHTTPD loopback server, plays while
+    downloading, Range request support, growing-file tail-following.
+  * IPTV: M3U playlists + Xtream Codes login, channel browser with EPG
+    "now playing" (XMLTV), HLS playback in the player screen.
+  * Agent: DeepSeek chat with SSE streaming, reasoning dim, 6 tools
+    (search_indexers, web_search, add_torrent, list_downloads, + system
+    guidance for deep-search combining both search tools), chat
+    persistence (last 30 bubbles), Stop button, custom key override.
+  * UI: 4 tabs (Downloads, Agent, Live TV, Settings), adaptive phone/
+    tablet layout, dark brand theme matching the desktop.
+
+## Android v1.1 (2026-11-13 evening) — agent torrent control + i18n + SAF
+- versionCode 7, v1.1.0, release AAB 29.3 MB signed.
+- NEW agent tools (9 total): pause_torrent, resume_torrent, remove_torrent —
+  the agent can now fully manage downloads from chat (find by partial name
+  or info-hash). Combined with search_indexers + web_search + add_torrent +
+  list_downloads, the full desktop agent loop runs on Android.
+- zh-CN string catalog (ui/ZhStrings.kt) — ~70 strings covering all tabs,
+  notifications, and dialogs. Language toggle in Settings (English/中文);
+  strings are ready to wire into screens via Strings.isChinese.
+- SAF folder picker (ACTION_OPEN_DOCUMENT_TREE) in Settings → "Save location"
+  card — opens the system folder picker; result pending wiring to
+  engine save dir (the infrastructure exists, engine still uses
+  getExternalFilesDir by default).
+- Tablet 16:9 verified on 1920×1080 landscape AVD — NavigationRail
+  (left side) correctly replaces the phone bottom bar.
+
+## Android v1.2 (2026-11-13 late) — zh-CN live, SAF picker, two-pane tablet
+- versionCode 8, v1.2.0, release AAB signed.
+- zh-CN STRINGS WIRED INTO SCREENS: DownloadsScreen (all labels, states,
+  empty state, buttons), AppRoot (tab names), ChatScreen (placeholder,
+  empty state). Language toggle in Settings swaps Strings.isChinese.
+- SAF FOLDER PICKER END-TO-END: Settings → "Choose folder" →
+  ActivityResultContracts.OpenDocumentTree → takePersistableUriPermission →
+  repository.setCustomSaveDir. The engine still uses getExternalFilesDir
+  by default; the SAF URI is stored and ready for the DocumentFile
+  engine integration (next step).
+- TWO-PANE TABLET DOWNLOADS: on wide screens (isWide=true via WindowSizeClass),
+  the Downloads tab shows a compact list on the left + a detail pane on the
+  right (name, progress bar, speeds, sizes, peers, Play FAB). Tap a torrent
+  in the list to select it. Phone layout unchanged.
+
+## Android agent guidelines review (2026-11-16, owner directives)
+- ALWAYS-YOLO (owner: "make it yolo mode always"): every agent tool call
+  executes immediately — the Android chat has NO confirmation UI and none
+  may be added. The system prompt (ChatSession.systemPrompt) opens with the
+  desktop's UNATTENDED MODE paragraph (the desktop YOLO lesson: without it
+  models narrate waiting for approvals that never come) — keep it in sync
+  with agent/loop.py's yolo block.
+- NO LIMITS (owner: "don't add limits"): the 4-round tool-loop cap is
+  REMOVED (was `while (rounds < 4)`; the `tooManyRounds` string deleted
+  from all three string files). The loop runs until the model returns final
+  content or the user presses Stop — the Stop button is the only bound. Do
+  NOT re-add round/turn caps (mirrors the desktop's 2026-10-20 wall-clock
+  cap removal). Output-size coercions (RSS items ≤50, IPTV list ≤100) are
+  display caps, not agent limits — they stay.
+- NO JACKETT on Android (owner 2026-11-15): search_indexers is WEB-ONLY
+  (WebTorrentSearch: DuckDuckGo + known sites). Guidelines must never
+  mention/suggest Jackett, private trackers, search categories or seed
+  counts — web results carry none; the prompt tells the model to write "—"
+  instead of inventing numbers. Leftover `setJackettUrl/ApiKey` setters in
+  AppSettings are intentional no-op tombstones for old settings imports.
+- Guidelines ported from the desktop SYSTEM_PROMPT: reply in the user's
+  language, short intro on greeting, batch independent tool calls in one
+  turn, search-path choice (vague query → web_search first to pin the
+  title, then search_indexers; specific title → straight to search_indexers),
+  DEEP REQUESTS ("deep" = keep sweeping query variants until exhausted),
+  numbered results + "type the number" selection (a bare number reply =
+  download that choice), today's date injected (rebuilt every send).
+- Bug fixed in the review: find_alt_trackers' host label used
+  substringBefore('/') which stops at the scheme slash and printed
+  "[web · https:]" — now uses hostLabel() (URL-parsed) like
+  torrentSearchTool.
+- Known gaps noted, NOT changed (roadmap material, owner call): no LLM
+  retry/backoff (desktop has 3 attempts); in-session `history` is never
+  pruned/fitted (desktop prunes + caps tokens) — a very long single
+  session can outgrow the model context and start erroring; chat history
+  is display-only across restarts (memory files are the cross-session
+  context).
+
+## Android player top-bar auto-hide (v1.4.11, owner 2026-11-16)
+- The PlayerActivity title bar (✕ + stream title + CC) AUTO-HIDES 10s
+  (TOP_BAR_AUTOHIDE_MS) after playback actually runs and ANY touch
+  (dispatchTouchEvent ACTION_DOWN) brings it back and restarts the timer.
+  Gate = STATE_READY && playWhenReady (a rebuffer stall must not flicker
+  the chrome); paused/connecting/errored keeps the bar PINNED — the
+  2026-11-13 "always a visible way out" rule survives as: while playing,
+  the way out is one tap away. Do not regress the paused-pinned behavior.
+- Emulator test gotchas hit (2026-11-16): `-no-boot-animate` is NOT a
+  valid flag on emulator 37.x (use none — `-no-snapshot-save` +
+  `-gpu swiftshader_indirect` work); PlayerActivity is exported=false —
+  `adb root` first, then `am start` with the whole command QUOTED through
+  `adb shell` (unquoted `--es title 'Two Words'` parses "Test" as pkg);
+  uiautomator dump does NOT expose contentDescription on these plain
+  TextViews — probe the bar by its title TEXT, and run timed hide/show
+  assertions inside ONE adb command (inter-command latency exceeds the
+  10s window and produces false "still hidden" readings).
+

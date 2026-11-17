@@ -97,8 +97,10 @@ def test_add_magnet_confirmation(mock_engine):
     r2 = loop.chat("yes")
     assert r2["content"].startswith("- Executed")
     mock_engine.add_magnet.assert_called_once()
-    # The post-execution summary runs on the fast model with low effort.
-    assert any(c["effort"] == "low" and c["model"] == "deepseek-flash" for c in llm.calls)
+    # The post-execution summary runs with low effort; since 7.9 the
+    # default fast_model is "" (fall back to the main model), so the call
+    # carries no explicit model override.
+    assert any(c["effort"] == "low" and c["model"] is None for c in llm.calls)
 
 
 def test_pause_over_50gb(mock_engine):

@@ -826,8 +826,9 @@ class APIKeysDialog(QDialog):
         self._key_typed = False
         self.llm_key.textEdited.connect(lambda _t: setattr(self, "_key_typed", True))
         self._llm_key_hint = _api_hint(
-            "DeepSeek or OpenRouter key — powers the conversational agent. "
-            "Get one at https://platform.deepseek.com/api_keys (DeepSeek) or "
+            "Venice / DeepSeek / OpenRouter key — powers the conversational agent. "
+            "Get one at https://venice.ai/settings-api (Venice, the built-in "
+            "default), https://platform.deepseek.com/api_keys (DeepSeek) or "
             "https://openrouter.ai/keys (OpenRouter). Custom OpenAI-compatible "
             "endpoints may leave the key blank when their server allows it.")
         fl.addRow(tr('API Key:'), self.llm_key)
@@ -1121,12 +1122,25 @@ class APIKeysDialog(QDialog):
 
     def _selected_endpoint(self) -> str:
         pid = self.llm_endpoint.currentData()
-        return pid if pid in LLM_PROVIDER_PRESETS else "deepseek"
+        return pid if pid in LLM_PROVIDER_PRESETS else "venice"
 
     def _on_endpoint_changed(self, _index: int) -> None:
         """Endpoint switch: swap the base URL unless the user typed a custom one."""
         provider = self._selected_endpoint()
         preset = LLM_PROVIDER_PRESETS[provider]
+        # The in-box shared key must never ride an endpoint switch — saved
+        # under another provider it would be sent as a Bearer token to that
+        # provider's endpoint. Clear it when switching AWAY while the field
+        # still carries the injected value, and restore it when the user
+        # switches back (setText never marks _key_typed, so a genuinely
+        # typed key is never clobbered).
+        from config import llm_key_is_shared
+        if llm_key_is_shared():
+            if provider != self.config.llm.provider:
+                if self.llm_key.text().strip() == self.config.llm.api_key:
+                    self.llm_key.setText("")
+            elif not self.llm_key.text().strip():
+                self.llm_key.setText(self.config.llm.api_key)
         self.llm_base_url.setPlaceholderText(preset["base_url"] or "https://provider.example/v1")
         preset_urls = {p["base_url"] for p in LLM_PROVIDER_PRESETS.values()}
         if self.llm_base_url.text().strip() in preset_urls:
@@ -1144,7 +1158,7 @@ class APIKeysDialog(QDialog):
         # (the field is display-only there — _save_and_accept re-applies the
         # preset lineup), local shows the model OK would actually persist,
         # custom keeps whatever the user typed.
-        if provider in ("deepseek", "openrouter"):
+        if provider in ("venice", "deepseek", "openrouter"):
             self.llm_model.setText(models[0] if models else "")
         elif provider == "local":
             from infra import local_model
@@ -1890,7 +1904,7 @@ class APIKeysDialog(QDialog):
 
     def _load_values(self) -> None:
         provider = self.config.llm.provider
-        idx = self.llm_endpoint.findData(provider if provider in LLM_PROVIDER_PRESETS else "deepseek")
+        idx = self.llm_endpoint.findData(provider if provider in LLM_PROVIDER_PRESETS else "venice")
         self.llm_endpoint.blockSignals(True)
         self.llm_endpoint.setCurrentIndex(max(idx, 0))
         self.llm_endpoint.blockSignals(False)

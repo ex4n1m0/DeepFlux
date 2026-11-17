@@ -58,10 +58,10 @@ organize files, all with your confirmation for sensitive actions.</p>
 
 <ol>
   <li><b>AI key (optional):</b> the agent works out of the box on a built-in
-      shared DeepSeek key — no account needed. To run it on your own key
-      instead, open API →: <i>AI Agent Key…</i> (pick the
-      DeepSeek endpoint, or DeepSeek via OpenRouter), adjust the base URL if
-      needed, and paste your key. Your own key is independent of the shared one.</li>
+      shared key (Venice AI's uncensored DeepSeek) — no account needed. To run
+      it on your own key instead, open API →: <i>AI Agent Key…</i> (pick the
+      Venice, DeepSeek, or DeepSeek-via-OpenRouter endpoint), adjust the base
+      URL if needed, and paste your key. Your own key is independent of the shared one.</li>
   <li><b>Set up Jackett (optional but recommended):</b> Downloads → Jackett Indexer Settings….
       Jackett connects to torrent indexers and gives the agent structured search results.
       DeepFlux starts it automatically when it's not running. If you kept the
@@ -210,9 +210,10 @@ provider in parallel (DuckDuckGo always, plus Brave and Perplexity when their ke
 are set) and merges the results — a Perplexity key adds a synthesized answer.</p>
 
 <h3>Local AI (built-in, uncensored)</h3>
-<p>Out of the box the agent runs on a built-in DeepSeek key that ships with
-the setup file — no account and no setup needed. The agent can ALSO run on a
-local model instead of a cloud API — nothing leaves your PC. Local AI is
+<p>Out of the box the agent runs on a built-in key (Venice AI's uncensored
+DeepSeek) that ships with the setup file — no account and no setup needed.
+The agent can ALSO run on a local model instead of a cloud API — nothing
+leaves your PC. Local AI is
 optional: enable it later in API → → <i>AI Agent Key…</i>
 (or tick the optional box
 at the end of setup), where DeepFlux detects your GPU and RAM, picks the
@@ -730,7 +731,7 @@ the native host wasn't registered.
 
 <h2>Version</h2>
 <p>DeepFlux {VERSION} — AI Deep Search</p>
-<p>AI via built-in local models (uncensored, offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
+<p>AI via Venice (built-in, uncensored DeepSeek) or built-in local models (offline) or DeepSeek / OpenRouter / custom · Web search via DuckDuckGo, Brave, Perplexity (parallel)</p>
 
 </body>
 </html>
@@ -811,7 +812,7 @@ class AboutDialog(QDialog):
 
         desc = QLabel(
             tr("AI-powered download manager with browser, player, community room, and file manager.\n\n"
-               "AI via DeepSeek / OpenRouter / custom\n"
+               "AI via Venice (uncensored DeepSeek) / DeepSeek / OpenRouter / custom\n"
                "Web search via DuckDuckGo, Brave, Perplexity (parallel)")
         )
         desc.setStyleSheet(scale_qss("color: #ffffff; font-size: 18px;"))

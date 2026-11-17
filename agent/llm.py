@@ -98,6 +98,8 @@ class DeepSeekClient(LLMClient):
         self.capabilities = preset
         if self.provider == "deepseek":
             self.api_key = config.api_key or os.environ.get("DEEPSEEK_API_KEY", "")
+        elif self.provider == "venice":
+            self.api_key = config.api_key or os.environ.get("VENICE_API_KEY", "")
         elif self.provider == "local":
             # The local llama.cpp server is loopback-only and keyless; a key
             # carried over in the config (e.g. the shared DeepSeek key that
@@ -467,7 +469,7 @@ class DummyLLMClient(LLMClient):
         # Offline demo mode can't parse this — point the user at the fix.
         return LLMMessage(
             role="assistant",
-            content="Add an LLM API key (DeepSeek, OpenRouter, …) in Settings → AI & API Keys to make the agent work.",
+            content="Add an LLM API key (Venice, DeepSeek, OpenRouter, …) in Settings → AI & API Keys to make the agent work.",
             tool_calls=[],
         )
 

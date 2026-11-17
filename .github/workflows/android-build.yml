@@ -1,0 +1,84 @@
+name: Android build
+
+# Builds the Android APKs (debug + unsigned release) on GitHub's free
+# Ubuntu runner — CI IS the Android build machine for anyone without a
+# local Android toolchain (same pattern as macos-build/linux-build).
+# Toolchain: JDK 21 + AGP 8.13 + Gradle 8.14.3 + platform 36 (see
+# android/README.md). The shared Venice AI key (the built-in uncensored-
+# DeepSeek agent, owner decision 2026-11-17) is embedded from the
+# EMBED_SHARED_VENICE_API_KEY secret via packaging/gen_android_key.py —
+# obfuscated pair only, git stays keyless (owner decision 2026-11-12).
+# Release APKs are UNSIGNED for now: signing keystore + deepflux.space
+# distribution lane is the next release ritual (ANDROID_STUDY.md §8).
+#
+# Trigger: manual dispatch only — release-gated by hand, like the Linux build.
+on:
+  workflow_dispatch:
+    inputs:
+      upload_release:
+        description: 'Also upload the APKs to the draft android-staging release (fast download lane — artifact-API downloads crawl from some networks)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write  # draft android-staging release upload lane
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Ensure SDK pieces (runner ships most of it; pin ours)
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses >/dev/null || true
+          "$SDKM" --install "platforms;android-36" "build-tools;36.0.0" >/dev/null
+
+      - name: Embed shared Venice key (from secret, obfuscated)
+        env:
+          EMBED_SHARED_VENICE_API_KEY: ${{ secrets.EMBED_SHARED_VENICE_API_KEY }}
+        run: python ../packaging/gen_android_key.py --from-env
+
+      - name: Build (debug + unsigned release)
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug assembleRelease --stacktrace --no-daemon
+
+      - name: Smoke the APKs (exist + native libs inside)
+        run: |
+          ls -la app/build/outputs/apk/debug/ app/build/outputs/apk/release/
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -E 'lib/(arm64-v8a|armeabi-v7a|x86_64)/.*\.so' | head -12
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: DeepFlux-Android-APKs
+          path: |
+            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload APKs to draft android-staging release
+        if: ${{ inputs.upload_release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd ..
+          gh release view android-staging -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create android-staging -R "$GITHUB_REPOSITORY" --draft --title "Android staging" --notes "CI upload lane (draft, not announced)"
+          gh release upload android-staging -R "$GITHUB_REPOSITORY" \
+            android/app/build/outputs/apk/debug/app-debug.apk \
+            android/app/build/outputs/apk/release/app-release-unsigned.apk \
+            --clobber

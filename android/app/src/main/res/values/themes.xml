@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mirrors the desktop background ladder (AGENTS.md): #05070c window
+         base, dark chrome, brand accent in Compose (ui/theme/Theme.kt). -->
+    <style name="Theme.DeepFlux" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/deepflux_bg</item>
+        <item name="android:statusBarColor">@color/deepflux_bg</item>
+        <item name="android:navigationBarColor">@color/deepflux_bg</item>
+    </style>
+</resources>

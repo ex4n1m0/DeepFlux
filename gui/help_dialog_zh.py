@@ -47,9 +47,10 @@ HELP_HTML_ZH = r"""
 <h2>快速上手</h2>
 
 <ol>
-  <li><b>API 密钥（可选）：</b>智能体开箱即用 —— 随安装包内置的共享 DeepSeek
-      密钥直接可用，无需账号。如想改用自己的密钥：API 菜单 → AI 与 API 密钥：
-      <i>AI 智能体密钥…</i>（选择 DeepSeek 端点，或经 OpenRouter 使用
+  <li><b>API 密钥（可选）：</b>智能体开箱即用 —— 随安装包内置的共享密钥
+      （Venice AI 的无审查 DeepSeek）直接可用，无需账号。如想改用自己的
+      密钥：API 菜单 → AI 与 API 密钥：
+      <i>AI 智能体密钥…</i>（选择 Venice、DeepSeek 端点，或经 OpenRouter 使用
       DeepSeek），按需调整 Base URL，然后粘贴密钥 —— 自己的密钥完全独立于
       共享密钥。</li>
   <li><b>配置 Jackett（可选但推荐）：</b>下载菜单 → Jackett 索引器设置…。Jackett 连接
@@ -175,8 +176,9 @@ Brave 和 Perplexity 在配置密钥后加入）并合并结果 —— Perplexit
 附上一段综合答案。</p>
 
 <h3>本地 AI（内置，无审查）</h3>
-<p>开箱即用：智能体默认使用随安装包内置的 DeepSeek 密钥运行 —— 无需账号，
-无需任何设置。也可以改为在本地模型上运行（什么都不离开你的电脑）：本地
+<p>开箱即用：智能体默认使用随安装包内置的密钥（Venice AI 的无审查
+DeepSeek）运行 —— 无需账号，无需任何设置。也可以改为在本地模型上运行
+（什么都不离开你的电脑）：本地
 AI 是可选功能，之后在 API 菜单 → AI 与 API 密钥 → <i>AI 智能体密钥…</i> 中开启
 （或在安装最后一步勾选
 可选框）。DeepFlux 会检测你的显卡和内存，从固定的 Hugging Face 模型清单
@@ -592,7 +594,7 @@ AES-128 加密的流。
 
 <h2>版本</h2>
 <p>DeepFlux {VERSION} —— AI 深度搜索</p>
-<p>AI：内置本地模型（无审查、离线）或 DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
+<p>AI：Venice（内置，无审查 DeepSeek）/ 内置本地模型（离线）/ DeepSeek / OpenRouter / 自定义 · 网页搜索：DuckDuckGo、Brave、Perplexity（并行）</p>
 
 </body>
 </html>
