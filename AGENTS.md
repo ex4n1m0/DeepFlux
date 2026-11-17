@@ -623,6 +623,27 @@
   the hover poll is CHROME-ONLY now (`_rail_*` symbols all removed);
   pure fullscreen (`set_video_pure_chrome`) snapshots only the agent
   panel. Do not re-add a left rail or rail-adjacent pollers.
+- AGENT BACKGROUND MUSIC (8.3, owner 2026-11-18, `gui/agent_music.py`): a
+  ♫ toggle in the agent input row AND the mini player's idle row plays the
+  bundled repo-root `backgroundmusic.mp3` (owner file, 74.5 MB / 1h17m,
+  committed; ships via app.spec + app_linux.spec datas — macOS has NO
+  button, no file). Audio-only second libmpv (`video=False` so ID3 cover
+  art can never open a window, `loop_file="inf"`, volume knob =
+  `agent_music.VOLUME`). STARTS ON at boot (owner: "background music starts
+  on") via `maybe_autostart` — config `ui_background_music` (top-level
+  like ui_font_size: the agent can NEVER set it), default True, toggling
+  either button PERSISTS (an explicit OFF stays off). Contract: ANY media
+  opening stops it (`stop_agent_music()` hooks: mini open_media,
+  PlayerWidget.play, GridTile.assign — browser-tab web video does NOT
+  count) and it never auto-resumes; MainWindow.closeEvent terminates the
+  handle (live-libmpv-at-exit class). Buttons sync via controller
+  state listeners (BOTH windows can be alive across morphs). Setup exe
+  grows ~75 MB from the track (8.3 ≈ 511 MB, still under the ~750 MiB
+  Vercel cap). Tests: tests/test_agent_music.py (fake-mpv seam +
+  source-pinned hooks), tests/test_mini_player.py (button e2e + persist).
+- MATRIX RAIN SPEED (owner 2026-11-18 "reduce the speed"):
+  `gui/matrix_rain.py` SPEED_MIN/MAX 0.12–0.55 cells/tick (was 0.25–1.1
+  at the same 18 fps); pinned by tests/test_matrix_rain.py.
 - NO AUTOMATIC MAIN-TAB JUMPS (owner decision 2026-11-17, "automatic tabs
   jumping are annoying"): background work must NEVER switch the main tab —
   the user keeps reading whatever tab they are on. Removed that day:

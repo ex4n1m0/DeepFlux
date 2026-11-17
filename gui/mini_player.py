@@ -147,6 +147,40 @@ class _IdleBanner(QWidget):
         painter.end()
 
 
+class _VideoSurface(QWidget):
+    """Black host for the embedded mpv/VLC window plus an "Opening…"
+    overlay. Children of a layout-less QWidget never auto-resize, so the
+    surface itself repositions the overlay on resize. The overlay is a
+    Qt-painted child: once mpv's OWN child HWND appears (first frame) it
+    covers the overlay anyway — but by then the wait it describes is over
+    and _on_state has hidden it (2026-11-17 study: the first open pays
+    backend init + demux behind a dead-black window)."""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setStyleSheet("background-color: #000000;")
+        self._overlay = QLabel("", self)
+        self._overlay.setAlignment(Qt.AlignCenter)
+        self._overlay.setStyleSheet(scale_qss(
+            "QLabel { color: #ffffff; background-color: rgba(5,7,12,0.8);"
+            " border-radius: 6px; font-size: 14px; }"))
+        self._overlay.hide()
+
+    def show_opening(self, name: str) -> None:
+        self._overlay.setText(tr("Opening {name}…").format(name=name))
+        self._overlay.setGeometry(self.rect())
+        self._overlay.show()
+        self._overlay.raise_()
+
+    def hide_opening(self) -> None:
+        self._overlay.hide()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        if self._overlay.isVisible():
+            self._overlay.setGeometry(self.rect())
+        super().resizeEvent(event)
+
+
 class MiniPlayerWindow(QWidget):
     """The lightweight player window. Two visual states (idle / playing)
     plus a morph overlay; one optional heavy sibling (the MainWindow)."""
@@ -278,6 +312,24 @@ class MiniPlayerWindow(QWidget):
             "playback stops during the switch"))
         self._morph_btn_idle.clicked.connect(self.morph_to_full)
         btn_row.addWidget(self._morph_btn_idle)
+        # ♫ Background music toggle (owner 2026-11-18: starts ON) — the mini
+        # player needs its own switch: music can be playing while only this
+        # window exists, and turning it off must never require a morph.
+        self._music_btn = None
+        from gui.agent_music import MUSIC_SUPPORTED
+        if MUSIC_SUPPORTED:
+            from gui import agent_music
+            music_btn = QPushButton("♫")
+            music_btn.setObjectName("btn_secondary")
+            music_btn.setCheckable(True)
+            music_btn.setFixedWidth(40)
+            music_btn.setToolTip(tr(
+                'Background music on/off — loops until you turn it off;\n'
+                'stops automatically when other media opens'))
+            music_btn.clicked.connect(self._on_music_toggle)
+            self._music_btn = music_btn
+            agent_music.controller().add_state_listener(self._sync_music_btn)
+            btn_row.addWidget(music_btn)
         btn_row.addStretch(1)
         lay.addLayout(btn_row)
         self._idle_page = page
@@ -289,8 +341,7 @@ class MiniPlayerWindow(QWidget):
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        self.surface = QWidget()
-        self.surface.setStyleSheet("background-color: #000000;")
+        self.surface = _VideoSurface()
         lay.addWidget(self.surface, 1)
         self._build_transport(lay)
         self._video_page = page
@@ -367,13 +418,43 @@ class MiniPlayerWindow(QWidget):
         # A clicked button KEEPS keyboard focus — Space would re-trigger it
         # and ←/→ would never reach the window. Hand focus back after every
         # transport interaction (same lesson as PlayerWidget's re-seating).
-        for btn in (self._open_btn, self._play_btn, self._rw_btn,
-                    self._ff_btn, self._mute_btn, self._fs_btn):
+        btns = [self._open_btn, self._play_btn, self._rw_btn,
+                self._ff_btn, self._mute_btn, self._fs_btn]
+        if getattr(self, "_music_btn", None) is not None:
+            btns.append(self._music_btn)
+        for btn in btns:
             btn.clicked.connect(self._reseat_focus)
 
     def _reseat_focus(self, *args) -> None:
         """Return keyboard focus to the window after button/slider use."""
         self.setFocus()
+
+    # ------------------------------------------------------- background music
+    def _sync_music_btn(self, playing: bool) -> None:
+        btn = getattr(self, "_music_btn", None)
+        if btn is not None:
+            btn.blockSignals(True)
+            btn.setChecked(playing)
+            btn.blockSignals(False)
+
+    def _on_music_toggle(self) -> None:
+        """Toggle the looping background music and PERSIST the choice — the
+        boot autostart reads it (owner 2026-11-18: starts ON by default)."""
+        from gui import agent_music
+        ctl = agent_music.controller()
+        was_playing = ctl.is_playing()
+        now_playing = ctl.toggle()
+        self._config.ui_background_music = now_playing
+        try:
+            self._config.to_file(self._config_path)
+        except Exception:
+            logger.debug("music preference save failed", exc_info=True)
+        if was_playing == now_playing:   # start failed (no track / no player)
+            self._sync_music_btn(False)
+            QMessageBox.warning(
+                self, tr("DeepFlux Mini"),
+                tr("Background music is unavailable on this install "
+                   "(bundled track or audio backend missing)."))
 
     def _build_morph_overlay(self) -> None:
         self._morph_overlay = QWidget(self)
@@ -427,9 +508,21 @@ class MiniPlayerWindow(QWidget):
                 logger.warning("mini player: not a playable media file: %r",
                                path)
             return
+        # Show the wait BEFORE the cold start: backend init + first demux
+        # can take several hundred ms frozen (2026-11-17 study) — a labeled
+        # black window reads as "working", an unlabeled one as "dead".
+        self.surface.show_opening(os.path.basename(path))
+        # Background music yields to real media (owner 2026-11-18): the
+        # agent-tab track stops the moment ANY player opens something.
+        try:
+            from gui.agent_music import stop_agent_music
+            stop_agent_music()
+        except Exception:
+            logger.debug("music stop hook failed", exc_info=True)
         if self._backend is None:
             self._backend = self._backend_factory()
             if self._backend is None:
+                self.surface.hide_opening()
                 QMessageBox.warning(
                     self, tr("DeepFlux Mini"),
                     tr("No playback backend available (mpv/VLC missing).\n"
@@ -460,6 +553,9 @@ class MiniPlayerWindow(QWidget):
 
     # backend callbacks ------------------------------------------------
     def _on_state(self, state: str) -> None:
+        # Any backend word means the wait is over — drop the "Opening…"
+        # overlay (playing/buffering alike; even "stopped" on a quick error).
+        self.surface.hide_opening()
         if state == "playing":
             self._play_btn.setText("⏸")
         elif state == "paused":
@@ -480,6 +576,7 @@ class MiniPlayerWindow(QWidget):
         self._time_lbl.setText(f"{_fmt(pos)} / {_fmt(duration)}")
 
     def _on_error(self, message: str) -> None:
+        self.surface.hide_opening()
         logger.warning("mini player backend error: %s", message)
 
     # transport ----------------------------------------------------------
@@ -707,6 +804,20 @@ class MiniPlayerWindow(QWidget):
                 logger.debug("mini backend stop failed", exc_info=True)
 
     # ------------------------------------------------------------ app-level
+    def prewarm_backend(self) -> None:
+        """Idle-boot warm-up: create the playback backend NOW (no file
+        loaded, cheap once the DLL is warm) so the first open_media() pays
+        only loadfile + demux. Most of the frozen first-open gap was the
+        backend cold start behind a black window (2026-11-17 study F4).
+        Called from run_mini_player only — tests construct the window
+        directly and keep their stub factories lazy."""
+        if self._backend is not None or self._morphing:
+            return
+        try:
+            self._backend = self._backend_factory()
+        except Exception:
+            logger.debug("backend prewarm failed", exc_info=True)
+
     def start_control_api(self) -> None:
         """Single-instance listener so a second launch forwards its target
         here instead of opening another player (same contract as the full
@@ -776,6 +887,14 @@ class MiniPlayerWindow(QWidget):
         self._stop_playback()
         self._main = main
         self._stack.setCurrentWidget(self._idle_page)
+        self.surface.hide_opening()
+        # Music may already be playing (kept alive across the morph) — the
+        # idle-row toggle must show it.
+        try:
+            from gui import agent_music
+            self._sync_music_btn(agent_music.controller().is_playing())
+        except Exception:
+            pass
         self.setWindowTitle(f"DeepFlux Mini {APP_VERSION}")
         self._play_btn.setText("▶")
         self.seek.setValue(0)
@@ -895,13 +1014,56 @@ def run_mini_player(config_path: Optional[str] = None,
     if queue:
         _MINI_WINDOW._queue = [os.path.abspath(q) for q in queue]
     _MINI_WINDOW.show()
-    # Single-instance listener + delayed telemetry (both off the paint path).
-    QTimer.singleShot(0, _MINI_WINDOW.start_control_api)
-    QTimer.singleShot(2000, _start_telemetry_lazily)
+    # ORDER MATTERS (2026-11-17 study F3): the media open is what the user
+    # launched the app FOR — it goes first; the single-instance listener
+    # only serves SECOND launches, so it comes up a beat later (its engine
+    # start does a download-folder registry scan that used to sit between
+    # the window and the first video frame).
     if media:
         m = os.path.abspath(media)
         QTimer.singleShot(0, lambda: _MINI_WINDOW.open_media(m))
+    QTimer.singleShot(250, _MINI_WINDOW.start_control_api)
+    if media is None:
+        # Plain boot: warm the playback stack while the user looks at the
+        # idle banner, so a later drop / forwarded open skips the cold start.
+        threading.Thread(target=_prewarm_mpv_dll, daemon=True,
+                         name="mini-mpv-prewarm").start()
+        QTimer.singleShot(400, _MINI_WINDOW.prewarm_backend)
+        # Background music starts ON (owner 2026-11-18) unless the user has
+        # turned it off — a beat after first paint, and never over media the
+        # user already opened in these 600 ms.
+        QTimer.singleShot(600, _autostart_music_when_idle)
+    # Delayed telemetry (off the paint path).
+    QTimer.singleShot(2000, _start_telemetry_lazily)
     return app.exec()
+
+
+def _autostart_music_when_idle() -> None:
+    """Boot helper: start the background music unless media is already open
+    in the mini window (media wins — the music yields per its contract)."""
+    win = _MINI_WINDOW
+    if win is None:
+        return
+    if win._stack.currentWidget() is win._video_page:
+        return   # a file was dropped/forwarded in during the boot beat
+    try:
+        from gui.agent_music import maybe_autostart
+        maybe_autostart(win._config)
+    except Exception:
+        logging.getLogger(__name__).debug("music autostart failed",
+                                          exc_info=True)
+
+
+def _prewarm_mpv_dll() -> None:
+    """Background libmpv warm-up for no-media boots: pay the (Defender-
+    scanned) DLL load at idle instead of on the first file open. Silent
+    no-op on failure — open_media retries the real path with a warning."""
+    try:
+        from iptv.player import ensure_mpv_dll_on_path
+        ensure_mpv_dll_on_path()
+        import mpv  # noqa: F401  (the load is the point)
+    except Exception:
+        logger.debug("mpv dll prewarm skipped", exc_info=True)
 
 
 def _start_telemetry_lazily() -> None:

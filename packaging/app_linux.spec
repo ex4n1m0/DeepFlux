@@ -113,6 +113,9 @@ _wanted_datas = [
     # (app.spec ships it; Linux/mac builds had only the older art — review 2026-11-09).
     (os.path.join(project_root, "DeepFluxNovBanner.webp"), "."),
 (os.path.join(project_root, "website", "deepflux", "DeepFluxBanner.webp"), "."),
+    # Agent-tab background music (owner 2026-11-18): looping MP3 on a
+    # dedicated audio-only mpv (libmpv ships in _internal/mpvlibs here).
+    (os.path.join(project_root, "backgroundmusic.mp3"), "."),
     (os.path.join(project_root, "packaging", "icons", "back.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "forward.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "reload.svg"), "packaging/icons"),

@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "8.2"
+APP_VERSION = "8.3"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -466,7 +466,9 @@ class SourcesConfig:
 @dataclass
 class DownloadConfig:
     """Configuration for the IDM-style download manager."""
-    max_concurrent: int = 3
+    # 1 since 2026-11-17 (owner: one download at a time by default; was 3).
+    # Existing configs ride the ui_defaults_gen 2→3 remap below.
+    max_concurrent: int = 1
     max_connections_per_download: int = 8       # 1–32
     default_folder: str = str(Path.home() / "Downloads" / "DeepFlux")
     bandwidth_limit_bps: int = 0                # 0 = unlimited
@@ -741,22 +743,31 @@ class DeeptorrentConfig:
     # font and every stylesheet font-size (gui/fonts.set_font_scale/
     # scale_qss); applied once at startup, takes effect next launch.
     # Top-level for the same reason as ui_language: stays user-controlled,
-    # agent cannot set it. Default "small" since 2026-11-04 (was "medium");
-    # from_file migrates 7.0/7.1 configs once (ui_defaults_gen below).
-    ui_font_size: str = "small"
+    # agent cannot set it. Default "micro" since 2026-11-17 (was "small"
+    # 2026-11-04, "medium" before); from_file migrates old saved defaults
+    # once per generation (ui_defaults_gen below).
+    ui_font_size: str = "micro"
     # UI text color theme ("white" | "light_blue" | "blue" | "dark_blue") —
     # rewrites every stylesheet text color via gui/fonts.scale_qss; applied
     # once at startup, takes effect next launch. Top-level for the same
     # reason as ui_language: stays user-controlled, agent cannot set it.
-    # Default "light_blue" since 2026-11-04 (was "white"); from_file
-    # migrates 7.0/7.1 configs once (ui_defaults_gen below).
-    ui_text_theme: str = "light_blue"
-    # Generation stamp for one-time UI-default migrations: 7.0/7.1 persisted
-    # the then-defaults (medium font, white text) into every config.json, so
-    # "saved default" is indistinguishable from "never chose". gen 1 → 2
-    # (2026-11-04) remaps those saved defaults to the new ones (small /
-    # light_blue) exactly once; explicit choices always survive.
-    ui_defaults_gen: int = 2
+    # Default "dark_blue" since 2026-11-17 (was "light_blue" 2026-11-04,
+    # "white" before); from_file migrates old saved defaults once per
+    # generation (ui_defaults_gen below).
+    ui_text_theme: str = "dark_blue"
+    # Agent-tab background music ON at boot (owner 2026-11-18: "background
+    # music starts on"). Top-level like the other ui_* fields: user-only,
+    # the agent can NEVER set it. Toggling either ♫ button persists the
+    # choice, so an explicit OFF stays off across launches.
+    ui_background_music: bool = True
+    # Generation stamp for one-time default migrations: config saves persist
+    # the then-defaults into every config.json, so "saved default" is
+    # indistinguishable from "never chose". gen 1 → 2 (2026-11-04) remapped
+    # the 7.0/7.1 defaults (medium/white → small/light_blue). gen 2 → 3
+    # (2026-11-17, owner) remaps the previous defaults to the new ones
+    # (small → micro, light_blue → dark_blue, download.max_concurrent 3 → 1)
+    # exactly once; explicit post-stamp choices always survive.
+    ui_defaults_gen: int = 3
     # Generation stamp for the one-time YOLO-default migration: llm.yolo_mode
     # shipped False since 5.8 and every config save persists the whole llm
     # section, so a saved False is almost always "never chose" — a bare
@@ -1076,7 +1087,7 @@ class DeeptorrentConfig:
                                 if isinstance(data.get("browser", {}).get("zoom_by_origin", {}), dict) else {}),
             ),
             download=DownloadConfig(
-                max_concurrent=data.get("download", {}).get("max_concurrent", 3),
+                max_concurrent=data.get("download", {}).get("max_concurrent", 1),
                 max_connections_per_download=data.get("download", {}).get("max_connections_per_download", 8),
                 default_folder=dl_folder,
                 bandwidth_limit_bps=data.get("download", {}).get("bandwidth_limit_bps", 0),
@@ -1205,14 +1216,17 @@ class DeeptorrentConfig:
             ui_language=(data.get("ui_language") or "en")
             if (data.get("ui_language") or "en") in ("en", "zh")
             else "en",
-            ui_font_size=(data.get("ui_font_size") or "small")
-            if (data.get("ui_font_size") or "small")
+            ui_font_size=(data.get("ui_font_size") or "micro")
+            if (data.get("ui_font_size") or "micro")
             in ("micro", "small", "medium", "large")
-            else "small",
-            ui_text_theme=(data.get("ui_text_theme") or "light_blue")
-            if (data.get("ui_text_theme") or "light_blue")
+            else "micro",
+            ui_text_theme=(data.get("ui_text_theme") or "dark_blue")
+            if (data.get("ui_text_theme") or "dark_blue")
             in ("white", "light_blue", "blue", "dark_blue")
-            else "light_blue",
+            else "dark_blue",
+            ui_background_music=data.get("ui_background_music", True)
+            if isinstance(data.get("ui_background_music", True), bool)
+            else True,
             ui_defaults_gen=data.get("ui_defaults_gen", 1)
             if isinstance(data.get("ui_defaults_gen", 1), int)
             else 1,
@@ -1236,6 +1250,20 @@ class DeeptorrentConfig:
                 config.ui_font_size = "small"
             if config.ui_text_theme == "white":
                 config.ui_text_theme = "light_blue"
+        # One-time defaults refresh (gen 2 → 3, 2026-11-17, owner): the
+        # small/light_blue/max_concurrent=3 defaults were persisted into
+        # every config by any save, so remap them to the new defaults
+        # (micro / dark_blue / 1) once. Explicit post-stamp choices don't
+        # match the remap and survive; after the first to_file the gen=3
+        # stamp blocks re-migration.
+        if config.ui_defaults_gen < 3:
+            config.ui_defaults_gen = 3
+            if config.ui_font_size == "small":
+                config.ui_font_size = "micro"
+            if config.ui_text_theme == "light_blue":
+                config.ui_text_theme = "dark_blue"
+            if config.download.max_concurrent == 3:
+                config.download.max_concurrent = 1
         # One-time YOLO-default migration (gen 1 → 2, 2026-11-07): the
         # shipped default was False since 5.8, so configs saved before the
         # flip carry False without anyone choosing it — move them to the

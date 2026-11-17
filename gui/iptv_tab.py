@@ -983,6 +983,13 @@ class PlayerWidget(QWidget):
     _MAX_RETRIES = 5      # total attempts before giving up
 
     def play(self, item: Any, allow_milkdrop: bool = True) -> None:
+        # Background music yields to real media (owner 2026-11-18): the
+        # agent-tab track stops the moment anything starts here.
+        try:
+            from gui.agent_music import stop_agent_music
+            stop_agent_music()
+        except Exception:
+            pass
         # Starting playback in the main player means leaving multiview mode —
         # the tiles' decoders/connections are freed for the new stream.
         if self._multiview_grid is not None:

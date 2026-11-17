@@ -1,8 +1,8 @@
 {
-  "version": "8.2",
-  "file": "DeepFlux8.2Setup.exe",
-  "size": 436824957,
-  "sha256": "4b085a328e0d505ad3970a3a3a08b05167259f325dd2529751a50b3c897cd15d",
-  "released": "2026-11-17",
-  "notes": "DeepFlux 8.2 - player keys fixed, blue rain. Arrow-key seeking (plus Space, F and the other player shortcuts) now works in the full player even when the video never takes keyboard focus - previously, with SVP's out-of-process playback, clicking the video focused nothing and every player key died; focus is now seated on playback and stranded keys are forwarded from the tab. The Agent tab's idle screen gets a blue Matrix-style digital rain behind the banner (runs only before the first message, stops when hidden)."
+  "version": "8.3",
+  "file": "DeepFlux8.3Setup.exe",
+  "size": 508675435,
+  "sha256": "74bd265c613cbe0e6e3c00bd6ae881bb7ba4e9600b9534f086b70be01a2388b7",
+  "released": "2026-11-18",
+  "notes": "DeepFlux 8.3 - instant close, faster video open, background music, new defaults. Closing the app was a 1-2 second freeze; it is now immediate (about 0.1s) on every path. Opening a video from Explorer shows an Opening label and reaches the first frame faster, and the mini player pre-warms playback while idle. The Agent tab gains a looping background-music track (bundled, about 75 minutes) that starts with the app, can be toggled from the Agent tab or the mini player, and pauses whenever you play anything else - the setup grew to 485 MB because of it. The Matrix-style agent rain falls slower. Defaults refresh: Micro font, Dark Blue text, one download at a time (change any of it back in Settings). The second-instance open fix also covers custom control ports."
 }

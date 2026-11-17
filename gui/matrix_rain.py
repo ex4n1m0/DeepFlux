@@ -46,6 +46,11 @@ FPS = 18
 CELL_W = 16
 CELL_H = 22
 MAX_TRAIL = 24
+# Per-tick advance range, in cells (owner 2026-11-18: "reduce the speed").
+# Halved from the original port's 0.25–1.1 — the same 18 fps cadence, each
+# stream just falls slower. Fractional speeds keep streams out of lockstep.
+SPEED_MIN = 0.12
+SPEED_MAX = 0.55
 
 
 def _level_color(level: int, levels: int = _BRIGHTNESS_LEVELS) -> QColor:
@@ -82,7 +87,7 @@ class MatrixRain:
         return {
             # cells per tick — fractional speeds keep streams from marching
             # in lockstep (the .scr's "Glyphs speed" jitter).
-            "speed": self._rng.uniform(0.25, 1.1),
+            "speed": self._rng.uniform(SPEED_MIN, SPEED_MAX),
             "head": float(self._rng.uniform(0, rows) if not at_top else -self._rng.uniform(0, rows)),
             "trail": self._rng.randint(8, MAX_TRAIL),
             # Glyphs persist within a stream and re-roll occasionally —

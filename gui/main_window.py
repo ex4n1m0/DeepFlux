@@ -2048,6 +2048,26 @@ class MainWindow(QMainWindow):
         self._sync_yolo_button()
         agent_input_layout.addWidget(yolo_btn)
 
+        # ♫ Background music (owner 2026-11-18): the bundled looping track.
+        # Stops whenever other media opens (mini player / Play tab) and when
+        # toggled off — never auto-resumes. macOS ships no player stack, so
+        # the button simply doesn't exist there.
+        from gui.agent_music import MUSIC_SUPPORTED
+        self.music_btn = None
+        if MUSIC_SUPPORTED:
+            music_btn = QPushButton(tr('♫'))
+            music_btn.setObjectName("btn_secondary")
+            music_btn.setCheckable(True)
+            music_btn.setFixedWidth(44)
+            music_btn.setToolTip(tr(
+                'Background music on/off — loops until you turn it off;\n'
+                'stops automatically when other media opens'))
+            music_btn.clicked.connect(self._on_music_toggle)
+            self.music_btn = music_btn
+            from gui import agent_music
+            agent_music.controller().add_state_listener(self._sync_music_button)
+            agent_input_layout.addWidget(music_btn)
+
         search_btn = QPushButton(tr('Search'))
         search_btn.setObjectName("btn_accent")
         search_btn.setToolTip(tr('Instant web sweep — no agent involved (Ctrl+Enter)'))
@@ -3642,6 +3662,36 @@ class MainWindow(QMainWindow):
             self.yolo_btn.setObjectName(wanted)
             self.yolo_btn.style().unpolish(self.yolo_btn)
             self.yolo_btn.style().polish(self.yolo_btn)
+
+    def _sync_music_button(self, playing: bool) -> None:
+        """Reflect the music controller's state on the ♫ toggle (also fires
+        when a media-open hook stopped the music — the button must uncheck
+        itself even though nobody clicked it)."""
+        btn = getattr(self, "music_btn", None)
+        if btn is not None:
+            btn.blockSignals(True)
+            btn.setChecked(playing)
+            btn.blockSignals(False)
+
+    def _on_music_toggle(self) -> None:
+        """User toggled the Agent-tab background music (owner 2026-11-18).
+        The choice persists — the boot autostart (starts ON by default)
+        reads it back, so an explicit OFF stays off."""
+        from gui import agent_music
+        ctl = agent_music.controller()
+        was_playing = ctl.is_playing()
+        now_playing = ctl.toggle()
+        self.config.ui_background_music = now_playing
+        try:
+            self.config.to_file(self.config_path)
+        except Exception as exc:
+            logger.warning("Failed to persist music preference: %s", exc)
+        if was_playing == now_playing:   # start failed (no track / no player)
+            QMessageBox.warning(
+                self, tr("DeepFlux"),
+                tr("Background music is unavailable on this install "
+                   "(bundled track or audio backend missing)."))
+            self._sync_music_button(False)
 
     def _on_yolo_toggle(self) -> None:
         """User toggled YOLO mode — confirm the risky direction, persist, and
@@ -7686,6 +7736,14 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # Stop the Agent-tab background music — a live libmpv handle at
+        # interpreter shutdown is the exit-crash class (owner 2026-11-18).
+        try:
+            from gui import agent_music
+            agent_music.controller().shutdown()
+        except Exception:
+            pass
+
         # Persist window geometry + active tab. Skipped when an imported
         # settings file is pending — the old in-memory config must not
         # overwrite it on the way out.
@@ -7702,8 +7760,11 @@ class MainWindow(QMainWindow):
                 logger.warning("Failed to persist UI state: %s", exc)
 
         # Export fast-resume data first so the next launch skips hash rechecks.
+        # Short timeout on purpose (2026-11-17 study F5): the method default
+        # is 15 s — a straggler alert must never stretch the visible close.
         try:
-            self._state_manager.save_resume_data(self.engine.export_resume_data())
+            self._state_manager.save_resume_data(
+                self.engine.export_resume_data(timeout=3.0))
         except Exception as exc:
             logger.warning("Failed to export resume data: %s", exc)
         # Save torrent state before closing.
@@ -7795,6 +7856,17 @@ def run_gui(config_path: Optional[str] = None, open_targets: Optional[List[str]]
     except Exception:
         logger.debug("gc.freeze skipped", exc_info=True)
     window.show()
+    # Background music starts ON (owner 2026-11-18) unless turned off — a
+    # beat after first paint, and never on association launches (their
+    # target may be media, and media wins over music by contract).
+    if not open_targets:
+        def _music_autostart() -> None:
+            try:
+                from gui.agent_music import maybe_autostart
+                maybe_autostart(_cfg)
+            except Exception:
+                logger.debug("music autostart failed", exc_info=True)
+        QTimer.singleShot(800, _music_autostart)
     # Targets passed on the command line (file associations / "Open with").
     # 0 ms (was a fixed 500 ms in ≤7.7): the window is up after show(); the
     # dispatch itself raises/activates, so no settle delay is needed — every

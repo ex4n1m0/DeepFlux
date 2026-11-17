@@ -85,3 +85,16 @@ def test_chat_history_rain_runs_only_while_idle_and_shown():
 
     view.hide()  # tab switched away -> stop
     assert not view._rain_timer.isActive()
+
+
+def test_rain_speed_was_halved_2026_11_18():
+    """Owner 2026-11-18: "reduce the speed" — the per-tick advance range was
+    halved (was 0.25–1.1 cells/tick at 18 fps). Pins both the constants and
+    that _spawn_column actually draws its speeds from them."""
+    from gui.matrix_rain import SPEED_MIN, SPEED_MAX
+    assert SPEED_MIN < SPEED_MAX
+    assert SPEED_MAX < 0.6, "the rain must stay slower than the original 1.1 max"
+    rain = MatrixRain(seed=3)
+    rain._build_columns(320, 240)
+    for col in rain._columns:
+        assert SPEED_MIN - 1e-9 <= col["speed"] <= SPEED_MAX + 1e-9

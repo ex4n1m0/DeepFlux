@@ -310,7 +310,7 @@ class DownloadsSettingsDialog(QDialog):
 
         self.dm_max_concurrent = QSpinBox()
         self.dm_max_concurrent.setRange(1, 20)
-        self.dm_max_concurrent.setValue(3)
+        self.dm_max_concurrent.setValue(1)
         dm_layout.addRow(tr('Max Concurrent Downloads:'), self.dm_max_concurrent)
 
         self.dm_max_connections = QSpinBox()

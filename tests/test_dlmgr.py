@@ -45,6 +45,38 @@ def engine():
     eng._running = False
 
 
+def test_stop_is_immediate_mid_monitor_sleep(tmp_path):
+    """2026-11-17 boot/shutdown study: the monitor loop's inter-pass wait
+    MUST be interruptible. It used to be a bare time.sleep(2.0), so
+    DownloadEngine.stop() — which runs on every app close — blocked for the
+    REMAINDER of the interval (measured median ~1 s, max ~1.85 s): the
+    whole 'app hangs for a second or two on close' report."""
+    import time as _time
+
+    eng = DownloadEngine(None)
+    # Never read/scan the real machine's download folders or registry.
+    eng._registry_path = str(tmp_path / "folders.json")
+    eng._default_folder = str(tmp_path / "dl")
+    eng._auto_start = False
+    eng.start()
+    _time.sleep(0.3)   # the monitor is now ~0.3 s into its 2 s wait
+    t0 = _time.perf_counter()
+    eng.stop()
+    elapsed = _time.perf_counter() - t0
+    assert eng._monitor_thread is not None
+    assert not eng._monitor_thread.is_alive()
+    # Broken shape blocked ~1.7 s from this offset; 0.6 s leaves CI headroom
+    # while still failing loudly on a regression to the bare sleep.
+    assert elapsed < 0.6, f"stop() took {elapsed:.2f}s — monitor wait is not interruptible"
+
+    # A stopped engine can start again (the wake event must reset).
+    eng.start()
+    _time.sleep(0.1)
+    t0 = _time.perf_counter()
+    eng.stop()
+    assert _time.perf_counter() - t0 < 0.6
+
+
 def test_http_client_revalidates_redirect_destinations():
     response = mock.MagicMock(status_code=302)
     response.headers = {"Location": "http://127.0.0.1/private"}

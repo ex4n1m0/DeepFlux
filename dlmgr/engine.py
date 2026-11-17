@@ -112,6 +112,10 @@ class DownloadEngine:
         self._probe_threads: Dict[str, threading.Thread] = {}
         self._lock = threading.RLock()
         self._running = False
+        # Wakes the monitor loop's inter-pass wait so stop() never sits out a
+        # full REBALANCE_INTERVAL (2026-11-17 study: that join was ~1 s median
+        # / 2 s max of pure dead wait on EVERY app close — the close hang).
+        self._wake = threading.Event()
         self._monitor_thread: Optional[threading.Thread] = None
         self._last_save_time = 0.0
         self._global_throttle = threading.Event()
@@ -138,6 +142,7 @@ class DownloadEngine:
         if self._running:
             return
         self._running = True
+        self._wake.clear()   # a stopped-then-restarted engine must sleep again
         # Recover incomplete downloads from every folder we've ever saved to.
         self._load_folder_registry()
         try:
@@ -157,6 +162,7 @@ class DownloadEngine:
     def stop(self) -> None:
         """Stop all workers and the monitor thread. Saves resume state."""
         self._running = False
+        self._wake.set()   # interrupt the inter-pass wait — stop is now ~instant
         with self._lock:
             workers = [worker for group in self._workers.values() for worker in group]
             stream_threads = list(self._stream_threads.values())
@@ -1166,7 +1172,9 @@ class DownloadEngine:
                 self._maybe_save_state()
             except Exception as exc:
                 logger.warning("Monitor loop error: %s", exc)
-            time.sleep(REBALANCE_INTERVAL)
+            # Event.wait, never time.sleep: stop() sets the event so a close
+            # doesn't block on the remainder of the interval (2026-11-17 study).
+            self._wake.wait(REBALANCE_INTERVAL)
 
     def _auto_retry_errors(self) -> None:
         """Restart segments that failed transiently, up to MAX_SEGMENT_RETRIES."""

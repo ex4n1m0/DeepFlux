@@ -391,11 +391,17 @@ def _load_control_token() -> str:
         return ""
 
 
-def _forward_to_running_instance(targets: List[str]) -> bool:
+def _forward_to_running_instance(targets: List[str],
+                                 ports: Optional[List[int]] = None,
+                                 config_path: Optional[str] = None) -> bool:
     """Send open targets to an already-running DeepFlux via its control API.
 
     Returns True if a running instance accepted them (this process should
-    exit); False if no instance is running (start the GUI normally)."""
+    exit); False if no instance is running (start the GUI normally).
+    ``ports``/``config_path`` exist for tests; production leaves them None
+    and the probe covers the CONFIGURED control port first (Settings can
+    move it — the default range alone would miss it and boot a second
+    instance; 2026-11-17 study F6) plus the default 53742–53751 range."""
     import json as _json
     from urllib.request import Request, urlopen
 
@@ -403,7 +409,20 @@ def _forward_to_running_instance(targets: List[str]) -> bool:
     if not token:
         return False
     auth = {"Authorization": f"Bearer {token}"}
-    for port in range(53742, 53752):
+    if ports is None:
+        ports = []
+        try:
+            cfgp = config_path or os.path.join(
+                os.path.expanduser("~"), ".deeptorrent", "config.json")
+            with open(cfgp, "r", encoding="utf-8") as f:
+                p = int(_json.load(f).get("download", {})
+                        .get("control_api_port", 0))
+            if 1024 < p < 65536:
+                ports.append(p)
+        except Exception:
+            pass
+        ports.extend(range(53742, 53752))
+    for port in ports:
         base = f"http://127.0.0.1:{port}"
         try:
             with urlopen(Request(f"{base}/api/health", headers=auth), timeout=0.5) as resp:

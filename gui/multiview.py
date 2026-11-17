@@ -274,6 +274,13 @@ class GridTile(QWidget):
     def assign(self, channel: Channel, is_stream: bool,
                headers: Optional[Dict[str, str]] = None) -> bool:
         """Load an item into this tile. Returns False when no backend."""
+        # Background music yields to real media (owner 2026-11-18) — same
+        # contract as the main player and the mini player.
+        try:
+            from gui.agent_music import stop_agent_music
+            stop_agent_music()
+        except Exception:
+            pass
         backend = self._ensure_backend()
         if backend is None:
             return False

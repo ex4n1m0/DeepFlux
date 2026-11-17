@@ -373,7 +373,13 @@ class ControlAPI:
                 logger.error("Could not start control API on any port")
                 return
 
-        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True, name="dl-control-api")
+        # poll_interval 0.05 (default 0.5): shutdown() only returns after the
+        # serve loop polls, and stop() runs on the app's close path — the
+        # default added ~0.2–0.5 s to every quit (2026-11-17 study).
+        server = self._server
+        self._thread = threading.Thread(
+            target=lambda: server.serve_forever(poll_interval=0.05),
+            daemon=True, name="dl-control-api")
         self._thread.start()
         logger.info("Control API started on 127.0.0.1:%d", self._port)
 

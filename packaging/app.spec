@@ -135,6 +135,10 @@ _wanted_datas = [
     (os.path.join(project_root, "DeepFluxNovBanner.webp"), "."),
     (os.path.join(project_root, "DeepFluxNeonBanner.webp"), "."),
     (os.path.join(project_root, "website", "deepflux", "DeepFluxNov2026.webp"), "."),
+    # Agent-tab background music (owner 2026-11-18): a 74.5 MB looping MP3 on
+    # a dedicated audio-only mpv. macOS ships no player stack → no button
+    # there, and app_macos.spec deliberately does NOT carry this entry.
+    (os.path.join(project_root, "backgroundmusic.mp3"), "."),
     (os.path.join(project_root, "packaging", "icons", "back.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "forward.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "reload.svg"), "packaging/icons"),

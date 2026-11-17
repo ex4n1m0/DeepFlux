@@ -61,6 +61,58 @@ def test_decide_boot_unsupported_platform_is_full():
     assert main._decide_boot(["C:/x/video.mp4"], False) == "full"
 
 
+def test_forward_probe_covers_the_configured_control_port(tmp_path, monkeypatch):
+    """2026-11-17 study F6: the second-instance forward used to probe only
+    the hardcoded 53742–53751 range — a configured control_api_port outside
+    it was invisible, so the 'open' booted a whole second app instead of
+    forwarding. The probe must try the CONFIGURED port first."""
+    import json as _json
+    import main
+
+    opened = []
+
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self):   # /api/health
+            self.send_response(200)
+            self.end_headers()
+
+        def do_POST(self):  # /api/open
+            opened.append(self.path)
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *a):   # silence the test run
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_address[1]
+    server.timeout = 0.05
+    import threading as _threading
+    _threading.Thread(target=server.serve_forever,
+                      kwargs={"poll_interval": 0.05}, daemon=True).start()
+    try:
+        monkeypatch.setattr(main, "_load_control_token", lambda: "t" * 40)
+        cfg_path = tmp_path / "config.json"
+        cfg_path.write_text(_json.dumps(
+            {"download": {"control_api_port": port}}), encoding="utf-8")
+
+        assert main._forward_to_running_instance(
+            ["C:/x/video.mp4"], config_path=str(cfg_path)) is True
+        # The configured port answered the open.
+        assert opened and opened[0] == "/api/open"
+
+        # Without a listener anywhere (ports pinned to nothing), the forward
+        # declines and the caller boots its own GUI.
+        assert main._forward_to_running_instance(
+            ["C:/x/video.mp4"], ports=[port + 7]) is False
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_main_module_stays_light():
     """The whole point of the fast path: importing main must NOT drag the
     engine/agent/gui chains (regression guard for the 7.8 restructure)."""
@@ -276,6 +328,66 @@ def test_open_media_plays_and_updates_transport(mini, tmp_path):
     win._on_position(12.0, 120.0)
     assert win.seek.maximum() == 120
     assert win._time_lbl.text().startswith("0:12")
+
+
+def test_opening_overlay_covers_the_cold_start_wait(mini, tmp_path):
+    """2026-11-17 study F4: the first open pays backend init + demux behind
+    a black window — the 'Opening…' overlay must be up BEFORE play and come
+    down on the backend's first word (state or error), never linger."""
+    win, stub, _ = mini
+    media = str(tmp_path / "movie.mp4")
+    with open(media, "wb") as f:
+        f.write(b"v" * 1024)
+    win.show()
+    win.open_media(media)
+    assert stub.played == [media]
+    assert win.surface._overlay.isVisible()
+    assert "movie.mp4" in win.surface._overlay.text()
+    # Any backend state drops the overlay (playing/buffering/stopped alike).
+    win.backendState.emit("buffering")
+    assert not win.surface._overlay.isVisible()
+    # Re-open: overlay returns, an error path also clears it.
+    win.open_media(media)
+    assert win.surface._overlay.isVisible()
+    win._on_error("boom")
+    assert not win.surface._overlay.isVisible()
+
+
+def test_prewarm_backend_pays_the_cold_start_at_idle(mini, tmp_path):
+    """2026-11-17 study F4: run_mini_player pre-creates the backend at idle
+    so the first open_media pays only loadfile+demux. The factory must be
+    called ONCE; open_media reuses; a failing factory is swallowed."""
+    calls = {"n": 0}
+
+    def factory():
+        calls["n"] += 1
+        return _StubBackend()
+
+    from gui.mini_player import MiniPlayerWindow
+
+    cfg_path = str(tmp_path / "config.json")
+    DeeptorrentConfig().to_file(cfg_path)
+    win = MiniPlayerWindow(DeeptorrentConfig.from_file(cfg_path), cfg_path,
+                           backend_factory=factory)
+    win.prewarm_backend()
+    win.prewarm_backend()          # idempotent — never two backends
+    assert calls["n"] == 1
+    backend = win._backend
+    media = str(tmp_path / "clip.mkv")
+    with open(media, "wb") as f:
+        f.write(b"v" * 512)
+    win.open_media(media)
+    assert calls["n"] == 1          # reused, not rebuilt
+    assert win._backend is backend
+    assert backend.played == [media]
+
+    # A factory that raises must not leak the exception into the boot path.
+    def boom():
+        raise RuntimeError("no mpv")
+    win2 = MiniPlayerWindow(DeeptorrentConfig.from_file(cfg_path), cfg_path,
+                            backend_factory=boom)
+    win2.prewarm_backend()          # silent no-op
+    assert win2._backend is None
 
 
 def test_open_media_rejects_non_media_silently(mini, tmp_path, monkeypatch):
@@ -504,6 +616,20 @@ def test_declined_quit_prompt_cancels_mini_close(mini, monkeypatch):
     win._main = None
 
 
+def test_close_resume_export_is_time_bounded():
+    """2026-11-17 study F5: the closeEvent fast-resume export must pass an
+    explicit SHORT timeout — the engine method default is 15 s and the call
+    runs while the window is frozen on the user's screen. Source-pin in the
+    test_crash_log.py style (scanning the repo's call sites)."""
+    import re
+    from pathlib import Path
+    import gui.main_window as mw
+    src = Path(mw.__file__).read_text(encoding="utf-8")
+    m = re.search(r"export_resume_data\(timeout=([\d.]+)\)", src)
+    assert m, "closeEvent must call export_resume_data with an explicit timeout"
+    assert float(m.group(1)) <= 5.0, "close-path resume export must stay time-bounded"
+
+
 def test_media_queue_autoplays(mini, tmp_path):
     """Multi-select "Open with" queues every target; each stop advances."""
     from PySide6.QtWidgets import QApplication
@@ -536,3 +662,144 @@ def test_missing_media_file_warns(mini, tmp_path, monkeypatch):
     win.open_media(str(tmp_path / "vanished.mp4"))
     assert calls, "expected a warning dialog for the missing media file"
     assert stub.played == []
+
+
+def test_agent_music_button_toggles_and_yields_to_media(mini, tmp_path, monkeypatch):
+    """Owner 2026-11-18: the Agent tab's ♫ button starts/stops the bundled
+    looping track; opening media in the mini player stops it AND unchecks
+    the button (the controller notifies, nobody clicked anything). Fake mpv
+    seam — no audio hardware needed offscreen."""
+    import sys as _sys
+    import types as _types
+    import gui.agent_music as am
+
+    if not am.MUSIC_SUPPORTED:
+        pytest.skip("no bundled player stack on this platform")
+
+    made = []
+    mod = _types.ModuleType("mpv")
+
+    class _P:
+        def __init__(self, **kw):
+            self.kw = kw
+            self.loads = []
+            self.term = 0
+
+        def loadfile(self, p):
+            self.loads.append(p)
+
+        def terminate(self):
+            self.term += 1
+
+    def _mpv(**kw):
+        p = _P(**kw)
+        made.append(p)
+        return p
+
+    mod.MPV = _mpv
+    monkeypatch.setitem(_sys.modules, "mpv", mod)
+    track = tmp_path / "t.mp3"
+    track.write_bytes(b"x")
+    monkeypatch.setattr(am, "resolve_music_path", lambda: str(track))
+    import iptv.player as pm
+    monkeypatch.setattr(pm, "ensure_mpv_dll_on_path", lambda: None)
+    am._CONTROLLER = None   # fresh singleton — MainWindow wires its listener
+
+    from PySide6.QtWidgets import QApplication
+    win, stub, _ = mini
+    app = QApplication.instance()
+    win.show()
+    win.morph_to_full()
+    deadline = time.time() + 90
+    while not (win._main is not None and not win._morphing
+               and not win.isVisible()):
+        app.processEvents()
+        assert time.time() < deadline, "morph did not complete"
+    main = win._main
+
+    # The button exists on player-stack platforms and toggles the track on.
+    assert main.music_btn is not None
+    assert not main.music_btn.isChecked()
+    main.music_btn.click()
+    app.processEvents()
+    assert main.music_btn.isChecked(), "button must reflect music started"
+    assert made and made[0].kw["loop_file"] == "inf"
+    assert made[0].loads and made[0].loads[0].endswith("t.mp3")
+
+    # Opening media in the mini player stops the music and unchecks the
+    # button — through the controller's listener, not a click.
+    media = str(tmp_path / "video.mp4")
+    with open(media, "wb") as f:
+        f.write(b"v" * 1024)
+    main.morph_to_mini()
+    app.processEvents()
+    win.open_media(media)
+    app.processEvents()
+    assert made[0].term == 1, "media open must stop the background music"
+    assert not main.music_btn.isChecked(), "button must uncheck itself"
+
+    # Graceful teardown path also terminates the (restarted) player.
+    main.music_btn.click()
+    app.processEvents()
+    assert made[-1].term == 0
+    main._mini_view = False
+    main.close()
+    app.processEvents()
+    assert made[-1].term == 1, "closeEvent must tear the music player down"
+    am._CONTROLLER = None
+
+
+def test_mini_idle_music_button_toggles_and_persists(mini, tmp_path, monkeypatch):
+    """Owner 2026-11-18: music starts ON — and the MINI window carries its
+    own ♫ switch (turning music off must never require morphing to the full
+    app). The choice persists: boot autostart reads it back."""
+    import sys as _sys
+    import types as _types
+    import gui.agent_music as am
+
+    if not am.MUSIC_SUPPORTED:
+        pytest.skip("no bundled player stack on this platform")
+
+    made = []
+    mod = _types.ModuleType("mpv")
+
+    class _P:
+        def __init__(self, **kw):
+            self.loads = []
+            self.term = 0
+
+        def loadfile(self, p):
+            self.loads.append(p)
+
+        def terminate(self):
+            self.term += 1
+
+    def _mpv(**kw):
+        p = _P(**kw)
+        made.append(p)
+        return p
+
+    mod.MPV = _mpv
+    monkeypatch.setitem(_sys.modules, "mpv", mod)
+    monkeypatch.setattr(am, "resolve_music_path", lambda: str(tmp_path / "m.mp3"))
+    import iptv.player as pm
+    monkeypatch.setattr(pm, "ensure_mpv_dll_on_path", lambda: None)
+    am._CONTROLLER = None
+
+    win, _, _ = mini
+    win.show()
+    assert win._music_btn is not None
+    assert not win._music_btn.isChecked()
+
+    win._music_btn.click()            # ON
+    assert win._music_btn.isChecked()
+    assert win._config.ui_background_music is True
+    assert made and made[0].loads
+
+    win._music_btn.click()            # OFF — must persist
+    assert not win._music_btn.isChecked()
+    assert made[0].term == 1
+    assert win._config.ui_background_music is False
+    from config import DeeptorrentConfig as _C
+    assert _C.from_file(win._config_path).ui_background_music is False
+    am._CONTROLLER = None
