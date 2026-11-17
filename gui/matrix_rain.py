@@ -31,14 +31,16 @@ _GLYPHS = (
     "0123456789:･.=*+-|"
 )
 
-# Classic Matrix green (the .scr's default hue with "Randomize glyph colors"
-# off). Dim enough to sit BEHIND the agent idle banner without fighting it.
-HUE = 140
-SATURATION = 255
+# BLUE rain (owner 2026-11-17: "make sure the rain is blue — normally I
+# select 30 for the hue rotation" in the .scr's config). The screensaver's
+# hue knob rotates its default green; we go straight to the app's accent-
+# blue family (#2a7abf ≈ hue 207) so the effect matches DeepFlux's chrome.
+HUE = 210
+SATURATION = 230
 
-# Brightness ramp: index 0 = head (near-white green), higher = dimmer trail.
+# Brightness ramp: index 0 = head (near-white blue), higher = dimmer trail.
 _BRIGHTNESS_LEVELS = 10
-_HEAD_COLOR = QColor(190, 255, 200)
+_HEAD_COLOR = QColor(185, 225, 255)
 
 FPS = 18
 CELL_W = 16

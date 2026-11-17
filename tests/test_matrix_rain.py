@@ -30,9 +30,12 @@ def test_matrix_rain_paints_visible_trails():
     painter.end()
 
     img = surface.toImage()
+    blue = sum(QtGui.qBlue(img.pixel(x, y))
+               for y in range(0, 360, 4) for x in range(0, 480, 4))
     green = sum(QtGui.qGreen(img.pixel(x, y))
                 for y in range(0, 360, 4) for x in range(0, 480, 4))
-    assert green > 2000, "expected visible green glyph pixels"
+    assert blue > 2000, "expected visible blue glyph pixels"
+    assert blue > green, "rain must be blue, not green"
 
 
 def test_matrix_rain_columns_stable_across_respawns():
