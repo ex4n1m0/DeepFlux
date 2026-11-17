@@ -1,8 +1,8 @@
 {
-  "version": "7.9",
-  "file": "DeepFlux7.9Setup.exe",
-  "size": 436796814,
-  "sha256": "c5d2de30e45c7fe6f8d9e1d0b07f2f3445c499476d817a8c93b883b8a10d3741",
+  "version": "8.0",
+  "file": "DeepFlux8.0Setup.exe",
+  "size": 436815051,
+  "sha256": "43fcb5da042072d82ff80a62973c0dfbebd8b9bf679293f624f5ad356ee6a331",
   "released": "2026-11-17",
-  "notes": "DeepFlux 7.9 - uncensored agent. The built-in AI agent now runs on an uncensored DeepSeek (Venice AI's deepseek-v4-1-flash-uncensored, private inference, 1M-token context) instead of the standard cloud model - out of the box, no account needed, on Windows, Linux and Android. Existing installs switch over automatically when they ride the built-in key; if you entered your own API key or picked a different provider, nothing changes. The Settings dialog no longer carries the built-in key across an endpoint switch, and the agent itself can no longer redirect the built-in key to another provider."
+  "notes": "DeepFlux 8.0 - the agent learns to grab videos. Two new agent tools: scan_video_page sees every stream a video page embeds (recommended stream with quality renditions, ranked alternates) and download_video downloads from any page, stream or YouTube link in one confirmed step - with the Referer context hotlink CDNs require and a max_height quality cap. YouTube links route through yt-dlp instead of saving the HTML page, and the app no longer jumps between tabs on its own while the agent works (downloads and navigation stay where you are looking)."
 }
