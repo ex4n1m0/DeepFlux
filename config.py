@@ -216,9 +216,13 @@ class LLMConfig:
     reasoning_effort: str = "high"       # planning turns; summaries always use "low"
     custom_reasoning_effort: bool = False
     fast_model: str = ""                 # summaries/quick replies ("" = main model)
-    max_turns: int = 40             # ReAct loop cap per user message; the loop self-terminates when the model stops calling tools
-    max_llm_calls: int = 50
-    max_tool_calls: int = 100
+    # Raised 2026-11-17 (owner: "can we increase the limits?", after 8.0):
+    # 40/50/100 → 80/100/200. Every config save persists the whole llm
+    # section, so from_file remaps the OLD defaults to these once via
+    # limits_defaults_gen below; explicit non-default values survive.
+    max_turns: int = 80             # ReAct loop cap per user message; the loop self-terminates when the model stops calling tools
+    max_llm_calls: int = 100
+    max_tool_calls: int = 200
     # REMOVED 2026-10-20 (owner): the wall-clock task cap killed long deep
     # searches mid-sweep. The field stays for saved-config compat but is no
     # longer enforced by the loop; tasks are bounded by max_llm_calls /
@@ -760,6 +764,12 @@ class DeeptorrentConfig:
     # (2026-11-07, owner: YOLO on by default) remaps saved False → True
     # exactly once; a deliberate later Off persists normally.
     yolo_defaults_gen: int = 2
+    # Generation stamp for the one-time agent-limits migration: the pre-8.0
+    # defaults (40/50/100) were persisted into every config.json by any save,
+    # so remapping them needs a stamp, not a bare default flip. gen 1 → 2
+    # (2026-11-17, owner) remaps old defaults → 80/100/200 exactly once;
+    # explicitly chosen values never match the remap and survive.
+    limits_defaults_gen: int = 2
 
     @classmethod
     def from_file(cls, path: str) -> "DeeptorrentConfig":
@@ -1209,6 +1219,9 @@ class DeeptorrentConfig:
             yolo_defaults_gen=data.get("yolo_defaults_gen", 1)
             if isinstance(data.get("yolo_defaults_gen", 1), int)
             else 1,
+            limits_defaults_gen=data.get("limits_defaults_gen", 1)
+            if isinstance(data.get("limits_defaults_gen", 1), int)
+            else 1,
         )
         # One-time UI-default migration (gen 1 → 2, 2026-11-04): 7.0/7.1
         # persisted their defaults into every config.json, so a saved
@@ -1232,6 +1245,20 @@ class DeeptorrentConfig:
             config.yolo_defaults_gen = 2
             if config.llm.yolo_mode is False:
                 config.llm.yolo_mode = True
+        # One-time limits migration (gen 1 → 2, 2026-11-17): pre-8.0 defaults
+        # (40 turns / 50 LLM calls / 100 tool calls) were persisted into every
+        # config.json by any save, so a saved old default is almost always
+        # "never chose" — remap to the raised defaults once. Explicit
+        # non-default values never match the remap and survive; the gen=2
+        # stamp blocks re-migration after the first to_file.
+        if config.limits_defaults_gen < 2:
+            config.limits_defaults_gen = 2
+            if config.llm.max_turns == 40:
+                config.llm.max_turns = 80
+            if config.llm.max_llm_calls == 50:
+                config.llm.max_llm_calls = 100
+            if config.llm.max_tool_calls == 100:
+                config.llm.max_tool_calls = 200
         return config
 
     def sanitized_dict(self) -> Dict[str, Any]:

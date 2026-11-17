@@ -1372,7 +1372,10 @@
   a tool message from its assistant tool_calls); `_fit_context` also enforces
   an approximate token budget on every LLM call. Tool schemas are selected by
   task domain instead of always sending the full registry. Turns, LLM calls,
-  tool calls and repeated identical calls are bounded; the GUI Stop
+  tool calls and repeated identical calls are bounded (defaults 80 / 100 /
+  200 since 2026-11-17, owner — were 40 / 50 / 100; from_file remaps saved
+  old defaults to the new ones once via the limits_defaults_gen stamp,
+  tests/test_agent_limits.py); the GUI Stop
   button sets cooperative cancellation. WALL-CLOCK TASK LIMIT REMOVED
   2026-10-20 (owner: long deep searches hit the 600 s cap) — the check is
   gone from `_task_limit_reason` and `llm.task_timeout_seconds` defaults to
