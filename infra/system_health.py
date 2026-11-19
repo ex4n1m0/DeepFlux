@@ -43,6 +43,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from config import SystemHealthConfig
 from infra import hardware_monitor
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,13 @@ _PS_TIMEOUT = 25.0
 # Disk volumes — enumeration, space, live throughput
 # ---------------------------------------------------------------------------
 
-IOCTL_DISK_PERFORMANCE = 0x00070000  # winioctl.h
+# CTL_CODE(IOCTL_DISK_BASE=7, 0x0008, METHOD_BUFFERED, FILE_ANY_ACCESS) =
+# (7 << 16) | (0x8 << 2) = 0x70020. 0x70000 is IOCTL_DISK_GET_DRIVE_GEOMETRY
+# (function 0x0000) — the shipped 8.5 used it by mistake, so the driver
+# answered with a 24-byte DISK_GEOMETRY that we misread as perf counters:
+# constant "deltas" and 0 B/s disk speeds everywhere (measured 2026-11-19:
+# 0x70000 → bytes_in_out=24, 0x70020 → the real 88-byte live counters).
+IOCTL_DISK_PERFORMANCE = 0x00070020
 
 
 class _DISK_PERFORMANCE(ctypes.Structure):
@@ -577,7 +584,9 @@ def warnings_from(snap: dict, thresholds: Any = None) -> List[dict]:
     (or anything with the same field names); the defaults apply when None.
     Readings that are None (unknown) never warn."""
     if thresholds is None:
-        from config import SystemHealthConfig
+        # Imported at module top: a function-level import compiles config.py
+        # on whatever thread first lands here (the collector thread) —
+        # demonstrated as a native-AV dice trigger 2026-11-19.
         thresholds = SystemHealthConfig()
     out: List[dict] = []
 

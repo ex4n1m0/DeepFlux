@@ -1234,7 +1234,12 @@
     power_w / pcie_gen / pcie_width — legacy keys unchanged,
     "[Not Supported]" → None) with its 60 s failure backoff; static
     fallback dxgi_adapters. Disk SPEEDS = IOCTL_DISK_PERFORMANCE
-    (0x70000) deltas on `\\.\C:` volume handles opened with access 0
+    (0x70020 — FIXED 2026-11-19: 8.5 shipped 0x70000, which is
+    GET_DRIVE_GEOMETRY; the driver answered with a 24-byte geometry
+    struct misread as counters → constant deltas → disk speeds 0 B/s
+    everywhere; value = CTL_CODE(7, 0x8, METHOD_BUFFERED, FILE_ANY_ACCESS),
+    derivation pinned by test_ioctl_disk_performance_code_is_derived_not_
+    guessed) deltas on `\\.\C:` volume handles opened with access 0
     (works unelevated; a refusing volume is marked cold in
     `_disk_dead` and never re-asked). CPU/board temp = ACPI
     MSAcpi_ThermalZoneTemperature via one-shot PowerShell (30 s TTL,

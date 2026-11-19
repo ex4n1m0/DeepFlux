@@ -1,8 +1,8 @@
 {
-  "version": "8.5",
-  "file": "DeepFlux8.5Setup.exe",
-  "size": 508659373,
-  "sha256": "cbcf1b0d0d7e64af5f90cff1a0fbf60de7e7524e92db3048a9182b72ae326594",
+  "version": "8.6",
+  "file": "DeepFlux8.6Setup.exe",
+  "size": 508635751,
+  "sha256": "6803bcc25ec35e5b18717a550c284f0fce0e0a75460f94ae0c85fb860a9c18bc",
   "released": "2026-11-19",
-  "notes": "DeepFlux 8.5 - System Health tab + player parity. New: a System Health tab (the pulse icon, far right) shows CPU, memory, GPU and VRAM usage, GPU temperature, fan and power, per-disk free space with live read/write speeds, and a hardware inventory list - and it only takes readings while you are looking at it. The agent can now report your system's health and warn you when something runs too hot or a disk gets too full. Also: the mini player gained a Stop button and the S key, and both players now skip time identically (arrow keys and buttons) with arrow up/down volume control."
+  "notes": "DeepFlux 8.6 - System Health fixes. The per-disk read/write speeds in the System Health tab now show real live numbers (a wrong Windows query code made them always read 0 B/s in 8.5), and the tab's sampling code was hardened. If 8.5 closed when you opened the System Health tab, please try this build - and if it still closes, the app's crash log (AppData\\Local\\DeepFlux\\faulthandler.log) now holds the exact line to report."
 }

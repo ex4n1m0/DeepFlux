@@ -478,3 +478,27 @@ def test_tab_minimum_stays_small(qapp):
     msh = tab.minimumSizeHint()
     assert msh.width() <= 700 and msh.height() <= 460
     tab.shutdown()
+
+
+def test_ioctl_disk_performance_code_is_derived_not_guessed():
+    """8.5 shipped 0x70000 — which is IOCTL_DISK_GET_DRIVE_GEOMETRY
+    (function 0x0000), so the driver filled a 24-byte DISK_GEOMETRY that
+    read_volume_counters misread as counters: constant deltas, disk speeds
+    0 B/s everywhere (owner-adjacent finding 2026-11-19). The real value
+    is CTL_CODE(IOCTL_DISK_BASE=7, 0x0008, METHOD_BUFFERED, FILE_ANY_ACCESS)
+    — derive it here so a typo can never ship silently again."""
+    ctl_code = (7 << 16) | (0 << 14) | (0x0008 << 2) | 0
+    assert ctl_code == 0x70020
+    assert sh.IOCTL_DISK_PERFORMANCE == ctl_code
+
+
+def test_warnings_from_imports_config_at_module_level():
+    """The default-thresholds import must NOT be function-level: compiling
+    config.py lazily on the collector thread is a native-AV dice trigger
+    (demonstrated 2026-11-19 — AV inside _compile_bytecode on the sampler
+    thread), and in any fresh process it re-parses a module every call."""
+    import ast
+    import inspect
+    tree = ast.parse(inspect.getsource(sh.warnings_from))
+    for node in ast.walk(tree):
+        assert not isinstance(node, (ast.Import, ast.ImportFrom)),             f"lazy import found in warnings_from: line {node.lineno}"
