@@ -37,6 +37,7 @@ import json
 import logging
 import os
 import shutil
+import struct
 import subprocess
 import threading
 import time
@@ -108,6 +109,60 @@ def _fixed_volumes() -> List[str]:
         return []
 
 
+def _query_disk_performance(handle, deviceio) -> Optional[Tuple[int, int]]:
+    """IOCTL_DISK_PERFORMANCE with psutil's error ladder: on
+    ERROR_INSUFFICIENT_BUFFER retry with a doubled buffer (drivers may
+    return a bigger struct than the SDK's) up to 1 MiB;
+    ERROR_INVALID_FUNCTION / ERROR_NOT_SUPPORTED mark an "exotic disk" and
+    return None immediately. ``deviceio`` is the bound DeviceIoControl
+    callable — injected so tests can drive the ladder. The error code is
+    read via ctypes.get_last_error(), i.e. the caller must invoke
+    DeviceIoControl through a ``WinDLL(..., use_last_error=True)`` —
+    the documented race-free form (a bare GetLastError() after the call
+    can observe an interpreter-clobbered value)."""
+    size = ctypes.sizeof(_DISK_PERFORMANCE)
+    while size <= 1 << 20:
+        buf = ctypes.create_string_buffer(size)
+        returned = ctypes.c_ulong()
+        if deviceio(handle, IOCTL_DISK_PERFORMANCE, None, 0, buf, size,
+                    ctypes.byref(returned), None):
+            if returned.value < ctypes.sizeof(_DISK_PERFORMANCE):
+                return None   # short write: distrust, never guess
+            dp = _DISK_PERFORMANCE.from_buffer(buf)
+            return int(dp.BytesRead), int(dp.BytesWritten)
+        err = ctypes.get_last_error()
+        if err in (122, 234):        # INSUFFICIENT_BUFFER / MORE_DATA
+            size *= 2
+            continue
+        if err in (1, 50):           # INVALID_FUNCTION / NOT_SUPPORTED
+            logger.debug("disk perf IOCTL unsupported on this volume "
+                         "(err=%s) — exotic disk, skipping", err)
+        return None
+    return None
+
+
+_k32_last_error = None    # lazy WinDLL("kernel32", use_last_error=True)
+
+
+def _k32_le():
+    """kernel32 loaded with use_last_error=True so DeviceIoControl's error
+    survives the return into ctypes.get_last_error() (the race-free
+    GetLastError form; see _query_disk_performance)."""
+    global _k32_last_error
+    if _k32_last_error is None:
+        _k32_last_error = ctypes.WinDLL("kernel32", use_last_error=True)
+        _k32_last_error.CreateFileW.restype = ctypes.c_void_p
+        _k32_last_error.CreateFileW.argtypes = [
+            ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p,
+            ctypes.c_uint, ctypes.c_uint, ctypes.c_void_p]
+        _k32_last_error.DeviceIoControl.restype = ctypes.c_int
+        _k32_last_error.DeviceIoControl.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+    return _k32_last_error
+
+
 def read_volume_counters(volume: str) -> Optional[Tuple[int, int]]:
     """Cumulative (bytes_read, bytes_written) for one fixed volume via
     IOCTL_DISK_PERFORMANCE, or None when the handle/IOCTL is refused (some
@@ -118,32 +173,15 @@ def read_volume_counters(volume: str) -> Optional[Tuple[int, int]]:
         return None
     handle = None
     try:
-        k32 = ctypes.windll.kernel32
+        k32 = _k32_le()
         # Pointer-size restype/argtypes are MANDATORY for CreateFileW — a
         # WinDLL call without them converts as C ints and TRUNCATES 64-bit
         # handles (the compact-mode ctypes lesson).
-        k32.CreateFileW.restype = ctypes.c_void_p
-        k32.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint,
-                                    ctypes.c_uint, ctypes.c_void_p,
-                                    ctypes.c_uint, ctypes.c_uint,
-                                    ctypes.c_void_p]
         # dwDesiredAccess 0 (device query only) + full sharing: unelevated.
         handle = k32.CreateFileW(f"\\\\.\\{volume}", 0, 3, None, 3, 0, None)
         if not handle or handle == ctypes.c_void_p(-1).value:
             return None
-        buf = _DISK_PERFORMANCE()
-        returned = ctypes.c_ulong()
-        k32.DeviceIoControl.restype = ctypes.c_int
-        k32.DeviceIoControl.argtypes = [
-            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
-            ctypes.c_void_p, ctypes.c_ulong,
-            ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
-        if not k32.DeviceIoControl(handle, IOCTL_DISK_PERFORMANCE,
-                                   None, 0, ctypes.byref(buf),
-                                   ctypes.sizeof(buf),
-                                   ctypes.byref(returned), None):
-            return None
-        return int(buf.BytesRead), int(buf.BytesWritten)
+        return _query_disk_performance(handle, k32.DeviceIoControl)
     except Exception:
         return None
     finally:
@@ -200,6 +238,444 @@ def disk_snapshot() -> List[dict]:
                             0.0, (counters[1] - prev[1]) / dt)
             out.append(entry)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Network interfaces — live throughput (GetIfTable2 / /proc/net/dev)
+# ---------------------------------------------------------------------------
+
+# MIB_IF_ROW2 is parsed from RAW BYTES at pinned offsets instead of a big
+# ctypes Structure: a Structure transcription that drops ONE tail field
+# silently shifts every row after the first (caught live 2026-11-19 — a
+# probe struct missing OutBroadcastOctets/OutQLet was 16 bytes short and
+# read garbage from row 1 on). Offsets per shared/netioapi.h (SDK
+# 10.0.26100; IF_MAX_STRING_SIZE=256 → WCHAR[257] arrays, two GUIDs,
+# 8-aligned ULONG64 tail), verified against a live table: descriptions
+# sane at stride 1352 and the HardwareInterface bit exactly separates
+# real adapters from their WFP/QoS filter-stack mirror rows (which carry
+# IDENTICAL counters — filtering to hw rows also prevents double count).
+_IF_ROW_STRIDE = 1352
+_IF_OFF_INDEX = 8           # NET_IFINDEX
+_IF_OFF_DESCRIPTION = 542   # WCHAR[257], UTF-16
+_IF_OFF_TYPE = 1128         # IFTYPE: 6 ethernet, 71 ieee80211, 24 loopback
+_IF_OFF_FLAGS = 1152        # bitfield byte; bit0 = HardwareInterface
+_IF_OFF_OPER = 1156         # IF_OPER_STATUS: 1 = up
+_IF_OFF_SPEEDS = 1192       # TransmitLinkSpeed, ReceiveLinkSpeed (u64 pair)
+_IF_OFF_IN_OCTETS = 1208
+_IF_OFF_OUT_OCTETS = 1280
+
+_net_lock = threading.Lock()
+_net_last: Dict[int, Tuple[int, int, float]] = {}   # index → (in, out, mono)
+_net_dead_until = 0.0
+_NET_FAIL_BACKOFF = 60.0
+
+
+def _parse_if_row(raw: bytes) -> Optional[dict]:
+    """One 1352-byte MIB_IF_ROW2 → dict, or None for a junk row (index 0 /
+    no name). Pure function — the pinned-offset parse the study's fail-safe
+    rule demands (see the offset comment above)."""
+    if len(raw) < _IF_ROW_STRIDE:
+        return None
+    index = struct.unpack_from("<I", raw, _IF_OFF_INDEX)[0]
+    if index == 0:
+        return None
+    try:
+        # Decode the WHOLE field first, split on the NUL char after: a
+        # byte-level split can land mid-surrogate and corrupt the tail
+        # (seen live — it broke the mirror-row filter with a U+FFFD at
+        # the name's end).
+        name = raw[_IF_OFF_DESCRIPTION:_IF_OFF_DESCRIPTION + 514] \
+            .decode("utf-16-le", errors="replace").split("\x00", 1)[0].strip()
+    except Exception:
+        name = ""
+    if not name:
+        return None
+    tx_speed, rx_speed = struct.unpack_from("<2Q", raw, _IF_OFF_SPEEDS)
+    return {
+        "index": index, "name": name,
+        "type": struct.unpack_from("<I", raw, _IF_OFF_TYPE)[0],
+        "hw": bool(raw[_IF_OFF_FLAGS] & 1),
+        "oper": struct.unpack_from("<I", raw, _IF_OFF_OPER)[0],
+        "rx_speed": rx_speed, "tx_speed": tx_speed,
+        "in": struct.unpack_from("<Q", raw, _IF_OFF_IN_OCTETS)[0],
+        "out": struct.unpack_from("<Q", raw, _IF_OFF_OUT_OCTETS)[0],
+    }
+
+
+def _win_iftable_rows() -> Optional[List[dict]]:
+    """One GetIfTable2 snapshot → raw per-interface dicts, or None when the
+    API fails (the caller backs off). Rows are read ONE AT A TIME, bounded
+    to the row size — the table's allocation is never overrun even if the
+    layout drifts."""
+    if os.name != "nt":
+        return None
+    try:
+        iphlpapi = ctypes.windll.iphlpapi
+        table = ctypes.c_void_p()
+        if iphlpapi.GetIfTable2(ctypes.byref(table)) != 0 or not table.value:
+            return None
+        try:
+            count = ctypes.cast(table, ctypes.POINTER(ctypes.c_ulong))[0]
+            rows: List[dict] = []
+            for i in range(min(count, 256)):
+                off = table.value + 8 + i * _IF_ROW_STRIDE
+                try:
+                    raw = ctypes.string_at(off, _IF_ROW_STRIDE)
+                except OSError:
+                    break   # layout drift: stop before the allocation ends
+                parsed = _parse_if_row(raw)
+                if parsed is not None:
+                    rows.append(parsed)
+            return rows
+        finally:
+            iphlpapi.FreeMibTable(table)
+    except Exception:
+        return None
+
+
+def _posix_if_rows() -> List[dict]:
+    """/proc/net/dev snapshot: real interfaces with cumulative octets —
+    plain text parsing, the htop-class safe lane."""
+    rows: List[dict] = []
+    try:
+        with open("/proc/net/dev", "r", encoding="ascii",
+                  errors="ignore") as fh:
+            for line in fh.readlines()[2:]:
+                if ":" not in line:
+                    continue
+                name, rest = line.split(":", 1)
+                name = name.strip()
+                fields = rest.split()
+                if len(fields) < 9 or name == "lo":
+                    continue
+                rows.append({
+                    "index": abs(hash(name)) % (10 ** 8), "name": name,
+                    "type": 6, "hw": True, "oper": 1,
+                    "rx_speed": 0, "tx_speed": 0,
+                    "in": int(fields[0]), "out": int(fields[8]),
+                })
+    except (OSError, ValueError, IndexError):
+        pass
+    return rows
+
+
+def network_snapshot() -> List[dict]:
+    """Per-interface {name, rx_bps, tx_bps, link_mbps}. Physical adapters
+    (HardwareInterface bit) that are UP are always shown; software
+    adapters (VPN tunnels etc.) only once they carry actual traffic —
+    and never when their name extends a physical adapter's name, which
+    is exactly what the WFP/QoS filter-stack mirror rows are (verified
+    live: they duplicate the real NIC's counters to the byte). Speeds
+    are None until a second sample builds a delta. Never raises."""
+    global _net_dead_until
+    now = time.monotonic()
+    with _net_lock:
+        if now < _net_dead_until:
+            return []
+        rows = _win_iftable_rows() if os.name == "nt" else _posix_if_rows()
+        if rows is None:
+            _net_dead_until = now + _NET_FAIL_BACKOFF
+            return []
+        deltas: Dict[int, Tuple[Optional[float], Optional[float]]] = {}
+        for row in rows:
+            prev = _net_last.get(row["index"])
+            _net_last[row["index"]] = (row["in"], row["out"], now)
+            rx_bps = tx_bps = None
+            if prev is not None and now - prev[2] > 0.2:
+                dt = now - prev[2]
+                # Counter reset (adapter replug) shows as a DECREASE —
+                # distrust that window instead of computing garbage.
+                if row["in"] >= prev[0] and row["out"] >= prev[1]:
+                    rx_bps = max(0.0, (row["in"] - prev[0]) / dt)
+                    tx_bps = max(0.0, (row["out"] - prev[1]) / dt)
+            deltas[row["index"]] = (rx_bps, tx_bps)
+        hw_names = [r["name"] for r in rows
+                    if r["hw"] and r["oper"] == 1 and r["name"]]
+        out: List[dict] = []
+        for row in rows:
+            if row["oper"] != 1 or row["type"] == 24 or not row["name"]:
+                continue
+            rx_bps, tx_bps = deltas.get(row["index"], (None, None))
+            if row["hw"]:
+                pass   # physical adapter: always shown
+            elif (row["name"].startswith(tuple(hw_names))
+                  or "Miniport" in row["name"]):
+                continue   # filter-stack mirror / dormant miniport
+            elif not (rx_bps or tx_bps):
+                continue   # idle software adapter (VPN down): hidden
+            out.append({
+                "index": row["index"],
+                "name": row["name"][:34],
+                "rx_bps": rx_bps, "tx_bps": tx_bps,
+                "link_mbps": (round(row["rx_speed"] / 1e6)
+                              if row["rx_speed"] else None),
+            })
+        out.sort(key=lambda e: -((e["rx_bps"] or 0) + (e["tx_bps"] or 0)))
+        return out[:6]
+
+
+# ---------------------------------------------------------------------------
+# Physical drives — NVMe health / SATA SMART, unelevated (study P1-3)
+# ---------------------------------------------------------------------------
+
+# Both IOCTLs are FILE_ANY_ACCESS (winioctl.h) and work on access-0
+# handles — the documented no-admin tier (smartmontools' 'f' fallback).
+# NVMe: IOCTL_STORAGE_QUERY_PROPERTY with an AdapterProtocolSpecific query
+# wrapping STORAGE_PROTOCOL_SPECIFIC_DATA (ProtocolTypeNvme=3,
+# NVMeDataTypeLogPage=2, health log page 0x02) — the driverless NVMe path
+# LibreHardwareMonitor's NVMeWindows.cs uses. Verified live 2026-11-19:
+# three NVMe drives answered temperature/spare/percentage-used from
+# unelevated access-0 handles. SATA: IOCTL_STORAGE_PREDICT_FAILURE
+# returns the SMART attribute block in VendorSpecific (12-byte entries
+# from offset 2; temperature = attribute 194, fallback 190) — NVMe and
+# USB bridges answer INVALID_FUNCTION and simply show no extras.
+_IOCTL_STORAGE_QUERY_PROPERTY = 0x2D1400   # CTL_CODE(0x2d, 0x0500, 0, 0)
+_IOCTL_STORAGE_PREDICT_FAILURE = 0x2D1100  # CTL_CODE(0x2d, 0x0440, 0, 0)
+
+_drv_lock = threading.Lock()
+_drv_cache: Dict[int, Tuple[dict, float]] = {}
+_DRV_TTL = 30.0
+_DRV_FAIL_BACKOFF = 300.0
+
+
+def _open_physical_drive(n: int):
+    if os.name != "nt":
+        return None
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.CreateFileW.restype = ctypes.c_void_p
+        k32.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint,
+                                    ctypes.c_uint, ctypes.c_void_p,
+                                    ctypes.c_uint, ctypes.c_uint,
+                                    ctypes.c_void_p]
+        handle = k32.CreateFileW(f"\\\\.\\PhysicalDrive{n}", 0, 3, None,
+                                 3, 0, None)
+        if handle and handle != ctypes.c_void_p(-1).value:
+            return handle
+    except Exception:
+        pass
+    return None
+
+
+def _parse_nvme_health(log: bytes) -> Optional[dict]:
+    """NVMe health log page (512 bytes) → dict, fail-closed. Offsets per
+    the NVMe spec health log: CriticalWarning@0, Temperature@1 (u16 K),
+    AvailableSpare@3, PercentageUsed@5, UnsafeShutdowns@144 (128-bit)."""
+    if len(log) < 160 or not any(log[:8]):
+        return None
+    temp_k = log[1] | (log[2] << 8)
+    temp_c = round(temp_k - 273.15, 1)
+    if not 200 <= temp_k <= 360:      # -73..87 °C plausibility gate
+        temp_c = None
+    used = log[5]
+    spare = log[3]
+    if 100 < used < 255:              # >100 is legal (worn past rating)
+        used = 100
+    return {
+        "kind": "nvme",
+        "temp_c": temp_c,
+        "critical_warning": log[0],
+        "spare_percent": spare if spare <= 100 else None,
+        "used_percent": None if used == 255 else used,  # 255 = not reported
+        "unsafe_shutdowns": int.from_bytes(log[144:152], "little"),
+    }
+
+
+def _query_nvme_health(handle) -> Optional[dict]:
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.DeviceIoControl.restype = ctypes.c_int
+        k32.DeviceIoControl.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+        inbuf = ctypes.create_string_buffer(48)
+        struct.pack_into("<II", inbuf, 0, 49, 0)     # AdapterProtocolSpecific, standard query
+        struct.pack_into("<10I", inbuf, 8,
+                         3,      # ProtocolTypeNvme
+                         2,      # NVMeDataTypeLogPage
+                         0x02,   # health log page
+                         0,      # subvalue (log offset)
+                         40,     # ProtocolDataOffset (from protocol struct)
+                         512,    # ProtocolDataLength
+                         0, 0, 0, 0)
+        out = ctypes.create_string_buffer(560)
+        returned = ctypes.c_ulong()
+        if not k32.DeviceIoControl(handle, _IOCTL_STORAGE_QUERY_PROPERTY,
+                                   inbuf, 48, out, 560,
+                                   ctypes.byref(returned), None):
+            return None
+        if returned.value < 48:
+            return None
+        return _parse_nvme_health(out.raw[48:48 + 512])
+    except Exception:
+        return None
+
+
+def _parse_sata_smart(vendor: bytes, predict_failure: int) -> dict:
+    """SMART attribute block from STORAGE_PREDICT_FAILURE.VendorSpecific:
+    12-byte entries from offset 2 (id, flags u16, value, worst, raw[6],
+    resv). Temperature = attribute 194 (fallback 190), raw[0..1]."""
+    temp_c: Optional[float] = None
+    temp_attr = None
+    for off in range(2, min(len(vendor) - 10, 2 + 30 * 12), 12):
+        attr_id = vendor[off]
+        if not attr_id:
+            continue
+        if attr_id == 194 or (attr_id == 190 and temp_attr is None):
+            raw = vendor[off + 5:off + 11]
+            value = raw[0] | (raw[1] << 8)
+            if 0 <= value <= 90:
+                temp_attr = attr_id
+                temp_c = float(value)
+    return {
+        "kind": "sata",
+        "temp_c": temp_c,
+        "predict_failure": bool(predict_failure),
+        "temp_attr": temp_attr,
+    }
+
+
+def _query_sata_smart(handle) -> Optional[dict]:
+    try:
+        k32 = ctypes.windll.kernel32
+        k32.DeviceIoControl.restype = ctypes.c_int
+        k32.DeviceIoControl.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.c_void_p, ctypes.c_ulong,
+            ctypes.POINTER(ctypes.c_ulong), ctypes.c_void_p]
+        out = ctypes.create_string_buffer(516)
+        returned = ctypes.c_ulong()
+        if not k32.DeviceIoControl(handle, _IOCTL_STORAGE_PREDICT_FAILURE,
+                                   None, 0, out, 516,
+                                   ctypes.byref(returned), None):
+            return None
+        predict = struct.unpack_from("<I", out, 0)[0]
+        return _parse_sata_smart(out.raw[4:516], predict)
+    except Exception:
+        return None
+
+
+def _drive_name(index: int) -> str:
+    """Model name from the CACHED inventory (DeviceId join) — never spawns
+    PowerShell for the health snapshot's sake."""
+    inv = inventory(cached_only=True)
+    for d in inv.get("disks") or []:
+        try:
+            if int(d.get("id", -1)) == index:
+                return d.get("model") or f"Drive {index}"
+        except (TypeError, ValueError):
+            continue
+    return f"Drive {index}"
+
+
+def drive_health_snapshot() -> List[dict]:
+    """Per-physical-drive health/temperature, TTL-cached (30 s good / 5 min
+    fail per drive — SMART/NVMe logs move slowly). Never raises."""
+    now = time.monotonic()
+    out: List[dict] = []
+    with _drv_lock:
+        for index in range(16):
+            cached = _drv_cache.get(index)
+            if cached and now - cached[1] < _DRV_TTL:
+                fresh = cached[0]
+            else:
+                fresh = None
+                handle = _open_physical_drive(index)
+                if handle:
+                    try:
+                        fresh = _query_nvme_health(handle)
+                        if fresh is None:
+                            fresh = _query_sata_smart(handle)
+                    finally:
+                        try:
+                            ctypes.windll.kernel32.CloseHandle(
+                                ctypes.c_void_p(handle))
+                        except Exception:
+                            pass
+                if fresh is None:
+                    if cached:   # keep serving the last good reading in backoff
+                        fresh = cached[0]
+                        _drv_cache[index] = (fresh, now - _DRV_TTL
+                                             + _DRV_FAIL_BACKOFF)
+                    else:
+                        _drv_cache[index] = ({"kind": "absent"}, now)
+                        continue
+                else:
+                    _drv_cache[index] = (fresh, now)
+            if fresh.get("kind") == "absent":
+                continue
+            entry = dict(fresh)
+            entry["index"] = index
+            entry["name"] = _drive_name(index)
+            kind = fresh.get("kind")
+            if fresh.get("critical_warning") or fresh.get("predict_failure"):
+                entry["health"] = "fail"
+            elif kind == "nvme" and ((fresh.get("used_percent") or 0) >= 90
+                                     or (fresh.get("spare_percent")
+                                         is not None
+                                         and fresh["spare_percent"] <= 10)):
+                entry["health"] = "warn"
+            else:
+                entry["health"] = "ok"
+            out.append(entry)
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Battery (study P1-4) — GetSystemPowerStatus / /sys/class/power_supply
+# ---------------------------------------------------------------------------
+
+
+def battery_status() -> Optional[dict]:
+    """{percent, charging, ac} or None on desktops / when unknown.
+    Never raises."""
+    if os.name == "nt":
+        try:
+            class _SPS(ctypes.Structure):
+                _fields_ = [("ACLineStatus", ctypes.c_ubyte),
+                            ("BatteryFlag", ctypes.c_ubyte),
+                            ("BatteryLifePercent", ctypes.c_ubyte),
+                            ("SystemStatusFlag", ctypes.c_ubyte),
+                            ("BatteryLifeTime", ctypes.c_ulong),
+                            ("BatteryFullLifeTime", ctypes.c_ulong)]
+            sps = _SPS()
+            if not ctypes.windll.kernel32.GetSystemPowerStatus(
+                    ctypes.byref(sps)):
+                return None
+            if sps.BatteryFlag & 0x80 or sps.BatteryLifePercent > 100:
+                return None   # BATTERY_FLAG_NO_BATTERY / unknown
+            return {
+                "percent": int(sps.BatteryLifePercent),
+                "charging": bool(sps.BatteryFlag & 0x08),
+                "ac": sps.ACLineStatus == 1,
+            }
+        except Exception:
+            return None
+    # POSIX: first battery with a readable capacity file.
+    try:
+        base = "/sys/class/power_supply"
+        for name in sorted(os.listdir(base)):
+            cap_path = f"{base}/{name}/capacity"
+            st_path = f"{base}/{name}/status"
+            if not name.startswith("BAT") or not os.path.isfile(cap_path):
+                continue
+            with open(cap_path, "r", encoding="ascii",
+                      errors="ignore") as fh:
+                percent = int(fh.read().strip())
+            status = ""
+            try:
+                with open(st_path, "r", encoding="ascii",
+                          errors="ignore") as fh:
+                    status = fh.read().strip()
+            except OSError:
+                pass
+            return {"percent": max(0, min(100, percent)),
+                    "charging": status == "Charging",
+                    "ac": status in ("Charging", "Fully charged")}
+    except (OSError, ValueError):
+        pass
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +769,7 @@ _INV_PS_SCRIPT = (
     "$o.gpus=@(Get-CimInstance Win32_VideoController | Select-Object "
     "Name,DriverVersion,AdapterRAM);"
     "$o.disks=@(Get-PhysicalDisk | Select-Object "
-    "FriendlyName,BusType,MediaType,Size,HealthStatus);"
+    "DeviceId,FriendlyName,BusType,MediaType,Size,HealthStatus);"
     "$o.nics=@(Get-CimInstance Win32_NetworkAdapter -Filter "
     "'NetEnabled=true' | Select-Object Name,Speed);"
     "$o.os=@(Get-CimInstance Win32_OperatingSystem | Select-Object -First 1 "
@@ -398,6 +874,7 @@ def _parse_inventory_win(text: str) -> Optional[dict]:
             "vram_mb": g.get("AdapterRAM"),
         } for g in _inv_many(raw.get("gpus"))],
         "disks": [{
+            "id": d.get("DeviceId"),   # joins \\.\PhysicalDrive{n} rows
             "model": _s(d.get("FriendlyName")),
             "bus": _s(d.get("BusType"), 16),       # NVMe / SATA / USB / RAID
             "media": _s(d.get("MediaType"), 16),   # SSD / HDD / Unspecified
@@ -438,17 +915,23 @@ def _inventory_posix() -> dict:
     return out
 
 
-def inventory(refresh: bool = False) -> dict:
+def inventory(refresh: bool = False,
+              cached_only: bool = False) -> dict:
     """Hardware inventory (device names, like a hardware inventory list),
     cached: a good fetch serves for _INV_TTL, a failed one retries at most
     every _INV_FAIL_BACKOFF. Never raises; on total failure returns
-    {"available": False}."""
+    {"available": False}. ``cached_only`` (drive-health's name join) never
+    spawns PowerShell — and serves a STALE cache too (hardware model
+    names are static; only a never-fetched cache reads as unavailable)."""
     global _inv_cache, _inv_stamp, _inv_failed
     with _inv_lock:
         ttl = _INV_FAIL_BACKOFF if _inv_failed else _INV_TTL
         if not refresh and _inv_cache is not None \
                 and (time.monotonic() - _inv_stamp) < ttl:
             return _inv_cache
+        if cached_only:
+            return _inv_cache if _inv_cache is not None \
+                else {"available": False}
     fetched = _fetch_inventory()
     with _inv_lock:
         _inv_cache = fetched
@@ -527,6 +1010,19 @@ def inventory_digest(inv: dict) -> List[str]:
 # The snapshot + warnings
 # ---------------------------------------------------------------------------
 
+def _clamp(v, lo: float, hi: float):
+    """Plausibility clamp (LHM's 'some cards report 54000 °C' rule): a
+    reading outside [lo, hi] is garbage → None, never displayed, never
+    warned on."""
+    if v is None:
+        return None
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return v if lo <= v <= hi else None
+
+
 def _gpu_block() -> dict:
     gpu: Dict[str, Any] = {
         "name": "", "live": False, "percent": None,
@@ -537,17 +1033,21 @@ def _gpu_block() -> dict:
     gpus = hardware_monitor.nvidia_smi_query()
     if gpus:
         g = gpus[0]
+        vram_total = max(0, int(g.get("mem_total_mb") or 0))
+        vram_used = max(0, int(g.get("mem_used_mb") or 0))
+        if vram_total and vram_used > vram_total * 1.05:
+            vram_used = vram_total    # counter glitch: clamp, don't lie
         gpu.update({
-            "name": g.get("name") or "",
+            "name": _s(g.get("name") or "", 60),
             "live": True,
-            "percent": g.get("util"),
-            "vram_used_mb": g.get("mem_used_mb") or 0,
-            "vram_total_mb": g.get("mem_total_mb") or 0,
-            "temp_c": g.get("temp_c"),
-            "fan_percent": g.get("fan_percent"),
-            "power_w": g.get("power_w"),
-            "pcie_gen": g.get("pcie_gen"),
-            "pcie_width": g.get("pcie_width"),
+            "percent": _clamp(g.get("util"), 0.0, 100.0),
+            "vram_used_mb": vram_used,
+            "vram_total_mb": vram_total,
+            "temp_c": _clamp(g.get("temp_c"), 0.0, 120.0),
+            "fan_percent": _clamp(g.get("fan_percent"), 0.0, 100.0),
+            "power_w": _clamp(g.get("power_w"), 0.0, 2000.0),
+            "pcie_gen": _clamp(g.get("pcie_gen"), 0.0, 16.0),
+            "pcie_width": _clamp(g.get("pcie_width"), 0.0, 64.0),
         })
         return gpu
     static = hardware_monitor.dxgi_adapters()
@@ -635,6 +1135,34 @@ def warnings_from(snap: dict, thresholds: Any = None) -> List[dict]:
                 "message": (f"{d.get('volume', '?')} has only "
                             f"{free_gb:.0f} GB free"),
             })
+
+    # Drive temperature / SMART health (study P1-3). None readings never
+    # warn; the thresholds section is user-only like every other.
+    disk_t_threshold = getattr(thresholds, "temp_warn_disk_c", 60)
+    for drv in snap.get("drives") or []:
+        temp = drv.get("temp_c")
+        name = drv.get("name") or f"Drive {drv.get('index', '?')}"
+        if temp is not None and temp >= disk_t_threshold:
+            out.append({
+                "kind": "disk_temp",
+                "severity": ("danger"
+                             if temp >= disk_t_threshold + 10 else "warn"),
+                "message": (f"{name} temperature is {temp:.0f} °C "
+                            f"(threshold {disk_t_threshold} °C)"),
+            })
+        if drv.get("health") == "fail":
+            out.append({
+                "kind": "disk_health",
+                "severity": "danger",
+                "message": (f"{name} reports a SMART/health failure "
+                            f"prediction — back it up"),
+            })
+        elif drv.get("health") == "warn":
+            out.append({
+                "kind": "disk_health",
+                "severity": "warn",
+                "message": f"{name} wear indicators are high",
+            })
     return out
 
 
@@ -671,13 +1199,30 @@ def snapshot(include_inventory: bool = False,
         cpu_c = cpu_temperature(probe=True)
     except Exception:
         cpu_c = None
+    try:
+        per_core = hardware_monitor.per_core_percent()
+    except Exception:
+        per_core = []
+    try:
+        network = network_snapshot()
+    except Exception:
+        network = []
+    try:
+        drives = drive_health_snapshot()
+    except Exception:
+        drives = []
+    try:
+        battery = battery_status()
+    except Exception:
+        battery = None
 
     snap: Dict[str, Any] = {
         "generated_at": datetime.now(timezone.utc).isoformat(
             timespec="seconds"),
         "uptime_seconds": _uptime_seconds(),
         "cpu": {"percent": round(cpu_pct, 1),
-                "cores": os.cpu_count() or 0},
+                "cores": os.cpu_count() or 0,
+                "per_core": [round(v, 1) for v in per_core]},
         "ram": {"used_mb": ram_used_mb, "total_mb": ram_total_mb,
                 "percent": _pct(ram_used_mb, ram_total_mb),
                 "commit_used_mb": commit_used_mb,
@@ -685,6 +1230,9 @@ def snapshot(include_inventory: bool = False,
         "gpu": gpu,
         "temperatures": {"cpu_c": cpu_c, "gpu_c": gpu.get("temp_c")},
         "disks": disks,
+        "network": network,
+        "drives": drives,
+        "battery": battery,
     }
     snap["warnings"] = warnings_from(snap, thresholds)
     if include_inventory:
@@ -715,6 +1263,10 @@ def summary_line(snap: dict) -> str:
     for d in snap.get("disks") or []:
         if d.get("volume") and d.get("free_gb") is not None:
             parts.append(f"{d['volume']} {d['free_gb']:.0f} GB free")
+    battery = snap.get("battery")
+    if battery and battery.get("percent") is not None:
+        parts.append(f"battery {battery['percent']}%"
+                     + (" (charging)" if battery.get("charging") else ""))
     warnings_ = snap.get("warnings") or []
     if warnings_:
         parts.append(f"{len(warnings_)} warning(s)")

@@ -1270,6 +1270,40 @@
     set, test_responsive parametrize. LIVE-VERIFIED 2026-11-19
     (offscreen real-MainWindow smoke: samples arrive, inventory 15
     rows, timer stops on tab switch).
+  * STUDY + P0/P1 EXPANSION (2026-11-19, same day — read
+    SYSTEM_HEALTH_STUDY.md for the full fail-safe doctrine + sources):
+    every new reading follows "SDK-verify the layout, live-probe it,
+    THEN write the parser; degrade to absence; per-source backoff;
+    never a new vendor DLL in the GUI process". Shipped: negative-delta
+    clamps on ALL CPU counters (Windows counters go backwards —
+    psutil/htop/btop4win all clamp; a backwards step reads 0.0);
+    IOCTL_DISK_PERFORMANCE error ladder (INSUFFICIENT_BUFFER → double
+    buffer to 1 MiB, INVALID_FUNCTION/NOT_SUPPORTED → "exotic disk"
+    cold-mark, short writes distrusted); GPU plausibility clamps
+    (_clamp — a 54000 °C reading is None, LHM's rule); per-core CPU
+    via NtQuerySystemInformation(8) — buffer must be EXACTLY
+    count×stride (oversized non-multiple → C0000004; probed 816 ok /
+    776+1024 fail), stride 48 with 40 fallback, hard fail = sticky
+    off; network throughput (GetIfTable2 parsed from RAW BYTES at
+    pinned offsets — stride 1352; a ctypes Structure missing one tail
+    field shifts every later row, that exact probe bug is why; decode
+    the full description BEFORE splitting on NUL or the name tail
+    corrupts; admission = up AND (HardwareInterface bit OR live
+    traffic) minus name-prefix mirrors + Miniports); drive health
+    (NVMe via IOCTL_STORAGE_QUERY_PROPERTY protocol query —
+    STORAGE_PROTOCOL_SPECIFIC_DATA has ProtocolDataOffset BEFORE
+    ProtocolDataLength, the common mis-transcription is wrong; SATA
+    via IOCTL_STORAGE_PREDICT_FAILURE SMART attrs 194/190 — NOT yet
+    validated on a real SATA drive, fail-closed); battery
+    (GetSystemPowerStatus, 0x80 flag = absent = hidden chip). Drive
+    names join the CACHED inventory's DeviceId —
+    inventory(cached_only=True) NEVER spawns PowerShell. New user-only
+    threshold temp_warn_disk_c (60) + disk_temp/disk_health warning
+    kinds. The live CPU CLOCK was probed and DROPPED (ACPI
+    CurrentMhz stays at base under load — dishonest to show). P2
+    (D3DKMT subprocess GPU lane, external LHM/HWiNFO bridge) remains
+    study-only. Tests 57 in test_system_health.py; full nine-chunk
+    gate green 2026-11-19 (1,481 tests).
 - Hardware HUD (6.1) — **REMOVED in 7.6 (owner decision 2026-11-07)**:
   `gui/hardware_hud.py` + `tests/test_hardware_hud.py` are gone. The HUD's
   2 s sampler (GetSystemTimes + GlobalMemoryStatusEx ctypes + nvidia-smi

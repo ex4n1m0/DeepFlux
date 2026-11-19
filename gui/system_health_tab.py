@@ -98,13 +98,9 @@ class HealthMeter(QWidget):
             self.update()
 
     def _fill_color(self) -> QColor:
-        if self._neutral or self._frac is None:
+        if self._neutral:
             return QColor(_OK_HEX)
-        if self._frac >= _DANGER_AT:
-            return QColor(_DANGER_HEX)
-        if self._frac >= _WARN_AT:
-            return QColor(_WARN_HEX)
-        return QColor(_OK_HEX)
+        return QColor(_threshold_hex(self._frac))
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
@@ -141,6 +137,63 @@ class HealthMeter(QWidget):
                 fill.setWidth(track.width() * min(100.0, self._frac) / 100.0)
                 painter.setBrush(self._fill_color())
                 painter.drawRoundedRect(fill, 2, 2)
+        finally:
+            painter.end()
+
+
+def _threshold_hex(frac: Optional[float]) -> str:
+    """Meter fill color for a 0–100 fraction — one place for the
+    warn/danger breakpoints (HealthMeter and the per-core strip share)."""
+    if frac is None:
+        return _OK_HEX
+    if frac >= _DANGER_AT:
+        return _DANGER_HEX
+    if frac >= _WARN_AT:
+        return _WARN_HEX
+    return _OK_HEX
+
+
+class CoreStrip(QWidget):
+    """Thin per-core activity strip under the meters — painted, so any
+    core count (capped at 32 bars) renders without layout churn. Hidden
+    entirely when the per-core source is unavailable (first tick of a
+    cold process, or the NtQuery probe refused: absence, not fake 0%)."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._values: List[float] = []
+        self.setFixedHeight(26)
+        self.setVisible(False)
+
+    def set_values(self, values: List[Any]) -> None:
+        vals = [min(100.0, max(0.0, float(v)))
+                for v in values or [] if isinstance(v, (int, float))][:32]
+        if vals != self._values:
+            self._values = vals
+            self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        if not self._values:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        try:
+            rect = self.rect()
+            n = len(self._values)
+            gap = 2.0
+            bar_w = max(3.0, (rect.width() - 12.0 - gap * (n - 1)) / n)
+            painter.setPen(Qt.NoPen)
+            for i, value in enumerate(self._values):
+                frac = value / 100.0
+                x = 6.0 + i * (bar_w + gap)
+                track = QRectF(x, 8.0, bar_w, rect.height() - 10.0)
+                painter.setBrush(QColor(_TRACK_HEX))
+                painter.drawRoundedRect(track, 1, 1)
+                if frac > 0.02:
+                    fill = QRectF(track)
+                    fill.setTop(track.bottom() - track.height() * frac)
+                    painter.setBrush(QColor(_threshold_hex(value)))
+                    painter.drawRoundedRect(fill, 1, 1)
         finally:
             painter.end()
 
@@ -182,6 +235,8 @@ class SystemHealthTab(QWidget):
         self._force_inventory = False
         self._last_severity = ""         # banner restyle cache
         self._disk_rows: Dict[str, Tuple[HealthMeter, QLabel, QWidget]] = {}
+        self._net_rows: Dict[str, Tuple[QLabel, QLabel, QWidget]] = {}
+        self._drv_rows: Dict[int, QLabel] = {}
 
         self._timer = QTimer(self)
         self._timer.setInterval(max(
@@ -242,6 +297,9 @@ class SystemHealthTab(QWidget):
             meters.addWidget(meter, 1)
         col.addLayout(meters)
 
+        self._core_strip = CoreStrip()
+        col.addWidget(self._core_strip)
+
         chips = QHBoxLayout()
         chips.setSpacing(6)
         self._gpu_temp_chip = _chip()
@@ -250,9 +308,12 @@ class SystemHealthTab(QWidget):
         self._pcie_chip = _chip()
         self._cpu_temp_chip = _chip()
         self._uptime_chip = _chip()
+        self._battery_chip = _chip()
         for chip in (self._gpu_temp_chip, self._fan_chip, self._power_chip,
-                     self._pcie_chip, self._cpu_temp_chip, self._uptime_chip):
+                     self._pcie_chip, self._cpu_temp_chip, self._uptime_chip,
+                     self._battery_chip):
             chips.addWidget(chip)
+        self._battery_chip.hide()
         chips.addStretch(1)
         col.addLayout(chips)
 
@@ -262,6 +323,20 @@ class SystemHealthTab(QWidget):
         self._disk_lay.setContentsMargins(0, 0, 0, 0)
         self._disk_lay.setSpacing(4)
         col.addWidget(self._disk_host)
+
+        col.addWidget(_section(tr("Network")))
+        self._net_host = QWidget()
+        self._net_lay = QVBoxLayout(self._net_host)
+        self._net_lay.setContentsMargins(0, 0, 0, 0)
+        self._net_lay.setSpacing(4)
+        col.addWidget(self._net_host)
+
+        col.addWidget(_section(tr("Drive health")))
+        self._drv_host = QWidget()
+        self._drv_lay = QVBoxLayout(self._drv_host)
+        self._drv_lay.setContentsMargins(0, 0, 0, 0)
+        self._drv_lay.setSpacing(4)
+        col.addWidget(self._drv_host)
 
         inv_head = QHBoxLayout()
         self._inv_toggle = QPushButton(tr("▸ Hardware inventory"))
@@ -409,7 +484,23 @@ class SystemHealthTab(QWidget):
         self._uptime_chip.setText(
             tr("Up {n}").format(n=_fmt_uptime(snap.get("uptime_seconds"))))
 
+        battery = snap.get("battery")
+        if battery and battery.get("percent") is not None:
+            self._battery_chip.show()
+            text = tr("Battery {n}%").format(n=battery["percent"])
+            if battery.get("charging"):
+                text += " ⚡"
+            self._battery_chip.setText(text)
+        else:
+            self._battery_chip.hide()
+
+        per_core = cpu.get("per_core") or []
+        self._core_strip.set_values(per_core)
+        self._core_strip.setVisible(bool(per_core))
+
         self._sync_disk_rows(snap.get("disks") or [])
+        self._sync_net_rows(snap.get("network") or [])
+        self._sync_drive_rows(snap.get("drives") or [])
         self._sync_warnings(snap.get("warnings") or [])
         self._updated_lbl.setText(
             tr("Updated {t}").format(t=time.strftime("%H:%M:%S")))
@@ -448,6 +539,80 @@ class SystemHealthTab(QWidget):
             if vol not in seen:
                 _, _, wrap = self._disk_rows.pop(vol)
                 wrap.setParent(None)
+
+    def _sync_net_rows(self, net: List[Dict[str, Any]]) -> None:
+        seen = set()
+        for entry in net:
+            name = str(entry.get("name") or "?")
+            # Key by interface INDEX when present: two same-model NICs
+            # (dual-port / twin USB adapters) must not collapse into one
+            # row just because their display names match.
+            key = entry.get("index", name)
+            seen.add(key)
+            row = self._net_rows.get(key)
+            if row is None:
+                lbl = QLabel("")
+                shrink_label(lbl)
+                lbl.setStyleSheet(scale_qss(
+                    "QLabel { color: #ffffff; font-size: 13px; }"))
+                speed = QLabel("")
+                shrink_label(speed)
+                speed.setStyleSheet(scale_qss(
+                    "QLabel { color: #ffffff; font-size: 13px; }"))
+                wrap = QWidget()
+                lay = QHBoxLayout(wrap)
+                lay.setContentsMargins(0, 0, 0, 0)
+                lay.setSpacing(8)
+                lay.addWidget(lbl, 1)
+                lay.addWidget(speed)
+                self._net_lay.addWidget(wrap)
+                row = self._net_rows[key] = (lbl, speed, wrap)
+            lbl, speed, _ = row
+            lbl.setText(_elide(name, 40))
+            speed.setText(
+                f"↓ {_fmt_bps(entry.get('rx_bps'))}"
+                f"   ↑ {_fmt_bps(entry.get('tx_bps'))}")
+        for key in list(self._net_rows):
+            if key not in seen:
+                _, _, wrap = self._net_rows.pop(key)
+                wrap.setParent(None)
+
+    def _sync_drive_rows(self, drives: List[Dict[str, Any]]) -> None:
+        seen = set()
+        for drv in drives:
+            index = drv.get("index")
+            if not isinstance(index, int):
+                continue
+            seen.add(index)
+            label = self._drv_rows.get(index)
+            if label is None:
+                label = QLabel("")
+                shrink_label(label)
+                self._drv_lay.addWidget(label)
+                self._drv_rows[index] = label
+            parts = [str(drv.get("name") or f"Drive {index}")]
+            kind = drv.get("kind")
+            if kind:
+                parts.append(str(kind).upper())
+            temp = drv.get("temp_c")
+            if temp is not None:
+                parts.append(f"{temp:.0f} °C")
+            if kind == "nvme" and drv.get("used_percent") is not None:
+                parts.append(tr("{n}% used").format(n=drv["used_percent"]))
+            health = drv.get("health")
+            if health == "fail":
+                parts.append(tr("failing — back up this drive"))
+            elif health == "warn":
+                parts.append(tr("wear high"))
+            label.setText(_elide(" · ".join(parts), 90))
+            color = (_DANGER_HEX if health == "fail"
+                     else _WARN_HEX if health == "warn" else "#ffffff")
+            label.setStyleSheet(scale_qss(
+                f"QLabel {{ color: {color}; font-size: 13px; }}"))
+        for index in list(self._drv_rows):
+            if index not in seen:
+                label = self._drv_rows.pop(index)
+                label.setParent(None)
 
     def _sync_warnings(self, warnings: List[Dict[str, Any]]) -> None:
         if not warnings:

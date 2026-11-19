@@ -1,8 +1,8 @@
 {
-  "version": "8.6",
-  "file": "DeepFlux8.6Setup.exe",
-  "size": 508635751,
-  "sha256": "6803bcc25ec35e5b18717a550c284f0fce0e0a75460f94ae0c85fb860a9c18bc",
+  "version": "8.7",
+  "file": "DeepFlux8.7Setup.exe",
+  "size": 508742885,
+  "sha256": "d884c86f68d8d3c5700353dcc8c8e75ec903c18ad4d7b52bd4017e3145acd759",
   "released": "2026-11-19",
-  "notes": "DeepFlux 8.6 - System Health fixes. The per-disk read/write speeds in the System Health tab now show real live numbers (a wrong Windows query code made them always read 0 B/s in 8.5), and the tab's sampling code was hardened. If 8.5 closed when you opened the System Health tab, please try this build - and if it still closes, the app's crash log (AppData\\Local\\DeepFlux\\faulthandler.log) now holds the exact line to report."
+  "notes": "DeepFlux 8.7 - System Health expansion: per-core CPU activity, live network throughput per adapter, drive health and temperatures (NVMe and SATA SMART, no admin rights needed) and a battery meter. Every new reading is fail-safe by design - anything that cannot be read safely simply shows as unavailable instead of risking a crash."
 }

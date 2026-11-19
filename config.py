@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "8.6"
+APP_VERSION = "8.7"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -708,6 +708,8 @@ class SystemHealthConfig:
     # Temperature warning thresholds (°C; None-valued readings never warn).
     temp_warn_gpu_c: int = 85
     temp_warn_cpu_c: int = 90
+    # Drive (SMART/NVMe) temperature threshold, same contract.
+    temp_warn_disk_c: int = 60
     # Per-volume free-space warning: fires under EITHER floor.
     disk_min_free_gb: float = 10.0
     disk_min_free_percent: int = 10
@@ -1211,6 +1213,8 @@ class DeeptorrentConfig:
                     "temp_warn_gpu_c", 85) or 85),
                 temp_warn_cpu_c=int(data.get("system_health", {}).get(
                     "temp_warn_cpu_c", 90) or 90),
+                temp_warn_disk_c=int(data.get("system_health", {}).get(
+                    "temp_warn_disk_c", 60) or 60),
                 disk_min_free_gb=max(0.0, float(data.get("system_health", {}).get(
                     "disk_min_free_gb", 10.0) or 0.0)),
                 disk_min_free_percent=max(1, min(95, int(

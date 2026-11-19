@@ -29,6 +29,7 @@ import ctypes
 import logging
 import os
 import shutil
+import struct
 import subprocess
 import threading
 import time
@@ -118,13 +119,26 @@ def _cpu_times() -> Optional[Tuple[int, int]]:
     return _cpu_times_posix()
 
 
+def _seed_percpu() -> None:
+    """Store the per-core baseline so the next per_core_percent() is real
+    (the cold-path companion of the aggregate seed)."""
+    with _percpu_lock:
+        global _percpu_last
+        if _percpu_last is None:
+            rows = _percpu_counts()
+            if rows:
+                _percpu_last = (rows, time.monotonic())
+
+
 def seed_cpu_baseline() -> None:
-    """Take the first reading now so the first cpu_percent() is meaningful."""
+    """Take the first reading now so the first cpu_percent() (and the first
+    per_core_percent()) is meaningful."""
     with _cpu_lock:
         global _cpu_last
         t = _cpu_times()
         if t is not None:
             _cpu_last = (t[0], t[1], time.monotonic())
+    _seed_percpu()
 
 
 def cpu_percent() -> float:
@@ -139,12 +153,121 @@ def cpu_percent() -> float:
         _cpu_last = (t[0], t[1], time.monotonic())
         if prev is None:
             return 0.0
-        d_idle = t[0] - prev[0]
-        d_busy = t[1] - prev[1]
+        # Windows CPU counters can go BACKWARDS between reads (psutil
+        # clamps with max(0, delta) citing issues #392/#645/#1210 — "top
+        # does the same"; htop saturatingSub; btop4win max(0ll,...)).
+        # Unclamped, a backwards step renders a negative percentage.
+        d_idle = max(0, t[0] - prev[0])
+        d_busy = max(0, t[1] - prev[1])
         total = d_idle + d_busy
         if total <= 0:
             return 0.0
         return min(100.0, d_busy * 100.0 / total)
+
+
+# ---------------------------------------------------------------------------
+# CPU per-core — NtQuerySystemInformation(SystemProcessorPerformanceInformation)
+#
+# psutil's per-core source and (per community consensus) Task Manager's.
+# Semi-documented (winternl.h carries a PARTIAL layout with "Use
+# GetSystemTimes instead" for totals — we keep GetSystemTimes for the
+# aggregate). The fail-safe contract (2026-11-19 live-probed on this
+# machine, 16 logical processors):
+#   * the buffer size must be EXACTLY count*stride — an oversized,
+#     non-multiple length fails with STATUS_INFO_LENGTH_MISMATCH
+#     (0xC0000004); 816 = 17*48 succeeds while 776/1024 fail;
+#   * stride is 48 bytes per entry (Geoff Chappell's 0x30 layout —
+#     documented trio + DpcTime/InterruptTime/InterruptCount); the
+#     winternl.h shape (40) is kept as a one-shot fallback for
+#     hypothetical layouts;
+#   * per entry: IdleTime@0, KernelTime@8 (INCLUDES idle), UserTime@16;
+#   * the kernel may return fewer entries than requested (processor
+#     groups) — psutil recomputes the count from ReturnLength; we
+#     REQUIRE retlen == count*stride and otherwise distrust the read.
+# A failing probe disables per-core for the process (doctrine: hard-fail
+# means off, never retried hot).
+# ---------------------------------------------------------------------------
+
+_percpu_lock = threading.Lock()
+_percpu_last: Optional[Tuple[List[Tuple[int, int]], float]] = None
+_percpu_stride: Optional[int] = None   # resolved on first successful read
+
+
+def _percpu_read(count: int, stride: int):
+    """One raw NtQuerySystemInformation(class 8) call → (rows, retlen,
+    status); rows is None on any failure."""
+    if os.name != "nt":
+        return None, 0, -1
+    try:
+        ntdll = ctypes.windll.ntdll
+        ntdll.NtQuerySystemInformation.restype = ctypes.c_long
+        ntdll.NtQuerySystemInformation.argtypes = [
+            ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p]
+        size = count * stride
+        buf = ctypes.create_string_buffer(size)
+        retlen = ctypes.c_ulong()
+        status = ntdll.NtQuerySystemInformation(
+            8, buf, size, ctypes.byref(retlen))
+        if status != 0 or retlen.value != size:
+            return None, retlen.value, status
+        rows = []
+        for i in range(count):
+            idle, kern, user = struct.unpack_from("<3q", buf, i * stride)
+            rows.append((idle, (kern - idle) + user))
+        return rows, retlen.value, status
+    except Exception:
+        return None, 0, -1
+
+
+def _percpu_counts() -> List[Tuple[int, int]]:
+    """(idle, busy) per logical processor, or [] when unavailable (the
+    stride resolution runs once; failure is sticky for the process)."""
+    global _percpu_stride
+    if os.name != "nt" or _percpu_stride == 0:
+        return []
+    try:
+        count = ctypes.windll.kernel32.GetActiveProcessorCount(0xFFFF)
+    except Exception:
+        _percpu_stride = 0
+        return []
+    if not count or count > 1024:
+        _percpu_stride = 0
+        return []
+    if _percpu_stride:
+        rows, _, _ = _percpu_read(count, _percpu_stride)
+        return rows or []
+    for stride in (48, 40):   # live-verified 48; winternl shape as fallback
+        rows, _, _ = _percpu_read(count, stride)
+        if rows:
+            _percpu_stride = stride
+            return rows
+    _percpu_stride = 0   # neither layout answered: off for the session
+    return []
+
+
+def per_core_percent() -> List[float]:
+    """Per-core busy % since the previous call ([] on the first call or
+    when the source is unavailable — the tab shows nothing, never zeros
+    pretending to be readings)."""
+    global _percpu_last
+    with _percpu_lock:
+        rows = _percpu_counts()
+        if not rows:
+            return []
+        now = time.monotonic()
+        prev = _percpu_last
+        _percpu_last = (rows, now)
+        if prev is None:
+            return []
+        out: List[float] = []
+        for cur, old in zip(rows, prev[0]):
+            dt = now - prev[1]
+            d_idle = max(0, cur[0] - old[0])
+            d_busy = max(0, cur[1] - old[1])
+            total = d_idle + d_busy
+            out.append(min(100.0, d_busy * 100.0 / total)
+                       if total > 0 and dt > 0 else 0.0)
+        return out
 
 
 def cpu_percent_quick(settle_seconds: float = 0.2) -> float:
