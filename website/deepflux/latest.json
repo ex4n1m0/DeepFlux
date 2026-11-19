@@ -1,8 +1,8 @@
 {
-  "version": "8.7",
-  "file": "DeepFlux8.7Setup.exe",
-  "size": 508742885,
-  "sha256": "d884c86f68d8d3c5700353dcc8c8e75ec903c18ad4d7b52bd4017e3145acd759",
+  "version": "8.8",
+  "file": "DeepFlux8.8Setup.exe",
+  "size": 508677578,
+  "sha256": "d5364b883fedce0ce30e8dec7355a70329805d45c1eac1dcf0a41c9f738ad920",
   "released": "2026-11-19",
-  "notes": "DeepFlux 8.7 - System Health expansion: per-core CPU activity, live network throughput per adapter, drive health and temperatures (NVMe and SATA SMART, no admin rights needed) and a battery meter. Every new reading is fail-safe by design - anything that cannot be read safely simply shows as unavailable instead of risking a crash."
+  "notes": "DeepFlux 8.8 - crash fix for AMD laptops: the System Health tab no longer re-enumerates the graphics adapters on every refresh (static data is now cached ~10 minutes). On machines without NVIDIA, that repeated low-level GPU query is the prime suspect in the app closing while the System Health tab was open."
 }

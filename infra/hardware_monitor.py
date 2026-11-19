@@ -493,11 +493,46 @@ class _DXGI_ADAPTER_DESC1(ctypes.Structure):
                 ("AdapterLuidHigh", ctypes.c_long)]
 
 
+_dxgi_lock = threading.Lock()
+_dxgi_cache: Optional[List[Tuple[str, int]]] = None
+_dxgi_stamp = 0.0
+_DXGI_TTL = 600.0
+
+
 def dxgi_adapters() -> List[Tuple[str, int]]:
     """(name, dedicated-VRAM MiB) for every hardware adapter, via D3D's own
     enumeration. DedicatedVideoMemory is a SIZE_T — unlike WMI's uint32
     AdapterRAM it does NOT wrap above 4 GB, so a 16 GB card reports 16 GB.
-    Software adapters (Basic Render Driver) are filtered. POSIX → []."""
+    Software adapters (Basic Render Driver) are filtered. POSIX → [].
+
+    Cached ~10 min: the data is STATIC, but callers like the System
+    Health tab's GPU fallback used to walk the DXGI factory EVERY tick —
+    on machines where nvidia-smi is absent (AMD/Intel) that means a COM
+    enumeration ~every 2 s for the lifetime of the tab. Laptop crash
+    investigation 2026-11-19 (GPD/AMD 890M, Insider 26300): the app died
+    with python311.dll+0x49245 AVs ONLY while the health tab was open,
+    bystander threads faulting, surviving an Adrenalin update — prime
+    suspect is the AMD In-Game Overlay's dxgi hook being driven by our
+    per-tick walk. One walk per window kills the churn (an empty result
+    stays uncached so a transient failure still retries)."""
+    global _dxgi_cache, _dxgi_stamp
+    if os.name != "nt":
+        return []
+    with _dxgi_lock:
+        if _dxgi_cache is not None \
+                and time.monotonic() - _dxgi_stamp < _DXGI_TTL:
+            return list(_dxgi_cache)
+    adapters = _dxgi_walk()
+    if adapters:
+        with _dxgi_lock:
+            _dxgi_cache = adapters
+            _dxgi_stamp = time.monotonic()
+    return list(adapters)
+
+
+def _dxgi_walk() -> List[Tuple[str, int]]:
+    """The raw CreateDXGIFactory1 → EnumAdapters1 → GetDesc1 walk (the
+    pre-cache body of dxgi_adapters)."""
     if os.name != "nt":
         return []
     try:

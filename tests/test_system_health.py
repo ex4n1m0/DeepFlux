@@ -27,6 +27,7 @@ _REAL_PERCPU = hm.per_core_percent
 _REAL_NET = sh.network_snapshot
 _REAL_DRV = sh.drive_health_snapshot
 _REAL_BAT = sh.battery_status
+_REAL_DXGI = hm.dxgi_adapters
 
 _FAKE_IO = {}          # volume → (read_bytes, write_bytes) | None
 
@@ -66,11 +67,13 @@ def _isolated(monkeypatch):
     saved = (sh._thermal_value, sh._thermal_stamp,
              sh._inv_cache, sh._inv_stamp, sh._inv_failed,
              sh._net_dead_until,
-             hm._cpu_last, hm._percpu_last, hm._percpu_stride)
+             hm._cpu_last, hm._percpu_last, hm._percpu_stride,
+             hm._dxgi_cache, hm._dxgi_stamp)
     sh._thermal_value, sh._thermal_stamp = None, 0.0
     sh._inv_cache, sh._inv_stamp, sh._inv_failed = None, 0.0, False
     sh._net_dead_until = 0.0
     hm._cpu_last, hm._percpu_last, hm._percpu_stride = None, None, None
+    hm._dxgi_cache, hm._dxgi_stamp = None, 0.0
     yield
     _FAKE_IO.clear()
     sh._disk_last.clear()
@@ -80,7 +83,8 @@ def _isolated(monkeypatch):
     (sh._thermal_value, sh._thermal_stamp,
      sh._inv_cache, sh._inv_stamp, sh._inv_failed,
      sh._net_dead_until,
-     hm._cpu_last, hm._percpu_last, hm._percpu_stride) = saved
+     hm._cpu_last, hm._percpu_last, hm._percpu_stride,
+     hm._dxgi_cache, hm._dxgi_stamp) = saved
 
 
 # ------------------------------------------------------------- smi parsing
@@ -1090,3 +1094,43 @@ def test_tab_hides_battery_and_cores_when_absent(qapp):
     assert tab._drv_rows == {}
     tab.shutdown()
 
+
+
+# ------------------------------------------- laptop-crash hardening (8.8)
+
+def test_dxgi_adapters_ttl_cached(monkeypatch):
+    """Laptop crash investigation 2026-11-19 (AMD 890M): the health tab's
+    GPU fallback walked the DXGI factory EVERY tick on machines without
+    nvidia-smi — driving the AMD overlay's dxgi hook twice a second, the
+    prime suspect in the tab-correlated python311.dll+0x49245 AVs. The
+    static adapter list must be walked ONCE per TTL window; empty results
+    stay uncached so transient failures still retry."""
+    monkeypatch.setattr(hm, "dxgi_adapters", _REAL_DXGI)
+    calls = {"n": 0}
+
+    def fake_walk():
+        calls["n"] += 1
+        return [("AMD Radeon(TM) 890M Graphics", 8192)]
+
+    monkeypatch.setattr(hm, "_dxgi_walk", fake_walk)
+    hm._dxgi_cache, hm._dxgi_stamp = None, 0.0
+    first = hm.dxgi_adapters()
+    assert hm.dxgi_adapters() == first
+    hm.dxgi_adapters()
+    assert calls["n"] == 1                       # one walk per window
+    hm._dxgi_stamp = time.monotonic() - 601.0    # TTL expiry
+    assert hm.dxgi_adapters() == first
+    assert calls["n"] == 2
+
+    monkeypatch.setattr(hm, "_dxgi_walk", lambda: [])
+    hm._dxgi_cache, hm._dxgi_stamp = None, 0.0
+    calls["n"] = 0
+
+    def counting_empty():
+        calls["n"] += 1
+        return []
+
+    monkeypatch.setattr(hm, "_dxgi_walk", counting_empty)
+    hm.dxgi_adapters()
+    hm.dxgi_adapters()
+    assert calls["n"] == 2                       # empty: retried, not cached
