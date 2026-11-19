@@ -1304,6 +1304,30 @@
     (D3DKMT subprocess GPU lane, external LHM/HWiNFO bridge) remains
     study-only. Tests 57 in test_system_health.py; full nine-chunk
     gate green 2026-11-19 (1,481 tests).
+  * 8.8 + 8.9 LAPTOP CRASH ARC (2026-11-19 evening, AMD GPD laptop):
+    8.8 = dxgi_adapters() TTL-cached ~10 min — on non-NVIDIA machines the
+    tab's GPU fallback walked the DXGI COM factory EVERY 2 s tick
+    (driving the AMD In-Game Overlay's dxgi hook in-process; laptop died
+    with python311.dll+0x49245 AVs ONLY while the health tab was open,
+    faulthandler stacks were innocent EPG bystanders, survived an
+    Adrenalin update). dxgi_adapters(force=True) bypasses the cache.
+    8.9 = STEP-BY-STEP DIAGNOSIS (owner idea): a "Step-by-step" toggle
+    on the tab runs each reading SEQUENTIALLY (2 s dwell) with a visible
+    per-step state, logging BEGIN before every attempt to
+    ~/.deeptorrent/logs/health_steps.log (crash-safe open-flush-close,
+    `_STEPS_LOG_PATH` redirects in tests) — if the app dies, the last
+    BEGIN without OK names the culprit reading. DURABLE RULES:
+    health_steps() in infra/system_health.py is the SINGLE SOURCE OF
+    TRUTH (snapshot() = snapshot_base() + every step + snapshot_finalize()
+    — parity-pinned by test; a new reading = a new step closure, never a
+    parallel code path); step mode passes force=True so the raw dxgi walk
+    is re-driven deliberately; the collector thread NEVER emits sampled
+    after shutdown; and the timer-gating test DRAINS the collector before
+    fixture teardown — a zombie collector surviving into the restored
+    REAL native readers mid-flight is the deterministic 0xc0000374
+    heap-corruption detonation found 2026-11-19 (latent since 8.5; ANY
+    test that kicks the real collector must drain
+    `while tab._collector_busy` before returning).
 - Hardware HUD (6.1) — **REMOVED in 7.6 (owner decision 2026-11-07)**:
   `gui/hardware_hud.py` + `tests/test_hardware_hud.py` are gone. The HUD's
   2 s sampler (GetSystemTimes + GlobalMemoryStatusEx ctypes + nvidia-smi
