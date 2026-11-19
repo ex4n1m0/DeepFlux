@@ -4782,6 +4782,33 @@ def test_stop_cancels_pending_error_retry():
     assert player._error_retry_pending is False
 
 
+def test_player_volume_and_stop_keys_match_mini_player():
+    """Key parity with the mini player (owner 2026-11-18): ↑/↓ nudge the
+    volume by ±5 and S stops playback — the mini window has answered both
+    since 7.8; the full player must control time/volume equally."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    from unittest.mock import MagicMock
+    from config import DeeptorrentConfig
+    from gui.iptv_tab import PlayerWidget
+    from iptv.manager import IPTVManager
+
+    QApplication.instance() or QApplication([])
+    player = PlayerWidget(IPTVManager(sources=[], tmdb_api_key=""),
+                          DeeptorrentConfig())
+    player._backend = MagicMock()
+    player.vol.setValue(50)
+    QTest.keyClick(player, Qt.Key.Key_Up)
+    assert player.vol.value() == 55
+    QTest.keyClick(player, Qt.Key.Key_Down)
+    assert player.vol.value() == 50
+    QTest.keyClick(player, Qt.Key.Key_S)
+    assert player._backend.stop.called
+    assert not player.rw_btn.isEnabled()  # stop() resets the VOD controls
+
+
 def test_force_stop_all_streams_destroys_backend_and_kills_retries():
     """force_stop_all_streams goes beyond stop(): the backend is DESTROYED
     (provider sockets closed, SVP child killed) and every pending auto-retry

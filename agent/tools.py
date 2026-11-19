@@ -71,6 +71,7 @@ READ_ONLY_TOOL_NAMES = frozenset({
     "analyze_organization", "list_memories", "agent_diagnostics",
     "iptv_list_sources", "list_api_keys", "list_settings", "list_torrent_sources",
     "commander_state", "scan_video_page", "list_page_videos",
+    "system_health",  # local hardware readings — read-only, on demand
 })
 
 CONFIRMATION_TOOL_NAMES = frozenset({
@@ -630,6 +631,37 @@ class ToolRegistry:
                     required=[],
                 ),
                 "handler": self._agent_diagnostics,
+            },
+            "system_health": {
+                "schema": self._tool_schema(
+                    name="system_health",
+                    description=(
+                        "Read this machine's hardware health on demand: "
+                        "CPU/RAM/GPU utilization, VRAM, temperatures, "
+                        "per-disk free space and live read/write speeds, "
+                        "uptime, plus threshold warnings (GPU/CPU too hot, "
+                        "a disk nearly full, memory pressure). Use it to "
+                        "give the user hardware reports and to WARN them "
+                        "when a warning appears. Unknown readings report "
+                        "null (e.g. CPU temperature when the board does "
+                        "not expose it) — treat null as unknown, never as "
+                        "zero. include_inventory=true also lists the "
+                        "installed hardware (CPU model, RAM sticks with "
+                        "speeds in MT/s, motherboard, BIOS, GPUs with "
+                        "drivers, physical disks with bus/media type, "
+                        "network adapters)."),
+                    properties={
+                        "include_inventory": {
+                            "type": "boolean",
+                            "default": False,
+                            "description": (
+                                "Also include the hardware inventory list "
+                                "(one extra system query, cached ~10 min)."),
+                        },
+                    },
+                    required=[],
+                ),
+                "handler": self._system_health,
             },
             "add_magnet": {
                 "schema": self._tool_schema(
@@ -2151,6 +2183,23 @@ class ToolRegistry:
                 "cooldown_seconds": self.config.watchdog.cooldown_seconds,
             },
         }
+
+    def _system_health(self, include_inventory: bool = False) -> Dict[str, Any]:
+        """Read-only hardware snapshot (infra/system_health.py). Sampling
+        happens per call — the on-demand contract; the System Health tab
+        samples separately while IT is the selected tab. Local data only,
+        so the result is NOT untrusted-tagged."""
+        from infra import system_health as _sh
+        try:
+            snap = _sh.snapshot(include_inventory=include_inventory,
+                                thresholds=self.config.system_health)
+        except Exception as exc:   # belt: snapshot itself never raises
+            return {"success": False,
+                    "error": f"system health sampling failed: {exc}"}
+        result = dict(snap)
+        result["success"] = True
+        result["health"] = result["summary"] = _sh.summary_line(snap)
+        return result
 
     def _add_magnet(self, uri: str, save_path: str, category: str = "Other") -> Dict[str, Any]:
         uri = uri.strip()

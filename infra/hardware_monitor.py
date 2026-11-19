@@ -147,6 +147,20 @@ def cpu_percent() -> float:
         return min(100.0, d_busy * 100.0 / total)
 
 
+def cpu_percent_quick(settle_seconds: float = 0.2) -> float:
+    """One-shot CPU% for callers WITHOUT a cadence (the system_health
+    snapshot): when no baseline exists yet in this process, seed one and
+    measure over a short settle window, so the first on-demand reading is
+    real instead of the 0.0 a cold delta would give. Cadence callers (the
+    System Health tab) keep using seed_cpu_baseline + cpu_percent."""
+    if _cpu_last is None:
+        seed_cpu_baseline()
+        if _cpu_last is None:
+            return 0.0
+        time.sleep(max(0.05, settle_seconds))
+    return cpu_percent()
+
+
 # ---------------------------------------------------------------------------
 # RAM — used/total in MiB
 # ---------------------------------------------------------------------------
@@ -186,6 +200,44 @@ def ram_stats() -> Tuple[int, int]:
     return max(0, total - avail), total
 
 
+def pagefile_stats() -> Tuple[int, int]:
+    """(commit_used_mb, commit_limit_mb) — the commit-charge view
+    GlobalMemoryStatusEx reports (physical + pagefile combined). Linux:
+    (swap_used_mb, swap_total_mb) from /proc/meminfo. (0, 0) when
+    unavailable."""
+    if os.name == "nt":
+        try:
+            class _MSX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong),
+                            ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong),
+                            ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong),
+                            ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong),
+                            ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            stat = _MSX(dwLength=ctypes.sizeof(_MSX))
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat)):
+                used = int((stat.ullTotalPageFile - stat.ullAvailPageFile)
+                           // (1024 * 1024))
+                return used, int(stat.ullTotalPageFile // (1024 * 1024))
+        except Exception:
+            pass
+        return 0, 0
+    total = free = 0
+    try:
+        with open("/proc/meminfo", "r", encoding="ascii", errors="ignore") as fh:
+            for line in fh:
+                if line.startswith("SwapTotal:"):
+                    total = int(line.split()[1]) // 1024
+                elif line.startswith("SwapFree:"):
+                    free = int(line.split()[1]) // 1024
+    except (OSError, ValueError):
+        pass
+    return max(0, total - free), total
+
+
 # ---------------------------------------------------------------------------
 # GPU — live stats via nvidia-smi, static inventory via DXGI
 # ---------------------------------------------------------------------------
@@ -206,11 +258,26 @@ def _find_smi() -> Optional[str]:
     return sysdir if os.path.isfile(sysdir) else None
 
 
+def _smi_num(col: str) -> Optional[float]:
+    """One smi CSV cell → float, or None for empty/``[Not Supported]``."""
+    if not col or col.startswith("["):
+        return None
+    try:
+        return float(col)
+    except ValueError:
+        return None
+
+
 def parse_smi_csv(text: str) -> List[dict]:
-    """Parse ``--query-gpu=name,utilization.gpu,memory.used,memory.total
-    --format=csv,noheader,nounits`` output. One dict per GPU:
-    {name, util (float|None), mem_used_mb, mem_total_mb}. Unparsable lines
-    are skipped, never raised — a driver hiccup must not blank the HUD."""
+    """Parse ``--query-gpu=name,utilization.gpu,memory.used,memory.total,
+    temperature.gpu,fan.speed,power.draw,pcie.link.gen.current,
+    pcie.link.width.current --format=csv,noheader,nounits`` output. One dict
+    per GPU: {name, util (float|None), mem_used_mb, mem_total_mb,
+    temp_c, fan_percent, power_w, pcie_gen, pcie_width (all float|None)}.
+    The five optional columns may be absent (older callers/tests feed the
+    4-column line) and every field degrades to None on ``[Not Supported]``.
+    Unparsable lines are skipped, never raised — a driver hiccup must not
+    blank the readout."""
     gpus: List[dict] = []
     for line in (text or "").splitlines():
         line = line.strip()
@@ -223,9 +290,17 @@ def parse_smi_csv(text: str) -> List[dict]:
             util: Optional[float] = None
             if cols[1] and not cols[1].startswith("["):  # "[Not Supported]"
                 util = float(cols[1])
-            gpus.append({"name": cols[0], "util": util,
-                         "mem_used_mb": int(float(cols[2])),
-                         "mem_total_mb": int(float(cols[3]))})
+            gpu = {"name": cols[0], "util": util,
+                   "mem_used_mb": int(float(cols[2])),
+                   "mem_total_mb": int(float(cols[3])),
+                   "temp_c": None, "fan_percent": None, "power_w": None,
+                   "pcie_gen": None, "pcie_width": None}
+            optional = ("temp_c", "fan_percent", "power_w",
+                        "pcie_gen", "pcie_width")
+            for i, key in enumerate(optional):
+                if 4 + i < len(cols):
+                    gpu[key] = _smi_num(cols[4 + i])
+            gpus.append(gpu)
         except ValueError:
             continue
     return gpus
@@ -243,7 +318,9 @@ def nvidia_smi_query() -> List[dict]:
         try:
             proc = subprocess.run(
                 [_smi_path, "--query-gpu",
-                 "name,utilization.gpu,memory.used,memory.total",
+                 "name,utilization.gpu,memory.used,memory.total,"
+                 "temperature.gpu,fan.speed,power.draw,"
+                 "pcie.link.gen.current,pcie.link.width.current",
                  "--format=csv,noheader,nounits"],
                 capture_output=True, timeout=SMI_TIMEOUT,
                 encoding="utf-8", errors="replace",

@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "8.4"
+APP_VERSION = "8.5"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -692,6 +692,28 @@ class MiniPlayerConfig:
 
 
 @dataclass
+class SystemHealthConfig:
+    """System Health tab (infra/system_health.py + gui/system_health_tab.py).
+
+    Sampling is ON DEMAND ONLY — the successor contract to the removed 7.6
+    hardware HUD (owner 2026-11-18: "only does readings when that tab is
+    selected"): numbers are read while the System Health tab is the
+    SELECTED tab, or when the agent's system_health tool is called — never
+    on a background cadence. These fields are deliberately absent from the
+    agent's settings whitelist (_SETTINGS_SECTIONS in agent/tools.py):
+    warning thresholds are user-only, so a prompt injection can never
+    silence an overheating / disk-full warning."""
+    # Live-meter cadence while the tab is open (seconds, clamped 1–30).
+    refresh_seconds: float = 2.0
+    # Temperature warning thresholds (°C; None-valued readings never warn).
+    temp_warn_gpu_c: int = 85
+    temp_warn_cpu_c: int = 90
+    # Per-volume free-space warning: fires under EITHER floor.
+    disk_min_free_gb: float = 10.0
+    disk_min_free_percent: int = 10
+
+
+@dataclass
 class DeeptorrentConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     indexer: IndexerConfig = field(default_factory=IndexerConfig)
@@ -707,6 +729,7 @@ class DeeptorrentConfig:
     chat: ChatConfig = field(default_factory=ChatConfig)
     stats: StatsConfig = field(default_factory=StatsConfig)
     updater: UpdaterConfig = field(default_factory=UpdaterConfig)
+    system_health: SystemHealthConfig = field(default_factory=SystemHealthConfig)
     sources: SourcesConfig = field(default_factory=SourcesConfig)
     default_save_path: str = str(Path.home() / "Downloads" / "DeepFlux")
     categories: List[str] = field(default_factory=lambda: ["Movies", "TV", "Software", "Other"])
@@ -1180,6 +1203,18 @@ class DeeptorrentConfig:
                 check_enabled=bool(data.get("updater", {}).get("check_enabled", True)),
                 skip_version=str(data.get("updater", {}).get("skip_version", "") or "")[:16],
                 last_check=float(data.get("updater", {}).get("last_check", 0.0) or 0.0),
+            ),
+            system_health=SystemHealthConfig(
+                refresh_seconds=max(1.0, min(30.0, float(
+                    data.get("system_health", {}).get("refresh_seconds", 2.0) or 2.0))),
+                temp_warn_gpu_c=int(data.get("system_health", {}).get(
+                    "temp_warn_gpu_c", 85) or 85),
+                temp_warn_cpu_c=int(data.get("system_health", {}).get(
+                    "temp_warn_cpu_c", 90) or 90),
+                disk_min_free_gb=max(0.0, float(data.get("system_health", {}).get(
+                    "disk_min_free_gb", 10.0) or 0.0)),
+                disk_min_free_percent=max(1, min(95, int(
+                    data.get("system_health", {}).get("disk_min_free_percent", 10) or 10))),
             ),
             sources=SourcesConfig(
                 sources=merged_sources,

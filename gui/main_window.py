@@ -111,6 +111,10 @@ _TAB_ICONS = {
     "Play": "play",
     "Command": "command",
     "Room": "room",
+    # Last in the map = LAST tab = far-right icon chip (owner 2026-11-18:
+    # "the tab icon goes to the top where the other tab icons are, on the
+    # far right").
+    "System Health": "health",
 }
 
 
@@ -185,6 +189,17 @@ def _tab_icon_pixmap(kind: str, size: float = 16.0, dpr: float = 2.0) -> QPixmap
         p.drawLine(QLineF(5.5, 11.0, 4.5, 13.5))
         _dot(6.2, 7.2, 0.9)
         _dot(9.8, 7.2, 0.9)
+    elif kind == "health":
+        # Heartbeat pulse: flat baseline, one sharp spike up and dip down —
+        # reads as "system health" even at 16 px.
+        path = QPainterPath()
+        path.moveTo(2.5, 9.0)
+        path.lineTo(5.3, 9.0)
+        path.lineTo(7.0, 4.0)
+        path.lineTo(9.0, 12.7)
+        path.lineTo(10.6, 9.0)
+        path.lineTo(13.5, 9.0)
+        p.drawPath(path)
     else:
         # Unknown page: a diamond.
         path = QPainterPath()
@@ -213,6 +228,7 @@ if _PLAY_TAB_SUPPORTED:
     from gui.iptv_tab import AgentIPTVBridge, IPTVTab  # noqa: E402
     from gui.iptv_settings_dialog import IPTV_SETTINGS_PAGES, IPTVMetadataDialog  # noqa: E402
 from gui.room_tab import RoomTab  # noqa: E402
+from gui.system_health_tab import SystemHealthTab  # noqa: E402
 from gui.voice_input import MIN_SECONDS, SAMPLE_RATE as VOICE_SAMPLE_RATE, VoiceRecorder, VoiceTranscriber, pcm_to_whisper_audio  # noqa: E402
 from gui.fonts import scale_qss  # noqa: E402
 from dlmgr.engine import DownloadEngine  # noqa: E402
@@ -2710,6 +2726,15 @@ class MainWindow(QMainWindow):
         # QtWebEngine silently drops the download).
         self.room_tab.attach_download_handler(self._on_browser_download_requested)
         self.main_tabs.addTab(self.room_tab, tr("Room"))
+
+        # --- System Health tab (hardware readout + inventory) ---
+        # LAST tab on purpose (owner 2026-11-18): its icon chip is the far
+        # right one in the menu bar's tab-icon row. Construction is pure
+        # widget building — sampling starts ONLY when the tab becomes
+        # current (see _on_main_tab_changed → set_active); nothing here
+        # samples at boot (the removed 7.6 HUD's contract).
+        self.system_health_tab = SystemHealthTab(self.config, self)
+        self.main_tabs.addTab(self.system_health_tab, tr("System Health"))
 
         # Restore saved splitter positions (user-adjusted sizes persist).
         self._restore_splitters()
@@ -5240,6 +5265,7 @@ class MainWindow(QMainWindow):
         "find_alt_release": ("🔎", "Finding alternative releases"),
         "refresh_tracker_list": ("📋", "Refreshing tracker list"),
         "agent_diagnostics": ("", "Checking Agent status"),
+        "system_health": ("🖥", "Reading system health"),
         "list_torrents": ("📋", "Listing torrents"),
         "get_torrent_status": ("📊", "Getting torrent status"),
         "diagnose_swarm": ("🩺", "Diagnosing swarm"),
@@ -5942,6 +5968,12 @@ class MainWindow(QMainWindow):
         if self.main_tabs.widget(index) is self._torrents_tab:
             if not self._agent_ratio_applied:
                 QTimer.singleShot(0, self._enforce_agent_split)
+        # System Health samples ONLY while it is the current tab (owner
+        # 2026-11-18) — both directions of every switch flip the gate.
+        health_tab = getattr(self, "system_health_tab", None)
+        if health_tab is not None:
+            health_tab.set_active(
+                self.main_tabs.widget(index) is health_tab)
         # Menu-bar address bar: installed only while the Browse tab is
         # active. Swapping the corner widget (not just hiding it — a hidden
         # corner widget does NOT shrink the menu bar) keeps every other tab's
@@ -7826,6 +7858,12 @@ class MainWindow(QMainWindow):
         # pagehide handler).
         try:
             self.room_tab.shutdown()
+        except Exception:
+            pass
+        # Stop System Health sampling for good (it is already gated to the
+        # tab being current, but shutdown must be explicit at exit).
+        try:
+            self.system_health_tab.shutdown()
         except Exception:
             pass
         # A fullscreened browser view is a parentless top-level window —

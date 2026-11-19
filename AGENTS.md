@@ -52,10 +52,17 @@
   `python -m pytest tests/test_local_model.py -q`
   `python -m pytest tests/test_j*.py tests/test_llm.py -q`
   `python -m pytest tests/test_loop.py tests/test_memory.py tests/test_m*.py tests/test_n*.py tests/test_o*.py -q`
-  `python -m pytest tests/test_r*.py tests/test_s*.py tests/test_t*.py tests/test_u*.py tests/test_v*.py tests/test_x*.py tests/test_y*.py -q`
-  (that is eight lines; d–g+i in ONE process and j–o in one process are
-  the current poison shapes). If a chunk native-AVs, suspect the dice
-  first: re-run / re-split before hunting code.
+  2026-11-19 UPDATE: the r–z line is now TWO commands — test_tools.py
+  went SOLO (3 identical native aborts inside
+  test_search_indexers_private_tier_before_public when it shares a
+  process with the new tests/test_system_health.py; both halves green
+  separately — classic dice re-roll, NOT a code bug):
+  `python -m pytest tests/test_tools.py -q`
+  `files=$(ls tests/test_r*.py tests/test_s*.py tests/test_t*.py tests/test_u*.py tests/test_v*.py tests/test_x*.py tests/test_y*.py | grep -v "tests/test_tools.py"); python -m pytest $files -q`
+  (nine commands total; d–g+i in ONE process, j–o in one process, and
+  r–z-with-tools in one process are the current poison shapes). If a
+  chunk native-AVs, suspect the dice first: re-run / re-split before
+  hunting code.
   POWERSHELL NOTE (2026-11-06): the chunk commands assume a
   glob-expanding shell (bash). PowerShell passes wildcards to native
   commands LITERALLY — `pytest tests/test_a*.py` exits 4 with
@@ -608,6 +615,16 @@
     full morph cycle (monotonic stages, routing, graceful close),
     instant re-morph, full-boot-first routing, declined-quit cancel,
     media queue, missing-file warning.
+  * TRANSPORT PARITY (owner 2026-11-18, "both players control time
+    skipping equally"): the mini transport mirrors the full player's
+    ⏪ ⏸ ⏹ ⏩ order — it HAS a ⏹ stop button (`_user_stop`: drops the
+    on-deck queue so a DELIBERATE stop never auto-advances, resets to
+    the idle page, exits fullscreen) and the S key stops in BOTH
+    players; the full PlayerWidget gained ↑/↓ volume nudges (±5,
+    matching the mini). Both surfaces skip ±10 s via ⏪/⏩ buttons and
+    ←/→ keys — PlayerWidget.SKIP_SECONDS (10) and the mini's hardcoded
+    ±10 are pinned in lockstep by test_mini_player.py; keep the two in
+    sync if either ever changes.
 - MENU BAR + NAVIGATION (7.6 restructure, owner decision 2026-11-07):
   the v5 left activity rail is GONE (gui/activity_rail.py deleted). Tab
   navigation = small icon-only checkable QActions LEFT of File
@@ -1196,6 +1213,58 @@
   0 VRAM; and COM vtable access needs a DOUBLE dereference: object →
   lpVtbl → slots). DedicatedVideoMemory is a SIZE_T (no WMI AdapterRAM
   4 GB wrap) and matched Vulkan's 16003 MiB exactly on the 5080 Mobile.
+- SYSTEM HEALTH TAB (2026-11-19, owner request — the HUD's sanctioned
+  successor: "only does readings when that tab is selected, not always"):
+  `gui/system_health_tab.py` + `infra/system_health.py` + the read-only
+  `system_health` agent tool. Durable rules — do not regress:
+  * SAMPLING CONTRACT: the tab's QTimer runs ONLY while the tab is the
+    CURRENT tab (`MainWindow._on_main_tab_changed` → `set_active` both
+    directions), on hide and on shutdown; each tick spawns ONE
+    short-lived collector thread (skipped while the previous one runs)
+    that hands the Qt-free snapshot back via the queued `sampled`
+    signal — the mini-player marshal pattern. NO always-on thread of any
+    kind (the 7.6 HUD bisect is the reason this shape exists). The
+    agent tool samples per call (`cpu_percent_quick` seeds a one-shot
+    baseline + 0.2 s settle so a cold process gets a real CPU%).
+  * Data sources (all dependency-free, psutil stays out of
+    requirements): CPU/RAM via hardware_monitor (GetSystemTimes /
+    GlobalMemoryStatusEx + the new `pagefile_stats` commit-charge
+    helper); GPU live via the EXTENDED smi query
+    (`nvidia_smi_query` now also returns temp_c / fan_percent /
+    power_w / pcie_gen / pcie_width — legacy keys unchanged,
+    "[Not Supported]" → None) with its 60 s failure backoff; static
+    fallback dxgi_adapters. Disk SPEEDS = IOCTL_DISK_PERFORMANCE
+    (0x70000) deltas on `\\.\C:` volume handles opened with access 0
+    (works unelevated; a refusing volume is marked cold in
+    `_disk_dead` and never re-asked). CPU/board temp = ACPI
+    MSAcpi_ThermalZoneTemperature via one-shot PowerShell (30 s TTL,
+    5-min failure backoff — many boards expose NONE, None is honest);
+    /sys/class/thermal on Linux. INVENTORY = ONE PowerShell CIM query
+    (CPU, RAM sticks incl. Speed/ConfiguredClockSpeed MT/s, board,
+    BIOS, GPUs+drivers, Get-PhysicalDisk bus/media, enabled NICs, OS)
+    JSON-cached 10 min, failure backoff 60 s; /proc digest on POSIX.
+  * Warnings (`warnings_from`): GPU ≥ temp_warn_gpu_c (85) / CPU ≥
+    temp_warn_cpu_c (90) / RAM ≥ 95% / per-volume free below
+    disk_min_free_gb (10) OR disk_min_free_percent (10); severity
+    danger escalates past threshold+10 or half the floor. None-valued
+    readings NEVER warn. Config section `system_health`
+    (refresh_seconds clamped 1–30) is deliberately ABSENT from
+    `_SETTINGS_SECTIONS` — thresholds are user-only so prompt injection
+    can never silence a warning.
+  * Tab is the LAST main tab on purpose (owner: "the tab icon goes …
+    on the far right") — icon kind "health" is a painted pulse line in
+    `_tab_icon_pixmap`; `_TAB_ICONS` ends with "System Health".
+    Meters are painted (theme text via fonts.text_color, warn
+    #e67e22 / danger #ff3366 / ok #2a7abf at 75/90 breakpoints); the
+    whole tab sits in a QScrollArea (responsive cap); Ctrl+7 comes
+    free. `shutdown()` is wired in closeEvent next to iptv/room.
+  * Tests: tests/test_system_health.py (28 — every external sampler
+    faked via the autouse `_isolated` fixture; real-function restore
+    via `_REAL_QUICK`/`_REAL_CPU_PCT` for the cpu_percent_quick unit
+    tests), test_tools.py system_health tool test, test_v5_ui icon
+    set, test_responsive parametrize. LIVE-VERIFIED 2026-11-19
+    (offscreen real-MainWindow smoke: samples arrive, inventory 15
+    rows, timer stops on tab switch).
 - Hardware HUD (6.1) — **REMOVED in 7.6 (owner decision 2026-11-07)**:
   `gui/hardware_hud.py` + `tests/test_hardware_hud.py` are gone. The HUD's
   2 s sampler (GetSystemTimes + GlobalMemoryStatusEx ctypes + nvidia-smi

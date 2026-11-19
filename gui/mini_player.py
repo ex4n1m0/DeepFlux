@@ -341,17 +341,26 @@ class MiniPlayerWindow(QWidget):
         row.setContentsMargins(8, 4, 8, 4)
         row.setSpacing(6)
 
+        # Same order as the full PlayerWidget (⏪ ⏸ ⏹ ⏩) so the transport
+        # feels identical in both surfaces (owner 2026-11-18: the mini had
+        # no stop button at all).
+        self._rw_btn = QPushButton("⏪")
+        self._rw_btn.setFixedWidth(40)
+        self._rw_btn.setToolTip(tr("Back 10 seconds (←)"))
+        self._rw_btn.clicked.connect(lambda: self._seek_by(-10))
+        row.addWidget(self._rw_btn)
+
         self._play_btn = QPushButton("⏸")
         self._play_btn.setFixedWidth(40)
         self._play_btn.setToolTip(tr("Play/Pause (Space)"))
         self._play_btn.clicked.connect(self._toggle_pause)
         row.addWidget(self._play_btn)
 
-        self._rw_btn = QPushButton("⏪")
-        self._rw_btn.setFixedWidth(40)
-        self._rw_btn.setToolTip(tr("Back 10 seconds (←)"))
-        self._rw_btn.clicked.connect(lambda: self._seek_by(-10))
-        row.addWidget(self._rw_btn)
+        self._stop_btn = QPushButton("⏹")
+        self._stop_btn.setFixedWidth(40)
+        self._stop_btn.setToolTip(tr("Stop (S)"))
+        self._stop_btn.clicked.connect(self._user_stop)
+        row.addWidget(self._stop_btn)
 
         self._ff_btn = QPushButton("⏩")
         self._ff_btn.setFixedWidth(40)
@@ -404,7 +413,8 @@ class MiniPlayerWindow(QWidget):
         # and ←/→ would never reach the window. Hand focus back after every
         # transport interaction (same lesson as PlayerWidget's re-seating).
         for btn in (self._open_btn, self._play_btn, self._rw_btn,
-                    self._ff_btn, self._mute_btn, self._fs_btn):
+                    self._stop_btn, self._ff_btn, self._mute_btn,
+                    self._fs_btn):
             btn.clicked.connect(self._reseat_focus)
 
     def _reseat_focus(self, *args) -> None:
@@ -543,6 +553,29 @@ class MiniPlayerWindow(QWidget):
         else:
             self._backend.resume()
 
+    def _user_stop(self) -> None:
+        """Transport ⏹ / S: stop playback and return to the idle page. The
+        on-deck queue is dropped on purpose — a DELIBERATE stop must not
+        auto-advance to the next file (the backend's "stopped" event that
+        follows is ours, not end-of-file; clearing the queue first keeps
+        _on_state's advance branch quiet)."""
+        if self._morphing:
+            return
+        self._queue.clear()
+        self._last_media = ""
+        if self.isFullScreen():
+            self._toggle_fullscreen()
+        self._stop_playback()
+        self._stack.setCurrentWidget(self._idle_page)
+        self.surface.hide_opening()
+        self.setWindowTitle(f"DeepFlux Mini {APP_VERSION}")
+        self._duration = 0.0
+        self.seek.setRange(0, 0)
+        self.seek.setValue(0)
+        self._time_lbl.setText("0:00 / 0:00")
+        self._play_btn.setText("▶")
+        self.setFocus()
+
     def _seek_by(self, delta: float) -> None:
         if self._backend is not None:
             self._backend.seek_by(delta)
@@ -618,6 +651,8 @@ class MiniPlayerWindow(QWidget):
             self.vol.setValue(max(0, self.vol.value() - 5))
         elif key == Qt.Key_M:
             self._toggle_mute()
+        elif key == Qt.Key_S:
+            self._user_stop()
         else:
             super().keyPressEvent(event)
 

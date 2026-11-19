@@ -1,8 +1,8 @@
 {
-  "version": "8.4",
-  "file": "DeepFlux8.4Setup.exe",
-  "size": 508609531,
-  "sha256": "955ab2571278c05ab837ec1981d2407578575a2afb80261320f8b3ee2e1b0f70",
-  "released": "2026-11-18",
-  "notes": "DeepFlux 8.4 - background music, refined. The Agent tab's looping background track now starts when the full app opens (the mini player stays silent and button-free; the toggle lives in the Agent tab next to YOLO). While the music plays the toggle turns WHITE; when idle it is blue. Opening any media still stops the music and your on/off choice is remembered across launches."
+  "version": "8.5",
+  "file": "DeepFlux8.5Setup.exe",
+  "size": 508659373,
+  "sha256": "cbcf1b0d0d7e64af5f90cff1a0fbf60de7e7524e92db3048a9182b72ae326594",
+  "released": "2026-11-19",
+  "notes": "DeepFlux 8.5 - System Health tab + player parity. New: a System Health tab (the pulse icon, far right) shows CPU, memory, GPU and VRAM usage, GPU temperature, fan and power, per-disk free space with live read/write speeds, and a hardware inventory list - and it only takes readings while you are looking at it. The agent can now report your system's health and warn you when something runs too hot or a disk gets too full. Also: the mini player gained a Stop button and the S key, and both players now skip time identically (arrow keys and buttons) with arrow up/down volume control."
 }

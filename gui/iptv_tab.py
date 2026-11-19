@@ -372,7 +372,7 @@ class PlayerWidget(QWidget):
         ctrl.addWidget(self.play_btn)
 
         self.stop_btn = QPushButton(tr('⏹'))
-        self.stop_btn.setToolTip(tr('Stop'))
+        self.stop_btn.setToolTip(f"{tr('Stop')} (S)")
         self.stop_btn.clicked.connect(self.stop)
         ctrl.addWidget(self.stop_btn)
 
@@ -2249,6 +2249,14 @@ class PlayerWidget(QWidget):
             self._toggle_fullscreen()
         elif k == Qt.Key_M:
             self._toggle_mute()
+        elif k == Qt.Key_Up:
+            # Volume nudge — key parity with the mini player (owner
+            # 2026-11-18): both surfaces answer ↑/↓ with ±5 volume.
+            self.vol.setValue(min(100, self.vol.value() + 5))
+        elif k == Qt.Key_Down:
+            self.vol.setValue(max(0, self.vol.value() - 5))
+        elif k == Qt.Key_S:
+            self.stop()
         elif k == Qt.Key_A:
             self._cycle_aspect()
         elif k == Qt.Key_J:

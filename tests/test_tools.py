@@ -1943,6 +1943,43 @@ def test_agent_diagnostics_exposes_capabilities_without_keys(mock_engine):
     assert "also-secret" not in json.dumps(result)
 
 
+def test_system_health_tool_reports_snapshot_without_secrets(mock_engine):
+    """The read-only system_health tool wraps infra.system_health.snapshot
+    on demand (never a cadence) and rides the loop's health/summary
+    fast-path line. The sampler is fully faked — no real hardware reads."""
+    import infra.system_health as sh
+    from agent.tools import READ_ONLY_TOOL_NAMES
+    fake = {
+        "generated_at": "2026-11-19T00:00:00+00:00", "uptime_seconds": 60,
+        "cpu": {"percent": 10.0, "cores": 8},
+        "ram": {"used_mb": 1, "total_mb": 2, "percent": 50.0,
+                "commit_used_mb": 1, "commit_total_mb": 2},
+        "gpu": {"name": "Fake GPU", "live": True, "percent": 5.0,
+                "vram_used_mb": 1, "vram_total_mb": 2, "temp_c": 40.0,
+                "fan_percent": None, "power_w": None,
+                "pcie_gen": None, "pcie_width": None},
+        "temperatures": {"cpu_c": None, "gpu_c": 40.0},
+        "disks": [{"volume": "C:", "total_gb": 100.0, "free_gb": 50.0,
+                   "used_percent": 50.0, "free_percent": 50.0,
+                   "read_bps": 1.0, "write_bps": 2.0}],
+        "warnings": [{"kind": "disk_free", "severity": "warn",
+                      "message": "C: has only 3 GB free"}],
+    }
+    assert "system_health" in READ_ONLY_TOOL_NAMES
+    from unittest.mock import patch
+    with patch.object(sh, "snapshot", return_value=fake) as snap_call:
+        tools = ToolRegistry(mock_engine, DeeptorrentConfig())
+        result = tools.call("system_health", {})
+    assert result["success"] is True
+    assert result["cpu"]["percent"] == 10.0
+    assert result["health"] == result["summary"] and result["summary"]
+    assert result["warnings"][0]["kind"] == "disk_free"
+    # include_inventory forwards to the snapshot engine.
+    with patch.object(sh, "snapshot", return_value=fake) as snap_call:
+        tools.call("system_health", {"include_inventory": True})
+    assert snap_call.call_args.kwargs.get("include_inventory") is True
+
+
 def test_successful_empty_search_is_cached(mock_engine):
     tools = ToolRegistry(mock_engine, DeeptorrentConfig())
     tools._search_indexers_uncached = MagicMock(return_value={

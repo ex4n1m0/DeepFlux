@@ -35,6 +35,7 @@ def _tabs(parent) -> QTabWidget:
     tabs.addTab(QWidget(), "Play")
     tabs.addTab(QWidget(), "Command")
     tabs.addTab(QWidget(), "Room")
+    tabs.addTab(QWidget(), "System Health")   # last = far-right icon chip
     return tabs
 
 
@@ -63,7 +64,7 @@ def _icon_host(qapp):
 
 def test_tab_icons_map_covers_all_pages(qapp):
     assert set(_TAB_ICONS) == {"Agent", "Browse", "Download", "Play",
-                               "Command", "Room"}
+                               "Command", "Room", "System Health"}
 
 
 def test_tab_icon_sync_follows_current_tab(qapp):

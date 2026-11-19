@@ -181,7 +181,8 @@ def test_enforce_agent_split_respects_saved_ratio():
     splitter.setSizes.assert_called_once_with([500, 500])
 
 
-@pytest.mark.parametrize("tab_name", ["iptv", "commander", "room", "downloads"])
+@pytest.mark.parametrize("tab_name", ["iptv", "commander", "room", "downloads",
+                                      "system_health"])
 def test_tabs_stay_shrinkable(tmp_path, tab_name):
     """Regression cap: no tab page may demand a wide window again — the
     window's minimum is the widest page's minimum (1138-1236px before)."""
@@ -206,6 +207,11 @@ def test_tabs_stay_shrinkable(tmp_path, tab_name):
             cfg = DeeptorrentConfig()
             cfg.chat.auto_join = False  # never touch the network in tests
             return RoomTab(cfg), lambda t: t.shutdown()
+        if tab_name == "system_health":
+            from config import DeeptorrentConfig
+            from gui.system_health_tab import SystemHealthTab
+            return SystemHealthTab(DeeptorrentConfig()), \
+                lambda t: t.shutdown()
         from PySide6.QtCore import QObject, Signal
         from config import DeeptorrentConfig
         from gui.downloads_tab import DownloadsTab
@@ -240,7 +246,8 @@ def test_tabs_stay_shrinkable(tmp_path, tab_name):
                          "_stat_active", "_stat_queued",      # Downloads
                          "_stat_speed", "_stat_showing",      # summary stats
                          "_status_label", "_topic_label",     # Room
-                         "_status", "_outcome_status"):       # Commander
+                         "_status", "_outcome_status",        # Commander
+                         "_updated_lbl"):                     # System Health
             lbl = getattr(tab, lbl_name, None)
             if lbl is not None:
                 lbl.setText(long_text)

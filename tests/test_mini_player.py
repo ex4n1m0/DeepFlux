@@ -654,6 +654,70 @@ def test_media_queue_autoplays(mini, tmp_path):
     assert stub.played == [first, second]
 
 
+def test_stop_button_returns_to_idle_and_drops_queue(mini, tmp_path):
+    """⏹ (owner 2026-11-18 — the mini player shipped without a stop button):
+    a deliberate stop halts the backend, resets the transport and returns to
+    the idle page; the on-deck queue is dropped so it never auto-advances."""
+    from PySide6.QtWidgets import QApplication
+
+    win, stub, _ = mini
+    app = QApplication.instance()
+    first = str(tmp_path / "a.mp4")
+    second = str(tmp_path / "b.mp4")
+    for p in (first, second):
+        with open(p, "wb") as f:
+            f.write(b"v" * 512)
+    win.show()
+    win.open_media(first)
+    win._queue = [second]
+    win._on_position(30.0, 90.0)
+    assert win._stack.currentWidget() is win._video_page
+
+    win._stop_btn.click()
+    app.processEvents()
+
+    assert stub.stops == 1, "the stop button must stop the backend"
+    assert win._stack.currentWidget() is win._idle_page
+    assert win._queue == [], "a deliberate stop drops the on-deck queue"
+    assert win._last_media == ""
+    assert win._play_btn.text() == "▶"
+    assert win._time_lbl.text() == "0:00 / 0:00"
+    assert win.seek.value() == 0
+    assert stub.played == [first], "stop must not auto-advance the queue"
+    # The backend's own async "stopped" event must not resurrect it either.
+    win._on_state("stopped")
+    for _ in range(10):
+        app.processEvents()
+    assert stub.played == [first]
+
+
+def test_stop_key_and_skip_buttons_match_full_player(mini, tmp_path):
+    """Key/button parity with the full PlayerWidget (owner 2026-11-18):
+    S stops; ⏪/⏩ buttons and ←/→ keys all skip ±10 s — the same amount the
+    full player uses (PlayerWidget.SKIP_SECONDS == 10)."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    win, stub, _ = mini
+    media = str(tmp_path / "k.mp4")
+    with open(media, "wb") as f:
+        f.write(b"v" * 256)
+    win.show()
+    win.open_media(media)
+
+    seeks = []
+    stub.seek_by = lambda d: seeks.append(d)
+    win._rw_btn.click()
+    win._ff_btn.click()
+    QTest.keyClick(win, Qt.Key.Key_Left)
+    QTest.keyClick(win, Qt.Key.Key_Right)
+    assert seeks == [-10, 10, -10, 10]
+
+    QTest.keyClick(win, Qt.Key.Key_S)
+    assert stub.stops == 1
+    assert win._stack.currentWidget() is win._idle_page
+
+
 def test_missing_media_file_warns(mini, tmp_path, monkeypatch):
     """A media-NAMED file that cannot be opened surfaces a message, not a
     silent idle banner."""
