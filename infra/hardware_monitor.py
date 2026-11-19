@@ -499,7 +499,7 @@ _dxgi_stamp = 0.0
 _DXGI_TTL = 600.0
 
 
-def dxgi_adapters() -> List[Tuple[str, int]]:
+def dxgi_adapters(force: bool = False) -> List[Tuple[str, int]]:
     """(name, dedicated-VRAM MiB) for every hardware adapter, via D3D's own
     enumeration. DedicatedVideoMemory is a SIZE_T — unlike WMI's uint32
     AdapterRAM it does NOT wrap above 4 GB, so a 16 GB card reports 16 GB.
@@ -514,14 +514,17 @@ def dxgi_adapters() -> List[Tuple[str, int]]:
     bystander threads faulting, surviving an Adrenalin update — prime
     suspect is the AMD In-Game Overlay's dxgi hook being driven by our
     per-tick walk. One walk per window kills the churn (an empty result
-    stays uncached so a transient failure still retries)."""
+    stays uncached so a transient failure still retries). ``force=True``
+    (the tab's step-by-step diagnosis mode) bypasses the cache and
+    re-drives the raw walk — deliberately, to identify a culprit."""
     global _dxgi_cache, _dxgi_stamp
     if os.name != "nt":
         return []
-    with _dxgi_lock:
-        if _dxgi_cache is not None \
-                and time.monotonic() - _dxgi_stamp < _DXGI_TTL:
-            return list(_dxgi_cache)
+    if not force:
+        with _dxgi_lock:
+            if _dxgi_cache is not None \
+                    and time.monotonic() - _dxgi_stamp < _DXGI_TTL:
+                return list(_dxgi_cache)
     adapters = _dxgi_walk()
     if adapters:
         with _dxgi_lock:

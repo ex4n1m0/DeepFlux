@@ -321,7 +321,7 @@ def test_snapshot_gpu_static_fallback_names_card():
     monkeypatch = pytest.MonkeyPatch()
     try:
         monkeypatch.setattr(sh.hardware_monitor, "dxgi_adapters",
-                            lambda: [("Intel Arc A770", 16384)])
+                            lambda *a, **k: [("Intel Arc A770", 16384)])
         gpu = sh._gpu_block()
         assert gpu["name"] == "Intel Arc A770"
         assert gpu["vram_total_mb"] == 16384 and gpu["live"] is False
@@ -441,6 +441,14 @@ def test_tab_timer_is_gated_by_set_active_and_shutdown(qapp):
     assert not tab._timer.isActive() and tab._closing
     tab.set_active(True)
     assert not tab._timer.isActive(), "shutdown is final"
+    # DRAIN the real collector thread set_active kicked: the autouse
+    # fixture tears its fakes down at test end, and a zombie thread that
+    # survives into the REAL native readers mid-flight is the heap
+    # corruption (0xc0000374) detonation of 2026-11-19's 8.9 test runs.
+    deadline = time.monotonic() + 10.0
+    while tab._collector_busy and time.monotonic() < deadline:
+        time.sleep(0.02)
+    time.sleep(0.05)   # let the queued emit land before teardown
 
 
 def test_tab_collector_never_piles_up(qapp, monkeypatch):
@@ -1134,3 +1142,103 @@ def test_dxgi_adapters_ttl_cached(monkeypatch):
     hm.dxgi_adapters()
     hm.dxgi_adapters()
     assert calls["n"] == 2                       # empty: retried, not cached
+
+
+# ------------------------------------------------ step-by-step diagnosis
+
+def test_health_steps_merge_is_the_snapshot(monkeypatch):
+    """Single source of truth: running every health_steps() reader into a
+    base + finalize must produce exactly snapshot()'s key set — the
+    diagnostic path can never drift from the real one."""
+    snap = sh.snapshot()
+    manual = sh.snapshot_base()
+    for _key, fn in sh.health_steps():
+        fn(manual, False)
+    sh.snapshot_finalize(manual)
+    assert sorted(manual.keys()) == sorted(snap.keys())
+    assert "per_core" in manual["cpu"] and "temperatures" in manual
+
+
+def test_step_log_crash_safe_lines(tmp_path, monkeypatch):
+    log = tmp_path / "steps.log"
+    monkeypatch.setattr(sh, "_STEPS_LOG_PATH", str(log))
+    sh.step_log("cycle 1 BEGIN gpu")
+    sh.step_log("cycle 1 OK gpu 12 ms")
+    lines = log.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    assert lines[0].endswith("cycle 1 BEGIN gpu")
+    assert lines[1].endswith("cycle 1 OK gpu 12 ms")
+
+
+def test_dxgi_force_bypasses_the_cache(monkeypatch):
+    monkeypatch.setattr(hm, "dxgi_adapters", _REAL_DXGI)
+    calls = {"n": 0}
+
+    def fake_walk():
+        calls["n"] += 1
+        return [("GPU", 1024)]
+
+    monkeypatch.setattr(hm, "_dxgi_walk", fake_walk)
+    hm._dxgi_cache, hm._dxgi_stamp = None, 0.0
+    hm.dxgi_adapters()                    # warms the cache
+    hm.dxgi_adapters()                    # cached
+    assert calls["n"] == 1
+    hm.dxgi_adapters(force=True)          # diagnosis mode: raw walk again
+    assert calls["n"] == 2
+
+
+def test_tab_step_mode_runs_reads_and_logs(qapp, monkeypatch, tmp_path):
+    """The owner's diagnosis flow: toggle Step-by-step → each reading runs
+    alone, in order, with a visible state and a crash-safe log line BEFORE
+    every attempt. A raising reader marks ✗ and the cycle continues."""
+    import gui.system_health_tab as sht
+    log_path = tmp_path / "steps.log"
+    monkeypatch.setattr(sh, "_STEPS_LOG_PATH", str(log_path))
+    monkeypatch.setattr(sht, "_STEP_DWELL", 0.0)
+    order = []
+
+    def fake_steps():
+        def ok_reader(snap, force):
+            order.append(("ok_reader", force))
+            snap["cpu"] = {"percent": 5.0, "cores": 4, "per_core": []}
+
+        def boom(snap, force):
+            order.append(("boom", force))
+            raise RuntimeError("native death")
+
+        def battery_reader(snap, force):
+            order.append(("battery", force))
+            snap["battery"] = {"percent": 50, "charging": False, "ac": True}
+
+        return [("cpu_total", ok_reader), ("bad", boom),
+                ("battery", battery_reader)]
+
+    monkeypatch.setattr(sh, "health_steps", fake_steps)
+    tab = _tab(qapp)
+    tab._step_btn.click()                 # toggle ON (not active: no kick)
+    assert tab._step_mode is True and tab._step_host.isVisibleTo(tab)
+    snap = tab._run_steps_sequentially()
+    qapp.processEvents()
+    # All three ran in order despite the failure; force=True propagated.
+    assert [name for name, _f in order] == ["ok_reader", "boom", "battery"]
+    assert all(f is True for _n, f in order)
+    # The assembled snapshot still carries the successful fragments.
+    assert snap["cpu"]["percent"] == 5.0 and snap["battery"]["percent"] == 50
+    assert "warnings" in snap
+    # Log lines: BEGIN before every attempt, FAIL for the raiser.
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert any(l.endswith("BEGIN bad") for l in lines)
+    assert any(" FAIL bad " in l for l in lines)   # line carries the ms too
+    assert any(" OK battery " in l for l in lines)
+    # Rows: ✓ / ✗ / ✓ states with the step labels.
+    assert tab._step_rows["bad"].text().startswith("\u2717")
+    assert tab._step_rows["battery"].text().startswith("\u2713")
+    tab.shutdown()
+
+
+def test_tab_step_mode_off_is_invisible(qapp):
+    tab = _tab(qapp)
+    qapp.processEvents()
+    assert tab._step_mode is False
+    assert not tab._step_host.isVisibleTo(tab)
+    tab.shutdown()

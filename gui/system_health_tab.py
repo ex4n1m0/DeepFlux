@@ -43,6 +43,26 @@ _DANGER_HEX = "#ff3366"   # the app's error red (downloads _STATUS_COLORS)
 _OK_HEX = "#2a7abf"       # accent blue
 _TRACK_HEX = "#1a2a4a"    # empty bar / borders
 
+# Step-by-step diagnosis (owner idea 2026-11-19): one reading at a time,
+# each attempt logged crash-safe BEFORE it runs — if the app dies, the
+# last BEGIN line in ~/.deeptorrent/logs/health_steps.log names the
+# culprit reading. Dwell between steps makes the sequence watchable.
+_STEP_DWELL = 2.0
+_STEP_READING_HEX = _OK_HEX
+_STEP_ERROR_HEX = _DANGER_HEX
+
+_STEP_LABELS = {
+    "cpu_total": ("CPU total"),
+    "cpu_per_core": ("CPU per-core"),
+    "ram": ("Memory"),
+    "gpu": ("GPU (nvidia-smi / adapter list)"),
+    "disks": ("Disks (space + speeds)"),
+    "network": ("Network adapters"),
+    "drives": ("Drive health (NVMe / SMART)"),
+    "cpu_temp": ("CPU temperature (ACPI)"),
+    "battery": ("Battery"),
+}
+
 
 def _elide(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -223,6 +243,7 @@ class SystemHealthTab(QWidget):
 
     # Emitted by the collector thread, queued onto the GUI thread.
     sampled = Signal(object)   # (snapshot dict, inventory dict | None)
+    stepUpdate = Signal(object)  # (key, state, detail, cycle) — step mode
 
     def __init__(self, config: DeeptorrentConfig,
                  parent: Optional[QWidget] = None) -> None:
@@ -243,6 +264,10 @@ class SystemHealthTab(QWidget):
             1000, int(config.system_health.refresh_seconds * 1000)))
         self._timer.timeout.connect(self._on_tick)
         self.sampled.connect(self._apply_sample)
+        self.stepUpdate.connect(self._on_step_update)
+
+        self._step_mode = False
+        self._step_cycle = 0
 
         self._build_ui()
 
@@ -273,6 +298,10 @@ class SystemHealthTab(QWidget):
         self._refresh_btn.setObjectName("btn_accent")
         self._refresh_btn.clicked.connect(self._manual_refresh)
         head.addWidget(self._refresh_btn)
+        self._step_btn = QPushButton(tr("Step-by-step"))
+        self._step_btn.setCheckable(True)
+        self._step_btn.clicked.connect(self._toggle_step_mode)
+        head.addWidget(self._step_btn)
         col.addLayout(head)
 
         note = QLabel(tr("Live readings update only while this tab is open"))
@@ -280,6 +309,20 @@ class SystemHealthTab(QWidget):
         note.setStyleSheet(scale_qss(
             "QLabel { color: #ffffff; font-size: 12px; }"))
         col.addWidget(note)
+
+        # Step-by-step diagnosis panel (hidden unless the mode is on).
+        self._step_host = QWidget()
+        self._step_lay = QVBoxLayout(self._step_host)
+        self._step_lay.setContentsMargins(0, 0, 0, 0)
+        self._step_lay.setSpacing(2)
+        self._step_head_lbl = QLabel("")
+        shrink_label(self._step_head_lbl)
+        self._step_head_lbl.setStyleSheet(scale_qss(
+            "QLabel { color: #ffffff; font-size: 12px; }"))
+        self._step_lay.addWidget(self._step_head_lbl)
+        self._step_rows: Dict[str, QLabel] = {}
+        self._step_host.hide()
+        col.addWidget(self._step_host)
 
         self._warn_lbl = QLabel("")
         self._warn_lbl.setWordWrap(True)
@@ -389,29 +432,125 @@ class SystemHealthTab(QWidget):
 
     def _kick_collector(self) -> None:
         """One short-lived collector thread; skipped while the previous
-        one is still running (no pile-up — the HUD lesson)."""
+        one is still running (no pile-up — the HUD lesson). In step mode
+        the thread walks ONE reading at a time with a dwell between
+        steps (a full cycle takes ~20 s; ticks arriving meanwhile are
+        skipped by the busy guard)."""
         if self._collector_busy or self._closing:
             return
         self._collector_busy = True
         want_inv, force_inv = self._want_inventory, self._force_inventory
+        step_mode = self._step_mode
         self._force_inventory = False
 
         def work() -> None:
             snap: Optional[Dict[str, Any]] = None
             inv: Optional[Dict[str, Any]] = None
             try:
-                snap = system_health.snapshot(
-                    thresholds=self._config.system_health)
+                if step_mode:
+                    snap = self._run_steps_sequentially()
+                else:
+                    snap = system_health.snapshot(
+                        thresholds=self._config.system_health)
                 if want_inv:
                     inv = system_health.inventory(refresh=force_inv)
             except Exception:
                 logger.debug("system-health collection failed", exc_info=True)
             finally:
                 self._collector_busy = False
-            self.sampled.emit((snap, inv))
+            if not self._closing:
+                self.sampled.emit((snap, inv))
 
         threading.Thread(target=work, daemon=True,
                          name="system-health-sample").start()
+
+    # ------------------------------------------------- step-by-step mode
+
+    def _toggle_step_mode(self, on: bool) -> None:
+        """Owner-facing diagnosis switch (session-only, default off): run
+        each reading sequentially, visibly, one cycle after another."""
+        self._step_mode = bool(on)
+        if self._step_mode:
+            self._step_cycle = 0
+            self._ensure_step_rows()
+            self._step_host.show()
+            self._step_head_lbl.setText(tr(
+                "Every attempt is logged to "
+                "~/.deeptorrent/logs/health_steps.log — if the app "
+                "closes, the last line names the reading that caused it"))
+        else:
+            self._step_host.hide()
+        if self._active and not self._closing:
+            self._kick_collector()
+
+    def _ensure_step_rows(self) -> None:
+        if self._step_rows:
+            return
+        for key, _fn in system_health.health_steps():
+            lbl = QLabel("")
+            shrink_label(lbl)
+            lbl.setStyleSheet(scale_qss(
+                "QLabel { color: #ffffff; font-size: 13px; }"))
+            self._step_lay.addWidget(lbl)
+            self._step_rows[key] = lbl
+            self._set_step_row(key, "queued", "")
+
+    def _set_step_row(self, key: str, state: str, detail: str) -> None:
+        lbl = self._step_rows.get(key)
+        if lbl is None:
+            return
+        label = tr(_STEP_LABELS.get(key, key))
+        glyph = {"queued": "○", "reading": "◍", "ok": "✓",
+                 "error": "✗"}.get(state, "○")
+        color = (_STEP_READING_HEX if state == "reading"
+                 else _STEP_ERROR_HEX if state == "error" else "#ffffff")
+        text = f"{glyph}  {label}"
+        if detail:
+            text += f"   {detail}"
+        lbl.setText(text)
+        lbl.setStyleSheet(scale_qss(
+            f"QLabel {{ color: {color}; font-size: 13px; }}"))
+
+    def _on_step_update(self, payload) -> None:
+        if self._closing or not isinstance(payload, tuple):
+            return
+        key, state, detail, cycle = payload
+        if cycle:
+            self._step_cycle = cycle
+        self._set_step_row(key, state, detail)
+
+    def _run_steps_sequentially(self) -> Dict[str, Any]:
+        """Collector-thread body of the diagnosis mode: walk every reading
+        one at a time, log BEGIN before each attempt (crash-safe — the
+        log outlives the process) and OK/FAIL after, update the panel via
+        the queued signal, dwell between steps. force=True on the readers
+        re-drives the raw dxgi path (the 8.8 cache is bypassed here on
+        purpose)."""
+        snap = system_health.snapshot_base()
+        self._step_cycle += 1
+        cycle = self._step_cycle
+        system_health.step_log(f"=== cycle {cycle} begin ===")
+        for key, step_fn in system_health.health_steps():
+            if self._closing or not self._step_mode:
+                break
+            system_health.step_log(f"cycle {cycle} BEGIN {key}")
+            self.stepUpdate.emit((key, "reading", "", cycle))
+            started = time.monotonic()
+            try:
+                step_fn(snap, True)
+                state, note = "ok", ""
+            except Exception as exc:   # readers never raise — belt anyway
+                state, note = "error", str(exc)[:60]
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            detail = f"{elapsed_ms} ms" + (f"  {note}" if note else "")
+            system_health.step_log(
+                f"cycle {cycle} {'OK' if state == 'ok' else 'FAIL'} "
+                f"{key} {elapsed_ms} ms")
+            self.stepUpdate.emit((key, state, detail, cycle))
+            time.sleep(_STEP_DWELL)
+        system_health.step_log(f"=== cycle {cycle} end ===")
+        system_health.snapshot_finalize(snap, self._config.system_health)
+        return snap
 
     # ------------------------------------------------------------ updates
     def _apply_sample(self, payload) -> None:

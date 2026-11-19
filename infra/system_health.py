@@ -1023,7 +1023,7 @@ def _clamp(v, lo: float, hi: float):
     return v if lo <= v <= hi else None
 
 
-def _gpu_block() -> dict:
+def _gpu_block(force: bool = False) -> dict:
     gpu: Dict[str, Any] = {
         "name": "", "live": False, "percent": None,
         "vram_used_mb": 0, "vram_total_mb": 0,
@@ -1050,7 +1050,7 @@ def _gpu_block() -> dict:
             "pcie_width": _clamp(g.get("pcie_width"), 0.0, 64.0),
         })
         return gpu
-    static = hardware_monitor.dxgi_adapters()
+    static = hardware_monitor.dxgi_adapters(force)
     if static:
         gpu["name"], gpu["vram_total_mb"] = static[0][0], static[0][1]
     return gpu
@@ -1166,75 +1166,167 @@ def warnings_from(snap: dict, thresholds: Any = None) -> List[dict]:
     return out
 
 
-def snapshot(include_inventory: bool = False,
-             thresholds: Any = None) -> dict:
-    """One on-demand system-health reading. Never raises. ``thresholds``
-    is a SystemHealthConfig; defaults apply when None."""
-    try:
-        ram_used_mb, ram_total_mb = hardware_monitor.ram_stats()
-    except Exception:
-        ram_used_mb, ram_total_mb = 0, 0
-    try:
-        commit_used_mb, commit_total_mb = hardware_monitor.pagefile_stats()
-    except Exception:
-        commit_used_mb, commit_total_mb = 0, 0
-    try:
-        # One-shot semantics: a cold process gets a real reading over a
-        # short settle window instead of the 0.0 a first delta would give.
-        cpu_pct = hardware_monitor.cpu_percent_quick()
-    except Exception:
-        cpu_pct = 0.0
-    try:
-        gpu = _gpu_block()
-    except Exception:
-        gpu = {"name": "", "live": False, "percent": None,
-               "vram_used_mb": 0, "vram_total_mb": 0, "temp_c": None,
-               "fan_percent": None, "power_w": None,
-               "pcie_gen": None, "pcie_width": None}
-    try:
-        disks = disk_snapshot()
-    except Exception:
-        disks = []
-    try:
-        cpu_c = cpu_temperature(probe=True)
-    except Exception:
-        cpu_c = None
-    try:
-        per_core = hardware_monitor.per_core_percent()
-    except Exception:
-        per_core = []
-    try:
-        network = network_snapshot()
-    except Exception:
-        network = []
-    try:
-        drives = drive_health_snapshot()
-    except Exception:
-        drives = []
-    try:
-        battery = battery_status()
-    except Exception:
-        battery = None
+# ---------------------------------------------------------------------------
+# Step-by-step diagnosis (owner idea 2026-11-19): the tab can run each
+# reading SEQUENTIALLY with a visible per-step state and a crash-safe
+# log — if the app dies, the last "BEGIN <step>" line without an OK in
+# ~/.deeptorrent/logs/health_steps.log names the culprit reading.
+# health_steps() is the single source of truth: snapshot() is exactly
+# "run every step, then post-process", so the diagnostic mode can never
+# drift from the real thing.
+# ---------------------------------------------------------------------------
 
-    snap: Dict[str, Any] = {
+StepFn = Any   # Callable[[dict, bool], None]
+
+
+def health_steps() -> List[Tuple[str, StepFn]]:
+    """Ordered (key, step) pairs; step(snap, force) fills its part of the
+    snapshot dict in place and NEVER raises. ``force`` is honored only
+    where an 8.8+ cache changed behavior (the dxgi adapter walk) — the
+    step mode re-drives that raw path deliberately; every other step
+    already runs its representative live/TTL'd path."""
+
+    def _cpu(snap: dict, force: bool) -> None:
+        try:
+            # One-shot semantics: a cold process gets a real reading over
+            # a short settle window instead of the 0.0 a first delta gives.
+            pct = hardware_monitor.cpu_percent_quick()
+        except Exception:
+            pct = 0.0
+        snap["cpu"] = {"percent": round(pct, 1),
+                       "cores": os.cpu_count() or 0}
+
+    def _cpu_per_core(snap: dict, force: bool) -> None:
+        try:
+            vals = hardware_monitor.per_core_percent()
+        except Exception:
+            vals = []
+        snap["cpu"]["per_core"] = [round(v, 1) for v in vals]
+
+    def _ram(snap: dict, force: bool) -> None:
+        try:
+            ram_used_mb, ram_total_mb = hardware_monitor.ram_stats()
+        except Exception:
+            ram_used_mb, ram_total_mb = 0, 0
+        try:
+            commit_used_mb, commit_total_mb = hardware_monitor.pagefile_stats()
+        except Exception:
+            commit_used_mb, commit_total_mb = 0, 0
+        snap["ram"] = {"used_mb": ram_used_mb, "total_mb": ram_total_mb,
+                       "percent": _pct(ram_used_mb, ram_total_mb),
+                       "commit_used_mb": commit_used_mb,
+                       "commit_total_mb": commit_total_mb}
+
+    def _gpu(snap: dict, force: bool) -> None:
+        try:
+            snap["gpu"] = _gpu_block(force)
+        except Exception:
+            snap["gpu"] = {"name": "", "live": False, "percent": None,
+                           "vram_used_mb": 0, "vram_total_mb": 0,
+                           "temp_c": None, "fan_percent": None,
+                           "power_w": None, "pcie_gen": None,
+                           "pcie_width": None}
+
+    def _disks(snap: dict, force: bool) -> None:
+        try:
+            snap["disks"] = disk_snapshot()
+        except Exception:
+            snap["disks"] = []
+
+    def _network(snap: dict, force: bool) -> None:
+        try:
+            snap["network"] = network_snapshot()
+        except Exception:
+            snap["network"] = []
+
+    def _drives(snap: dict, force: bool) -> None:
+        try:
+            snap["drives"] = drive_health_snapshot()
+        except Exception:
+            snap["drives"] = []
+
+    def _cpu_temp(snap: dict, force: bool) -> None:
+        try:
+            snap["_cpu_temp"] = cpu_temperature(probe=True)
+        except Exception:
+            snap["_cpu_temp"] = None
+
+    def _battery(snap: dict, force: bool) -> None:
+        try:
+            snap["battery"] = battery_status()
+        except Exception:
+            snap["battery"] = None
+
+    return [
+        ("cpu_total", _cpu),
+        ("cpu_per_core", _cpu_per_core),
+        ("ram", _ram),
+        ("gpu", _gpu),
+        ("disks", _disks),
+        ("network", _network),
+        ("drives", _drives),
+        ("cpu_temp", _cpu_temp),
+        ("battery", _battery),
+    ]
+
+
+_STEPS_LOG_MAX = 512 * 1024   # trim to last ~512 KiB on open
+_STEPS_LOG_PATH: Optional[str] = None   # tests redirect; None = real path
+
+
+def step_log(line: str) -> None:
+    """Append one crash-safe line to ~/.deeptorrent/logs/health_steps.log
+    (open-flush-close, so everything before a native death is on disk)."""
+    try:
+        path = _STEPS_LOG_PATH or os.path.join(
+            os.path.expanduser("~"), ".deeptorrent",
+            "logs", "health_steps.log")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            if os.path.getsize(path) > _STEPS_LOG_MAX:
+                with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                    tail = fh.read()[-_STEPS_LOG_MAX // 2:]
+                with open(path, "w", encoding="utf-8", newline="\n") as fh:
+                    fh.write(tail)
+        except OSError:
+            pass
+        with open(path, "a", encoding="utf-8", newline="\n") as fh:
+            fh.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S ")
+                     + line + "\n")
+    except Exception:
+        pass   # diagnostics must never take the app down with them
+
+
+def snapshot_base() -> dict:
+    """The skeleton every snapshot starts from (step mode builds the same
+    dict — one more guarantee the diagnosis path equals the real one)."""
+    return {
         "generated_at": datetime.now(timezone.utc).isoformat(
             timespec="seconds"),
         "uptime_seconds": _uptime_seconds(),
-        "cpu": {"percent": round(cpu_pct, 1),
-                "cores": os.cpu_count() or 0,
-                "per_core": [round(v, 1) for v in per_core]},
-        "ram": {"used_mb": ram_used_mb, "total_mb": ram_total_mb,
-                "percent": _pct(ram_used_mb, ram_total_mb),
-                "commit_used_mb": commit_used_mb,
-                "commit_total_mb": commit_total_mb},
-        "gpu": gpu,
-        "temperatures": {"cpu_c": cpu_c, "gpu_c": gpu.get("temp_c")},
-        "disks": disks,
-        "network": network,
-        "drives": drives,
-        "battery": battery,
     }
+
+
+def snapshot_finalize(snap: dict, thresholds: Any = None) -> dict:
+    """Post-step composition: temperatures + warnings (and the internal
+    _cpu_temp hand-off between the thermal step and the temperatures
+    block)."""
+    snap["temperatures"] = {"cpu_c": snap.pop("_cpu_temp", None),
+                            "gpu_c": (snap.get("gpu") or {}).get("temp_c")}
     snap["warnings"] = warnings_from(snap, thresholds)
+    return snap
+
+
+def snapshot(include_inventory: bool = False,
+             thresholds: Any = None) -> dict:
+    """One on-demand system-health reading. Never raises. ``thresholds``
+    is a SystemHealthConfig; defaults apply when None. Built by running
+    every health_steps() reader in order — the same code path the tab's
+    step-by-step diagnosis mode walks one step at a time."""
+    snap = snapshot_base()
+    for _key, step in health_steps():
+        step(snap, False)
+    snapshot_finalize(snap, thresholds)
     if include_inventory:
         snap["inventory"] = inventory_digest(inventory())
     return snap

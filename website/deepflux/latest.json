@@ -1,8 +1,8 @@
 {
-  "version": "8.8",
-  "file": "DeepFlux8.8Setup.exe",
-  "size": 508677578,
-  "sha256": "d5364b883fedce0ce30e8dec7355a70329805d45c1eac1dcf0a41c9f738ad920",
+  "version": "8.9",
+  "file": "DeepFlux8.9Setup.exe",
+  "size": 508738105,
+  "sha256": "37a2c46e608610f327f9893d22d90b9674d8801204b777d6ba79eafa600d675f",
   "released": "2026-11-19",
-  "notes": "DeepFlux 8.8 - crash fix for AMD laptops: the System Health tab no longer re-enumerates the graphics adapters on every refresh (static data is now cached ~10 minutes). On machines without NVIDIA, that repeated low-level GPU query is the prime suspect in the app closing while the System Health tab was open."
+  "notes": "DeepFlux 8.9 - System Health step-by-step diagnosis: a new toggle on the System Health tab runs each reading one at a time with a visible per-step state, and logs every attempt to ~/.deeptorrent/logs/health_steps.log - if the app ever closes while diagnosing, the last log line names exactly which reading was in progress. Also keeps the 8.8 graphics-adapter caching fix."
 }
