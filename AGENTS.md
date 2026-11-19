@@ -652,17 +652,26 @@
   `maybe_autostart`: run_gui's post-show timer (skipped on association
   launches) and the mini→full morph completion's else-branch (suppressed
   when a target routes or the last video auto-resumes — media wins).
-  Config `ui_background_music` (top-level like ui_font_size: the agent can
-  NEVER set it), default True, the ♫ toggle PERSISTS (explicit OFF stays
-  off). Contract: ANY media opening stops it (`stop_agent_music()` hooks:
+  UNCONDITIONAL since owner request 2026-11-19 ("it should start white
+  and playing"): the music starts on EVERY full-app open; the ♫ button is
+  a SESSION-ONLY stop (no preference consulted or persisted — the old
+  top-level `ui_background_music` config key is RETIRED; from_file drops
+  a stale copy from old configs, and a legacy object exposing the attr
+  must not gate the boot either — pinned by
+  test_maybe_autostart_is_unconditional). tests/test_mini_player.py's
+  shared `mini` fixture therefore neutralizes the maybe_autostart SEAM
+  (monkeypatch to no-op) — the config can no longer suppress it, and an
+  unpatched morph would spin a REAL mpv.
+  Contract: ANY media opening stops it (`stop_agent_music()` hooks:
   mini open_media, PlayerWidget.play, GridTile.assign — browser-tab web
   video does NOT count) and it never auto-resumes; music playing when the
   full app morphs back to mini KEEPS playing (no toggle there — the
   contract hooks stop it on media); MainWindow.closeEvent terminates the
-  handle (live-libmpv-at-exit class). Button colors (owner 2026-11-18):
+  handle (live-libmpv-at-exit class). Button colors (owner 2026-11-18;
+  idle color darkened by owner request 2026-11-19):
   WHITE fill while playing (`QPushButton#btn_music_on`, dark #0a1a2e text
-  — the one non-white color literal, in SEMANTIC_TEXT_COLORS), accent
-  BLUE when idle (btn_accent); swapped via the YOLO objectName+repolish
+  — the one non-white color literal, in SEMANTIC_TEXT_COLORS), DARK
+  btn_secondary chip when idle; swapped via the YOLO objectName+repolish
   pattern in `_sync_music_button`. Tests: tests/test_agent_music.py
   (fake-mpv seam + source-pinned hooks), tests/test_mini_player.py (button
   e2e incl. color contract, morph-autostart + media suppression,
@@ -670,6 +679,38 @@
 - MATRIX RAIN SPEED (owner 2026-11-18 "reduce the speed"):
   `gui/matrix_rain.py` SPEED_MIN/MAX 0.12–0.55 cells/tick (was 0.25–1.1
   at the same 18 fps); pinned by tests/test_matrix_rain.py.
+- COMMANDER SIZE COLUMN (owner request 2026-11-19, "show file sizes and
+  folder sizes, default on"): a checkable "Size" button in the Commander
+  F-key bar (first to overflow into the ⋯ menu) toggles the panes' Size
+  column; ON (default) additionally shows RECURSIVE FOLDER SIZES —
+  QFileSystemModel leaves a directory's Size cell blank, so a
+  `_FolderSizeDelegate` (gui/commander_tab.py) paints the computed size
+  (or "…" while walking) through the view's own item style; files keep
+  the model's text. Durable rules — do not regress:
+  * ONE shared background engine (`_folder_size_engine()` module
+    singleton, single daemon thread, session cache keyed by path,
+    generation-based stale-skip): a full tab strip carries up to 24
+    panes — never one thread per pane. The walker is ITERATIVE
+    (deep trees), never crosses link/junction boundaries
+    (CommanderTab._is_boundary), polls a cancellation callback every 64
+    entries, and a walker exception is logged-and-skipped (a dead worker
+    would freeze every folder at "…" forever).
+  * ACTIVITY GATE (System Health doctrine): walks run ONLY while the
+    Command tab is the current main tab — main_window's
+    _on_main_tab_changed flips commander_tab.set_active both directions.
+    Without this, every launch would background-walk the whole system
+    drive (the right pane starts at `_fs_root()`). An invalid view root
+    (the drive-list fallback) never queues walks either. Pinned by
+    test_folder_sizes_wait_for_tab_activity.
+  * Config `ui_commander_folder_sizes` (top-level bool, default True —
+    the agent can never switch it off, same rule as the other ui_*
+    fields); the toggle applies to every pane incl. tabs opened later.
+  * AutoColumnSizer gained an optional `text_override` callable
+    (gui/column_sizing.py) so auto-fit widths account for
+    delegate-painted cell text the model doesn't carry; the downloads
+    tables construct it without the param (unchanged).
+  * Tests: tests/test_commander_tab.py (walker/engine/gate/delegate/
+    toggle/config round-trip) + test_column_sizing.py text_override.
 - NO AUTOMATIC MAIN-TAB JUMPS (owner decision 2026-11-17, "automatic tabs
   jumping are annoying"): background work must NEVER switch the main tab —
   the user keeps reading whatever tab they are on. Removed that day:

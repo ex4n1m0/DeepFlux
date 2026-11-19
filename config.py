@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "8.9"
+APP_VERSION = "9.0"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -754,6 +754,10 @@ class DeeptorrentConfig:
     # Commander folder tabs per side ("left"/"right" -> list of abs paths);
     # ui_commander_paths keeps the CURRENT tab of each side.
     ui_commander_tabs: Dict[str, List[str]] = field(default_factory=dict)
+    # Commander "Size" toggle: show the Size column incl. recursive folder
+    # sizes (background walk, session-cached). Owner request 2026-11-19,
+    # default ON. Top-level so the agent can never switch it off.
+    ui_commander_folder_sizes: bool = True
     # Agent debug mode: raw tool args/results, full reasoning, watchdog activity in chat.
     ui_agent_debug: bool = True
     # v5: the agent quick-ask side panel is open (restored on launch).
@@ -780,11 +784,6 @@ class DeeptorrentConfig:
     # "white" before); from_file migrates old saved defaults once per
     # generation (ui_defaults_gen below).
     ui_text_theme: str = "dark_blue"
-    # Agent-tab background music ON at boot (owner 2026-11-18: "background
-    # music starts on"). Top-level like the other ui_* fields: user-only,
-    # the agent can NEVER set it. Toggling either ♫ button persists the
-    # choice, so an explicit OFF stays off across launches.
-    ui_background_music: bool = True
     # Generation stamp for one-time default migrations: config saves persist
     # the then-defaults into every config.json, so "saved default" is
     # indistinguishable from "never chose". gen 1 → 2 (2026-11-04) remapped
@@ -1251,6 +1250,9 @@ class DeeptorrentConfig:
                 for side, values in data.get("ui_commander_tabs", {}).items()
                 if side in ("left", "right") and isinstance(values, list)
             } if isinstance(data.get("ui_commander_tabs"), dict) else {},
+            ui_commander_folder_sizes=data.get("ui_commander_folder_sizes", True)
+            if isinstance(data.get("ui_commander_folder_sizes", True), bool)
+            else True,
             ui_agent_debug=True,  # assumed always-on (no UI toggle anymore)
             ui_language=(data.get("ui_language") or "en")
             if (data.get("ui_language") or "en") in ("en", "zh")
@@ -1263,9 +1265,6 @@ class DeeptorrentConfig:
             if (data.get("ui_text_theme") or "dark_blue")
             in ("white", "light_blue", "blue", "dark_blue")
             else "dark_blue",
-            ui_background_music=data.get("ui_background_music", True)
-            if isinstance(data.get("ui_background_music", True), bool)
-            else True,
             ui_defaults_gen=data.get("ui_defaults_gen", 1)
             if isinstance(data.get("ui_defaults_gen", 1), int)
             else 1,

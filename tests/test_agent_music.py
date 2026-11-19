@@ -151,26 +151,29 @@ def test_media_open_hooks_are_wired_into_every_player():
     assert _has_hook_in_function(gui.multiview, "def assign(")
 
 
-def test_maybe_autostart_respects_user_choice(fake_mpv):
-    """Owner 2026-11-18: "background music starts on" — boot autostarts
-    unless the user turned it off (persisted choice wins)."""
+def test_maybe_autostart_is_unconditional(fake_mpv):
+    """Owner 2026-11-19: "it should start white and playing" — every
+    full-app open starts the track; the ♫ button is session-only, so no
+    persisted preference is consulted (the old ui_background_music key is
+    gone; a config still carrying it must not silence the boot either)."""
     import config as config_mod
 
     cfg = config_mod.DeeptorrentConfig()
-    assert cfg.ui_background_music is True       # the new default
+    assert not hasattr(cfg, "ui_background_music")  # the key is retired
+    # A legacy/stub config object exposing the old key must not gate it.
+    legacy = type("C", (), {"ui_background_music": False})()
     agent_music._CONTROLLER = None
     assert agent_music.maybe_autostart(cfg) is True
     assert agent_music.controller().is_playing()
 
     agent_music._CONTROLLER = None
-    cfg.ui_background_music = False
-    assert agent_music.maybe_autostart(cfg) is False
-    assert not agent_music.controller().is_playing()   # never started
+    assert agent_music.maybe_autostart(legacy) is True  # starts anyway
+    assert agent_music.controller().is_playing()
 
 
 def test_maybe_autostart_unsupported_platform(fake_mpv, monkeypatch):
     monkeypatch.setattr(agent_music, "MUSIC_SUPPORTED", False)
-    assert agent_music.maybe_autostart(type("C", (), {"ui_background_music": True})()) is False
+    assert agent_music.maybe_autostart(object()) is False
 
 
 def test_state_listeners_support_multiple_buttons(fake_mpv):
@@ -194,14 +197,16 @@ def test_state_listeners_support_multiple_buttons(fake_mpv):
     assert c == [True, False]
 
 
-def test_config_ui_background_music_roundtrip(tmp_path):
+def test_config_no_longer_carries_background_music_key(tmp_path):
+    """The retired key is dropped on load — an old config carrying False
+    (which used to silence boot) must load clean and never re-persist."""
     import json
     from config import DeeptorrentConfig
     path = str(tmp_path / "config.json")
-    assert DeeptorrentConfig.from_file(path).ui_background_music is True
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"ui_background_music": False}, f)
-    assert DeeptorrentConfig.from_file(path).ui_background_music is False
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"ui_background_music": "garbage"}, f)
-    assert DeeptorrentConfig.from_file(path).ui_background_music is True
+    cfg = DeeptorrentConfig.from_file(path)
+    assert not hasattr(cfg, "ui_background_music")
+    cfg.to_file(path)
+    on_disk = json.load(open(path, encoding="utf-8"))
+    assert "ui_background_music" not in on_disk

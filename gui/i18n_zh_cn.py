@@ -473,7 +473,10 @@ ZH_CN: dict[str, str] = {
     "Show auto-download items only": "只显示自动下载项",
     "Show content as a details list": "以详情列表显示内容",
     "Show content as poster tiles": "以海报墙显示内容",
+    "Show file and folder sizes": "显示文件和文件夹大小",
     "Show or hide hidden and system items": "显示/隐藏隐藏项和系统项",
+    "Show the Size column; folder sizes are totalled recursively in the background":
+        "显示大小列；文件夹大小在后台递归累加",
     "Show/hide the category tree (left pane)": "显示/隐藏分类树（左栏）",
     "Show/hide the channels/posters area": "显示/隐藏频道/海报区",
     "Skip this version": "跳过此版本",

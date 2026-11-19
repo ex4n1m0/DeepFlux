@@ -278,3 +278,43 @@ def test_commander_tab_panes_use_auto_column_sizer(qapp, tmp_path):
             assert pane._fit_timer.isActive()
     finally:
         tab.deleteLater()
+
+
+def test_text_override_sizes_column_from_painted_text(qapp):
+    """Commander's delegate-painted folder sizes are invisible to the model
+    (folders read blank in the Size column) — the override feeds them into
+    auto-fit so the section still fits the widest painted text."""
+    from PySide6.QtWidgets import QTreeView
+    from PySide6.QtGui import QStandardItemModel, QStandardItem
+
+    view = QTreeView()
+    model = QStandardItemModel(0, 2, view)
+    view.setModel(model)
+    model.appendRow([QStandardItem("folder"), QStandardItem("")])
+
+    painted = "123.45 GiB painted-size-column-text"
+
+    def override(index):
+        if index.column() == 1:
+            return painted
+        return None
+
+    sizer = AutoColumnSizer(view, fill_column=0, padding=24,
+                            text_override=override)
+    view.resize(900, 400)
+    sizer.auto_fit()
+    metrics = view.fontMetrics()
+    assert view.header().sectionSize(1) >= \
+        metrics.horizontalAdvance(painted) + 24
+
+    # Without the override the same column sizes to the (empty) model data.
+    view2 = QTreeView()
+    model2 = QStandardItemModel(0, 2, view2)
+    view2.setModel(model2)
+    model2.appendRow([QStandardItem("folder"), QStandardItem("")])
+    sizer2 = AutoColumnSizer(view2, fill_column=0, padding=24)
+    view2.resize(900, 400)
+    sizer2.auto_fit()
+    assert view2.header().sectionSize(1) < view.header().sectionSize(1)
+    view.deleteLater()
+    view2.deleteLater()

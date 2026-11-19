@@ -226,16 +226,18 @@ def qapp():
 
 
 @pytest.fixture()
-def mini(qapp, tmp_path):
+def mini(qapp, tmp_path, monkeypatch):
     import gui.mini_player as mp
     from gui.mini_player import MiniPlayerWindow
     cfg_path = str(tmp_path / "config.json")
     cfg = DeeptorrentConfig()
     cfg.stats.ping_enabled = False
-    # Music is off in the shared fixture: completing a morph now AUTOSTARTS
-    # the background music when enabled (owner 2026-11-18) — tests that
-    # don't opt in must not spin up a real mpv instance.
-    cfg.ui_background_music = False
+    # Music autostart is UNCONDITIONAL since 2026-11-19 (owner: "it should
+    # start white and playing"), so the config can no longer suppress it —
+    # tests that don't opt in neutralize the autostart seam instead, or a
+    # completed morph would spin up a real mpv instance.
+    import gui.agent_music as _am
+    monkeypatch.setattr(_am, "maybe_autostart", lambda cfg: False)
     cfg.to_file(cfg_path)
     stub = _StubBackend()
     win = MiniPlayerWindow(DeeptorrentConfig.from_file(cfg_path), cfg_path,
@@ -788,11 +790,12 @@ def test_agent_music_button_toggles_and_yields_to_media(mini, tmp_path, monkeypa
     # The button exists on player-stack platforms and toggles the track on.
     assert main.music_btn is not None
     assert not main.music_btn.isChecked()
-    assert main.music_btn.objectName() == "btn_accent"   # blue when idle
+    assert main.music_btn.objectName() == "btn_secondary"   # dark when idle
     main.music_btn.click()
     app.processEvents()
     assert main.music_btn.isChecked(), "button must reflect music started"
-    # Owner 2026-11-18 color contract: WHITE while playing, accent blue idle.
+    # Owner 2026-11-18 color contract (idle darkened 2026-11-19): WHITE
+    # while playing, dark btn_secondary chip when idle.
     assert main.music_btn.objectName() == "btn_music_on"
     assert made and made[0].kw["loop_file"] == "inf"
     assert made[0].loads and made[0].loads[0].endswith("t.mp3")
@@ -808,7 +811,7 @@ def test_agent_music_button_toggles_and_yields_to_media(mini, tmp_path, monkeypa
     app.processEvents()
     assert made[0].term == 1, "media open must stop the background music"
     assert not main.music_btn.isChecked(), "button must uncheck itself"
-    assert main.music_btn.objectName() == "btn_accent"   # back to blue
+    assert main.music_btn.objectName() == "btn_secondary"   # back to dark
 
     # Graceful teardown path also terminates the (restarted) player.
     main.music_btn.click()
@@ -914,7 +917,6 @@ def test_morph_to_full_starts_background_music(qapp, tmp_path, monkeypatch):
     cfg_path = str(tmp_path / "music_on.json")
     cfg = DeeptorrentConfig()
     cfg.stats.ping_enabled = False
-    cfg.ui_background_music = True
     cfg.to_file(cfg_path)
     win = MiniPlayerWindow(DeeptorrentConfig.from_file(cfg_path), cfg_path,
                            backend_factory=lambda: _StubBackend())
@@ -947,7 +949,6 @@ def test_morph_suppresses_music_when_media_resumes(qapp, tmp_path, monkeypatch):
     cfg_path = str(tmp_path / "music_on2.json")
     cfg = DeeptorrentConfig()
     cfg.stats.ping_enabled = False
-    cfg.ui_background_music = True
     cfg.to_file(cfg_path)
     stub = _StubBackend()
     win = MiniPlayerWindow(DeeptorrentConfig.from_file(cfg_path), cfg_path,

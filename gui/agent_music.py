@@ -6,8 +6,12 @@ app_linux.spec datas) played on a dedicated AUDIO-ONLY libmpv instance with
 window, no video (``video=no`` also keeps ID3 cover art from ever opening
 one). The lifecycle rules come straight from the owner:
 
-* the Agent tab's ♫ button is the ONLY on-switch (no autostart, nothing
-  persisted — music on boot would be obnoxious);
+* the music starts EVERY time the full app opens (owner 2026-11-19: "it
+  should start white and playing" — run_gui's post-show timer and the
+  mini→full morph completion both call :func:`maybe_autostart`, unless a
+  target is being routed or the last video auto-resumes — media wins);
+* the Agent tab's ♫ button is the ONLY off-switch, and it is SESSION-ONLY:
+  nothing persists — the next full-app open plays again;
 * opening media anywhere ELSE stops it: the mini player's ``open_media``
   and the Play tab's ``PlayerWidget.play`` call :func:`stop_agent_music`
   (browser-tab web video does NOT count — it is web content with its own
@@ -162,12 +166,12 @@ def stop_agent_music() -> None:
 
 
 def maybe_autostart(config: Any) -> bool:
-    """Boot path (owner 2026-11-18: "background music starts on"): start the
-    track when the user hasn't turned it off. ``config.ui_background_music``
-    defaults True; toggling either ♫ button persists the choice, so OFF
-    stays OFF across launches. No-op (False) when unsupported."""
+    """Full-app-open path (owner 2026-11-18 "background music starts on";
+    made unconditional 2026-11-19: "it should start white and playing"):
+    the track starts EVERY time the full app opens — the ♫ button is a
+    session-only stop, so no preference is consulted or persisted.
+    ``config`` is kept for call-site symmetry. No-op (False) when
+    unsupported."""
     if not MUSIC_SUPPORTED:
-        return False
-    if not getattr(config, "ui_background_music", True):
         return False
     return controller().start()

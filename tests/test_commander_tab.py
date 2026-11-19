@@ -4,13 +4,15 @@ import io
 import os
 import stat
 import tarfile
+import threading
+import time
 import zipfile
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QDir
+from PySide6.QtCore import QDir, QLocale
 from PySide6.QtGui import QImage, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QAbstractItemView, QInputDialog, QLineEdit, QMessageBox,
@@ -1243,3 +1245,288 @@ def test_batch_rename_dialog_preview_and_paste_mode(tab, tmp_path, qapp):
         dialog.deleteLater()
         qapp.processEvents()
 
+
+
+# -- Size column: recursive folder sizes (owner 2026-11-19) -------------------
+
+def _wait_until(condition, timeout=5.0, interval=0.01):
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if condition():
+            return True
+        if app is not None:
+            app.processEvents()  # QFileSystemModel rows arrive as events
+        time.sleep(interval)
+    return condition()
+
+
+def test_folder_size_walk_totals_recursively_and_skips_links(tmp_path):
+    tree = tmp_path / "tree"
+    (tree / "nested").mkdir(parents=True)
+    (tree / "a.bin").write_bytes(b"a" * 100)
+    (tree / "nested" / "b.bin").write_bytes(b"b" * 250)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "c.bin").write_bytes(b"c" * 1000)
+    try:
+        (tree / "linked-tree").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation unavailable: {exc}")
+    # The link inside the tree points at 1000 more bytes — crossing it
+    # (a reparse cycle would) must not inflate the total.
+    assert commander._walk_folder_size(str(tree)) == 350
+
+
+def test_folder_size_engine_discards_stale_walks_and_caches():
+    calls = []
+    release = threading.Event()
+
+    def walker(path, cancelled=None):
+        calls.append(path)
+        release.wait(timeout=5)
+        return 123
+
+    engine = commander._FolderSizeEngine(walker=walker)
+    engine.request(["/a"], 1)
+    assert _wait_until(lambda: calls == ["/a"]), "walker never picked up /a"
+    # Supersede generation 1 while the walk is running: the finished walk
+    # must be discarded and re-run for the new generation.
+    engine.request(["/a"], 2)
+    release.set()
+    assert _wait_until(lambda: len(calls) >= 2 and engine.cached_size("/a") == 123)
+    assert calls == ["/a", "/a"]
+
+    # Cached paths are never re-walked.
+    engine.request(["/a"], 3)
+    time.sleep(0.1)
+    assert len(calls) == 2
+    assert engine.cached_size("/a") == 123
+
+    # A superseded walk that is NOT re-requested lands nowhere.
+    release = threading.Event()
+
+    def gated_walker(path, cancelled=None):
+        calls.append(path)
+        release.wait(timeout=5)
+        return 456
+
+    engine._walker = gated_walker
+    engine.request(["/b"], 7)
+    assert _wait_until(lambda: calls == ["/a", "/a", "/b"])
+    with engine._lock:
+        engine._wanted["/b"] = 8  # pane navigated away mid-walk
+    release.set()
+    time.sleep(0.2)
+    assert engine.cached_size("/b") is None
+
+
+def test_size_toggle_hides_column_and_persists_preference(qapp, tmp_path):
+    config = SimpleNamespace(default_save_path=str(tmp_path))
+    widget = CommanderTab(config)
+    try:
+        # Default ON: the toggle is checked and the Size column shows.
+        assert widget._size_btn.isChecked()
+        assert not widget.left_pane._view.isColumnHidden(1)
+        assert not widget.right_pane._view.isColumnHidden(1)
+
+        widget._size_btn.click()
+        qapp.processEvents()
+        assert not widget._size_btn.isChecked()
+        assert widget.left_pane._view.isColumnHidden(1)
+        assert widget.right_pane._view.isColumnHidden(1)
+        assert widget.left_pane.shows_folder_sizes() is False
+        assert config.ui_commander_folder_sizes is False
+
+        # A folder tab opened later inherits the OFF state.
+        pane = widget._add_tab("left", str(tmp_path))
+        assert pane._view.isColumnHidden(1)
+
+        widget._size_btn.click()
+        qapp.processEvents()
+        assert not widget.left_pane._view.isColumnHidden(1)
+        assert config.ui_commander_folder_sizes is True
+    finally:
+        widget.close()
+        widget.deleteLater()
+        qapp.processEvents()
+
+
+def test_pane_shows_folder_size_text_for_directories(qapp, tmp_path, monkeypatch):
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "sub").mkdir()
+    (tree / "sub" / "data.bin").write_bytes(b"x" * 2048)
+    (tree / "file.bin").write_bytes(b"y" * 10)
+    # Give this pane its own engine so the assertion path is deterministic.
+    engine = commander._FolderSizeEngine(walker=commander._walk_folder_size)
+    monkeypatch.setattr(commander, "_folder_size_engine", lambda: engine)
+    widget = CommanderTab(SimpleNamespace(default_save_path=str(tmp_path)))
+    try:
+        pane = widget.left_pane
+        widget.set_active(True)  # main_window flips this on tab switches
+        pane.navigate(str(tree))
+        assert _wait_until(
+            lambda: pane._model.rowCount(pane._view.rootIndex()) >= 2), \
+            "listing never populated"
+        pane._request_folder_sizes()  # skip the 300 ms coalescing debounce
+
+        model = pane._model
+        root = pane._view.rootIndex()
+        folder_row = file_row = None
+        for row in range(model.rowCount(root)):
+            name_index = model.index(row, 0, root)
+            if model.fileName(name_index) == "sub":
+                folder_row = row
+            elif model.fileName(name_index) == "file.bin":
+                file_row = row
+        assert folder_row is not None and file_row is not None
+
+        folder_path = model.filePath(model.index(folder_row, 0, root))
+        assert pane._size_wanted == {folder_path}
+        assert _wait_until(lambda: engine.cached_size(folder_path) == 2048), \
+            "background walk never finished"
+        qapp.processEvents()  # deliver size_ready on the GUI thread
+
+        # Re-resolve the rows: the event-pumped wait may have re-created the
+        # model's root node, and a stale index reads back as a non-dir.
+        root = pane._view.rootIndex()
+        folder_idx = file_idx = None
+        for row in range(model.rowCount(root)):
+            name_index = model.index(row, 0, root)
+            if model.fileName(name_index) == "sub":
+                folder_idx = model.index(row, 1, root)
+            elif model.fileName(name_index) == "file.bin":
+                file_idx = model.index(row, 1, root)
+        assert folder_idx is not None and file_idx is not None
+        assert pane._size_text_for(folder_idx) == QLocale().formattedDataSize(2048)
+        # Files keep the model's own formatted size: no override text.
+        assert pane._size_text_for(file_idx) is None
+        # Toggling off blanks the column and drops the pending set.
+        pane.set_folder_sizes(False)
+        assert pane._size_text_for(folder_idx) is None
+        assert pane._size_wanted == set()
+    finally:
+        widget.close()
+        widget.deleteLater()
+        qapp.processEvents()
+
+
+def test_config_persists_ui_commander_folder_sizes(qapp, tmp_path):
+    config_path = tmp_path / "config.json"
+    config = DeeptorrentConfig(default_save_path=str(tmp_path))
+    assert config.ui_commander_folder_sizes is True  # default ON
+    config.ui_commander_folder_sizes = False
+    config.to_file(str(config_path))
+    restored = DeeptorrentConfig.from_file(str(config_path))
+    assert restored.ui_commander_folder_sizes is False
+    widget = CommanderTab(restored)
+    try:
+        assert not widget._size_btn.isChecked()
+        assert widget.left_pane._view.isColumnHidden(1)
+    finally:
+        widget.close()
+        widget.deleteLater()
+        qapp.processEvents()
+    # Malformed saved values fall back to the default, not to a crash.
+    config_path.write_text('{"ui_commander_folder_sizes": "yes"}',
+                           encoding="utf-8")
+    assert DeeptorrentConfig.from_file(
+        str(config_path)).ui_commander_folder_sizes is True
+
+
+def test_folder_sizes_wait_for_tab_activity(qapp, tmp_path, monkeypatch):
+    """Review M1/M2 pin: no recursive walk is ever queued while the Command
+    tab is not the current main tab (the right pane starts at the drive
+    root — an unbidden walk there would hammer the disk for minutes)."""
+    requests = []
+
+    class _Quiet:
+        def connect(self, *args, **kwargs):
+            return None
+
+    class _StubEngine:
+        size_ready = _Quiet()
+
+        def cached_size(self, path):
+            return None
+
+        def request(self, paths, generation):
+            requests.append(list(paths))
+
+    monkeypatch.setattr(commander, "_folder_size_engine",
+                        lambda: _StubEngine())
+    (tmp_path / "subfolder").mkdir()
+    widget = CommanderTab(SimpleNamespace(default_save_path=str(tmp_path)))
+    try:
+        widget.left_pane.navigate(str(tmp_path))
+        assert _wait_until(lambda: widget.left_pane._model.rowCount(
+            widget.left_pane._view.rootIndex()) >= 1), \
+            "listing never populated"
+        # Not the current tab: let the 300 ms debounce come due — nothing.
+        time.sleep(0.4)
+        qapp.processEvents()
+        assert requests == []
+        assert widget.left_pane._size_wanted == set()
+
+        # Becoming current kicks the scan; hiding stops future ones.
+        widget.set_active(True)
+        assert _wait_until(
+            lambda: any("subfolder" in p for group in requests for p in group))
+        widget.set_active(False)
+        requests.clear()
+        time.sleep(0.4)
+        qapp.processEvents()
+        assert requests == []
+    finally:
+        widget.close()
+        widget.deleteLater()
+        qapp.processEvents()
+
+
+def test_folder_size_delegate_widens_hint_for_painted_text(qapp, tmp_path, monkeypatch):
+    """The delegate's sizeHint must grow with the painted folder-size text
+    (the model itself reports folders blank in the Size column)."""
+    from PySide6.QtWidgets import QStyleOptionViewItem
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "sub").mkdir()
+    widget = CommanderTab(SimpleNamespace(default_save_path=str(tmp_path)))
+    try:
+        pane = widget.left_pane
+        widget.set_active(True)
+        pane.navigate(str(tree))
+        assert _wait_until(lambda: pane._model.rowCount(
+            pane._view.rootIndex()) >= 1), "listing never populated"
+        model = pane._model
+        root = pane._view.rootIndex()
+        folder_index = None
+        for row in range(model.rowCount(root)):
+            index = model.index(row, 0, root)
+            if model.isDir(index):
+                folder_index = model.index(row, 1, root)
+        assert folder_index is not None
+
+        delegate = pane._view.itemDelegate()
+        assert isinstance(delegate, commander._FolderSizeDelegate)
+        option = QStyleOptionViewItem()
+        option.fontMetrics = pane._view.fontMetrics()
+        pane._size_wanted = {model.filePath(folder_index)}
+        # Force a cached size without touching the shared engine.
+        class _Known:
+            def cached_size(self, path):
+                return 5 * 1024 * 1024 * 1024
+
+        pane._size_engine = _Known()
+        assert pane._size_text_for(folder_index) == \
+            QLocale().formattedDataSize(5 * 1024 * 1024 * 1024)
+        wide = delegate.sizeHint(option, folder_index)
+        pane._size_wanted = set()  # not requested: falls back to the model
+        narrow = delegate.sizeHint(option, folder_index)
+        assert wide.width() > narrow.width()
+    finally:
+        widget.close()
+        widget.deleteLater()
+        qapp.processEvents()

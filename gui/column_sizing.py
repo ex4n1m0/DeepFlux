@@ -26,9 +26,9 @@ it), which is what lets us attribute every unguarded emission to the user.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
-from PySide6.QtCore import QEvent, QObject, QTimer, Qt
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QTimer, Qt
 from PySide6.QtWidgets import QHeaderView, QTableView, QWidget
 
 # Cell-text scan cap per column: content sizing stays cheap even on a
@@ -46,6 +46,7 @@ class AutoColumnSizer(QObject):
         fill_column: Optional[int] = 0,
         padding: int = 12,
         max_widths: Optional[dict[int, int]] = None,
+        text_override: Optional[Callable[[QModelIndex], Optional[str]]] = None,
     ) -> None:
         super().__init__(table)
         self._table = table
@@ -56,6 +57,10 @@ class AutoColumnSizer(QObject):
         self._fill_column = fill_column
         self._padding = padding
         self._max_widths = max_widths or {}
+        # Cell text the MODEL does not carry (Commander's delegate-painted
+        # folder sizes) still has to size the column: return the painted
+        # text for such cells, None to fall back to the model's data.
+        self._text_override = text_override
         self._user_sized: set[int] = set()
         self._fitting = False
         self._refit_timer = QTimer(self)
@@ -145,7 +150,12 @@ class AutoColumnSizer(QObject):
         if model is not None:
             root = self._table.rootIndex()
             for row in range(min(model.rowCount(root), _MAX_SCAN_ROWS)):
-                text = model.index(row, column, root).data(Qt.DisplayRole)
+                index = model.index(row, column, root)
+                text: Optional[str] = None
+                if self._text_override is not None:
+                    text = self._text_override(index)
+                if not text:
+                    text = index.data(Qt.DisplayRole)
                 if text:
                     width = max(width, metrics.horizontalAdvance(str(text)))
         width = max(width, self._header.sectionSizeHint(column)) + self._padding

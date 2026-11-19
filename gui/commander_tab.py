@@ -16,6 +16,7 @@ import fnmatch
 import hashlib
 import logging
 import os
+import queue
 import shutil
 import stat
 import subprocess
@@ -26,10 +27,10 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from PySide6.QtCore import (
-    QDir, QEvent, QModelIndex, QPoint, QTimer, Qt,
+    QEvent, QLocale, QDir, QModelIndex, QObject, QPoint, QTimer, Qt,
     QItemSelectionModel, Signal,
 )
 from PySide6.QtGui import QImage, QImageReader, QKeySequence, QPixmap, QShortcut
@@ -52,6 +53,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTabWidget,
     QToolButton,
     QTreeView,
@@ -90,6 +94,173 @@ _MENU_STYLE = (
     " QMenu::item { padding: 3px 20px; border-radius: 4px; }"
     " QMenu::item:selected { background-color: #1a2a4a; color: #ffffff; }"
 )
+
+
+def _walk_folder_size(path: str,
+                      cancelled: Optional[Callable[[], bool]] = None) -> int:
+    """Total byte size of a folder tree, iteratively (deep trees must not
+    recurse) and without crossing link/junction boundaries — a reparse
+    cycle would walk forever. Unreadable entries count as zero.
+    ``cancelled`` is polled every few dozen entries so a superseded walk
+    (pane navigated away / tab hidden) aborts promptly instead of
+    grinding through a multi-gigabyte tree nobody wants any more."""
+    total = 0
+    checked = 0
+    stack: List[str] = [path]
+    while stack:
+        folder = stack.pop()
+        try:
+            with os.scandir(folder) as entries:
+                for entry in entries:
+                    checked += 1
+                    if cancelled is not None and checked % 64 == 0 \
+                            and cancelled():
+                        raise _Cancelled()
+                    try:
+                        if CommanderTab._is_boundary(entry.path):
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        else:
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return total
+
+
+class _FolderSizeEngine(QObject):
+    """One shared background worker computing recursive folder sizes.
+
+    Every pane of every Commander tab funnels requests here (a full tab
+    strip can carry two dozen panes — one thread, not one per pane).
+    Requests carry the requesting pane's navigation generation; once the
+    pane has moved on, the queued walk is skipped. Results are cached for
+    the session and delivered on the GUI thread via size_ready(path)."""
+
+    size_ready = Signal(str)
+
+    def __init__(self,
+                 walker: Callable[..., int] = _walk_folder_size,
+                 parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._walker = walker
+        self._cache: Dict[str, int] = {}
+        self._lock = threading.Lock()
+        self._wanted: Dict[str, int] = {}  # path -> generation that asked
+        self._queue: "queue.Queue[Optional[Tuple[str, int]]]" = queue.Queue()
+        self._thread = threading.Thread(
+            target=self._run, name="commander-folder-sizes", daemon=True)
+        self._thread.start()
+
+    # -- GUI-thread API ---------------------------------------------------
+    def cached_size(self, path: str) -> Optional[int]:
+        with self._lock:
+            return self._cache.get(path)
+
+    def request(self, paths: List[str], generation: int) -> None:
+        """Queue walks for every path that is not cached yet."""
+        fresh: List[Tuple[str, int]] = []
+        with self._lock:
+            for path in paths:
+                if path in self._cache:
+                    continue
+                self._wanted[path] = generation
+                fresh.append((path, generation))
+        for item in fresh:
+            self._queue.put(item)
+
+    # -- worker thread ------------------------------------------------------
+    def _run(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is None:
+                return
+            path, generation = item
+            with self._lock:
+                if self._wanted.get(path) != generation:
+                    continue  # pane navigated away — skip the stale walk
+
+            def superseded() -> bool:
+                with self._lock:
+                    return self._wanted.get(path) != generation
+
+            try:
+                size = self._walker(path, cancelled=superseded)
+            except _Cancelled:
+                continue  # superseded mid-walk — discard, serve the next
+            except Exception as exc:  # a dead worker would freeze "…" forever
+                logger.warning("folder size walk failed for %s: %s", path, exc)
+                with self._lock:
+                    self._wanted.pop(path, None)
+                continue
+            with self._lock:
+                deliver = self._wanted.get(path) == generation
+                if deliver:
+                    self._cache[path] = size
+                    self._wanted.pop(path, None)
+            if deliver:
+                try:
+                    self.size_ready.emit(path)
+                except RuntimeError:
+                    # The engine's C++ object is gone (interpreter shutdown
+                    # or a dropped test engine) — stop the worker cleanly.
+                    return
+
+
+_FOLDER_SIZE_ENGINE: Optional[_FolderSizeEngine] = None
+_ENGINE_LOCK = threading.Lock()
+
+
+def _folder_size_engine() -> _FolderSizeEngine:
+    """Process-wide shared engine, created lazily so merely importing the
+    module (and non-GUI callers) never spawns the worker thread."""
+    global _FOLDER_SIZE_ENGINE
+    with _ENGINE_LOCK:
+        if _FOLDER_SIZE_ENGINE is None:
+            _FOLDER_SIZE_ENGINE = _FolderSizeEngine()
+        return _FOLDER_SIZE_ENGINE
+
+
+class _FolderSizeDelegate(QStyledItemDelegate):
+    """Paints recursive folder sizes into the Size column.
+
+    QFileSystemModel leaves a directory's Size cell blank; the delegate
+    draws the pane's computed size (or "…" while the walk runs) through
+    the view's own item style so selection, hover, font and eliding stay
+    native. Files and every other column pass straight through."""
+
+    def __init__(self, size_text_for: Callable[[QModelIndex], Optional[str]],
+                 parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._size_text_for = size_text_for
+
+    def _text(self, index: QModelIndex) -> Optional[str]:
+        if index.column() != 1:
+            return None
+        return self._size_text_for(index)
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802
+        text = self._text(index)
+        if text is None:
+            super().paint(painter, option, index)
+            return
+        styled = QStyleOptionViewItem(option)
+        self.initStyleOption(styled, index)
+        styled.text = text
+        widget = styled.widget
+        style = widget.style() if widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, styled,
+                          painter, widget)
+
+    def sizeHint(self, option, index):  # noqa: N802
+        hint = super().sizeHint(option, index)
+        text = self._text(index)
+        if text:
+            hint.setWidth(max(hint.width(),
+                              option.fontMetrics.horizontalAdvance(text) + 12))
+        return hint
 
 
 def _open_native(path: str) -> None:
@@ -424,7 +595,8 @@ class FilePane(QWidget):
     file_clipboard_request = Signal(str)  # "copy" | "cut" | "paste" (commander clipboard)
 
     def __init__(self, start_path: str, parent: Optional[QWidget] = None,
-                 pane_name: str = "File pane") -> None:
+                 pane_name: str = "File pane",
+                 folder_sizes: bool = True) -> None:
         super().__init__(parent)
         self._pane_name = pane_name
         self.setAccessibleName(pane_name)
@@ -437,6 +609,16 @@ class FilePane(QWidget):
         self._path_retries = 0
         self._show_token = 0
         self._shown_path = ""
+        # Recursive folder sizes in the Size column (tab-level Size toggle,
+        # owner 2026-11-19): computed by the shared background engine. The
+        # tab-activity gate (set_sizes_active) follows the System Health
+        # doctrine — walks only happen while the Command tab is in front.
+        self._folder_sizes = bool(folder_sizes)
+        self._sizes_active = False
+        self._size_gen = 0          # bumped on navigation; stale walks skip
+        self._size_wanted: Set[str] = set()
+        self._size_engine = _folder_size_engine()
+        self._size_engine.size_ready.connect(self._on_folder_size_ready)
         self._model = QFileSystemModel(self)
         self._model.setReadOnly(False)
         self._model.setRootPath("")
@@ -534,8 +716,14 @@ class FilePane(QWidget):
         # Same column behaviour as the download tables: file names always
         # fully readable (name column fits its content and absorbs leftover
         # viewport width), every column user-draggable, a drag never
-        # stomped, double-click a separator to re-enable auto-fit.
-        self._column_sizer = AutoColumnSizer(self._view, fill_column=0, padding=24)
+        # stomped, double-click a separator to re-enable auto-fit. The
+        # text_override sizes the Size column from the delegate-painted
+        # FOLDER sizes too (the model itself shows folders blank there).
+        self._view.setItemDelegate(
+            _FolderSizeDelegate(self._size_text_for, self._view))
+        self._column_sizer = AutoColumnSizer(
+            self._view, fill_column=0, padding=24,
+            text_override=self._size_text_for)
         # QFileSystemModel populates directories asynchronously in batches,
         # so refit whenever rows land or details (size/date) fill in.
         self._fit_timer = QTimer(self._view)
@@ -544,6 +732,15 @@ class FilePane(QWidget):
         self._fit_timer.timeout.connect(self._column_sizer.auto_fit)
         self._model.rowsInserted.connect(lambda *_: self._fit_timer.start())
         self._model.dataChanged.connect(lambda *_: self._fit_timer.start())
+        # Folder-size requests are coalesced the same way: the listing
+        # arrives in batches, and directoryLoaded marks the batch set done.
+        self._size_scan_timer = QTimer(self)
+        self._size_scan_timer.setSingleShot(True)
+        self._size_scan_timer.setInterval(300)
+        self._size_scan_timer.timeout.connect(self._request_folder_sizes)
+        self._model.rowsInserted.connect(lambda *_: self._size_scan_timer.start())
+        self._model.directoryLoaded.connect(lambda *_: self._size_scan_timer.start())
+        self._view.setColumnHidden(1, not self._folder_sizes)
         self._view.activated.connect(self._on_activated)
         self._view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._view.customContextMenuRequested.connect(self._context_menu)
@@ -658,6 +855,10 @@ class FilePane(QWidget):
         # again as the async listing lands rows via _fit_timer.
         self._column_sizer.auto_fit()
         self._fit_timer.start()
+        # Folder sizes belong to THIS listing: the generation bump makes
+        # the engine skip walks still queued for the previous folder.
+        self._size_gen += 1
+        self._size_scan_timer.start()
 
     def _retry_show_path(self, path: str, token: int) -> None:
         if token != self._show_token:
@@ -858,6 +1059,78 @@ class FilePane(QWidget):
     def shows_hidden_system(self) -> bool:
         return self._show_hidden_system
 
+    # -- folder sizes (Size column, owner 2026-11-19) ------------------------
+    def set_folder_sizes(self, on: bool) -> None:
+        """Show/hide the Size column incl. recursive folder sizes.
+
+        Driven by the tab-level Size toggle; every pane of the tab follows
+        (the setting is one global preference, persisted via config)."""
+        self._folder_sizes = bool(on)
+        self._view.setColumnHidden(1, not self._folder_sizes)
+        if self._folder_sizes:
+            self._request_folder_sizes()
+        else:
+            self._size_wanted = set()
+
+    def shows_folder_sizes(self) -> bool:
+        return self._folder_sizes
+
+    def set_sizes_active(self, on: bool) -> None:
+        """CommanderTab-level visibility gate: recursive size walks run only
+        while the Command tab is the current main tab (System Health
+        doctrine). Activating re-kicks the scan; the background engine
+        also aborts in-flight walks of a hidden tab via the generation
+        check."""
+        self._sizes_active = bool(on)
+        if self._sizes_active:
+            self._size_scan_timer.start()
+
+    def _size_text_for(self, index: QModelIndex) -> Optional[str]:
+        """Folder-size text for the Size column. Consumed by the paint
+        delegate AND the column auto-sizer; files keep the model's own
+        formatted size, unknown-but-requested folders show "…"."""
+        if not self._folder_sizes or index.column() != 1:
+            return None
+        model = index.model()
+        if model is None or not hasattr(model, "isDir") or not model.isDir(index):
+            return None
+        path = model.filePath(index)
+        if not path or path not in self._size_wanted:
+            return None
+        size = self._size_engine.cached_size(path)
+        if size is None:
+            return "…"
+        return QLocale().formattedDataSize(size)
+
+    def _request_folder_sizes(self) -> None:
+        """Queue recursive size walks for every folder in the listing."""
+        if not (self._folder_sizes and self._sizes_active):
+            self._size_wanted = set()
+            return
+        root = self._view.rootIndex()
+        if not root.isValid():
+            # Degenerate fallback view: the children are whole DRIVES —
+            # walking each one recursively is never what anyone wants.
+            self._size_wanted = set()
+            return
+        paths: List[str] = []
+        for row in range(self._model.rowCount(root)):
+            index = self._model.index(row, 0, root)
+            if index.isValid() and self._model.isDir(index):
+                path = self._model.filePath(index)
+                if path:
+                    paths.append(path)
+        self._size_wanted = set(paths)
+        if paths:
+            self._size_engine.request(paths, self._size_gen)
+
+    def _on_folder_size_ready(self, path: str) -> None:
+        """A folder's size landed in the engine cache (GUI thread) —
+        repaint the column and let auto-fit absorb a possibly wider text."""
+        if path in self._size_wanted:
+            self._view.viewport().update()
+            self._fit_timer.start()
+
     def _apply_filter(self) -> None:
         filt = QDir.Filter.AllDirs | QDir.Filter.Files | QDir.Filter.NoDotAndDotDot
         if self._show_hidden_system:
@@ -969,6 +1242,9 @@ class CommanderTab(QWidget):
         self._operation_outcomes: List[Dict[str, object]] = []
         self._preview_token = ""
         self._preview_path = ""
+        # Folder-size walks are gated on the Command tab being current
+        # (main_window flips this via set_active — System Health doctrine).
+        self._sizes_active = False
         # Commander file clipboard ("copy"/"cut", paths). App-internal on
         # purpose: pasting routes through the same safety controller as
         # F5/F6, which the OS clipboard could not promise.
@@ -1098,6 +1374,21 @@ class CommanderTab(QWidget):
             btn.clicked.connect(slot)
             keys.addWidget(btn)
             fn_btns.append(btn)
+        # Size column toggle (owner 2026-11-19, default ON): file sizes
+        # plus recursively-totalled folder sizes, computed in the shared
+        # background engine. Checkable, applies to every pane of the tab.
+        self._size_btn = QPushButton(tr('Size'))
+        self._size_btn.setCheckable(True)
+        self._size_btn.setChecked(self._folder_sizes_on())
+        if self._folder_sizes_on():
+            self._size_btn.setObjectName("btn_accent")  # ON is visible
+        self._size_btn.setAccessibleName(tr('Show file and folder sizes'))
+        self._size_btn.setToolTip(tr(
+            'Show the Size column; folder sizes are totalled recursively '
+            'in the background'))
+        self._size_btn.toggled.connect(self._on_size_toggle)
+        keys.addWidget(self._size_btn)
+        fn_btns.append(self._size_btn)
         keys.addStretch()
         self._status = QLabel("")
         self._status.setAccessibleName("Commander status")
@@ -1106,7 +1397,8 @@ class CommanderTab(QWidget):
         shrink_label(self._status)  # live text must not grow the window min
         keys.addWidget(self._status)
         layout.addWidget(keys_row)
-        # Hide-first order: Compare/Rename/Recycle go first, Copy/Move last.
+        # Hide-first order: Size/Compare/Rename/Recycle go first, Copy/Move
+        # last (Size is a display preference, never an operation).
         self._fn_overflow = OverflowRow(keys_row, tuple(reversed(fn_btns)))
 
         self._outcome_status = QLabel(tr('No file operations yet'))
@@ -1180,8 +1472,39 @@ class CommanderTab(QWidget):
             lambda path, source=pane: self._sync_tab_title(source, path))
         pane.set_favorites_provider(self.commander_favorites)
 
+    def _folder_sizes_on(self) -> bool:
+        """The persisted Size-column preference (default ON; top-level
+        config field, so the agent can never switch it off)."""
+        return bool(getattr(self._config, "ui_commander_folder_sizes", True))
+
+    def set_active(self, on: bool) -> None:
+        """Current-main-tab gate (main_window wires it next to the System
+        Health tab's). Folder-size walks only run while the Command tab is
+        in front — the right pane starts at the drive root, and walking it
+        unbidden on every launch would hammer the disk for minutes."""
+        self._sizes_active = bool(on)
+        for side in ("left", "right"):
+            for index in range(self._sides[side].count()):
+                self._sides[side].widget(index).set_sizes_active(on)
+
+    def _on_size_toggle(self, checked: bool) -> None:
+        """Apply the Size-column setting to every pane (existing tabs AND
+        ones opened later — they read the same config at creation) and
+        record it; main_window persists the config on close, exactly like
+        the pane paths and favorites."""
+        self._config.ui_commander_folder_sizes = bool(checked)
+        # Global QSS has no :checked rule — swap to the accent style so the
+        # ON state is visible (same pattern as the panes' Hidden toggle).
+        self._size_btn.setObjectName("btn_accent" if checked else "")
+        self._size_btn.style().polish(self._size_btn)
+        for side in ("left", "right"):
+            for index in range(self._sides[side].count()):
+                self._sides[side].widget(index).set_folder_sizes(checked)
+
     def _add_tab(self, side: str, path: str) -> FilePane:
-        pane = FilePane(path, pane_name=f"{side.title()} pane")
+        pane = FilePane(path, pane_name=f"{side.title()} pane",
+                        folder_sizes=self._folder_sizes_on())
+        pane.set_sizes_active(self._sizes_active)
         tabs = self._sides[side]
         tabs.addTab(pane, os.path.basename(os.path.normpath(path)) or path)
         tabs.setTabToolTip(tabs.indexOf(pane), QDir.toNativeSeparators(path))

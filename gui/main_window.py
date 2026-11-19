@@ -1639,10 +1639,11 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
             }
 
-            /* === ♫ Music toggle WHILE PLAYING (owner 2026-11-18: white
-               when playing, accent blue when idle) — a white FILL with
-               deliberately DARK text (themeable white would vanish on it;
-               same keep-white-exception family, inverted). === */
+            /* === ♫ Music toggle WHILE PLAYING (owner 2026-11-18; idle color
+               darkened 2026-11-19: white when playing, dark btn_secondary
+               chip when idle) — a white FILL with deliberately DARK text
+               (themeable white would vanish on it; same keep-white-exception
+               family, inverted). === */
             QPushButton#btn_music_on {
                 background-color: #ffffff;
                 border-left: 6px solid #05070c;
@@ -2091,7 +2092,7 @@ class MainWindow(QMainWindow):
         self.music_btn = None
         if MUSIC_SUPPORTED:
             music_btn = QPushButton(tr('♫'))
-            music_btn.setObjectName("btn_accent")   # blue when not playing
+            music_btn.setObjectName("btn_secondary")   # dark when not playing
             music_btn.setCheckable(True)
             music_btn.setFixedWidth(44)
             music_btn.setToolTip(tr(
@@ -3710,34 +3711,31 @@ class MainWindow(QMainWindow):
     def _sync_music_button(self, playing: bool) -> None:
         """Reflect the music controller's state on the ♫ toggle (also fires
         when a media-open hook stopped the music — the button must revert
-        even though nobody clicked it). Owner 2026-11-18 color contract:
-        WHITE fill while playing, accent BLUE when idle (the YOLO-style
-        objectName swap + repolish)."""
+        even though nobody clicked it). Owner 2026-11-18 color contract,
+        idle color darkened 2026-11-19: WHITE fill while playing, DARK
+        (btn_secondary) when idle (the YOLO-style objectName swap +
+        repolish)."""
         btn = getattr(self, "music_btn", None)
         if btn is None:
             return
         btn.blockSignals(True)
         btn.setChecked(playing)
         btn.blockSignals(False)
-        wanted = "btn_music_on" if playing else "btn_accent"
+        wanted = "btn_music_on" if playing else "btn_secondary"
         if btn.objectName() != wanted:
             btn.setObjectName(wanted)
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 
     def _on_music_toggle(self) -> None:
-        """User toggled the Agent-tab background music (owner 2026-11-18).
-        The choice persists — the boot autostart (starts ON by default)
-        reads it back, so an explicit OFF stays off."""
+        """User toggled the Agent-tab background music. Session-only
+        (owner 2026-11-19: "when we press should go dark and stop"): the
+        music starts again on the next full-app open, so nothing is
+        persisted here."""
         from gui import agent_music
         ctl = agent_music.controller()
         was_playing = ctl.is_playing()
         now_playing = ctl.toggle()
-        self.config.ui_background_music = now_playing
-        try:
-            self.config.to_file(self.config_path)
-        except Exception as exc:
-            logger.warning("Failed to persist music preference: %s", exc)
         if was_playing == now_playing:   # start failed (no track / no player)
             QMessageBox.warning(
                 self, tr("DeepFlux"),
@@ -5974,6 +5972,14 @@ class MainWindow(QMainWindow):
         if health_tab is not None:
             health_tab.set_active(
                 self.main_tabs.widget(index) is health_tab)
+        # Same doctrine for the Commander's recursive folder sizes: no
+        # background walks while another tab is in front (the right pane
+        # starts at the drive root — walking it unbidden on every launch
+        # would hammer the disk).
+        commander_tab = getattr(self, "commander_tab", None)
+        if commander_tab is not None:
+            commander_tab.set_active(
+                self.main_tabs.widget(index) is commander_tab)
         # Menu-bar address bar: installed only while the Browse tab is
         # active. Swapping the corner widget (not just hiding it — a hidden
         # corner widget does NOT shrink the menu bar) keeps every other tab's
