@@ -1389,6 +1389,23 @@
     just correlated. Any future AMD live-GPU-stats work must use the
     study's P2a shape (D3DKMTQueryStatistics in a SUBPROCESS — the hook
     dies with the child, never the GUI), never an in-process walk.
+    DEEP STUDY 2026-11-20 (owner request): **read AMD_GPU_STUDY.md**
+    before touching any GPU lane — four research lanes, all claims
+    VERIFIED-vs-REPORTED with URLs + local-SDK cross-checks. Headlines:
+    the crash twin is published (tapestry #194 — amdihk64.dll spawns a
+    worker thread then UNLOADS; a late thread jumps into unmapped code;
+    the hook engine lives INSIDE the AMD D3D user-mode driver, so any
+    process with a D3D device hosts it and NO overlay toggle or AMD
+    opt-out removes it); the laptop's driver is a GPD OEM branch with no
+    fix in any 2024-2026 notes; ADLX ("AMD Device Library eXtra",
+    driver-resident amdadlx64.dll, full sensors incl. hotspot/NPU/
+    iGPU-shared) is the vendor lane and AMD's OWN docs prescribe the
+    user-process+IPC boundary; PDH GPU counters + D3DKMT
+    ADAPTERPERFDATA (temp deci-C, IN THE OFFICIAL SDK HEADER — enum 62;
+    0 = no sensor) are the vendor-free lanes. Roadmap P1 (PDH+D3DKMT in
+    the collector subprocess) / P2 (ADLX long-lived read-only helper
+    child) / P3 (event-driven DXGI on the non-AMD path) — all
+    owner-pending, NONE implemented.
 - Hardware HUD (6.1) — **REMOVED in 7.6 (owner decision 2026-11-07)**:
   `gui/hardware_hud.py` + `tests/test_hardware_hud.py` are gone. The HUD's
   2 s sampler (GetSystemTimes + GlobalMemoryStatusEx ctypes + nvidia-smi
