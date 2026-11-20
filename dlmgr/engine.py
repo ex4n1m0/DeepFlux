@@ -1080,10 +1080,51 @@ class DownloadEngine:
                     self._start_job(job)
                 active += 1
 
+    def _recv_speed_per_worker(self) -> int:
+        """Socket-level per-worker share of the global bandwidth limit
+        (curl lane only — see http_client.USING_CURL for why consumer-side
+        blocking cannot pace it). Lock-free on purpose: callers spawn
+        while holding the engine lock. The divisor is the worker budget
+        upper bound (max_concurrent jobs × max_connections segments), so
+        the aggregate stays at-or-under the configured limit; fewer live
+        workers simply transfer a bit slower than the cap — a politeness
+        limit, not a precision instrument. Rate changes apply to NEW
+        connections; pause+resume a job to apply one immediately."""
+        limit = self._bandwidth_limit
+        if limit <= 0 or not http_client.USING_CURL:
+            return 0
+        divisor = max(1, self._max_concurrent * self._max_connections)
+        return max(limit // divisor, 64 * 1024)
+
+    def _spawn_segment_worker(self, job: DownloadJob, seg: SegmentState,
+                              workers: Optional[List[SegmentWorker]] = None) -> SegmentWorker:
+        """Single spawn site for segment workers (start/retry/rebalance/
+        orphan-respawn) — keeps the callbacks, resume identity and the
+        socket-rate share identical everywhere."""
+        throttle = self._job_throttles.get(job.id)
+        worker = SegmentWorker(
+            url=job.url,
+            segment=seg,
+            file_path=job.save_path,
+            headers=job.headers,
+            cookies=job.cookies,
+            referrer=job.referrer,
+            on_progress=lambda n, jid=job.id: self._on_segment_progress(jid, n),
+            on_done=lambda ok, err, jid=job.id: self._on_segment_done(jid, ok, err),
+            throttle_event=throttle,
+            use_range=job.supports_ranges,
+            if_range=job.etag or job.last_modified,
+            expected_file_size=job.file_size,
+            max_recv_speed=self._recv_speed_per_worker(),
+        )
+        bucket = workers if workers is not None else self._workers.setdefault(job.id, [])
+        bucket.append(worker)
+        worker.start()
+        return worker
+
     def _start_job(self, job: DownloadJob) -> None:
         """Start (or restart) segment workers for a job."""
         job.status = JobStatus.DOWNLOADING
-        throttle = self._job_throttles.get(job.id)
         workers: List[SegmentWorker] = []
 
         for seg in job.segments:
@@ -1093,22 +1134,7 @@ class DownloadEngine:
                 seg.status = SegmentStatus.DONE
                 continue
 
-            worker = SegmentWorker(
-                url=job.url,
-                segment=seg,
-                file_path=job.save_path,
-                headers=job.headers,
-                cookies=job.cookies,
-                referrer=job.referrer,
-                on_progress=lambda n, jid=job.id: self._on_segment_progress(jid, n),
-                on_done=lambda ok, err, jid=job.id: self._on_segment_done(jid, ok, err),
-                throttle_event=throttle,
-                use_range=job.supports_ranges,
-                if_range=job.etag or job.last_modified,
-                expected_file_size=job.file_size,
-            )
-            workers.append(worker)
-            worker.start()
+            self._spawn_segment_worker(job, seg, workers)
 
         self._workers[job.id] = workers
         logger.info("Started job %s with %d workers", job.id, len(workers))
@@ -1116,8 +1142,16 @@ class DownloadEngine:
     def _on_segment_progress(self, job_id: str, bytes_downloaded: int) -> None:
         """Called by segment workers as data arrives."""
         # Block here to enforce the global bandwidth limit — the worker thread
-        # waits for tokens, which throttles its write rate.
-        self._limiter.acquire(bytes_downloaded)
+        # waits for tokens, which throttles its write rate. CURL LANE ONLY:
+        # curl_cffi's producer runs to EOF into an UNBOUNDED queue, so a
+        # blocked consumer just buffers the whole response in RAM (measured
+        # 2026-11-20: a 9 GB ISO → a 10 GB process) — on that lane the limit
+        # is enforced at the SOCKET (max_recv_speed, see _recv_speed_per_
+        # worker) and blocking here must never happen. The plain-requests
+        # fallback streams with natural TCP backpressure, where this token
+        # bucket is correct and stays.
+        if not http_client.USING_CURL:
+            self._limiter.acquire(bytes_downloaded)
         with self._lock:
             job = self._jobs.get(job_id)
             if job:
@@ -1167,6 +1201,7 @@ class DownloadEngine:
             try:
                 self._try_start_jobs()
                 self._auto_retry_errors()
+                self._respawn_orphan_segments()
                 self._rebalance_segments()
                 self._update_speeds_and_eta()
                 self._maybe_save_state()
@@ -1188,23 +1223,7 @@ class DownloadEngine:
                     seg.retries += 1
                     seg.status = SegmentStatus.PENDING
                     seg.error = ""
-                    throttle = self._job_throttles.get(job.id)
-                    worker = SegmentWorker(
-                        url=job.url,
-                        segment=seg,
-                        file_path=job.save_path,
-                        headers=job.headers,
-                        cookies=job.cookies,
-                        referrer=job.referrer,
-                        on_progress=lambda n, jid=job.id: self._on_segment_progress(jid, n),
-                        on_done=lambda ok, err, jid=job.id: self._on_segment_done(jid, ok, err),
-                        throttle_event=throttle,
-                        use_range=job.supports_ranges,
-                        if_range=job.etag or job.last_modified,
-                        expected_file_size=job.file_size,
-                    )
-                    self._workers.setdefault(job.id, []).append(worker)
-                    worker.start()
+                    self._spawn_segment_worker(job, seg)
                     logger.info("Retrying segment %d of job %s (attempt %d)", seg.index, job.id, seg.retries)
 
     def _rebalance_segments(self) -> None:
@@ -1238,23 +1257,7 @@ class DownloadEngine:
                         stalled_seg.retries += 1
                         if stalled_seg.retries > MAX_SEGMENT_RETRIES:
                             continue
-                        throttle = self._job_throttles.get(job_id)
-                        new_worker = SegmentWorker(
-                            url=job.url,
-                            segment=stalled_seg,
-                            file_path=job.save_path,
-                            headers=job.headers,
-                            cookies=job.cookies,
-                            referrer=job.referrer,
-                            on_progress=lambda n, jid=job_id: self._on_segment_progress(jid, n),
-                            on_done=lambda ok, err, jid=job_id: self._on_segment_done(jid, ok, err),
-                            throttle_event=throttle,
-                            use_range=job.supports_ranges,
-                            if_range=job.etag or job.last_modified,
-                            expected_file_size=job.file_size,
-                        )
-                        workers.append(new_worker)
-                        new_worker.start()
+                        self._spawn_segment_worker(job, stalled_seg, workers)
                         logger.info("Restarted stalled segment %d of job %s", stalled_seg.index, job_id)
                         continue
                     # One done worker budgets one stalled rebalance (a fresh
@@ -1289,24 +1292,41 @@ class DownloadEngine:
                     stalled_seg.end_byte = split_point - 1
 
                     # Start a new worker for the tail.
-                    throttle = self._job_throttles.get(job_id)
-                    new_worker = SegmentWorker(
-                        url=job.url,
-                        segment=new_seg,
-                        file_path=job.save_path,
-                        headers=job.headers,
-                        cookies=job.cookies,
-                        referrer=job.referrer,
-                        on_progress=lambda n, jid=job_id: self._on_segment_progress(jid, n),
-                        on_done=lambda ok, err, jid=job_id: self._on_segment_done(jid, ok, err),
-                        throttle_event=throttle,
-                        use_range=job.supports_ranges,
-                        if_range=job.etag or job.last_modified,
-                        expected_file_size=job.file_size,
-                    )
-                    workers.append(new_worker)
-                    new_worker.start()
+                    self._spawn_segment_worker(job, new_seg, workers)
                     logger.info("Rebalanced job %s: split segment %d at byte %d", job_id, stalled_seg.index, split_point)
+
+    def _respawn_orphan_segments(self) -> None:
+        """Restart PENDING segments of an active job that have NO live
+        worker. Two producers of that state: the 2026-09-15 rebalance
+        orphan class (worked around by marking ERROR — that workaround
+        stays), and the segment worker's BUFFER GUARD (2026-11-20: when
+        curl_cffi's unbounded producer queue swells past ~32 MB because
+        the consumer fell behind, the worker aborts the transfer and
+        parks its segment PENDING — WITHOUT consuming a retry — so a
+        slow-disk download would otherwise stall forever). Respawn does
+        not consume retries; identity-matching a segment to its live
+        workers avoids double-spawns during the rebalance dances."""
+        with self._lock:
+            for job_id, workers in list(self._workers.items()):
+                job = self._jobs.get(job_id)
+                if not job or job.status != JobStatus.DOWNLOADING or job.job_type != "file":
+                    continue
+                # Prune finished worker threads while we hold the list.
+                if workers:
+                    alive_workers = [w for w in workers if w.is_alive()]
+                    if len(alive_workers) != len(workers):
+                        self._workers[job_id] = workers = alive_workers
+                covered = {id(w.segment) for w in workers if w.is_alive()}
+                for seg in job.segments:
+                    if seg.status != SegmentStatus.PENDING:
+                        continue
+                    if seg.end_byte >= 0 and seg.remaining_bytes <= 0:
+                        continue
+                    if id(seg) in covered:
+                        continue  # a live worker owns it (between ticks)
+                    self._spawn_segment_worker(job, seg, workers)
+                    covered.add(id(seg))
+                    logger.info("Respawned orphan segment %d of job %s", seg.index, job_id)
 
     def _update_speeds_and_eta(self) -> None:
         """Update per-job speed and ETA from downloaded-byte deltas between ticks.

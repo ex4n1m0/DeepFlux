@@ -1530,3 +1530,54 @@ def test_folder_size_delegate_widens_hint_for_painted_text(qapp, tmp_path, monke
         widget.close()
         widget.deleteLater()
         qapp.processEvents()
+
+
+def test_hiding_tab_aborts_inflight_size_walks(qapp, tmp_path, monkeypatch):
+    """2026-11-20 resource audit: a C:\ root walk kept a core ~85% busy for
+    minutes AFTER the user switched tabs — the old gate only stopped NEW
+    scans. Hiding (or toggling Size off) must bump the generation so the
+    engine's superseded() check aborts in-flight walkers."""
+    class _Quiet:
+        def connect(self, *a, **k):
+            return None
+
+    class _StubEngine:
+        size_ready = _Quiet()
+        def cached_size(self, path):
+            return None
+        def request(self, paths, generation):
+            requests.append((list(paths), generation))
+        def forget(self, paths):
+            forgots.append(list(paths))
+
+    requests = []
+    forgots = []
+    monkeypatch.setattr(commander, "_folder_size_engine", lambda: _StubEngine())
+    (tmp_path / "sub").mkdir()
+    widget = CommanderTab(SimpleNamespace(default_save_path=str(tmp_path)))
+    try:
+        pane = widget.left_pane
+        widget.set_active(True)
+        pane.navigate(str(tmp_path))
+        assert _wait_until(lambda: pane._model.rowCount(
+            pane._view.rootIndex()) >= 1), "listing never populated"
+        pane._request_folder_sizes()
+        gen_before = pane._size_gen
+        assert requests, "scan queued nothing"
+
+        wanted_before = set(pane._size_wanted)
+        widget.set_active(False)          # hide the tab
+        assert pane._size_gen == gen_before + 1
+        assert forgots and set(forgots[0]) == wanted_before  # engine told
+        pane._request_folder_sizes()      # gate: wanted cleared, no request
+        assert pane._size_wanted == set()
+
+        pane.set_folder_sizes(False)      # the toggle aborts too
+        assert pane._size_gen == gen_before + 2
+        # Stale generation is what the engine's superseded() sees: a walker
+        # started under gen_before aborts at its next checkpoint.
+        assert all(gen == gen_before for _paths, gen in requests)
+    finally:
+        widget.close()
+        widget.deleteLater()
+        qapp.processEvents()

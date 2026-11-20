@@ -171,6 +171,15 @@ class _FolderSizeEngine(QObject):
         for item in fresh:
             self._queue.put(item)
 
+    def forget(self, paths: List[str]) -> None:
+        """Drop paths from the wanted map (tab hidden / Size toggled off):
+        queued items skip and IN-FLIGHT walkers abort at their next
+        checkpoint — wanted.get(path) is None, which never equals any
+        generation. Cached results stay cached."""
+        with self._lock:
+            for path in paths:
+                self._wanted.pop(path, None)
+
     # -- worker thread ------------------------------------------------------
     def _run(self) -> None:
         while True:
@@ -1070,20 +1079,41 @@ class FilePane(QWidget):
         if self._folder_sizes:
             self._request_folder_sizes()
         else:
+            # In-flight walks of this pane abort at their next checkpoint.
+            if self._size_wanted:
+                try:
+                    self._size_engine.forget(list(self._size_wanted))
+                except AttributeError:
+                    pass
             self._size_wanted = set()
+            self._size_gen += 1
 
     def shows_folder_sizes(self) -> bool:
         return self._folder_sizes
 
     def set_sizes_active(self, on: bool) -> None:
-        """CommanderTab-level visibility gate: recursive size walks run only
-        while the Command tab is the current main tab (System Health
-        doctrine). Activating re-kicks the scan; the background engine
-        also aborts in-flight walks of a hidden tab via the generation
-        check."""
+        """Per-pane visibility gate (CommanderTab.set_active drives it for
+        every pane — walks run only while the Command tab is current,
+        System Health doctrine). Activating re-kicks this pane's scan.
+        Deactivating BUMPS this pane's generation, so the engine's
+        superseded() check aborts the pane's in-flight walks within ~64
+        entries — a drive-root walk actually STOPS when the user looks
+        elsewhere (measured 2026-11-20: a C:\\ walk kept a core ~85% busy
+        for minutes after switching away before this bump)."""
         self._sizes_active = bool(on)
         if self._sizes_active:
             self._size_scan_timer.start()
+        else:
+            # Invalidate at the ENGINE too — a pane-side gen bump alone
+            # changes nothing the worker can see (the wanted-map entry
+            # still matches the walk's generation).
+            if self._size_wanted:
+                try:
+                    self._size_engine.forget(list(self._size_wanted))
+                except AttributeError:
+                    pass   # test stub engines may not implement forget()
+            self._size_wanted = set()
+            self._size_gen += 1
 
     def _size_text_for(self, index: QModelIndex) -> Optional[str]:
         """Folder-size text for the Size column. Consumed by the paint

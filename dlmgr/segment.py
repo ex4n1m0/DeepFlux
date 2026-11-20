@@ -22,6 +22,18 @@ STALL_TIMEOUT = 10.0
 # Chunk size for streaming reads (64 KB).
 CHUNK_SIZE = 65536
 
+# Live lesson 2026-11-20 (owner's machine, a 9 GB Windows 11 ISO → a
+# 10 GB process): curl_cffi's sync streaming runs the WHOLE transfer on
+# its own thread into an UNBOUNDED queue — whenever this consumer drains
+# slower than the network delivers (throttle, slow disk, random-seek
+# writes across 6 workers), the entire remaining response parks in RAM.
+# The worker defends itself: if the response's internal queue swells
+# past this many buffered chunks (~32+ MB), ABORT the transfer and hand
+# the segment back as PENDING — the engine's orphan respawner restarts
+# it from the last completed byte (If-Range), so no bytes are lost and
+# RAM stays bounded no matter what the producer does.
+_MAX_QUEUED_CHUNKS = 512
+
 
 class SegmentWorker(threading.Thread):
     """Downloads a single byte-range segment via HTTP Range requests.
@@ -47,6 +59,7 @@ class SegmentWorker(threading.Thread):
         use_range: bool = True,
         if_range: str = "",
         expected_file_size: int = 0,
+        max_recv_speed: int = 0,
     ) -> None:
         super().__init__(daemon=True, name=f"seg-{segment.index}")
         self._url = url
@@ -60,6 +73,7 @@ class SegmentWorker(threading.Thread):
         self._throttle_event = throttle_event  # set = paused
         self._use_range = use_range
         self._if_range = if_range
+        self._max_recv_speed = max(0, int(max_recv_speed))
         self._expected_file_size = expected_file_size
         self._stop_flag = threading.Event()
         self._last_data_time = time.time()
@@ -102,7 +116,9 @@ class SegmentWorker(threading.Thread):
 
             # No context manager here: curl_cffi's Response doesn't support
             # the protocol — close explicitly instead (requests' does both).
-            resp = http_client.get(self._url, headers=req_headers, stream=True, timeout=(10, 20))
+            resp = http_client.get(self._url, headers=req_headers, stream=True,
+                                   timeout=(10, 20),
+                                   max_recv_speed=self._max_recv_speed)
             try:
                 resp.raise_for_status()
                 ranged = self._use_range and self._segment.end_byte >= 0
@@ -133,6 +149,7 @@ class SegmentWorker(threading.Thread):
                     write_pos = request_start if ranged else 0
                     f.seek(write_pos)
                     response_bytes = 0
+                    chunks_seen = 0
                     expected_bytes = self._segment.end_byte - request_start + 1 if self._segment.end_byte >= 0 else -1
 
                     for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
@@ -166,6 +183,31 @@ class SegmentWorker(threading.Thread):
 
                         if self._on_progress:
                             self._on_progress(chunk_len)
+
+                        # Buffer guard (see _MAX_QUEUED_CHUNKS): abort before
+                        # curl_cffi's unbounded producer queue can swallow
+                        # the rest of the response into RAM. The finally
+                        # below closes the response, which sets quit_now —
+                        # the transfer thread stops filling the queue. The
+                        # segment parks PENDING; the engine's orphan
+                        # respawner restarts it from the last completed
+                        # byte, so nothing is re-downloaded (ranged jobs;
+                        # unknown-size jobs restart from zero — rare, and
+                        # still better than an OOM).
+                        chunks_seen += 1
+                        if chunks_seen % 64 == 0:
+                            q = getattr(resp, "queue", None)
+                            if q is not None and q.qsize() > _MAX_QUEUED_CHUNKS:
+                                self._segment.status = SegmentStatus.PENDING
+                                logger.info(
+                                    "segment %d: shed ~%.0f MB of buffered "
+                                    "response (consumer behind producer) — "
+                                    "restarting from byte %d",
+                                    self._segment.index,
+                                    q.qsize() * CHUNK_SIZE / 1e6,
+                                    self._segment.start_byte
+                                    + self._segment.completed_bytes)
+                                return
             finally:
                 close = getattr(resp, "close", None)
                 if callable(close):

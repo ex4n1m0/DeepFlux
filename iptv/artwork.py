@@ -577,37 +577,66 @@ class ArtworkCache:
 
 
 class _BoundedExecutor:
-    """A fixed-size worker pool fed by a priority queue (stdlib only).
+    """A bounded worker pool fed by a priority queue (stdlib only).
 
-    Unlike a semaphore + thread-per-task approach, submitting 50k tasks only
-    queues 50k work items — the worker thread count stays at ``max_workers``.
+    LAZY + SELF-RETIRING (owner resource directive 2026-11-20): workers
+    spawn on demand (one more whenever the queue backs up while every
+    current worker is busy) and each one exits after ``idle_timeout``
+    seconds without work. Constructing the pool costs ZERO threads — the
+    IPTV stack used to eagerly spawn 30 (artwork 12 + metadata 16 +
+    framegrab 2) the moment the full app opened, whether or not the Play
+    tab was ever touched (measured: 36-thread full app, 30 of them idle
+    artwork-family workers).
+
+    As before: submitting 50k tasks only queues 50k work items — the
+    thread count never exceeds ``max_workers``.
 
     Order is (priority, newest first). Scrolling a big grid keeps queueing
     prefetches; without this the tiles the user is looking at right now would
     sit behind a minute's worth of stale requests for rows they scrolled past.
     """
 
-    def __init__(self, max_workers: int = 6) -> None:
+    def __init__(self, max_workers: int = 6, idle_timeout: float = 30.0) -> None:
         import itertools
         import queue
         self._queue: "queue.PriorityQueue" = queue.PriorityQueue()
         self._counter = itertools.count()
         self._counter_lock = threading.Lock()
         self._max_workers = max_workers
+        self._idle_timeout = max(0.05, float(idle_timeout))
         self._shutdown = False
-        for _ in range(max_workers):
-            t = threading.Thread(target=self._worker, daemon=True)
-            t.start()
+        self._worker_count = 0
+        self._pool_lock = threading.Lock()
 
     def _next_seq(self) -> int:
         with self._counter_lock:
             return next(self._counter)
 
+    def _spawn_worker(self) -> None:
+        self._worker_count += 1
+        t = threading.Thread(target=self._worker, daemon=True)
+        t.start()
+
     def _worker(self) -> None:
+        import queue as _q
         while True:
-            _prio, _seq, fn, args, kwargs = self._queue.get()
+            try:
+                item = self._queue.get(timeout=self._idle_timeout)
+            except _q.Empty:
+                # Idle too long — retire. The get_nowait re-check under the
+                # pool lock closes the race against a submit() that queued
+                # work in the window between our timeout and the decrement.
+                try:
+                    item = self._queue.get_nowait()
+                except _q.Empty:
+                    with self._pool_lock:
+                        self._worker_count -= 1
+                    return
+            _prio, _seq, fn, args, kwargs = item
             if fn is None:  # shutdown sentinel
                 self._queue.task_done()
+                with self._pool_lock:
+                    self._worker_count -= 1
                 return
             try:
                 fn(*args, **kwargs)
@@ -617,14 +646,26 @@ class _BoundedExecutor:
                 self._queue.task_done()
 
     def submit(self, fn, *args, priority: int = PRIORITY_NORMAL, **kwargs) -> None:
-        if not self._shutdown:
+        with self._pool_lock:
+            if self._shutdown:
+                return
             # Negative sequence => most recently queued task runs first.
             self._queue.put((priority, -self._next_seq(), fn, args, kwargs))
+            # Grow one worker when the backlog says every current worker is
+            # (or will be) busy — bursts converge toward max_workers, a
+            # trickle keeps a single worker alive.
+            if self._queue.qsize() > self._worker_count \
+                    and self._worker_count < self._max_workers:
+                self._spawn_worker()
 
     def shutdown(self) -> None:
-        # Stop accepting work and let in-flight/queued tasks drain.
-        self._shutdown = True
-        # Wake each worker with a sentinel so blocked queue.get() calls return.
-        # Highest priority so exit isn't stuck behind a full prefetch queue.
-        for _ in range(self._max_workers):
-            self._queue.put((_PRIORITY_SHUTDOWN, -self._next_seq(), None, (), {}))
+        # Stop accepting work; in-flight tasks finish. Sentinels keep the
+        # OLD semantics: highest priority, so workers exit without draining
+        # a backlog of advisory prefetches (artwork grabs are re-queueable).
+        with self._pool_lock:
+            if self._shutdown:
+                return
+            self._shutdown = True
+            live = self._worker_count
+            for _ in range(live):
+                self._queue.put((_PRIORITY_SHUTDOWN, -self._next_seq(), None, (), {}))

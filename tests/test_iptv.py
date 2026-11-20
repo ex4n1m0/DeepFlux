@@ -5961,3 +5961,91 @@ def test_player_keys_forward_from_tab_when_focus_stranded():
     backend.seek_by.assert_called_once_with(10)
     tab.keyPressEvent(QKeyEvent(QEvent.KeyPress, Qt.Key_Left, Qt.NoModifier))
     assert [c.args for c in backend.seek_by.call_args_list] == [(10,), (-10,)]
+
+
+# -- lazy _BoundedExecutor (owner resource directive 2026-11-20) --------------
+
+def _executor_threads():
+    import threading
+    from iptv.artwork import _BoundedExecutor
+    return [t for t in threading.enumerate()
+            if getattr(t, "_df_executor_target", None)]
+
+
+def test_bounded_executor_is_lazy_and_self_retiring():
+    """Constructing the pool costs ZERO threads (the IPTV stack used to
+    eagerly hold 30: artwork 12 + metadata 16 + framegrab 2); workers grow
+    on demand up to max, all tasks run, and idle workers retire."""
+    import threading
+    import time as _time
+    from iptv.artwork import _BoundedExecutor
+
+    ex = _BoundedExecutor(max_workers=4, idle_timeout=0.2)
+    base = threading.active_count()
+    _time.sleep(0.1)
+    assert threading.active_count() == base   # nothing spawned at init
+
+    done = []
+    release = threading.Event()
+
+    def task(n):
+        release.wait(timeout=5)
+        done.append(n)
+
+    for i in range(4):
+        ex.submit(task, i)
+    _time.sleep(0.2)
+    grown = threading.active_count() - base
+    assert 1 <= grown <= 4          # grew on demand, capped at max
+    release.set()
+    deadline = _time.time() + 5
+    while len(done) < 4 and _time.time() < deadline:
+        _time.sleep(0.02)
+    assert sorted(done) == [0, 1, 2, 3]
+
+    # Idle timeout: every worker retires back to zero.
+    deadline = _time.time() + 5
+    while threading.active_count() > base and _time.time() < deadline:
+        _time.sleep(0.05)
+    assert threading.active_count() == base
+
+    # Respawn after retirement still works, then shutdown is clean.
+    release2 = threading.Event()
+    done2 = []
+    ex.submit(lambda: (release2.wait(timeout=5), done2.append(1)))
+    _time.sleep(0.2)
+    assert threading.active_count() > base
+    release2.set()
+    deadline = _time.time() + 5
+    while not done2 and _time.time() < deadline:
+        _time.sleep(0.02)
+    assert done2 == [1]
+    ex.shutdown()
+    deadline = _time.time() + 5
+    while threading.active_count() > base and _time.time() < deadline:
+        _time.sleep(0.05)
+    assert threading.active_count() == base
+
+
+def test_bounded_executor_shutdown_wakes_busy_pool():
+    import threading
+    import time as _time
+    from iptv.artwork import _BoundedExecutor
+
+    ex = _BoundedExecutor(max_workers=2, idle_timeout=30.0)
+    ran = []
+    ex.submit(lambda: ran.append(1))
+    ex.submit(lambda: ran.append(2))
+    deadline = _time.time() + 5
+    while len(ran) < 2 and _time.time() < deadline:
+        _time.sleep(0.02)
+    assert sorted(ran) == [1, 2]
+    # Shutdown wakes idle workers immediately (no 30 s idle-timeout wait);
+    # sentinels jump queued ADVISORY work by design (old semantics).
+    ex.shutdown()
+    deadline = _time.time() + 5
+    base = threading.active_count()
+    while threading.active_count() == base and _time.time() < deadline:
+        _time.sleep(0.05)
+    # workers exit via the sentinels (no 30 s idle wait)
+    assert threading.active_count() <= base

@@ -205,7 +205,8 @@ class _RangeServer:
         self.requests = []
         self._re = _re
 
-    def get(self, url, headers=None, timeout=15, stream=False):
+    def get(self, url, headers=None, timeout=15, stream=False,
+            max_recv_speed=0):
         rng = (headers or {}).get("Range")
         if not self.support_ranges or not rng:
             self.requests.append((rng, 200))

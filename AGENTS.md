@@ -679,6 +679,48 @@
 - MATRIX RAIN SPEED (owner 2026-11-18 "reduce the speed"):
   `gui/matrix_rain.py` SPEED_MIN/MAX 0.12–0.55 cells/tick (was 0.25–1.1
   at the same 18 fps); pinned by tests/test_matrix_rain.py.
+- RESOURCE FRUGALITY (owner directive 2026-11-20: "only take the
+  resources needed for the current tasks, park other processes"):
+  * **curl_cffi streaming has NO backpressure** — its sync lane runs the
+    WHOLE transfer on its own thread into an UNBOUNDED queue (verified in
+    its session.py: `c.perform()` on an executor thread, plain
+    `queue.Queue`); a consumer that blocks (old token bucket) or just
+    writes slower than the network (6 workers random-seeking an HDD) lets
+    the ENTIRE remaining response park in RAM. MEASURED live: a 9 GB
+    Windows 11 ISO → a 10.3 GB process on 8.9. Fixes (all pinned by
+    tests/test_dlmgr.py): `http_client.USING_CURL` tells the lanes apart;
+    the curl lane throttles at the SOCKET (`max_recv_speed` =
+    CURLOPT_MAX_RECV_SPEED_LARGE, split across the worker budget —
+    consumer-side `limiter.acquire` is SKIPPED there and stays only on
+    the requests fallback, which has natural TCP backpressure);
+    SegmentWorker carries a BUFFER GUARD (response queue > 512 chunks ≈
+    32 MB → abort + park PENDING, close() sets quit_now and aborts the
+    producer); the engine's `_respawn_orphan_segments` monitor step
+    restarts PENDING segments with NO live worker WITHOUT consuming
+    retries (also the general fix for the 2026-09-15 orphan-hang class
+    the rebalancer used to paper over with ERROR+retry).
+  * **IPTV `_BoundedExecutor` is LAZY + SELF-RETIRING** (iptv/artwork.py,
+    shared by artwork 12 / metadata 16 / framegrab 2 = 30 EAGER threads
+    the moment the full app opened, all idle unless Play is used):
+    construction spawns ZERO threads, workers grow on demand when the
+    queue backs up, each retires after 30 s idle; shutdown sentinels
+    still jump queued ADVISORY work (old semantics, pinned). MEASURED:
+    full app 36 → 6 threads at idle, RSS unchanged ~240 MB.
+  * **Commander folder-size walks ABORT on tab-hide/Size-off**:
+    `set_sizes_active(False)` and `set_folder_sizes(False)` call the
+    engine's `forget(paths)` (drops the wanted-map entries —
+    `wanted.get(path) is None` matches no generation, so in-flight
+    walkers raise _Cancelled within 64 entries) AND bump the pane gen.
+    A pane-side gen bump ALONE aborts nothing (the wanted entry still
+    matches the walk's generation). MEASURED: a C:\ root walk held ~98%
+    of a core; after leaving the tab → 7.3% idle (rain only). While the
+    tab is VISIBLE the walk at full speed is the feature working on
+    demand.
+  * Mini player: 1 thread / 59 MB (already the frugality benchmark);
+    morph cycles leak nothing (MainWindow reuse, -1 thread delta).
+    Matrix rain: ~7% of one core while visible (intended visual), timer
+    already stops when hidden/after first message — do not "optimize"
+    it further without an owner decision.
 - COMMANDER SIZE COLUMN (owner request 2026-11-19, "show file sizes and
   folder sizes, default on"): a checkable "Size" button in the Commander
   F-key bar (first to overflow into the ⋯ menu) toggles the panes' Size

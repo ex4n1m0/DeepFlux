@@ -611,3 +611,189 @@ def test_hls_tolerance_is_zero_for_short_streams():
     assert failed_segment_tolerance(200) == 1
     assert failed_segment_tolerance(1920) == 9
 
+
+
+# -- RAM bomb fix (2026-11-20: a 9 GB ISO made the process hold ~10 GB) -------
+
+class _FakeQueue:
+    def __init__(self, size):
+        self._size = size
+
+    def qsize(self):
+        return self._size
+
+
+class _BloatyResp(_FakeResp):
+    """curl_cffi-shaped stub: a real queue attribute whose qsize() reports
+    a runaway producer buffer (> segment._MAX_QUEUED_CHUNKS)."""
+
+    def __init__(self, data, buffered_chunks, status_code=206, headers=None):
+        super().__init__(data, status_code=status_code, headers=headers)
+        self.queue = _FakeQueue(buffered_chunks)
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_segment_worker_sheds_runaway_buffer(tmp_path):
+    """The guard: when curl_cffi's unbounded producer queue swells past
+    _MAX_QUEUED_CHUNKS because the consumer fell behind, the worker ABORTS
+    (status PENDING, response closed) instead of letting the whole
+    remaining response park in RAM. Bytes already written survive."""
+    dest = str(tmp_path / "file.bin")
+    open(dest, "wb").close()
+    # ≥ 64 chunks of 64 KiB so the every-64-chunks guard checkpoint fires
+    data = b"z" * (70 * 65536)
+    seg = SegmentState(index=0, start_byte=0, end_byte=len(data) - 1)
+    w = SegmentWorker("http://x/f", seg, dest)
+    resp = _BloatyResp(
+        data, buffered_chunks=10_000,
+        headers={"Content-Range": f"bytes 0-{len(data)-1}/{len(data)}"})
+    with mock.patch("dlmgr.segment.http_client.get", return_value=resp):
+        w.run()
+    assert seg.status == SegmentStatus.PENDING
+    assert resp.closed is True                      # transfer aborted
+    # The guard trips at the 64-chunk checkpoint: 64 chunks are on disk,
+    # the remaining ~6 chunks of buffered data were shed (not written).
+    assert seg.completed_bytes == 64 * 65536
+    with open(dest, "rb") as f:
+        assert f.read() == data[: 64 * 65536]
+
+
+def test_segment_worker_unbothered_by_small_buffer(tmp_path):
+    """A well-behaved queue (or a plain requests response with NO queue
+    attribute at all) must complete normally — the guard never trips."""
+    dest = str(tmp_path / "file.bin")
+    open(dest, "wb").close()
+    data = b"y" * (70 * 65536)
+    seg = SegmentState(index=0, start_byte=0, end_byte=len(data) - 1)
+    w = SegmentWorker("http://x/f", seg, dest)
+    resp = _BloatyResp(
+        data, buffered_chunks=4,
+        headers={"Content-Range": f"bytes 0-{len(data)-1}/{len(data)}"})
+    with mock.patch("dlmgr.segment.http_client.get", return_value=resp):
+        w.run()
+    assert seg.status == SegmentStatus.DONE   # guard never tripped
+
+
+def test_segment_worker_passes_socket_speed_to_http_client(tmp_path):
+    dest = str(tmp_path / "file.bin")
+    open(dest, "wb").close()
+    data = b"y" * 1000
+    seg = SegmentState(index=0, start_byte=0, end_byte=999)
+    w = SegmentWorker("http://x/f", seg, dest, max_recv_speed=12345)
+    resp = _FakeResp(data, status_code=206,
+                     headers={"Content-Range": "bytes 0-999/1000"})
+    with mock.patch("dlmgr.segment.http_client.get", return_value=resp) as g:
+        w.run()
+    assert g.call_args.kwargs["max_recv_speed"] == 12345
+
+
+def test_engine_progress_never_blocks_on_curl_lane(engine, monkeypatch):
+    """On the curl lane the limiter.acquire must NOT run — a blocked
+    consumer is exactly what buffered a 9 GB response in RAM. The token
+    bucket stays for the plain-requests fallback (natural backpressure)."""
+    calls = []
+    monkeypatch.setattr(engine._limiter, "acquire", lambda n: calls.append(n))
+    engine._jobs["j"] = DownloadJob(
+        id="j", url="http://x/f", filename="f", save_path="x")
+    monkeypatch.setattr(http_client, "USING_CURL", True)
+    engine._on_segment_progress("j", 65536)
+    assert calls == []
+    monkeypatch.setattr(http_client, "USING_CURL", False)
+    engine._on_segment_progress("j", 65536)
+    assert calls == [65536]
+
+
+def test_engine_respawns_orphan_pending_segments(engine):
+    """A PENDING segment with no live worker (the guard's exit state — and
+    the 2026-09-15 orphan class generally) must be restarted WITHOUT
+    consuming a retry; a live worker's segment must never double-spawn."""
+    job = DownloadJob(id="j", url="http://x/f", filename="f",
+                      save_path=str("x"))
+    job.status = JobStatus.DOWNLOADING
+    seg_a = SegmentState(index=0, start_byte=0, end_byte=99)
+    seg_b = SegmentState(index=1, start_byte=100, end_byte=199)
+    seg_a.status = SegmentStatus.PENDING
+    seg_b.status = SegmentStatus.PENDING
+    job.segments = [seg_a, seg_b]
+    engine._jobs["j"] = job
+
+    class _AliveWorker:      # between ticks: owns seg_a, must not respawn
+        segment = seg_a
+
+        def is_alive(self):
+            return True
+
+    class _DeadWorker:       # guard-exited worker: pruned, seg_b orphaned
+        segment = seg_b
+
+        def is_alive(self):
+            return False
+
+    class _StubWorker:
+        def __init__(self, **kwargs):
+            self.segment = kwargs["segment"]
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+        def is_alive(self):
+            return True
+
+    engine._workers["j"] = [_AliveWorker(), _DeadWorker()]
+    spawned = []
+    real_spawn = engine._spawn_segment_worker
+
+    def _record(job_, seg, workers=None):
+        w = _StubWorker(url=job_.url, segment=seg, file_path=job_.save_path)
+        (workers if workers is not None
+         else engine._workers.setdefault(job_.id, [])).append(w)
+        spawned.append(seg)
+        return w
+
+    with mock.patch.object(engine, "_spawn_segment_worker", _record):
+        engine._respawn_orphan_segments()
+
+    assert spawned == [seg_b]                    # only the uncovered one
+    workers = engine._workers["j"]
+    assert all(w.__class__ is _StubWorker or w.__class__ is _AliveWorker
+               for w in workers)                 # dead worker pruned
+
+
+def test_recv_speed_share_math(engine, monkeypatch):
+    monkeypatch.setattr(http_client, "USING_CURL", True)
+    engine._bandwidth_limit = 16_000_000
+    engine._max_concurrent = 2
+    engine._max_connections = 8
+    assert engine._recv_speed_per_worker() == 1_000_000   # 16M // 16
+    engine._bandwidth_limit = 100_000            # floor protects tiny limits
+    assert engine._recv_speed_per_worker() == 64 * 1024
+    engine._bandwidth_limit = 0                  # unlimited → 0
+    assert engine._recv_speed_per_worker() == 0
+    monkeypatch.setattr(http_client, "USING_CURL", False)  # requests lane
+    engine._bandwidth_limit = 1_000_000
+    assert engine._recv_speed_per_worker() == 0
+
+
+def test_http_client_forwards_max_recv_speed_to_curl(monkeypatch):
+    """The socket cap reaches curl_cffi's request kwargs on the curl lane
+    (and is simply absent on the requests fallback)."""
+    recorded = {}
+
+    class _FakeSession:
+        def get(self, url, **kwargs):
+            recorded.update(kwargs)
+            return _FakeResp(b"", headers={})
+
+    monkeypatch.setattr(http_client, "_HAS_CURL_CFFI", True)
+    monkeypatch.setattr(http_client, "_session", lambda: _FakeSession())
+    http_client.get("https://example.com/f", max_recv_speed=4321)
+    assert recorded.get("max_recv_speed") == 4321
+    monkeypatch.setattr(http_client, "_HAS_CURL_CFFI", False)
+    with mock.patch.object(http_client.requests, "request",
+                           return_value=_FakeResp(b"")) as g:
+        http_client.get("https://example.com/f", max_recv_speed=4321)
+    assert "max_recv_speed" not in g.call_args.kwargs

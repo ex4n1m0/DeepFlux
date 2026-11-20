@@ -29,6 +29,16 @@ except ImportError:
     _HAS_CURL_CFFI = False
     logger.info("curl_cffi not installed — downloads use plain requests TLS fingerprint")
 
+# Which lane every caller got. CRITICAL for throttling (measured live
+# 2026-11-20, a 9 GB Windows 11 ISO): curl_cffi's sync streaming runs the
+# WHOLE transfer on its own thread into an UNBOUNDED queue — the consumer
+# pacing itself (our token bucket) can NOT slow the producer, so blocking
+# the reader just buffers the entire remaining response in RAM. The curl
+# lane must throttle at the SOCKET (max_recv_speed); the plain-requests
+# fallback streams from the socket as the reader iterates (natural TCP
+# backpressure), where the token bucket remains correct.
+USING_CURL = _HAS_CURL_CFFI
+
 # Chrome impersonation profile. "chrome" tracks the latest known-good alias.
 _IMPERSONATE = "chrome"
 
@@ -101,26 +111,38 @@ def validate_public_url(url: str) -> str:
     return parsed.geturl()
 
 
-def _request_once(method: str, url: str, headers, timeout, stream: bool):
+def _request_once(method: str, url: str, headers, timeout, stream: bool,
+                  max_recv_speed: int = 0):
     if _HAS_CURL_CFFI:
         try:
             request = getattr(_session(), method.lower())
-            return request(url, headers=headers, timeout=timeout, stream=stream, allow_redirects=False)
+            kwargs = {}
+            if max_recv_speed > 0:
+                # Socket-level receive cap (CURLOPT_MAX_RECV_SPEED_LARGE):
+                # the ONLY pacing that works on this lane — see USING_CURL.
+                kwargs["max_recv_speed"] = max_recv_speed
+            return request(url, headers=headers, timeout=timeout, stream=stream,
+                           allow_redirects=False, **kwargs)
         except Exception as exc:
             # Fingerprint failures (unsupported target, etc.) fall back to
             # plain requests; HTTP errors (403/404) are returned as-is.
             if getattr(exc, "response", None) is not None:
                 raise
             logger.debug("curl_cffi %s failed (%s) — retrying with requests", method, exc)
+    # The requests fallback has no receive-rate option and does not need
+    # one (iter_content reads pace the socket); the caller's token bucket
+    # applies on this lane.
     return requests.request(
         method, url, headers=headers, timeout=timeout, stream=stream, allow_redirects=False)
 
 
-def _request(method: str, url: str, headers, timeout, stream: bool, allow_redirects: bool):
+def _request(method: str, url: str, headers, timeout, stream: bool,
+             allow_redirects: bool, max_recv_speed: int = 0):
     current = url
     for _ in range(7):
         current = validate_public_url(current)
-        response = _request_once(method, current, headers, timeout, stream)
+        response = _request_once(method, current, headers, timeout, stream,
+                                 max_recv_speed)
         if not allow_redirects or response.status_code not in (301, 302, 303, 307, 308):
             return response
         location = response.headers.get("Location", "")
@@ -137,9 +159,15 @@ def get(
     timeout=15,
     stream: bool = False,
     allow_redirects: bool = True,
+    max_recv_speed: int = 0,
 ):
-    """GET with a Chrome TLS fingerprint when curl_cffi is available."""
-    return _request("GET", url, _sanitize_headers(headers), timeout, stream, allow_redirects)
+    """GET with a Chrome TLS fingerprint when curl_cffi is available.
+    ``max_recv_speed`` (bytes/sec, 0 = unlimited) caps the SOCKET on the
+    curl lane — see USING_CURL for why consumer-side pacing cannot work
+    there. The plain-requests fallback ignores it (its streaming has
+    natural backpressure)."""
+    return _request("GET", url, _sanitize_headers(headers), timeout, stream,
+                    allow_redirects, max_recv_speed)
 
 
 def head(url: str, headers: Optional[Dict[str, str]] = None, timeout=15, allow_redirects: bool = True):

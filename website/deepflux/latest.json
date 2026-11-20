@@ -1,8 +1,8 @@
 {
-  "version": "9.1",
-  "file": "DeepFlux9.1Setup.exe",
-  "size": 508698733,
-  "sha256": "17003c5ce853fa47dba1aef8f7ba2d9544d8436b2abda1ca2eacdd22b3b24eea",
+  "version": "9.2",
+  "file": "DeepFlux9.2Setup.exe",
+  "size": 508805347,
+  "sha256": "0a90c703db3bc41b19796295a093a472ebbe091cfe26421da26f5f7eafa164df",
   "released": "2026-11-20",
-  "notes": "DeepFlux 9.1 - stability fix for AMD laptops: the System Health tab's GPU reading no longer touches the graphics-driver layer on AMD machines (the step-by-step diagnosis showed it was the crash trigger); the GPU card shows 'skipped on AMD (stability)' there. NVIDIA and Intel machines are unchanged."
+  "notes": "DeepFlux 9.2 - memory and CPU frugality: large downloads no longer buffer into RAM (a 9 GB ISO download used to hold 10 GB of memory - the HTTP layer now throttles at the socket and sheds runaway buffers, resuming without losing progress), the app idles at 6 background threads instead of 36 (IPTV pools now spin up only when the Play tab works), and the Commander's folder-size walks stop the moment you leave the tab instead of grinding the disk for minutes. Includes all 9.0/9.1 features and the AMD laptop stability fix."
 }
