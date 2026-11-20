@@ -1384,6 +1384,11 @@
     gets the note). Do NOT "fix" this by re-enabling dxgi on AMD without
     a new owner decision; the local-model picker's dxgi chain is a
     separate call site (still TTL-cached, untouched).
+    OWNER-CONFIRMED 2026-11-20: the laptop is STABLE with the skip in —
+    the dxgi-walk→overlay-hook mechanism is now causally proven, not
+    just correlated. Any future AMD live-GPU-stats work must use the
+    study's P2a shape (D3DKMTQueryStatistics in a SUBPROCESS — the hook
+    dies with the child, never the GUI), never an in-process walk.
 - Hardware HUD (6.1) — **REMOVED in 7.6 (owner decision 2026-11-07)**:
   `gui/hardware_hud.py` + `tests/test_hardware_hud.py` are gone. The HUD's
   2 s sampler (GetSystemTimes + GlobalMemoryStatusEx ctypes + nvidia-smi
