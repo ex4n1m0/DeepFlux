@@ -541,6 +541,11 @@ class SystemHealthTab(QWidget):
                 state, note = "ok", ""
             except Exception as exc:   # readers never raise — belt anyway
                 state, note = "error", str(exc)[:60]
+            part = snap.get(key)
+            if state == "ok" and isinstance(part, dict) and part.get("skipped"):
+                # e.g. the GPU reading on AMD machines (owner 2026-11-20):
+                # the step succeeded by NOT running its dangerous part.
+                note = f"skipped ({part['skipped']})"
             elapsed_ms = int((time.monotonic() - started) * 1000)
             detail = f"{elapsed_ms} ms" + (f"  {note}" if note else "")
             system_health.step_log(
@@ -585,17 +590,26 @@ class SystemHealthTab(QWidget):
 
         gpu = snap.get("gpu") or {}
         gpu_pct = gpu.get("percent") if gpu.get("live") else None
+        if gpu.get("skipped") == "amd":
+            # Owner directive 2026-11-20: the dxgi-based GPU reading is OFF
+            # on AMD machines (stability) — say so instead of "not detected".
+            gpu_sub = tr("skipped on AMD (stability)")
+        else:
+            gpu_sub = _elide(gpu.get("name") or tr("not detected"), 30)
         self._gpu_m.set_reading(
             f"{gpu_pct:.0f}%" if gpu_pct is not None else "—",
-            gpu_pct, sub=_elide(gpu.get("name") or tr("not detected"), 30))
+            gpu_pct, sub=gpu_sub)
         vram_pct = None
         if gpu.get("live") and gpu.get("vram_total_mb"):
             vram_pct = min(100.0, gpu["vram_used_mb"] * 100.0
                            / gpu["vram_total_mb"])
+        vram_sub = (f"{gpu.get('vram_used_mb', 0) / 1024:.1f}/"
+                    f"{gpu.get('vram_total_mb', 0) / 1024:.1f} GB")
+        if gpu.get("skipped") == "amd":
+            vram_sub = tr("skipped on AMD (stability)")
         self._vram_m.set_reading(
             f"{vram_pct:.0f}%" if vram_pct is not None else "—", vram_pct,
-            sub=(f"{gpu.get('vram_used_mb', 0) / 1024:.1f}/"
-                 f"{gpu.get('vram_total_mb', 0) / 1024:.1f} GB"))
+            sub=vram_sub)
 
         temps = snap.get("temperatures") or {}
         gpu_t = temps.get("gpu_c")

@@ -1,8 +1,8 @@
 {
-  "version": "9.0",
-  "file": "DeepFlux9.0Setup.exe",
-  "size": 508723149,
-  "sha256": "8d89f0dad8ada755cb5f99f98dfe97f43951b5efbf26c32bd7e40e5c4ec10118",
-  "released": "2026-11-19",
-  "notes": "DeepFlux 9.0 - Commander Size column: file sizes plus folder sizes totalled recursively in the background (on by default, toggle in the Command tab). Background music now starts every time the full app opens (white button while playing, press to stop; dark when off). Also includes the full player keyboard fix (arrow keys work with SVP out-of-process video)."
+  "version": "9.1",
+  "file": "DeepFlux9.1Setup.exe",
+  "size": 508698733,
+  "sha256": "17003c5ce853fa47dba1aef8f7ba2d9544d8436b2abda1ca2eacdd22b3b24eea",
+  "released": "2026-11-20",
+  "notes": "DeepFlux 9.1 - stability fix for AMD laptops: the System Health tab's GPU reading no longer touches the graphics-driver layer on AMD machines (the step-by-step diagnosis showed it was the crash trigger); the GPU card shows 'skipped on AMD (stability)' there. NVIDIA and Intel machines are unchanged."
 }

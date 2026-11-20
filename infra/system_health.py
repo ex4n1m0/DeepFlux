@@ -19,7 +19,11 @@ Data sources, all dependency-free:
 - RAM + commit charge: GlobalMemoryStatusEx / /proc/meminfo.
 - GPU live: nvidia-smi via hardware_monitor.nvidia_smi_query (utilization,
   VRAM, temperature, fan, power, PCIe link) with its built-in 60 s failure
-  backoff; static fallback via dxgi_adapters.
+  backoff; static fallback via dxgi_adapters — which is TURNED OFF on AMD
+  machines (owner directive 2026-11-20: the AMD/Adrenalin overlay's dxgi
+  hook has killed the process on the owner's AMD laptop — 8.8 arc, and the
+  8.9 step-by-step died exactly AT the GPU step; hybrid AMD+NVIDIA boxes
+  still show their nvidia-smi live data before the gate).
 - Disks: shutil.disk_usage per fixed volume for space; live read/write
   throughput via IOCTL_DISK_PERFORMANCE deltas (no admin needed — a volume
   that refuses the IOCTL is marked cold and never asked again).
@@ -1023,6 +1027,66 @@ def _clamp(v, lo: float, hi: float):
     return v if lo <= v <= hi else None
 
 
+_AMD_MARKERS = ("amd", "radeon", "ati ")   # ATI with trailing space: "ATI Radeon", not "Numeric"
+
+
+def _amd_from_driver_descs(descs: List[str]) -> bool:
+    """True when any display-adapter DriverDesc names AMD hardware."""
+    for desc in descs:
+        lowered = (desc or "").lower()
+        if any(marker in lowered for marker in _AMD_MARKERS):
+            return True
+    return False
+
+
+_AMD_DISPLAY_CACHE: Optional[bool] = None
+
+
+def _amd_display_present() -> bool:
+    """One pure-registry probe: does this machine carry an AMD display
+    adapter? Registry only — NO COM, NO dxgi factory (the whole point:
+    detecting the AMD case must not itself drive the overlay's dxgi hook).
+    Cached for the process; POSIX has no AMD-overlay problem → False."""
+    global _AMD_DISPLAY_CACHE
+    if _AMD_DISPLAY_CACHE is not None:
+        return _AMD_DISPLAY_CACHE
+    present = False
+    if os.name == "nt":
+        try:
+            import winreg
+            # Display-adapter device class: 0000..NNNN subkeys, each with a
+            # DriverDesc value naming the adapter ("AMD Radeon 780M", …).
+            root = winreg.OpenKey(
+                winreg.HKEY_LOCAL_MACHINE,
+                r"SYSTEM\CurrentControlSet\Control\Class"
+                r"\{4d36e968-e325-11ce-bfc1-08002be10318}")
+            try:
+                descs: List[str] = []
+                index = 0
+                while True:
+                    try:
+                        subkey_name = winreg.EnumKey(root, index)
+                    except OSError:
+                        break
+                    index += 1
+                    if not subkey_name.isdigit():
+                        continue
+                    try:
+                        with winreg.OpenKey(root, subkey_name) as sub:
+                            desc, _ = winreg.QueryValueEx(sub, "DriverDesc")
+                            if isinstance(desc, str):
+                                descs.append(desc)
+                    except OSError:
+                        continue
+                present = _amd_from_driver_descs(descs)
+            finally:
+                root.Close()
+        except Exception:
+            present = False   # unreadable registry = don't gate (probe once)
+    _AMD_DISPLAY_CACHE = present
+    return present
+
+
 def _gpu_block(force: bool = False) -> dict:
     gpu: Dict[str, Any] = {
         "name": "", "live": False, "percent": None,
@@ -1049,6 +1113,15 @@ def _gpu_block(force: bool = False) -> dict:
             "pcie_gen": _clamp(g.get("pcie_gen"), 0.0, 16.0),
             "pcie_width": _clamp(g.get("pcie_width"), 0.0, 64.0),
         })
+        return gpu
+    if _amd_display_present():
+        # Owner directive 2026-11-20 ("turn off this reading for AMD gpus"):
+        # the dxgi adapter walk drives the AMD/Adrenalin overlay's in-process
+        # dxgi hook — the 8.8 arc's crash source, and the 8.9 step-by-step
+        # died exactly AT this step on the owner's AMD laptop. nvidia-smi
+        # already ran above (hybrid boxes keep their live data); the dxgi
+        # fallback is simply OFF on AMD machines.
+        gpu["skipped"] = "amd"
         return gpu
     static = hardware_monitor.dxgi_adapters(force)
     if static:

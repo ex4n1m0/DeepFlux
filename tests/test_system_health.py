@@ -59,6 +59,7 @@ def _isolated(monkeypatch):
     monkeypatch.setattr(sh, "network_snapshot", lambda: [])
     monkeypatch.setattr(sh, "drive_health_snapshot", lambda: [])
     monkeypatch.setattr(sh, "battery_status", lambda: None)
+    monkeypatch.setattr(sh, "_AMD_DISPLAY_CACHE", None)
     _FAKE_IO.clear()
     sh._disk_last.clear()
     sh._disk_dead.clear()
@@ -1242,3 +1243,135 @@ def test_tab_step_mode_off_is_invisible(qapp):
     assert tab._step_mode is False
     assert not tab._step_host.isVisibleTo(tab)
     tab.shutdown()
+
+
+# -- AMD GPU gate (owner directive 2026-11-20) --------------------------------
+
+def test_amd_detection_from_driver_descs():
+    assert sh._amd_from_driver_descs(["AMD Radeon 780M"]) is True
+    assert sh._amd_from_driver_descs(["AMD Radeon(TM) Graphics"]) is True
+    assert sh._amd_from_driver_descs(["ATI Radeon HD 4800"]) is True
+    assert sh._amd_from_driver_descs(
+        ["NVIDIA GeForce RTX 5080", "Intel(R) Iris(R) Xe Graphics"]) is False
+    assert sh._amd_from_driver_descs(["", "Intel(R) Graphics"]) is False
+
+
+def test_gpu_reading_never_touches_dxgi_on_amd(monkeypatch):
+    """The whole point of the gate: on an AMD machine the dxgi adapter walk
+    must NEVER run (owner's laptop died at this step — 8.9 step-by-step)."""
+    monkeypatch.setattr(sh, "_amd_display_present", lambda: True)
+    monkeypatch.setattr(sh.hardware_monitor, "nvidia_smi_query", lambda: [])
+
+    def _forbidden(*_a, **_k):
+        raise AssertionError("dxgi_adapters ran on an AMD machine")
+    monkeypatch.setattr(sh.hardware_monitor, "dxgi_adapters", _forbidden)
+
+    gpu = sh._gpu_block(force=True)   # step mode bypasses the 8.8 cache
+    assert gpu["skipped"] == "amd"
+    assert gpu["name"] == "" and gpu["live"] is False
+    assert gpu["temp_c"] is None      # absent never warns
+
+
+def test_hybrid_amd_keeps_nvidia_live_data(monkeypatch):
+    """smi runs BEFORE the gate — an AMD iGPU + NVIDIA dGPU box still shows
+    its live NVIDIA numbers without ever walking dxgi."""
+    monkeypatch.setattr(sh, "_amd_display_present", lambda: True)
+    monkeypatch.setattr(sh.hardware_monitor, "nvidia_smi_query", lambda: [{
+        "name": "NVIDIA GeForce RTX 5080", "util": 41.0,
+        "mem_used_mb": 6144, "mem_total_mb": 16003,
+        "temp_c": 61.0, "fan_percent": 35.0, "power_w": 120.5,
+        "pcie_gen": 5.0, "pcie_width": 16.0,
+    }])
+
+    def _forbidden(*_a, **_k):
+        raise AssertionError("dxgi_adapters ran on an AMD machine")
+    monkeypatch.setattr(sh.hardware_monitor, "dxgi_adapters", _forbidden)
+
+    gpu = sh._gpu_block(force=True)
+    assert gpu["live"] is True
+    assert "skipped" not in gpu
+    assert gpu["name"] == "NVIDIA GeForce RTX 5080"
+
+
+def test_gpu_reading_keeps_dxgi_fallback_elsewhere(monkeypatch):
+    monkeypatch.setattr(sh, "_amd_display_present", lambda: False)
+    monkeypatch.setattr(sh.hardware_monitor, "nvidia_smi_query", lambda: [])
+    monkeypatch.setattr(sh.hardware_monitor, "dxgi_adapters",
+                        lambda force=False: [("Intel(R) UHD Graphics", 4096)])
+    gpu = sh._gpu_block(force=True)
+    assert "skipped" not in gpu
+    assert gpu["name"] == "Intel(R) UHD Graphics"
+    assert gpu["vram_total_mb"] == 4096
+
+
+def test_amd_probe_posix_false_and_cached(monkeypatch):
+    """POSIX → False; a filled cache answers without any re-read."""
+    monkeypatch.setattr(sh.os, "name", "posix")
+    assert sh._amd_display_present() is False
+    sh._AMD_DISPLAY_CACHE = True
+    assert sh._amd_display_present() is True    # cached, nothing re-read
+
+
+def test_amd_probe_walks_display_class_keys(monkeypatch):
+    """The registry walk: digit subkeys 0000..N of the display class, their
+    DriverDesc values feed the predicate; non-digit keys and missing values
+    are skipped; enumeration ends at the first OSError."""
+    import sys
+    import types
+
+    class _Key:
+        def __init__(self, desc=None):
+            self.desc = desc
+
+        def Close(self):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    root = _Key()
+    # 0000 = AMD iGPU, "Properties" = non-digit (skipped), 0001 = NVIDIA,
+    # then enumeration raises OSError (list exhausted).
+    subkeys = {"0000": _Key("AMD Radeon 780M"),
+               "Properties": _Key("ignored"),
+               "0001": _Key("NVIDIA GeForce RTX 5080")}
+    order = ["0000", "Properties", "0001"]
+    seen_paths = []
+
+    def open_key(hive, path):
+        seen_paths.append(path)
+        if path.endswith("{4d36e968-e325-11ce-bfc1-08002be10318}"):
+            assert hive == 0
+            return root
+        if path in subkeys:            # subkey open: root + subkey name
+            return subkeys[path]
+        raise OSError("missing")
+
+    def enum_key(_key, index):
+        if index >= len(order):
+            raise OSError("no more")
+        return order[index]
+
+    def query_value_ex(key, value):
+        assert value == "DriverDesc"
+        return (key.desc, None)
+
+    fake = types.ModuleType("winreg")
+    fake.HKEY_LOCAL_MACHINE = 0
+    fake.OpenKey = open_key
+    fake.EnumKey = enum_key
+    fake.QueryValueEx = query_value_ex
+    monkeypatch.setitem(sys.modules, "winreg", fake)
+    monkeypatch.setattr(sh.os, "name", "nt")
+
+    assert sh._amd_display_present() is True
+    assert any(str(p).endswith("{4d36e968-e325-11ce-bfc1-08002be10318}")
+               for p in seen_paths)
+
+    # Same machine shape without the AMD adapter → probe says False.
+    sh._AMD_DISPLAY_CACHE = None
+    subkeys["0000"] = _Key("Intel(R) Iris(R) Xe Graphics")
+    assert sh._amd_display_present() is False

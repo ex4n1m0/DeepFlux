@@ -480,6 +480,7 @@ ZH_CN: dict[str, str] = {
     "Show/hide the category tree (left pane)": "显示/隐藏分类树（左栏）",
     "Show/hide the channels/posters area": "显示/隐藏频道/海报区",
     "Skip this version": "跳过此版本",
+    "skipped on AMD (stability)": "已在 AMD 上跳过（稳定性）",
     "Sleep timer expired and stopped playback": "睡眠定时到时，播放已停止",
     "Sleep: Off": "睡眠定时：关",
     "Sleep: Stopped": "睡眠定时：已停止",

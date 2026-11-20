@@ -1369,6 +1369,21 @@
     heap-corruption detonation found 2026-11-19 (latent since 8.5; ANY
     test that kicks the real collector must drain
     `while tab._collector_busy` before returning).
+    9.1 = AMD GPU READING OFF (owner directive 2026-11-20): the laptop
+    STILL crashed and the step-by-step tool named the GPU step as the
+    death point — dxgi_adapters() is now NEVER called from System Health
+    on AMD machines. Gate = `_amd_display_present()` in
+    infra/system_health.py: a PURE-REGISTRY probe (display class
+    {4d36e968-…} subkeys' DriverDesc vs amd/radeon/ati markers — no COM,
+    no subprocess; detecting AMD must not itself drive the overlay's dxgi
+    hook), process-cached, POSIX → False. `_gpu_block` runs nvidia-smi
+    FIRST (hybrid AMD+NVIDIA boxes keep live NVIDIA data), then gates the
+    dxgi fallback → `gpu["skipped"] = "amd"`; the tab's GPU/VRAM meters
+    show "skipped on AMD (stability)" and step mode's note column adds
+    "skipped (amd)" (generic: any step part carrying a `skipped` dict key
+    gets the note). Do NOT "fix" this by re-enabling dxgi on AMD without
+    a new owner decision; the local-model picker's dxgi chain is a
+    separate call site (still TTL-cached, untouched).
 - Hardware HUD (6.1) — **REMOVED in 7.6 (owner decision 2026-11-07)**:
   `gui/hardware_hud.py` + `tests/test_hardware_hud.py` are gone. The HUD's
   2 s sampler (GetSystemTimes + GlobalMemoryStatusEx ctypes + nvidia-smi
