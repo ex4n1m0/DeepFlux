@@ -193,7 +193,9 @@ def test_deepseek_sends_reasoning_effort_and_default_url(mock_post):
     url = mock_post.call_args.args[0]
     payload = mock_post.call_args.kwargs["json"]
     assert url == "https://api.deepseek.com/chat/completions"
-    assert payload["reasoning_effort"] == "high"
+    # "low" since 2026-11-21 (was "high" — owner: faster answers); the pin
+    # is that deepseek SENDS the configured default effort, value included.
+    assert payload["reasoning_effort"] == "low"
 
 
 @patch("agent.llm.requests.post")
@@ -209,7 +211,7 @@ def test_explicit_base_url_and_model_override_preset(mock_post):
     assert url == "http://localhost:1234/v1/chat/completions"
     assert payload["model"] == "local-model"
     # reasoning_effort is sent because provider is deepseek (even with custom base_url)
-    assert payload["reasoning_effort"] == "high"
+    assert payload["reasoning_effort"] == "low"
 
 
 @patch("agent.llm.requests.post")

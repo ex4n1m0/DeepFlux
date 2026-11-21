@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "9.2"
+APP_VERSION = "9.3"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -213,7 +213,14 @@ class LLMConfig:
     # API's deepseek-flash is V4.1-Flash (2026-09 lineup). fast_model ""
     # means summaries fall back to the main model.
     model: str = ""                      # main agent model ("" = preset default)
-    reasoning_effort: str = "high"       # planning turns; summaries always use "low"
+    # Dropped high → low (2026-11-21, owner: "taking too long to stop
+    # thinking and give an answer"): high effort on the flash models makes
+    # every turn — including the final-answer turn — emit a long CoT before
+    # any visible text. Low keeps tool-planning quality at a fraction of the
+    # thinking latency; the user can pick High/Max in the AI settings page
+    # (exposed same day) and old saved "high" defaults migrate once via
+    # effort_defaults_gen below. Summaries always use "low" regardless.
+    reasoning_effort: str = "low"
     custom_reasoning_effort: bool = False
     fast_model: str = ""                 # summaries/quick replies ("" = main model)
     # Raised 2026-11-17 (owner: "can we increase the limits?", after 8.0):
@@ -805,6 +812,14 @@ class DeeptorrentConfig:
     # (2026-11-17, owner) remaps old defaults → 80/100/200 exactly once;
     # explicitly chosen values never match the remap and survive.
     limits_defaults_gen: int = 2
+    # Generation stamp for the one-time reasoning-effort migration: "high"
+    # was the shipped default since the beginning and every config save
+    # persists the whole llm section, so a saved "high" is almost always
+    # "never chose" — and until 2026-11-21 there was no UI to choose one.
+    # gen 1 → 2 (2026-11-21, owner: default low for faster answers) remaps
+    # saved "high" → "low" exactly once; any other saved value (agent-set
+    # via set_settings) and post-stamp High choices survive.
+    effort_defaults_gen: int = 2
 
     @classmethod
     def from_file(cls, path: str) -> "DeeptorrentConfig":
@@ -1274,6 +1289,9 @@ class DeeptorrentConfig:
             limits_defaults_gen=data.get("limits_defaults_gen", 1)
             if isinstance(data.get("limits_defaults_gen", 1), int)
             else 1,
+            effort_defaults_gen=data.get("effort_defaults_gen", 1)
+            if isinstance(data.get("effort_defaults_gen", 1), int)
+            else 1,
         )
         # One-time UI-default migration (gen 1 → 2, 2026-11-04): 7.0/7.1
         # persisted their defaults into every config.json, so a saved
@@ -1325,6 +1343,17 @@ class DeeptorrentConfig:
                 config.llm.max_llm_calls = 100
             if config.llm.max_tool_calls == 100:
                 config.llm.max_tool_calls = 200
+        # One-time reasoning-effort migration (gen 1 → 2, 2026-11-21): the
+        # old default "high" was persisted into every config.json by any
+        # save and there was no UI to choose an effort before this release,
+        # so a saved "high" is almost always "never chose" — remap it to the
+        # new low default once. Any other saved value is an agent-set choice
+        # and survives; after the first to_file the gen=2 stamp blocks
+        # re-migration, so a deliberate later High pick persists normally.
+        if config.effort_defaults_gen < 2:
+            config.effort_defaults_gen = 2
+            if config.llm.reasoning_effort == "high":
+                config.llm.reasoning_effort = "low"
         return config
 
     def sanitized_dict(self) -> Dict[str, Any]:

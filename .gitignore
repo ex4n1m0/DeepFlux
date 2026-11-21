@@ -92,3 +92,8 @@ android/local.properties
 android/app/embedded_key.properties
 *.jks
 *.keystore
+
+# Known-good pinned VC runtime set for frozen builds (2026-11-21: the
+# system redist update breaks shiboken/PySide6 6.12 in frozen layout);
+# PINNED.json stays tracked like jackett/flaresolverr pins.
+packaging/vcruntime/*.dll

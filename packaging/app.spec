@@ -285,7 +285,15 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # sitecustomize: the BUILD venv carries a Qt-first boot-order guard (see
+    # .venv/Lib/site-packages/sitecustomize.py — bare onnxruntime imports AV
+    # on some boots, PyInstaller's isolated children need it). PyInstaller
+    # sweeps it into the module graph, and the frozen app then imports
+    # PySide6.QtCore at boot BEFORE the bootloader's own startup — which
+    # crashed the exe at startup (Shiboken BindingManager mutex AV, before
+    # argparse/faulthandler; proven 2026-11-21). A venv-level guard must
+    # NEVER ship inside the bundle.
+    excludes=["sitecustomize"],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -306,8 +314,17 @@ _VC_DLLS = ("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
             "vcruntime140.dll", "vcruntime140_1.dll",
             "concrt140.dll", "vccorlib140.dll")
 _sys32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+# 2026-11-21: prefer the PINNED known-good set in packaging/vcruntime/ over
+# System32. The system VC redist updated that day (installed alongside Plex)
+# and its msvcp140 breaks PySide6 6.12's shiboken in frozen builds — the
+# BindingManager's static mutex AVs (mtx_do_lock on null) the moment
+# QtCore.pyd initializes, crashing the exe before argparse/faulthandler.
+# The wheel-adjacent runtime copies the venv loads prove the Qt stack is
+# built against the older set; PINNED.json carries the hashes.
+_vcpin = os.path.join(SPECPATH, "vcruntime")
 for _dll in _VC_DLLS:
-    _src = os.path.join(_sys32, _dll)
+    _pinned = os.path.join(_vcpin, _dll)
+    _src = _pinned if os.path.isfile(_pinned) else os.path.join(_sys32, _dll)
     if not os.path.isfile(_src):
         continue
     _dest = _dll.lower()

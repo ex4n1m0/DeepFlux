@@ -124,7 +124,7 @@ class DeepSeekClient(LLMClient):
         if self.provider == "openrouter" and "/" not in model:
             model = _openrouter_slugs.get(model) or f"deepseek/{model}"
         self.model = model
-        self.reasoning_effort = config.reasoning_effort or "high"
+        self.reasoning_effort = config.reasoning_effort or "low"
         self.send_reasoning_effort = bool(
             config.custom_reasoning_effort if self.provider == "custom"
             else preset.get("reasoning_effort", False)

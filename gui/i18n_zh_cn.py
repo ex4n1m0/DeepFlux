@@ -463,6 +463,13 @@ ZH_CN: dict[str, str] = {
     "Send an anonymous usage ping (powers the live user count on deepflux.space)":
         "发送匿名使用统计（deepflux.space 的实时在线人数由它驱动）",
     "Send reasoning_effort to custom endpoint": "向自定义端点发送 reasoning_effort",
+    "Reasoning effort:": "推理强度：",
+    "Low — fastest answers": "低 — 回答最快",
+    "High — deeper thinking": "高 — 思考更深",
+    "Max — maximum reasoning": "最大 — 最强推理",
+    "None — disable reasoning": "无 — 关闭推理",
+    "How much the model reasons (thinks) before answering. Lower = faster replies; the default is Low.":
+        "模型回答前的推理（思考）程度。越低 = 回复越快；默认为低。",
     "Send the message to the AI agent (Enter)": "把消息发给 AI 智能体（回车）",
     "Setting up torrent search": "正在设置种子搜索",
     "Settings — DeepFlux": "设置 —— DeepFlux",

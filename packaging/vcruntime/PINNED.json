@@ -1,0 +1,12 @@
+{
+ "provenance": "Known-good VC runtime set (14.4x, pre-2026-11-21) taken from the shipped 9.2 bundle. The 2026-11-21 system VC redist update (installed alongside Plex) breaks PySide6 6.12 shiboken in frozen builds: Shiboken::BindingManager static mutex (mtx_do_lock) AVs at QtCore import. app.spec prefers these pinned copies over System32.",
+ "sha256": {
+  "concrt140.dll": "54716f0738af891f283d213b5c8d11b25896bb8ee3097d301eae718560cf974e",
+  "msvcp140.dll": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+  "msvcp140_1.dll": "206c931bf90fdad8816de3b5e2ef80b2bcaa9406c89ecc05fe6fddffe251e982",
+  "msvcp140_2.dll": "d50d7883f20d1dc6191768d3746f52dd9cac89c346ffaed5be1f110c2f34a838",
+  "vccorlib140.dll": "09f93d5ff96ae09767f3e1af3cdd43a5a58f2598654fc63089429bb6f9f4737f",
+  "vcruntime140.dll": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7",
+  "vcruntime140_1.dll": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e"
+ }
+}

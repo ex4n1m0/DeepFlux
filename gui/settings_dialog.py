@@ -800,7 +800,26 @@ class APIKeysDialog(QDialog):
         fl.addRow(tr('Base URL:'), self.llm_base_url)
         self.llm_model = QLineEdit()
         fl.addRow(tr('Model:'), self.llm_model)
+        # How long the model may think before replying (2026-11-21, owner:
+        # default low — "taking too long to stop thinking"). The level maps
+        # per provider at send time (OpenRouter max→xhigh, Venice has no
+        # medium); "none" disables the reasoning pass entirely.
+        self.llm_effort = QComboBox()
+        for label, value in (
+            (tr('Low — fastest answers'), "low"),
+            (tr('High — deeper thinking'), "high"),
+            (tr('Max — maximum reasoning'), "max"),
+            (tr('None — disable reasoning'), "none"),
+        ):
+            self.llm_effort.addItem(label, value)
+        self.llm_effort.setToolTip(tr(
+            'How much the model reasons (thinks) before answering. '
+            'Lower = faster replies; the default is Low.'))
+        fl.addRow(tr('Reasoning effort:'), self.llm_effort)
         self.llm_reasoning_effort = QCheckBox(tr('Send reasoning_effort to custom endpoint'))
+        # Custom endpoints only send an effort at all when this is checked —
+        # the level dropdown must follow it.
+        self.llm_reasoning_effort.toggled.connect(self._sync_effort_enabled)
         fl.addRow("", self.llm_reasoning_effort)
         self.llm_key = QLineEdit()
         self.llm_key.setEchoMode(QLineEdit.Password)
@@ -1120,6 +1139,19 @@ class APIKeysDialog(QDialog):
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
 
+    def _sync_effort_enabled(self) -> None:
+        """The effort dropdown is live only for providers that send one:
+        cloud presets with the capability always, custom only with its
+        checkbox ticked, local never (llama.cpp has no reasoning_effort
+        parameter). Mirrors DeepSeekClient.send_reasoning_effort."""
+        provider = self._selected_endpoint()
+        if provider == "custom":
+            sendable = self.llm_reasoning_effort.isChecked()
+        else:
+            preset = LLM_PROVIDER_PRESETS.get(provider, {})
+            sendable = bool(preset.get("reasoning_effort", False))
+        self.llm_effort.setEnabled(sendable)
+
     def _selected_endpoint(self) -> str:
         pid = self.llm_endpoint.currentData()
         return pid if pid in LLM_PROVIDER_PRESETS else "venice"
@@ -1152,6 +1184,7 @@ class APIKeysDialog(QDialog):
         self.llm_base_url.setReadOnly(not custom)
         self.llm_model.setEnabled(custom)
         self.llm_reasoning_effort.setEnabled(custom)
+        self._sync_effort_enabled()
         models = preset.get("models") or []
         self.llm_model.setPlaceholderText(models[0] if models else "provider/model-name")
         # Keep the Model field honest per endpoint: presets show THEIR model
@@ -1910,6 +1943,12 @@ class APIKeysDialog(QDialog):
         self.llm_endpoint.blockSignals(False)
         self.llm_base_url.setText(self.config.llm.base_url)
         self.llm_model.setText(self.config.llm.model)
+        # An agent-set level outside the four offered values (e.g. "medium")
+        # is shown as an extra honest entry instead of silently reading Low.
+        effort = self.config.llm.reasoning_effort or "low"
+        if self.llm_effort.findData(effort) < 0:
+            self.llm_effort.addItem(effort, effort)
+        self.llm_effort.setCurrentIndex(max(self.llm_effort.findData(effort), 0))
         self.llm_reasoning_effort.setChecked(self.config.llm.custom_reasoning_effort)
         self.llm_key.setText(self.config.llm.api_key)
         self._on_endpoint_changed(self.llm_endpoint.currentIndex())
@@ -1975,6 +2014,7 @@ class APIKeysDialog(QDialog):
                     flash = next((m for m in models[1:] if "flash" in m.lower()), None)
                     self.config.llm.fast_model = flash or (models[1] if len(models) > 1 else "")
             self.config.llm.custom_reasoning_effort = self.llm_reasoning_effort.isChecked()
+            self.config.llm.reasoning_effort = self.llm_effort.currentData() or "low"
         if self._page in ("all", "search"):
             self.config.indexer.api_key = self.jkt_key.text().strip()
             self.config.web_search.brave_api_key = self.brave_key.text().strip()

@@ -1,8 +1,8 @@
 {
-  "version": "9.2",
-  "file": "DeepFlux9.2Setup.exe",
-  "size": 508805347,
-  "sha256": "0a90c703db3bc41b19796295a093a472ebbe091cfe26421da26f5f7eafa164df",
-  "released": "2026-11-20",
-  "notes": "DeepFlux 9.2 - memory and CPU frugality: large downloads no longer buffer into RAM (a 9 GB ISO download used to hold 10 GB of memory - the HTTP layer now throttles at the socket and sheds runaway buffers, resuming without losing progress), the app idles at 6 background threads instead of 36 (IPTV pools now spin up only when the Play tab works), and the Commander's folder-size walks stop the moment you leave the tab instead of grinding the disk for minutes. Includes all 9.0/9.1 features and the AMD laptop stability fix."
+  "version": "9.3",
+  "file": "DeepFlux9.3Setup.exe",
+  "size": 512530448,
+  "sha256": "f032577218e97b387a102a4f278495763d7a74d6edbd9857b04a732d0daf1c97",
+  "released": "2026-11-21",
+  "notes": "DeepFlux 9.3 - the agent answers faster: its default reasoning effort drops from High to Low, so it stops over-thinking before every reply and gets to the answer sooner (existing setups migrate automatically), and a new Reasoning Effort option in Settings -> AI Agent API (Low/High/Max/None) turns the deep thinking back on for hard jobs. Jackett torrent-search integration pin refreshed. Includes all 9.0-9.2 features."
 }

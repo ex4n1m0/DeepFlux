@@ -318,3 +318,52 @@ def test_api_and_browser_pages_preserve_hidden_settings():
     browser_dialog._save_and_accept()
     assert config.browser.homepage == "https://example.com/"
     assert config.browser.history_retention_days == 45
+
+
+def test_effort_dropdown_roundtrip_offscreen():
+    """Reasoning-effort dropdown (2026-11-21): loads the config value, saves
+    the pick, stays honest about values outside the four offered levels
+    (agent-set "medium"), and is gated by provider — cloud presets always,
+    custom only with its checkbox, mirroring DeepSeekClient's
+    send_reasoning_effort."""
+    from PySide6.QtWidgets import QApplication
+    from config import DeeptorrentConfig
+    from gui.settings_dialog import APIKeysDialog
+
+    app = QApplication.instance() or QApplication([])
+    cfg = DeeptorrentConfig()
+
+    dlg = APIKeysDialog(cfg, page="ai")
+    # Default provider (venice) sends an effort → dropdown live, showing low.
+    assert dlg.llm_effort.isEnabled()
+    assert dlg.llm_effort.currentData() == "low"
+
+    dlg.llm_effort.setCurrentIndex(dlg.llm_effort.findData("high"))
+    dlg._save_and_accept()
+    assert cfg.llm.reasoning_effort == "high"
+    dlg.close()
+    dlg.deleteLater()
+    app.processEvents()
+
+    # Reopening reflects the saved pick; an out-of-list value (agent-set
+    # "medium") appears as its own entry instead of lying "Low".
+    dlg2 = APIKeysDialog(cfg, page="ai")
+    assert dlg2.llm_effort.currentData() == "high"
+    dlg2.close()
+    dlg2.deleteLater()
+    app.processEvents()
+
+    cfg.llm.reasoning_effort = "medium"
+    dlg3 = APIKeysDialog(cfg, page="ai")
+    assert dlg3.llm_effort.currentData() == "medium"
+
+    # Custom endpoint: no effort is sent until the checkbox is ticked.
+    dlg3.llm_endpoint.setCurrentIndex(dlg3.llm_endpoint.findData("custom"))
+    assert not dlg3.llm_effort.isEnabled()
+    dlg3.llm_reasoning_effort.setChecked(True)
+    assert dlg3.llm_effort.isEnabled()
+    dlg3.llm_reasoning_effort.setChecked(False)
+    assert not dlg3.llm_effort.isEnabled()
+    dlg3.close()
+    dlg3.deleteLater()
+    app.processEvents()
