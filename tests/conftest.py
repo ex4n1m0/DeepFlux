@@ -2,6 +2,20 @@ from __future__ import annotations
 
 import os
 
+# Qt-before-libtorrent guard (2026-11-21): on some boots Windows assigns
+# libtorrent.pyd and Qt6Core.dll ASLR bases that cannot coexist when
+# libtorrent maps FIRST — the subsequent first PySide6 import AVs (proven
+# deterministically: `import libtorrent; from PySide6.QtCore import Qt`
+# segfaulted 5/5 while the reverse order passed 3/3, same wheels that were
+# gate-green on 2026-11-19; bases re-roll per boot). The app itself always
+# imports gui (Qt) before the agent/engine chain, but pytest collection
+# imports test modules alphabetically — a chunk collecting agent/engine
+# importers (llm, jackett, loop...) before a Qt import died. conftest loads
+# before any test module, so importing Qt HERE pins the safe order for
+# every process. Same philosophy as test_local_model.py's agent.llm-early
+# guard; delete neither.
+import PySide6.QtCore  # noqa: F401  (must precede any libtorrent import)
+
 import pytest
 
 from config import DeeptorrentConfig

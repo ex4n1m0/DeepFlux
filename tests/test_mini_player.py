@@ -126,7 +126,13 @@ def test_main_module_stays_light():
     )
     env = dict(os.environ, PYTHONPATH=os.path.dirname(os.path.dirname(
         os.path.abspath(__file__))))
-    proc = subprocess.run([sys.executable, "-c", code], env=env,
+    # -S skips site (and with it the venv's sitecustomize.py — the Qt-first
+    # ASLR-dice guard from 2026-11-21 imports PySide6.QtCore in EVERY
+    # subprocess, which would false-positive this assertion). PYTHONPATH is
+    # honored regardless of -S, and main's module level is stdlib-only, so
+    # the import itself is unaffected. First hit at the 9.4 gate (2026-11-22)
+    # — the 9.3 gate predates the guard.
+    proc = subprocess.run([sys.executable, "-S", "-c", code], env=env,
                           capture_output=True, text=True, timeout=120)
     assert proc.returncode == 0, proc.stderr
 

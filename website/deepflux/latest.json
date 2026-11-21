@@ -1,8 +1,8 @@
 {
-  "version": "9.3",
-  "file": "DeepFlux9.3Setup.exe",
-  "size": 512530448,
-  "sha256": "f032577218e97b387a102a4f278495763d7a74d6edbd9857b04a732d0daf1c97",
-  "released": "2026-11-21",
-  "notes": "DeepFlux 9.3 - the agent answers faster: its default reasoning effort drops from High to Low, so it stops over-thinking before every reply and gets to the answer sooner (existing setups migrate automatically), and a new Reasoning Effort option in Settings -> AI Agent API (Low/High/Max/None) turns the deep thinking back on for hard jobs. Jackett torrent-search integration pin refreshed. Includes all 9.0-9.2 features."
+  "version": "9.4",
+  "file": "DeepFlux9.4Setup.exe",
+  "size": 512618358,
+  "sha256": "c36c866b68c21b01e243c8adb0c2e2c596155931e342c78d25571c3917314044",
+  "released": "2026-11-22",
+  "notes": "DeepFlux 9.4 - VOD downloads work on far more IPTV playlists: sources whose videos hide behind dated stream URLs (no movie keywords, plain .m3u8 links - e.g. non-English adult libraries) are now recognized as Movies instead of Live TV, so the Download button finally appears on them. Existing sources pick up the fix after a refresh in Play -> Sources. Includes all 9.0-9.3 features."
 }

@@ -63,6 +63,27 @@
   r–z-with-tools in one process are the current poison shapes). If a
   chunk native-AVs, suspect the dice first: re-run / re-split before
   hunting code.
+  2026-11-21 UPDATE (fresh-venv forensics, root cause of a whole-day
+  crash wave): the dice is PER-BOOT DETERMINISTIC, not per-run — Windows
+  assigns each DLL's ASLR base once per boot, and some boots hand
+  libtorrent.pyd + Qt6Core.dll bases that CANNOT coexist when libtorrent
+  maps FIRST: `import libtorrent; from PySide6.QtCore import Qt` segfaulted
+  5/5 while the reverse order passed 3/3, on the SAME wheels (libtorrent
+  2.1.1 + PySide6 6.12.0, byte-identical to the shipped 9.2 bundle) that
+  were gate-green on 11-19's boot. The app never hits this (main.py
+  imports gui/Qt before the agent/engine chain), but pytest collects test
+  modules alphabetically, so any chunk whose collection imports
+  agent/engine (llm, jackett, loop…) before its first Qt import died —
+  that day j*+llm, loop-mno, linux_port+llm were 4/4–5/5 reproducible
+  segfaults and test_iptv passed 382/382 but poisoned its EXIT CODE.
+  FIX (keep, same philosophy as the local_model guard): tests/conftest.py
+  imports PySide6.QtCore BEFORE anything else can pull libtorrent —
+  conftest loads before test modules, pinning Qt-first for every process;
+  with the guard all poison shapes went green incl. clean exit codes. If
+  the pattern ever returns WITHOUT libtorrent-first being provable, re-
+  run the two-line order repro before hunting code. Also note:
+  test_linux_port.py matches NO letter glob in the nine commands — run it
+  with the j chunk or solo so it is never silently skipped.
   POWERSHELL NOTE (2026-11-06): the chunk commands assume a
   glob-expanding shell (bash). PowerShell passes wildcards to native
   commands LITERALLY — `pytest tests/test_a*.py` exits 4 with
@@ -924,6 +945,38 @@
   * win_taskbar's _GUID must stay on plain ctypes primitives — a
     module-level wintypes reference crashes the Linux/mac builds AT
     IMPORT (CI run 42809567604); pinned by a POSIX-import subprocess test.
+- 2026-11-21/22 CRASH WAVE #2 (owner: "started crashing, even on 9.2"),
+  RESOLVED environmental — the 11-08 signature returned: 5 identical
+  python311.dll+0x49245 allocator AVs (22:27–22:46), victims all innocent
+  worker allocators (IPTV playlist json.loads ×4, local_model
+  server_status ×1); identical on 9.2 AND 9.3, SURVIVED a full reboot
+  (fast startup off → NOT the per-boot ASLR dice), the pinned VC runtime
+  loaded consistently (no dual CRT in the module list), nvspcap64 NOT
+  injected, kernel/UMD driver versions matched. Machine state: NVIDIA
+  610.88 was re-staged 11-20 22:41 with IObit Driver Booster active — a
+  BARE driver install: NVIDIA App + every companion component ABSENT
+  (11-08's fix actor was the App completing). FIX = clean reinstall
+  (owner: Custom → "perform a clean installation", then updated to
+  621.24 + reboot) — full component suite restored, no recurrence since
+  (watcher-monitored through the release session). RULES: Driver Booster
+  must never touch GPU drivers again; the missing
+  HKLM\SOFTWARE\Khronos\Vulkan\Drivers key observed during forensics is
+  NORMAL on this machine (still absent after the known-complete 621.24
+  clean install) — NOT a defect marker; and DeepFlux's GPU lane is
+  D3D11 (WebEngine), not Vulkan, so that key is irrelevant to crashes.
+- IPTV VOD CLASSIFICATION — dated upload paths (9.4, 2026-11-22): whole
+  providers score zero on every VOD signal — atsushi444's xxx.m3u carries
+  74,761 entries with Chinese group names (国产视频, 日本有码…) that match
+  no English group keyword, and every URL ends in the live-extension
+  .m3u8 — so the entire library fell into Live TV and the ⬇ Download
+  button never appeared. iptv/classify.py now treats a DATED URL path
+  (/video/m3u8/2025/09/06/<id>/index.m3u8 — live streams never carry an
+  upload date) as a VOD signal → Movies, or Series when the name has
+  SxxExx. Precedence kept: 24/7-channel naming ("UK: FILM4 HD") still
+  wins, plain .m3u8 without a date path stays live. Pinned by
+  tests/test_iptv.py::test_classify_entry_dated_url_path_is_vod. NOTE:
+  the sqlite cache stores the CLASSIFIED result — existing sources keep
+  their old (wrong) sections until refreshed.
 - 2026-11-09 full-codebase review (8 reviewers over the churn since
   3c9d492: 134 commits, 181 files, +31k/−7k lines). Findings + fix status
   live in REVIEW-2026-11-09.md (tracked). All 4 HIGH + 11 MED + Tier 3

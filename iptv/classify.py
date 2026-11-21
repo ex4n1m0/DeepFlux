@@ -75,6 +75,15 @@ _ADULT_VOD_DATE_RE = re.compile(r"\b(\d{2})\s+(\d{2})\s+(\d{2})\b")
 # date in a non-adult group).
 _ADULT_GROUP_KEYWORDS = ("xxx", "adult", "porn", "jav", "18+", "erotic")
 
+# VOD-by-URL-shape: a dated upload path ("/video/m3u8/2025/09/06/<id>/
+# index.m3u8") — live streams never carry an upload date. Measured
+# 2026-11-22 on atsushi444's xxx.m3u: 74,761 adult-VOD entries with Chinese
+# group names (国产视频 etc.) match NO English group keyword and end in the
+# live-extension .m3u8, so the whole library fell into Live TV and the
+# Download button never appeared. The dated path is the only reliable VOD
+# signal for such providers.
+_VOD_DATE_PATH_RE = re.compile(r"/(?:19|20)\d{2}/\d{1,2}/\d{1,2}/")
+
 
 def _is_adult_group(group: str) -> bool:
     g = (group or "").lower()
@@ -138,6 +147,14 @@ def classify_entry(group: str, url: str, name: str) -> str:
             return section
         if ext and ext in rules.get("extensions", []):
             return section
+
+    # Dated upload path -> VOD (see _VOD_DATE_PATH_RE): rescues providers
+    # whose group names match no keyword. An SxxExx name rides the same
+    # signal into Series; 24/7 channel naming already returned LIVE above.
+    if _VOD_DATE_PATH_RE.search(u):
+        if re.search(r"[Ss]\d{1,2}\s?[Ee]\d{1,3}", name or ""):
+            return SECTION_SERIES
+        return SECTION_MOVIES
 
     return SECTION_LIVE
 

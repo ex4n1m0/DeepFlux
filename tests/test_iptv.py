@@ -144,6 +144,25 @@ def test_classify_live_movie_channels_beat_group_keywords():
     assert classify_entry("Movie VOD", "http://s/789", "Yearless Film [1080p] [WEBRip]") == SECTION_MOVIES
 
 
+def test_classify_entry_dated_url_path_is_vod():
+    # Real-world case (2026-11-22, atsushi444 xxx.m3u): 74,761 adult-VOD
+    # entries with Chinese group names (国产视频 etc.) and .m3u8 URLs scored
+    # 0 movies / 0 series / 74,761 "live" channels — no English group keyword
+    # matches and .m3u8 is a live extension. The dated upload path
+    # (/video/m3u8/2025/09/06/<id>/index.m3u8) is the only reliable VOD
+    # signal: live streams never carry an upload date.
+    u = "https://t33.cdn2020.com/video/m3u8/2025/09/06/fa307ed2/index.m3u8"
+    assert classify_entry("国产视频", u, "猫步毒药-前田陽菜") == SECTION_MOVIES
+    assert classify_entry("", u, "Some Title") == SECTION_MOVIES
+    # SxxExx name on a dated path is a series episode, not a movie.
+    assert classify_entry("", u, "Show S01E02") == SECTION_SERIES
+    # 24/7 channel naming still beats a dated URL (live precedence kept).
+    assert classify_entry("UK Movies", u, "UK: FILM4 HD") == SECTION_LIVE
+    # Plain .m3u8 without an upload-date path stays live.
+    assert classify_entry("News", "http://s/2025/cnn.m3u8", "CNN") == SECTION_LIVE
+    assert classify_entry("国产", "https://cdn/live/index.m3u8", "某频道") == SECTION_LIVE
+
+
 def test_classify_promotes_movies_and_groups_series():
     pl = parse_m3u("src1", text=SAMPLE_M3U)
     classify(pl)
