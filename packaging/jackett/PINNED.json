@@ -3,7 +3,7 @@
   "asset": "Jackett.Installer.Windows.exe",
   "size": 44324572,
   "sha256": "f6f2af0e4b9e30ae743cf8e3d084b2545c64ec81a10932688d334455362b10ec",
-  "downloaded": "2026-11-22",
+  "downloaded": "2026-11-23",
   "linux": {
     "version": "v0.25.24",
     "asset": "Jackett.Binaries.LinuxAMDx64.tar.gz",

@@ -182,13 +182,27 @@ def test_enforce_agent_split_respects_saved_ratio():
 
 
 @pytest.mark.parametrize("tab_name", ["iptv", "commander", "room", "downloads",
-                                      "system_health"])
+                                      "system_health", "agents"])
 def test_tabs_stay_shrinkable(tmp_path, tab_name):
     """Regression cap: no tab page may demand a wide window again — the
     window's minimum is the widest page's minimum (1138-1236px before)."""
     app = _app()
 
     def build():
+        if tab_name == "agents":
+            # The Agent tab is built inline in MainWindow (chat + tasks
+            # sidebar). Before the 2026-11-22 responsive retrofit its
+            # onboarding cards + input row alone demanded ~1250px — this
+            # param pins the cap that used to be untestable.
+            from config import DeeptorrentConfig
+            from gui.main_window import MainWindow
+            cfg = DeeptorrentConfig()
+            cfg.stats.ping_enabled = False
+            cfg_path = str(tmp_path / "config.json")
+            cfg.to_file(cfg_path)
+            mw = MainWindow(cfg_path)
+            app.processEvents()
+            return mw._agents_tab, lambda _t: mw.close()
         if tab_name == "iptv":
             from config import DeeptorrentConfig, IPTVSourceConfig
             from gui import iptv_tab as tab_mod

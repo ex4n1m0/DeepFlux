@@ -63,6 +63,14 @@ def isolate_room_portal(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def isolate_agent_sessions(monkeypatch, tmp_path):
+    """Never read/write the real ~/.deeptorrent/agent_sessions (the Agent
+    tab's saved tasks). Same isolation rule as the config redirect: a GUI
+    test that sends one chat message auto-saves a session file."""
+    monkeypatch.setenv("DF_AGENT_SESSIONS", str(tmp_path / "agent_sessions"))
+
+
+@pytest.fixture(autouse=True)
 def isolate_local_model(monkeypatch, tmp_path):
     """Never touch the real ~/.deeptorrent/models (whisper weights + real
     GGUFs, multi-GB) or ~/.deeptorrent/llama (extracted runtimes), and drop

@@ -30,21 +30,21 @@ def _default_scale():
 
 def test_config_ui_font_size_roundtrip(tmp_path):
     path = str(tmp_path / "config.json")
-    # Default is "micro" since 2026-11-17 (was "small" 2026-11-04, "medium"
-    # in 7.0/7.1).
-    assert DeeptorrentConfig.from_file(path).ui_font_size == "micro"
+    # Default is "small" since 2026-11-23, owner (lineage: medium → small
+    # 2026-11-04 → micro 2026-11-17 → medium → small again, same day).
+    assert DeeptorrentConfig.from_file(path).ui_font_size == "small"
 
-    # ui_defaults_gen=3 opts out of the one-time default migrations below —
+    # ui_defaults_gen=4 opts out of the one-time default migrations below —
     # these rows pin the raw saved-value round trip.
     for mode in ("micro", "small", "medium", "large"):
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"ui_font_size": mode, "ui_defaults_gen": 3}, f)
+            json.dump({"ui_font_size": mode, "ui_defaults_gen": 5}, f)
         assert DeeptorrentConfig.from_file(path).ui_font_size == mode
 
     # invalid values fail closed to the default, not to a crash
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"ui_font_size": "huge", "ui_defaults_gen": 3}, f)
-    assert DeeptorrentConfig.from_file(path).ui_font_size == "micro"
+        json.dump({"ui_font_size": "huge", "ui_defaults_gen": 5}, f)
+    assert DeeptorrentConfig.from_file(path).ui_font_size == "small"
 
     # to_file persists the field (asdict round trip)
     DeeptorrentConfig(ui_font_size="small").to_file(path)
@@ -55,17 +55,18 @@ def test_config_ui_font_size_roundtrip(tmp_path):
 def test_config_ui_defaults_migrate_once(tmp_path):
     """Old builds persisted their then-defaults into every config.json, so a
     saved default is almost always "never chose". The migrations chain:
-    gen 1→2 (2026-11-04) remapped medium/white → small/light_blue, and gen
-    2→3 (2026-11-17) remaps those to the new defaults (micro / dark_blue) —
-    so an unstamped 7.0 config lands on today's defaults. Explicit choices
+    gen 1→2 (2026-11-04) remapped medium/white → small/light_blue, gen
+    2→3 (2026-11-17) remapped those to micro/dark_blue, and gen 3→4
+    (2026-11-23, owner) reverses back to medium/light_blue — so an
+    unstamped 7.0 config lands on today's defaults. Explicit choices
     survive every step, and once the stamp is saved a genuine later pick
     persists normally."""
     path = str(tmp_path / "config.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"ui_font_size": "medium", "ui_text_theme": "white"}, f)
     cfg = DeeptorrentConfig.from_file(path)
-    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("micro", "dark_blue")
-    assert cfg.ui_defaults_gen == 3
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("small", "blue")
+    assert cfg.ui_defaults_gen == 5
 
     # Explicit picks don't match any remap and survive the migration chain.
     with open(path, "w", encoding="utf-8") as f:
@@ -73,55 +74,85 @@ def test_config_ui_defaults_migrate_once(tmp_path):
     cfg = DeeptorrentConfig.from_file(path)
     assert (cfg.ui_font_size, cfg.ui_text_theme) == ("large", "blue")
 
-    # A gen-2 config keeps Medium/White as deliberate choices (the gen-3
-    # remap only touches small/light_blue — the gen-2 defaults).
+    # A gen-2 config's White survives every later remap; its Medium rides
+    # the gen-5 medium→small remap (deliberate-vs-default is indistinguish-
+    # able — the accepted once-per-generation caveat).
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"ui_font_size": "medium", "ui_text_theme": "white",
                    "ui_defaults_gen": 2}, f)
     cfg = DeeptorrentConfig.from_file(path)
-    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("medium", "white")
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("small", "white")
 
-    # The migration result survives save + reload (gen=3 blocks re-mapping).
+    # The migration result survives save + reload (gen=4 blocks re-mapping).
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"ui_font_size": "medium", "ui_text_theme": "white"}, f)
     DeeptorrentConfig.from_file(path).to_file(path)
     with open(path, encoding="utf-8") as f:
         saved = json.load(f)
-    assert saved["ui_defaults_gen"] == 3
+    assert saved["ui_defaults_gen"] == 5
     cfg = DeeptorrentConfig.from_file(path)
-    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("micro", "dark_blue")
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("small", "blue")
 
 
 def test_config_defaults_gen3_migrate_once(tmp_path):
     """gen 2 → 3 (2026-11-17, owner): the small / light_blue /
     max_concurrent=3 defaults had been persisted into every config by any
-    save, so they remap to the new defaults (micro / dark_blue / 1) exactly
-    once; explicit post-stamp choices survive."""
+    save, so they remap to the then-new defaults (micro / dark_blue / 1)
+    exactly once — and gen 3 → 4 (2026-11-23) carries them onward to
+    today's defaults; explicit post-stamp choices survive."""
     path = str(tmp_path / "config.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump({"ui_font_size": "small", "ui_text_theme": "light_blue",
                    "ui_defaults_gen": 2,
                    "download": {"max_concurrent": 3}}, f)
     cfg = DeeptorrentConfig.from_file(path)
-    assert cfg.ui_font_size == "micro"
-    assert cfg.ui_text_theme == "dark_blue"
+    assert cfg.ui_font_size == "small"
+    assert cfg.ui_text_theme == "blue"
     assert cfg.download.max_concurrent == 1
-    assert cfg.ui_defaults_gen == 3
+    assert cfg.ui_defaults_gen == 5
 
-    # Explicit post-stamp picks (gen=3) persist untouched — including a
+    # Explicit post-stamp picks (gen=5) persist untouched — including a
     # deliberate return to the OLD defaults.
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"ui_font_size": "small", "ui_text_theme": "light_blue",
-                   "ui_defaults_gen": 3,
+        json.dump({"ui_font_size": "micro", "ui_text_theme": "dark_blue",
+                   "ui_defaults_gen": 5,
                    "download": {"max_concurrent": 3}}, f)
     cfg = DeeptorrentConfig.from_file(path)
-    assert cfg.ui_font_size == "small"
-    assert cfg.ui_text_theme == "light_blue"
+    assert cfg.ui_font_size == "micro"
+    assert cfg.ui_text_theme == "dark_blue"
     assert cfg.download.max_concurrent == 3
 
     # Fresh configs get the new default outright (no migration needed).
     assert DeeptorrentConfig.from_file(str(tmp_path / "none.json")) \
         .download.max_concurrent == 1
+
+
+def test_config_defaults_gen4_migrate_once(tmp_path):
+    """gen 3 → 4 (2026-11-23, owner: "make the default font medium and the
+    color light blue"): the micro/dark_blue defaults were persisted into
+    every config by any save, so they remap once; explicit post-stamp
+    choices survive."""
+    path = str(tmp_path / "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ui_font_size": "micro", "ui_text_theme": "dark_blue",
+                   "ui_defaults_gen": 3}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("small", "blue")
+    assert cfg.ui_defaults_gen == 5
+
+    # A deliberate return to the old look after the stamp persists.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ui_font_size": "micro", "ui_text_theme": "dark_blue",
+                   "ui_defaults_gen": 4}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("micro", "dark_blue")
+
+    # Explicit non-default picks ride through untouched.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ui_font_size": "large", "ui_text_theme": "blue",
+                   "ui_defaults_gen": 3}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("large", "blue")
 
 
 def test_font_size_is_not_agent_settable():
@@ -137,21 +168,22 @@ def test_font_size_is_not_agent_settable():
 
 def test_config_ui_text_theme_roundtrip(tmp_path):
     path = str(tmp_path / "config.json")
-    # Default is "dark_blue" since 2026-11-17 (was "light_blue" 2026-11-04,
-    # "white" in 7.0/7.1).
-    assert DeeptorrentConfig.from_file(path).ui_text_theme == "dark_blue"
+    # Default is "blue" since 2026-11-23, owner (lineage: white →
+    # light_blue 2026-11-04 → dark_blue 2026-11-17 → light_blue → blue,
+    # same day).
+    assert DeeptorrentConfig.from_file(path).ui_text_theme == "blue"
 
-    # gen=3 opts out of the one-time default migrations (see the migration
+    # gen=4 opts out of the one-time default migrations (see the migration
     # tests) — these rows pin the raw saved-value round trip.
     for mode in ("white", "light_blue", "blue", "dark_blue"):
         with open(path, "w", encoding="utf-8") as f:
-            json.dump({"ui_text_theme": mode, "ui_defaults_gen": 3}, f)
+            json.dump({"ui_text_theme": mode, "ui_defaults_gen": 5}, f)
         assert DeeptorrentConfig.from_file(path).ui_text_theme == mode
 
     # invalid values fail closed to the default, not to a crash
     with open(path, "w", encoding="utf-8") as f:
-        json.dump({"ui_text_theme": "red", "ui_defaults_gen": 3}, f)
-    assert DeeptorrentConfig.from_file(path).ui_text_theme == "dark_blue"
+        json.dump({"ui_text_theme": "red", "ui_defaults_gen": 5}, f)
+    assert DeeptorrentConfig.from_file(path).ui_text_theme == "blue"
 
     # to_file persists the field (asdict round trip)
     DeeptorrentConfig(ui_text_theme="dark_blue").to_file(path)
@@ -442,3 +474,23 @@ def test_background_ladder_is_dark():
             seen_new.update(h for h in _NEW_LADDER if h in line)
     assert not offenders, f"old bright backgrounds found: {offenders}"
     assert seen_new == set(_NEW_LADDER), "new ladder literals missing"
+
+
+def test_config_defaults_gen5_migrate_once(tmp_path):
+    """gen 4 → 5 (2026-11-23, owner: "let's try small and blue instead"):
+    the medium/light_blue defaults from gen 4 remap once; explicit
+    post-stamp choices survive."""
+    path = str(tmp_path / "config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ui_font_size": "medium", "ui_text_theme": "light_blue",
+                   "ui_defaults_gen": 4}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("small", "blue")
+    assert cfg.ui_defaults_gen == 5
+
+    # A deliberate Medium/Light Blue after the stamp persists.
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"ui_font_size": "medium", "ui_text_theme": "light_blue",
+                   "ui_defaults_gen": 5}, f)
+    cfg = DeeptorrentConfig.from_file(path)
+    assert (cfg.ui_font_size, cfg.ui_text_theme) == ("medium", "light_blue")

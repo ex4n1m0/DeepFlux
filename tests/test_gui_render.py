@@ -393,3 +393,389 @@ def test_effort_dropdown_roundtrip_offscreen():
     dlg3.close()
     dlg3.deleteLater()
     app.processEvents()
+
+
+# ---------------------------------------------------------------------------
+# Agent task sessions sidebar (2026-11-22): auto-saved local conversations
+# ---------------------------------------------------------------------------
+# These build the REAL MainWindow (same precedent as tests/test_mini_player)
+# with agent.chat faked at the instance seam — no LLM, no network. The
+# autouse conftest fixtures redirect both the config path and
+# DF_AGENT_SESSIONS, so nothing here can touch the user's real files.
+
+def _qapp():
+    from PySide6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication([])
+
+
+def _build_main(tmp_path):
+    from config import DeeptorrentConfig
+    cfg = DeeptorrentConfig()
+    cfg.stats.ping_enabled = False
+    # Keep the startup ytdlp probe out of the test process — its worker
+    # thread imports yt_dlp (heavy) concurrently with test collection, and
+    # that import raced the d–g chunk's heap layout into native AVs on
+    # 2026-11-22 (innocent _compile_bytecode faulting frame). Same
+    # no-side-effect rule as the telemetry switch above.
+    cfg.download.youtube_update_check = False
+    cfg_path = str(tmp_path / "config.json")
+    cfg.to_file(cfg_path)
+    mw = MainWindow(cfg_path)
+    return mw
+
+
+def _fake_agent(mw):
+    """Instance-level chat seam: appends like the real loop and answers."""
+    def chat(text):
+        mw.agent.history.append({"role": "user", "content": text})
+        reply = f"done: {text}"
+        mw.agent.history.append({"role": "assistant", "content": reply})
+        return {"role": "assistant", "content": reply, "tool_calls": []}
+    mw.agent.chat = chat
+    return chat
+
+
+def _wait_quiet(app, mw, timeout=15.0):
+    """Pump events until the worker thread is done AND its queued finished
+    signal has been delivered (busy flag back down)."""
+    import time as _time
+    deadline = _time.time() + timeout
+    while _time.time() < deadline:
+        app.processEvents()
+        thread = getattr(mw, "_agent_thread", None)
+        if (thread is None or not thread.is_alive()) and not getattr(mw, "_agent_busy", False) \
+                and not getattr(mw, "_search_busy", False):
+            break
+        _time.sleep(0.01)
+    for _ in range(10):
+        app.processEvents()
+
+
+def _send(app, mw, text):
+    mw.chat_input.setText(text)
+    mw._on_send()
+    _wait_quiet(app, mw)
+
+
+def test_send_autosaves_task_with_history_and_transcript(tmp_path):
+    from agent.sessions import auto_name
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    _fake_agent(mw)
+    _send(app, mw, "grab ubuntu iso")
+    app.processEvents()
+
+    metas = mw._sessions.list_sessions()
+    assert len(metas) == 1
+    assert metas[0].name == auto_name("grab ubuntu iso")
+    data = mw._sessions.load(metas[0].id)
+    roles = [m["role"] for m in data.messages]
+    assert roles == ["user", "assistant"]
+    kinds = [e["k"] for e in data.transcript]
+    assert "user" in kinds and "agent" in kinds
+    # The sidebar lists it and highlights it as the open task.
+    assert mw._sessions_bar.current_session_id() == metas[0].id == mw._session_id
+
+
+def test_send_persists_user_message_mid_turn(tmp_path):
+    """Crash-safety: the save issued right after _append_user carries the
+    outgoing message even though agent.chat logs it on the worker thread."""
+    import threading
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    release = threading.Event()
+
+    def chat(text):
+        release.wait(10)
+        mw.agent.history.append({"role": "user", "content": text})
+        mw.agent.history.append({"role": "assistant", "content": "late"})
+        return {"role": "assistant", "content": "late", "tool_calls": []}
+    mw.agent.chat = chat
+
+    mw.chat_input.setText("mid-turn question")
+    mw._on_send()
+    # Wait for the pre-turn save (thread still blocked).
+    import time as _time
+    deadline = _time.time() + 10
+    while _time.time() < deadline and not mw._sessions.list_sessions():
+        app.processEvents()
+        _time.sleep(0.01)
+    metas = mw._sessions.list_sessions()
+    assert len(metas) == 1
+    data = mw._sessions.load(metas[0].id)
+    assert [m["role"] for m in data.messages] == ["user"]
+    assert [e["k"] for e in data.transcript] == ["user"]
+
+    release.set()
+    _wait_quiet(app, mw)
+    data = mw._sessions.load(metas[0].id)
+    assert [m["role"] for m in data.messages] == ["user", "assistant"]
+
+
+def test_boot_is_blank_but_sidebar_lists_saved_tasks(tmp_path):
+    """Owner decision 2026-11-22: launch starts a BLANK chat; saved tasks
+    open only on click. Seeds the store BEFORE the window exists (the
+    previous app run's tasks), so this one builds its own MainWindow."""
+    from agent.sessions import SessionStore, new_session_id
+    app = _qapp()
+    store = SessionStore()  # DF_AGENT_SESSIONS (conftest) → per-test tmp
+    sid = new_session_id()
+    store.save(sid, "earlier task",
+               [{"role": "user", "content": "hi"}],
+               [{"k": "user", "t": "hi"}])
+    mw = _build_main(tmp_path)
+    assert mw._session_id == ""
+    metas = mw._sessions.list_sessions()
+    assert [m.id for m in metas] == [sid]
+    assert mw._sessions_bar.current_session_id() == ""
+    # Blank look: onboarding visible, logo behind the chat.
+    assert mw._onboarding.isVisibleTo(mw._agents_tab)
+    assert mw.chat_history.toPlainText().strip() == ""
+
+
+def test_switch_task_restores_transcript_and_llm_history(tmp_path):
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    _fake_agent(mw)
+    _send(app, mw, "first question")
+    first_id = mw._session_id
+    mw._clear_chat()  # detach; first task stays on disk
+    _send(app, mw, "second question")
+    second_id = mw._session_id
+    assert first_id != second_id
+
+    # Reopen the first task through the sidebar's selected signal.
+    mw._sessions_bar.selected.emit(first_id)
+    app.processEvents()
+    assert mw._session_id == first_id
+    assert [m["content"] for m in mw.agent.history] == ["first question", "done: first question"]
+    assert "first question" in mw.chat_history.toPlainText()
+    assert "second question" not in mw.chat_history.toPlainText()
+    assert not mw._onboarding.isVisibleTo(mw._agents_tab)
+    assert mw._sessions_bar.current_session_id() == first_id
+    # The agent panel mirror shows only the NEW conversation.
+    assert "second question" not in mw.agent_panel._view.toPlainText()
+
+
+def test_new_task_keeps_old_one_listed_and_starts_fresh_id(tmp_path):
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    _fake_agent(mw)
+    _send(app, mw, "original task")
+    old_id = mw._session_id
+
+    mw._on_task_new()
+    app.processEvents()
+    assert mw._session_id == ""
+    assert mw.chat_history.toPlainText().strip() == ""
+    ids = [m.id for m in mw._sessions.list_sessions()]
+    assert ids == [old_id]  # still saved, nothing deleted
+
+    _send(app, mw, "fresh task")
+    assert mw._session_id and mw._session_id != old_id
+    assert {m.id for m in mw._sessions.list_sessions()} == {old_id, mw._session_id}
+
+
+def test_rename_task_updates_store_and_open_task(tmp_path):
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    _fake_agent(mw)
+    _send(app, mw, "name me")
+    sid = mw._session_id
+
+    from PySide6.QtWidgets import QInputDialog
+    orig = QInputDialog.getText
+    QInputDialog.getText = staticmethod(
+        lambda parent, title, label, text="": ("My custom name", True))
+    try:
+        mw._on_task_rename(sid)
+    finally:
+        QInputDialog.getText = orig
+    app.processEvents()
+    assert mw._sessions.load(sid).name == "My custom name"
+    assert mw._session_name == "My custom name"
+    assert mw._sessions_bar.current_session_id() == sid
+
+
+def test_delete_confirmed_removes_task_and_blanks_open_chat(tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    _fake_agent(mw)
+    _send(app, mw, "delete me")
+    sid = mw._session_id
+    assert sid
+
+    orig = QMessageBox.question
+    QMessageBox.question = staticmethod(
+        lambda *a, **k: QMessageBox.Yes)
+    try:
+        mw._on_task_delete(sid)
+    finally:
+        QMessageBox.question = orig
+    app.processEvents()
+    assert mw._sessions.load(sid) is None
+    assert [m.id for m in mw._sessions.list_sessions()] == []
+    assert mw._session_id == ""
+    assert mw.chat_history.toPlainText().strip() == ""
+
+
+def test_delete_declined_keeps_task(tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    _fake_agent(mw)
+    _send(app, mw, "keep me")
+    sid = mw._session_id
+
+    orig = QMessageBox.question
+    QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.No)
+    try:
+        mw._on_task_delete(sid)
+    finally:
+        QMessageBox.question = orig
+    assert mw._sessions.load(sid) is not None
+    assert mw._session_id == sid
+
+
+def test_busy_agent_disables_sidebar_interactions(tmp_path):
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    assert mw._sessions_bar._new_btn.isEnabled()
+
+    mw._set_busy(True)
+    app.processEvents()
+    assert not mw._sessions_bar._new_btn.isEnabled()
+    assert not mw._sessions_bar._list.isEnabled()
+    # Guarded actions are no-ops while busy (no save/switch side effects).
+    mw._on_task_new()
+    assert mw._session_id == ""
+
+    mw._set_busy(False)
+    app.processEvents()
+    assert mw._sessions_bar._new_btn.isEnabled()
+
+
+def test_search_sweep_creates_task_with_search_transcript(tmp_path):
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    mw.tools._web_search.search = lambda q, limit=20: {
+        "answer": "", "results": [{"url": "http://x/1", "name": "Result One"}]}
+    mw.chat_input.setText("sweep query")
+    mw._on_search_send()
+    _wait_quiet(app, mw)
+    app.processEvents()
+
+    metas = mw._sessions.list_sessions()
+    assert len(metas) == 1
+    assert metas[0].name == "sweep query"
+    data = mw._sessions.load(metas[0].id)
+    kinds = [e["k"] for e in data.transcript]
+    assert kinds[0] == "search_user"
+    assert "search_html" in kinds
+    # A web sweep carries no LLM context — messages stay empty.
+    assert data.messages == []
+    assert "Result One" in mw.chat_history.toPlainText()
+
+
+def test_task_delegate_sizehint_is_native_safe():
+    """Regression (2026-11-22): QSize.expandedTo has no (int, int) overload
+    in PySide6 — the TypeError escaping the delegate's sizeHint SEGFAULTED
+    the process natively during item-view layout (bare-list bisect; no
+    Python traceback ever printed). Showing a delegated list with two-line
+    items must stay native-clean."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QListWidget, QListWidgetItem
+    from gui.agent_sessions_bar import AgentSessionsBar, _TaskDelegate, _PREVIEW_ROLE
+    app = _qapp()
+    lw = QListWidget()
+    lw.setItemDelegate(_TaskDelegate(lw))
+    item = QListWidgetItem("task name")
+    item.setData(_PREVIEW_ROLE, "preview line")
+    lw.addItem(item)
+    lw.show()
+    app.processEvents()
+    from PySide6.QtGui import QFontMetrics
+    from PySide6.QtWidgets import QStyleOptionViewItem
+    delegate = lw.itemDelegate()
+    hint = delegate.sizeHint(QStyleOptionViewItem(), lw.model().index(0, 0))
+    assert hint.height() >= 40
+    # Metrics-driven two-line layout (owner screenshot 2026-11-23: the old
+    # fixed half/half rects collided at larger scales): the row must be at
+    # least as tall as BOTH real font lines plus padding.
+    opt = QStyleOptionViewItem()
+    name_font, preview_font = delegate._row_fonts(opt)
+    expected = (QFontMetrics(name_font).height() + delegate._GAP
+                + QFontMetrics(preview_font).height() + 2 * delegate._PAD)
+    assert hint.height() >= expected
+    # Paint smoke: a real render pass must complete natively (the
+    # double-print fix blanks opt.text before drawControl).
+    pix = lw.grab()
+    assert not pix.isNull()
+    bar = AgentSessionsBar()
+    bar.show()
+    app.processEvents()
+
+
+def test_live_search_thread_locks_task_switching(tmp_path):
+    """Review MED 2026-11-22: a sweep past its 60s watchdog clears
+    _search_busy while its worker is still alive — task switching must
+    stay locked or the late results would land in (and be saved into)
+    the WRONG task's file."""
+    import threading
+    import time as _time
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    _fake_agent(mw)
+    _send(app, mw, "task A message")
+
+    done = threading.Event()
+    mw._search_thread = threading.Thread(target=lambda: done.wait(5), daemon=True)
+    mw._search_thread.start()
+    mw._search_busy = False  # simulate the watchdog having fired
+    try:
+        assert mw._tasks_locked() is True  # the live thread still locks
+        mw._on_task_new()                  # guarded → no detach
+        assert mw._session_id != ""
+    finally:
+        done.set()
+        mw._search_thread.join(5)
+    assert mw._tasks_locked() is False
+
+
+def test_busy_flags_combine_for_sidebar_gating(tmp_path):
+    """A sweep ending must not re-enable the sidebar mid-agent-turn (and
+    vice versa) — both flags are evaluated on every gate flip."""
+    app = _qapp()
+    mw = _build_main(tmp_path)
+    mw._set_busy(True)
+    mw._set_search_busy(True)
+    app.processEvents()
+    assert not mw._sessions_bar._new_btn.isEnabled()
+    mw._set_search_busy(False)  # sweep done, agent still working
+    app.processEvents()
+    assert not mw._sessions_bar._new_btn.isEnabled()
+    mw._set_busy(False)
+    app.processEvents()
+    assert mw._sessions_bar._new_btn.isEnabled()
+
+
+def test_task_bar_opens_on_enter_key(tmp_path):
+    """Keyboard activation (found live 2026-11-22): a selected row must
+    open on Enter/double-click too — itemClicked alone is mouse-only and
+    strands keyboard users and accessibility Invoke."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from gui.agent_sessions_bar import AgentSessionsBar
+    from agent.sessions import SessionStore, new_session_id
+    app = _qapp()
+    store = SessionStore(str(tmp_path / "s"))
+    sid = new_session_id()
+    store.save(sid, "t", [], [{"k": "user", "t": "hi"}])
+    bar = AgentSessionsBar()
+    bar.set_sessions(store.list_sessions())
+    bar._list.setCurrentRow(0)
+    opened = []
+    bar.selected.connect(opened.append)
+    QTest.keyClick(bar._list, Qt.Key.Key_Return)
+    assert opened == [sid]

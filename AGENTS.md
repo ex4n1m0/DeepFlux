@@ -84,6 +84,38 @@
   run the two-line order repro before hunting code. Also note:
   test_linux_port.py matches NO letter glob in the nine commands — run it
   with the j chunk or solo so it is never silently skipped.
+  2026-11-22 EVENING UPDATE (tasks-sidebar change re-rolled the dice):
+  test_gui_render.py grew 11 MainWindow-building tests, and on THAT boot
+  the d–g, i, and loop+memory+m-n-o mega-shapes native-AVed 2–4/4 runs
+  (roving innocent victims — yt_dlp bytecode compile, requests.send in a
+  settings worker — never sidebar code). Pristine-HEAD stash runs of d–g
+  passed 3/3, so the SHAPE, not the code, is the trigger. Split verified
+  green REPEATEDLY same evening (1621 tests total) — TWELVE commands:
+  `a-c`, `d-f`, `g` SOLO, `h`, `iptv` SOLO, `i*` minus iptv,
+  `local_model` SOLO, `j*+llm+linux_port`, `loop+memory`, `m*`, `n-o`,
+  `tools` SOLO, `r-z minus tools` (that's thirteen lines counting the
+  tools line's swap-in below — keep every SOLO). In full:
+  `python -m pytest tests/test_a*.py tests/test_b*.py tests/test_c*.py -q`
+  `python -m pytest tests/test_d*.py tests/test_e*.py tests/test_f*.py -q`
+  `python -m pytest tests/test_g*.py -q`
+  `python -m pytest tests/test_h*.py -q`
+  `python -m pytest tests/test_iptv.py -q`
+  `python -m pytest $(ls tests/test_i*.py | grep -v iptv) -q`
+  `python -m pytest tests/test_local_model.py -q`
+  `python -m pytest tests/test_j*.py tests/test_llm.py tests/test_linux_port.py -q`
+  `python -m pytest tests/test_loop.py tests/test_memory.py -q`
+  `python -m pytest tests/test_m*.py -q`
+  `python -m pytest tests/test_n*.py tests/test_o*.py -q`
+  `python -m pytest tests/test_tools.py -q`
+  `files=$(ls tests/test_r*.py tests/test_s*.py tests/test_t*.py tests/test_u*.py tests/test_v*.py tests/test_x*.py tests/test_y*.py | grep -v "tests/test_tools.py"); python -m pytest $files -q`
+  The dice is PER-BOOT: on a fresh boot first try the old nine shapes,
+  and only re-split (these twelve) if a mega-shape AVs. Do NOT chase a
+  mega-shape AV with code changes when every constituent file is green
+  solo — stash-and-run-HEAD discriminates shape from bug in one minute.
+  Related trap found same evening: a per-test `mw.close()` fixture in
+  test_gui_render HUNG the g glob (closeEvent teardown deadlock with
+  gpu_preference in-process) — do not add MainWindow close-teardown to
+  these tests; build-and-forget is the proven shape.
   POWERSHELL NOTE (2026-11-06): the chunk commands assume a
   glob-expanding shell (bash). PowerShell passes wildcards to native
   commands LITERALLY — `pytest tests/test_a*.py` exits 4 with
@@ -91,8 +123,8 @@
   `$files = Get-ChildItem tests -Filter 'test_*.py' -File |
   Where-Object { $_.Name.Substring(5,1) -match '^[abc]$' } |
   ForEach-Object { $_.FullName }; python -m pytest $files -q --tb=short`
-  (letter groups: a-c / d-g / h / i / local_model solo / j+llm /
-  loop+memory+m-n-o / r-y).
+  (letter groups: a-c / d-f / g / h / iptv / i / local_model solo /
+  j+llm / loop+memory / m / n-o / r-y).
 - Tests must NEVER write the real `~/.deeptorrent/config.json`: the autouse
   fixture in `tests/conftest.py` redirects `DeeptorrentConfig.default_config_path`
   for every test; still pass explicit paths whenever
@@ -646,34 +678,33 @@
     ←/→ keys — PlayerWidget.SKIP_SECONDS (10) and the mini's hardcoded
     ±10 are pinned in lockstep by test_mini_player.py; keep the two in
     sync if either ever changes.
-- MINI-PLAYER LOGO LOOP (9.6, owner 2026-11-22 + same-day amendment "play
-  with sound one time and mute the after times"): the mini player's IDLE
-  STATE is the bundled repo-root `logoloop.mp4` (owner file, 9.3 MB / 5.04 s
-  h264 2362x876 + AAC audio bed; committed; ships via app.spec +
-  app_linux.spec datas — macOS has no mini player). Durable rules:
-  * Starts whenever the mini OPENS with no media (run_mini_player's 400 ms
-    timer), when the user ⏹-stops media (stop returns to the loop), and on
-    every full→mini morph (`show_from_main`). Banner idle page
-    (_IdleBanner) is only the FALLBACK when the file/backend is missing.
-  * AUDIO CONTRACT: first pass AUDIBLE (unless the user muted the mini —
-    config wins), muted at the FIRST position wrap-around
-    (`_logo_loop_wrapped`: near-end → back-to-start on the position signal
-    — works for native loop_file AND the stop/restart fallback). While
-    `_logo_mode`, M and the volume slider are inert (the logo's audio is
-    not user-adjustable; the volume path writes config). Real media
-    (`open_media`) restores the user's mute/volume.
-  * Looping: `PlayerBackend.set_loop_file(bool)` — native `loop_file=inf`
-    on mpv; VLC no-ops and `_on_state("stopped")` restarts it (bounded:
-    `_LOGO_MAX_RESTARTS` = 3 consecutive without a "playing", then banner
-    fallback — a broken file must not infinite-restart).
-  * ⏹/S during the logo is a NO-OP (the logo IS idle — stopping it would
-    just restart the loop). `_last_media` stays "" during the logo: it is
-    NOT resumable media (a morph from the logo lands on the music-
-    autostart branch, never a Play-tab resume).
-  * Exits: real media, morph_to_full/_stop_playback (loop off — no muted
-    video under the full app), window close. The logo never touches agent
-    music (mini-only sessions are silent by design; the sting is the
-    mini's own).
+- MINI-PLAYER LOGO INTRO (9.6 shipped an endless loop; owner 2026-11-23
+  SAME-DAY REVERSAL after seeing it live: "the video still loops
+  endlessly, it should play only once and after show the static image"):
+  the mini player's IDLE STATE is the STATIC owner banner (_IdleBanner);
+  the bundled repo-root `logoloop.mp4` (owner file, 9.3 MB / 5.04 s h264
+  2362x876 + AAC audio bed; committed; ships via app.spec +
+  app_linux.spec datas — macOS has no mini player) plays ONE audible,
+  NON-looping pass per WINDOW LIFETIME and lands on the banner at natural
+  EOF. Durable rules (these SUPERSEDE the 9.6 loop contract — the
+  wrap-muting `_logo_loop_wrapped` and the `_LOGO_MAX_RESTARTS` restart
+  machinery are GONE):
+  * ONE pass per window (`_logo_played` gate in `_start_logo_loop`): on
+    the mini's first idle after open (run_mini_player's 400 ms timer) —
+    or, if media opened immediately, on the FIRST ⏹-stop / morph-back.
+    Every later idle return goes straight to the banner. A fresh app run
+    is a fresh window → the intro plays again.
+  * AUDIBLE pass unless the user muted the mini (config wins); `set_loop_file(False)`
+    explicitly. While `_logo_mode`, M and the volume slider are inert; real
+    media (`open_media`) restores the user's mute/volume.
+  * Any backend "stopped" while `_logo_mode` = intro finished OR broken
+    file → banner (the graceful fallback; no restarts, no loops).
+  * ⏹/S during the intro SKIPS to the banner (backend stop + idle page).
+    `_last_media` stays "" during the intro: NOT resumable media (a morph
+    from it lands on the music-autostart branch, never a Play-tab resume).
+  * Exits: natural EOF, ⏹/S skip, real media, morph_to_full/_stop_playback
+    (loop off — no video under the full app), window close. The intro never
+    touches agent music (mini-only sessions are silent by design).
   * Tests: tests/test_mini_player.py — the `mini` fixture's stub backend
     records mutes/loop_file/volumes; tests that spin a REAL window via
     show_mini_player must monkeypatch `resolve_logo_video_path` to "" (the
@@ -693,6 +724,68 @@
   the hover poll is CHROME-ONLY now (`_rail_*` symbols all removed);
   pure fullscreen (`set_video_pure_chrome`) snapshots only the agent
   panel. Do not re-add a left rail or rail-adjacent pollers.
+- AGENT TASK SESSIONS sidebar (2026-11-22, owner: "the agent should have a
+  left side bar with sessions, like zcode, we can call them tasks"):
+  every Agent-tab conversation AUTO-SAVES as a local task under
+  `~/.deeptorrent/agent_sessions/` (env `DF_AGENT_SESSIONS`, redirected by
+  tests/conftest.py) and the left sidebar (`gui/agent_sessions_bar.py`,
+  pure view — no store access) lists them newest-first (name over a dim
+  preview, click/Enter/double-click to reopen, "✎ Rename" /
+  "🗑 Delete" / "➕ New task" LABELED buttons — owner 2026-11-23 after the
+  icon-only versions read as mystery glyphs; task text sized UP the same
+  day: name +2 font steps DemiBold, preview +1 dim, 48px rows). Durable
+  rules — do not regress:
+  * AUTO-SAVE ALL (owner decision): a task is created lazily on the first
+    send (auto-named from the first message, ≤48 chars), then saved
+    atomically (tmp+os.replace, `agent/sessions.py::SessionStore`) after
+    `_append_user` (with the outgoing message SPLICED IN — agent.chat
+    appends it only on the worker thread, so the pre-turn save captures
+    exactly the crash-mid-turn state), on `_on_agent_finished` (both the
+    agent and the web-sweep branches), on errors, on switch/new/delete,
+    and in closeEvent. Boot starts BLANK by owner decision — nothing
+    reopens; saved tasks open only on click.
+  * TWO payloads per file (`<uuid-hex>.json`, schema-versioned): the
+    OpenAI-style `messages` (so a reopened task resumes FULL LLM context
+    — `_load_session` replaces `agent.history`; `_reload_agent` carries
+    history across settings reloads via `_prev_agent_history`) and the
+    rendered `transcript` lines `{"k","t"}` (user/search_user/agent/
+    event/error/pending/search_html) so reopening looks identical.
+    `_replay_transcript` deliberately does NOT call the `_append_*`
+    builders (they mirror to the agent panel + status bell + re-log).
+    `sanitize_messages` strips a trailing dangling tool-call exchange
+    before every save — INCLUDING a PARTIAL reply set
+    (assistant(c1,c2)+tool(c1); loop.py appends the assistant with all
+    tool_calls before replies land one-by-one) — and `_load_session`
+    re-sanitizes on restore; a broken exchange anywhere in the tail must
+    never reach the LLM API (review HIGH 2026-11-22, pinned twice in
+    tests/test_agent_sessions.py). NOT captured in transcripts by design
+    (documented v1 scope): streamed token spans sealed mid-turn + debug
+    dumps — the final agent bubble + full LLM history always are.
+  * Clear/➕ New DETACH (the old task stays saved until deleted);
+    delete of the OPEN task blanks the chat. Web sweeps are tasks too
+    (search_user + search_html, empty messages). The sidebar is DISABLED
+    while a turn or sweep runs (`_set_busy`/`_set_search_busy` evaluate
+    BOTH flags — a sweep ending must not re-enable mid-turn) AND
+    `_tasks_locked` also checks `_agent_thread`/`_search_thread`
+    ALIVENESS: a sweep past its 60s watchdog clears `_search_busy` while
+    its worker still renders late results — a switch then would persist
+    those results into the WRONG task's file (review MED 2026-11-22;
+    `_search_timed_out` re-locks the bar for the same reason).
+  * ALL LOCAL-ONLY: no network, no telemetry, nothing in config.json.
+  * RESPONSIVE retrofit that shipped with the sidebar: the Agent tab used
+    to demand ~1250px (onboarding cards + input row — never covered by
+    test_responsive because the tab is built inline); it is now a
+    ResponsiveRow+OverflowRow citizen (cards fold rightmost-first; input
+    row folds ♫/🎤/Status/YOLO/Clear) and the "agents" param in
+    test_responsive.py pins ≤700×460 (measured 490px).
+  * PySide6 NATIVE-CRASH LESSON (bisected via bare QListWidget, 2026-11-22):
+    `QSize.expandedTo` has NO (int, int) overload — the TypeError escaping
+    a QStyledItemDelegate override (sizeHint/paint) into the C++ item-view
+    layout call SEGFAULTS the process with NO Python traceback (looks
+    exactly like the environmental AV family — check WER is empty for
+    today and bisect with a bare widget before blaming the dice). Build
+    QSize explicitly in delegates; pinned by
+    test_gui_render.py::test_task_delegate_sizehint_is_native_safe.
 - AGENT BACKGROUND MUSIC (8.3/8.4, owner 2026-11-18, `gui/agent_music.py`):
   a ♫ toggle in the agent input row ONLY plays the bundled repo-root
   `backgroundmusic.mp3` (owner file, 74.5 MB / 1h17m, committed; ships via
@@ -1200,11 +1293,15 @@
   `gui/main_window.py`).
 - Font size setting (2026-11-03): Settings → Font Size (Micro/Small/Medium/
   Large, config `ui_font_size`, top-level like `ui_language` so the agent can
-  NEVER set it) scales the whole UI. DEFAULT = "small" since 2026-11-04 (was
-  medium); because 7.0/7.1 persisted the then-default into every config.json,
-  `from_file` remaps a saved "medium"→"small" ONCE via the `ui_defaults_gen`
-  stamp (gen 1→2; explicit picks survive, and post-stamp Medium choices
-  persist normally — tests/test_font_scale.py::test_config_ui_defaults_migrate_once).
+  NEVER set it) scales the whole UI. DEFAULT = "small" since 2026-11-23,
+  owner (same-day chain: medium → small 2026-11-04 → micro 2026-11-17 →
+  medium → "let's try small and blue instead" → small). Because config
+  saves persist the then-default into every config.json, `from_file`
+  remaps each old default to the next via the `ui_defaults_gen` stamp
+  (gen 1→2 medium→small, 2→3 small→micro, 3→4 micro→medium, 4→5
+  medium→small — each ONCE; explicit picks survive, post-stamp choices
+  persist normally — tests/test_font_scale.py::
+  test_config_ui_defaults_migrate_once + test_config_defaults_gen4/5_migrate_once).
   Engine = `gui/fonts.py`: `set_font_scale()`
   must run BEFORE `load_app_fonts()` at boot (`run_gui` loads the config
   first for exactly this reason), and EVERY `setStyleSheet`/`setHtml`/
@@ -1215,11 +1312,13 @@
   sizes fitted to geometry (channel-number tiles, HUD strip) deliberately do
   NOT scale. Restart-to-apply, same convention as Language.
 - Text color themes (2026-11-03, same day as the font-size setting):
-  Settings → Text Color (Light Blue DEFAULT since 2026-11-04 / White / Blue /
-  Dark Blue, config `ui_text_theme`, top-level like `ui_font_size` — agent
-  can NEVER set it) recolors every stylesheet text; the 7.0/7.1 saved
-  "white" default rides the same `ui_defaults_gen` 1→2 migration to
-  light_blue. `set_text_theme()` runs at boot
+  Settings → Text Color (Blue DEFAULT since 2026-11-23, owner / White /
+  Light Blue / Dark Blue, config `ui_text_theme`, top-level like
+  `ui_font_size` — agent can NEVER set it) recolors every stylesheet text.
+  Default lineage: white → light_blue 2026-11-04 → dark_blue 2026-11-17 →
+  light_blue → blue (2026-11-23, same day), each hop riding the
+  `ui_defaults_gen` remap chain (a saved light_blue remaps once at gen 4→5).
+  `set_text_theme()` runs at boot
   next to `set_font_scale()` (mirrored in jackett_setup_dialog), and
   `scale_qss` rewrites bare `color: #ffffff` → the theme hex, QSS-BLOCK
   AWARE: `selection-color`, `background-color`, `border-color`,

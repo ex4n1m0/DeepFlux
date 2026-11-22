@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "9.6"
+APP_VERSION = "9.7"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -786,26 +786,33 @@ class DeeptorrentConfig:
     # font and every stylesheet font-size (gui/fonts.set_font_scale/
     # scale_qss); applied once at startup, takes effect next launch.
     # Top-level for the same reason as ui_language: stays user-controlled,
-    # agent cannot set it. Default "micro" since 2026-11-17 (was "small"
-    # 2026-11-04, "medium" before); from_file migrates old saved defaults
-    # once per generation (ui_defaults_gen below).
-    ui_font_size: str = "micro"
+    # agent cannot set it. Default "small" since 2026-11-23, owner
+    # ("let's try small and blue instead"; lineage: medium → small
+    # 2026-11-04 → micro 2026-11-17 → medium → small again, same day);
+    # from_file migrates old saved defaults once per generation
+    # (ui_defaults_gen below).
+    ui_font_size: str = "small"
     # UI text color theme ("white" | "light_blue" | "blue" | "dark_blue") —
     # rewrites every stylesheet text color via gui/fonts.scale_qss; applied
     # once at startup, takes effect next launch. Top-level for the same
     # reason as ui_language: stays user-controlled, agent cannot set it.
-    # Default "dark_blue" since 2026-11-17 (was "light_blue" 2026-11-04,
-    # "white" before); from_file migrates old saved defaults once per
-    # generation (ui_defaults_gen below).
-    ui_text_theme: str = "dark_blue"
+    # Default "blue" since 2026-11-23, owner ("let's try small and blue
+    # instead"; lineage: white → light_blue 2026-11-04 → dark_blue
+    # 2026-11-17 → light_blue → blue, same day); from_file migrates old
+    # saved defaults once per generation (ui_defaults_gen below).
+    ui_text_theme: str = "blue"
     # Generation stamp for one-time default migrations: config saves persist
     # the then-defaults into every config.json, so "saved default" is
     # indistinguishable from "never chose". gen 1 → 2 (2026-11-04) remapped
     # the 7.0/7.1 defaults (medium/white → small/light_blue). gen 2 → 3
     # (2026-11-17, owner) remaps the previous defaults to the new ones
-    # (small → micro, light_blue → dark_blue, download.max_concurrent 3 → 1)
-    # exactly once; explicit post-stamp choices always survive.
-    ui_defaults_gen: int = 3
+    # (small → micro, light_blue → dark_blue, download.max_concurrent 3 → 1).
+    # gen 3 → 4 (2026-11-23, owner) reversed 3's UI choices (micro → medium,
+    # dark_blue → light_blue); gen 4 → 5 (same day, owner changed their
+    # mind: "let's try small and blue instead") remaps those to the final
+    # small/blue. Each remap runs exactly once; explicit post-stamp choices
+    # always survive.
+    ui_defaults_gen: int = 5
     # Generation stamp for the one-time YOLO-default migration: llm.yolo_mode
     # shipped False since 5.8 and every config save persists the whole llm
     # section, so a saved False is almost always "never chose" — a bare
@@ -1280,14 +1287,14 @@ class DeeptorrentConfig:
             ui_language=(data.get("ui_language") or "en")
             if (data.get("ui_language") or "en") in ("en", "zh")
             else "en",
-            ui_font_size=(data.get("ui_font_size") or "micro")
-            if (data.get("ui_font_size") or "micro")
+            ui_font_size=(data.get("ui_font_size") or "small")
+            if (data.get("ui_font_size") or "small")
             in ("micro", "small", "medium", "large")
-            else "micro",
-            ui_text_theme=(data.get("ui_text_theme") or "dark_blue")
-            if (data.get("ui_text_theme") or "dark_blue")
+            else "small",
+            ui_text_theme=(data.get("ui_text_theme") or "blue")
+            if (data.get("ui_text_theme") or "blue")
             in ("white", "light_blue", "blue", "dark_blue")
-            else "dark_blue",
+            else "blue",
             ui_defaults_gen=data.get("ui_defaults_gen", 1)
             if isinstance(data.get("ui_defaults_gen", 1), int)
             else 1,
@@ -1328,6 +1335,29 @@ class DeeptorrentConfig:
                 config.ui_text_theme = "dark_blue"
             if config.download.max_concurrent == 3:
                 config.download.max_concurrent = 1
+        # One-time defaults refresh (gen 3 → 4, 2026-11-23, owner: "make
+        # the default font medium and the color light blue"): the
+        # micro/dark_blue defaults were persisted into every config by any
+        # save — remap them to the new defaults once. Explicit post-stamp
+        # choices don't match the remap and survive; after the first
+        # to_file the gen=4 stamp blocks re-migration.
+        if config.ui_defaults_gen < 4:
+            config.ui_defaults_gen = 4
+            if config.ui_font_size == "micro":
+                config.ui_font_size = "medium"
+            if config.ui_text_theme == "dark_blue":
+                config.ui_text_theme = "light_blue"
+        # One-time defaults refresh (gen 4 → 5, 2026-11-23, owner: "let's
+        # try small and blue instead"): the medium/light_blue defaults from
+        # gen 4 remap to the final small/blue once. Explicit post-stamp
+        # choices don't match the remap and survive; after the first
+        # to_file the gen=5 stamp blocks re-migration.
+        if config.ui_defaults_gen < 5:
+            config.ui_defaults_gen = 5
+            if config.ui_font_size == "medium":
+                config.ui_font_size = "small"
+            if config.ui_text_theme == "light_blue":
+                config.ui_text_theme = "blue"
         # One-time YOLO-default migration (gen 1 → 2, 2026-11-07): the
         # shipped default was False since 5.8, so configs saved before the
         # flip carry False without anyone choosing it — move them to the

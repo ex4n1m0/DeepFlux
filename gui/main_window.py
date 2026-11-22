@@ -60,6 +60,7 @@ from PySide6.QtCore import QUrl, QByteArray
 from agent.loop import AgentLoop
 from agent.tools import ToolRegistry
 from agent.rss import RSSMonitor
+from agent.sessions import SessionStore, auto_name, new_session_id
 from config import APP_VERSION, DeeptorrentConfig
 from engine import TorrentEngine
 from infra.config_backup import (
@@ -97,6 +98,7 @@ from gui.commander_tab import CommanderTab
 from gui.commander_bridge import CommanderBridge
 from gui.settings_hub import SettingsHub
 from gui.agent_panel import AgentPanel
+from gui.agent_sessions_bar import AgentSessionsBar
 from gui.win_taskbar import TaskbarProgress
 from gui.browser_bridge import BrowserBridge, accept_language_header, normalize_browser_target
 
@@ -1354,6 +1356,15 @@ class MainWindow(QMainWindow):
         )
         if self.config.watchdog.enabled:
             self.agent.start_watchdog()
+        # Agent task sessions (owner 2026-11-22, ZCode-style): every
+        # conversation auto-saves locally into ~/.deeptorrent/agent_sessions
+        # (DF_AGENT_SESSIONS override) and the Agent tab sidebar lists/
+        # renames/deletes them. Boot deliberately starts BLANK — saved tasks
+        # open only when clicked. All storage is local-only.
+        self._sessions = SessionStore()
+        self._session_id = ""       # "" = fresh unnamed task; set on first send
+        self._session_name = ""
+        self._transcript: List[Dict[str, str]] = []  # rendered lines {"k","t"}
         self._rss_monitor = RSSMonitor(self.config.rss)
         self._stage("engines", 35.0)
 
@@ -2006,6 +2017,31 @@ class MainWindow(QMainWindow):
         agents_tab_layout = QVBoxLayout(agents_tab)
         agents_tab_layout.setContentsMargins(0, 0, 0, 0)
 
+        # Tasks sidebar (owner 2026-11-22): ZCode-style session list left of
+        # the chat. Every conversation auto-saves as a local task; click to
+        # reopen (transcript + full LLM context), rename, delete. The bar is
+        # a pure view — persistence lives in MainWindow + agent/sessions.py.
+        agents_splitter = QSplitter(Qt.Horizontal)
+        agents_splitter.setContentsMargins(0, 0, 0, 0)
+        agents_splitter.setChildrenCollapsible(True)
+        self._agents_splitter = agents_splitter
+        self._sessions_bar = AgentSessionsBar()
+        self._sessions_bar.set_sessions(self._sessions.list_sessions())
+        self._sessions_bar.new_requested.connect(self._on_task_new)
+        self._sessions_bar.selected.connect(self._on_task_selected)
+        self._sessions_bar.rename_requested.connect(self._on_task_rename)
+        self._sessions_bar.delete_requested.connect(self._on_task_delete)
+        agents_splitter.addWidget(self._sessions_bar)
+        agents_chat_col = QWidget()
+        agents_col_layout = QVBoxLayout(agents_chat_col)
+        agents_col_layout.setContentsMargins(0, 0, 0, 0)
+        agents_splitter.addWidget(agents_chat_col)
+        agents_splitter.setStretchFactor(0, 0)
+        agents_splitter.setStretchFactor(1, 1)
+        agents_splitter.setCollapsible(1, False)  # the chat itself never folds away
+        agents_splitter.setSizes([210, 900])
+        agents_tab_layout.addWidget(agents_splitter)
+
         # Hardware HUD (6.1) REMOVED in 7.6 (owner decision 2026-11-07):
         # the always-on CPU/RAM/GPU strip's 2s sampler was bisect-proven to
         # be the boot-crash trigger on the dev machine (worker bisect: base
@@ -2023,26 +2059,41 @@ class MainWindow(QMainWindow):
         self.chat_history.anchorClicked.connect(self._on_chat_link_clicked)
         self.chat_history.document().setDefaultStyleSheet(scale_qss(CHAT_CSS))
         self.chat_history.setStyleSheet(scale_qss("QTextBrowser { background-color: transparent; color: #ffffff; border: 1px solid #1a2a4a; border-radius: 3px; padding: 2px; }"))
-        agents_tab_layout.addWidget(self.chat_history)
+        agents_col_layout.addWidget(self.chat_history)
 
         # First-run setup cards (v5.1): visible while the chat is fresh, so a
         # new install lands on "what do I do first" instead of a black void.
         # Hidden by the first real user message (the auto-greeting keeps them
         # up); Clear brings them back.
-        self._onboarding = QWidget()
+        # ResponsiveRow + OverflowRow (2026-11-22): the cards used to demand
+        # ~1250px and locked the whole window wide. The cards are valid
+        # overflow candidates — the app only hides the whole CONTAINER, never
+        # an individual card, so OverflowRow stays the only per-card hider.
+        self._onboarding = ResponsiveRow()
         onb_row = QHBoxLayout(self._onboarding)
         onb_row.setContentsMargins(2, 2, 2, 6)
         onb_row.setSpacing(10)
+        onb_cards = []
         for icon, title, tip, handler in self._onboarding_cards():
             card = QPushButton(f"{icon}  {title}")
             card.setObjectName("setup_card")
             card.setToolTip(tip)
             card.clicked.connect(handler)
             onb_row.addWidget(card)
+            onb_cards.append(card)
         onb_row.addStretch(1)
-        agents_tab_layout.addWidget(self._onboarding)
+        agents_col_layout.addWidget(self._onboarding)
+        # Rightmost card folds into "⋯" first.
+        self._onboarding_overflow = OverflowRow(self._onboarding, tuple(reversed(onb_cards)))
 
-        agent_input_layout = QHBoxLayout()
+        # ResponsiveRow + OverflowRow (2026-11-22): the full row (input +
+        # 🎤 + Clear + Status + YOLO + ♫ + Search + Ask Agent) demanded
+        # ~880px and locked the window wide. Optional toggles fold into a
+        # "⋯" menu on narrow windows; the input + Search + Ask Agent core
+        # stays. Candidates: widgets the app itself never hides (music_btn
+        # may not exist on macOS — the tuple is built conditionally).
+        agent_input_row = ResponsiveRow()
+        agent_input_layout = QHBoxLayout(agent_input_row)
         self.chat_input = QLineEdit()
         self.chat_input.setObjectName("big_input")
         self.chat_input.setPlaceholderText(tr(self._INPUT_PLACEHOLDER))
@@ -2059,7 +2110,8 @@ class MainWindow(QMainWindow):
 
         clear_btn = QPushButton(tr('Clear'))
         clear_btn.setObjectName("btn_secondary")
-        clear_btn.setToolTip(tr("Clear the history (also resets the agent's memory of this conversation)"))
+        clear_btn.setToolTip(tr(
+            "Start a fresh task — the current conversation stays saved in the tasks sidebar"))
         clear_btn.clicked.connect(self._clear_chat)
         self.clear_btn = clear_btn
         agent_input_layout.addWidget(clear_btn)
@@ -2117,7 +2169,15 @@ class MainWindow(QMainWindow):
         send_btn.clicked.connect(self._on_agent_button)
         self.send_btn = send_btn
         agent_input_layout.addWidget(send_btn)
-        agents_tab_layout.addLayout(agent_input_layout)
+        agents_col_layout.addWidget(agent_input_row)
+        # Hide-first order: ♫ and 🎤 fold first (least essential), Clear /
+        # YOLO / Status last; the input + Search + Ask Agent core remains.
+        overflow_candidates = []
+        if self.music_btn is not None:
+            overflow_candidates.append(self.music_btn)
+        overflow_candidates.extend((self.voice_btn, status_btn,
+                                    self.yolo_btn, self.clear_btn))
+        self._agent_input_overflow = OverflowRow(agent_input_row, tuple(overflow_candidates))
 
         # --- Torrents panel (top-right of the Agent tab) ---
         torrents_tab = QWidget()
@@ -2850,7 +2910,7 @@ class MainWindow(QMainWindow):
         # Font size: same restart-to-apply convention as Language. Display
         # scaling differs per machine — micro..large covers the "font too
         # big here / too small there" reports. Default small since
-        # 2026-11-04 (from_file migrates 7.0/7.1 configs once).
+        # 2026-11-23, owner (from_file migrates old saved defaults once).
         _file_zone(settings_menu, tr("Font Size"))
         size_group = QActionGroup(settings_menu)
         for _size, _size_label in (("micro", tr("Micro")),
@@ -2869,7 +2929,8 @@ class MainWindow(QMainWindow):
         # text ships pure white; the tiers recolor every stylesheet text
         # via gui/fonts.scale_qss on the next launch (the background ladder
         # was darkened 2026-11-03 so dark blue stays readable). Default
-        # light_blue since 2026-11-04 (from_file migrates 7.0/7.1 once).
+        # blue since 2026-11-23, owner (from_file migrates old saved
+        # defaults once).
         _file_zone(settings_menu, tr("Text Color"))
         theme_group = QActionGroup(settings_menu)
         for _theme, _theme_label in (("white", tr("White")),
@@ -3825,6 +3886,11 @@ class MainWindow(QMainWindow):
             return
         self.chat_input.clear()
         self._append_user(text)
+        # Task sessions: first message starts a task; save immediately with
+        # the outgoing message spliced in (agent.chat() logs it only on the
+        # worker thread) so a crash mid-turn still persists the user's words.
+        self._ensure_task(text)
+        self._save_current_session(extra_user_msg=text)
         # Record for Up/Down recall (skip consecutive duplicates).
         if not self._input_history or self._input_history[-1] != text:
             self._input_history.append(text)
@@ -3927,6 +3993,10 @@ class MainWindow(QMainWindow):
         self._search_timed_out_flag = False
         self.chat_input.clear()
         self._append_search_user(text)
+        # A web sweep is a task too: it names/creates one when the chat was
+        # fresh (agent history stays untouched — sweeps have no LLM context).
+        self._ensure_task(text)
+        self._save_current_session()
         # Record for Up/Down recall (skip consecutive duplicates).
         if not self._input_history or self._input_history[-1] != text:
             self._input_history.append(text)
@@ -3995,6 +4065,11 @@ class MainWindow(QMainWindow):
             self._busy_timer.stop()
         self._refresh_input_placeholder()
         self.agent_panel.set_busy(busy)
+        # No task switching/creating/deleting while either pipeline runs —
+        # evaluate BOTH flags (a sweep ending must not re-enable mid-turn).
+        bar = getattr(self, "_sessions_bar", None)
+        if bar is not None:
+            bar.set_interactive(not (self._agent_busy or getattr(self, "_search_busy", False)))
 
     def _tick_busy(self) -> None:
         """Update the elapsed-time indicator while the agent is working."""
@@ -4005,6 +4080,9 @@ class MainWindow(QMainWindow):
         self._search_busy = busy
         self.search_btn.setEnabled(not busy)
         self._refresh_input_placeholder()
+        bar = getattr(self, "_sessions_bar", None)
+        if bar is not None:
+            bar.set_interactive(not (self._search_busy or getattr(self, "_agent_busy", False)))
 
     def _refresh_input_placeholder(self) -> None:
         """Shared input placeholder: agent status wins over search status.
@@ -5662,6 +5740,13 @@ class MainWindow(QMainWindow):
         self._search_timed_out_flag = True
         self._append_search_error("Search is taking longer than 60s — the network may be slow. Results will appear here if they arrive.")
         self._set_search_busy(False)
+        # The sweep WORKER may still be alive (late results) — keep the
+        # tasks sidebar locked until it actually finishes, or a task
+        # switch would persist this sweep's late results into the wrong
+        # session file (review MED 2026-11-22).
+        bar = getattr(self, "_sessions_bar", None)
+        if bar is not None:
+            bar.set_interactive(not self._tasks_locked())
 
     def _on_chat_link_clicked(self, url) -> None:
         """Handle clicks on links in the chat — magnet links are added directly,
@@ -5941,6 +6026,10 @@ class MainWindow(QMainWindow):
             # Defer to the next event-loop tick so the splitter has its real
             # width (the Download tab may not be the current tab at startup).
             QTimer.singleShot(0, self._enforce_agent_split)
+            # Agent tab: tasks sidebar gets a fixed ~190px, the chat the
+            # rest (same rule as _enforce_agent_split — pre-show
+            # setSizes() alone is overridden by size hints).
+            QTimer.singleShot(0, self._enforce_tasks_sidebar_width)
 
     def _set_dl_view(self, mode: str) -> None:
         """Download page view chips: both panes, or focus one (v5.1)."""
@@ -5953,6 +6042,17 @@ class MainWindow(QMainWindow):
         w = self.agent_splitter.width()
         if w > 0 and not self.config.ui_splitters.get("download_v5_stack", ""):
             self.agent_splitter.setSizes([w // 2, w - w // 2])
+
+    def _enforce_tasks_sidebar_width(self) -> None:
+        """Give the Agent tab's tasks sidebar its default ~210px once the
+        splitter has real width (pre-show setSizes() is overridden by
+        size hints — the documented splitter rule)."""
+        splitter = getattr(self, "_agents_splitter", None)
+        if splitter is None:
+            return
+        w = splitter.width()
+        if w > 200:
+            splitter.setSizes([210, w - 210])
 
     def _on_main_tab_changed(self, index: int) -> None:
         """Enforce the 50/50 Download split when that tab becomes visible —
@@ -6128,6 +6228,9 @@ class MainWindow(QMainWindow):
             self._set_busy(False)
             self._set_search_busy(False)
         finally:
+            # The turn is complete (agent reply, sweep results or error):
+            # persist the task in its final state.
+            self._save_current_session()
             self._refresh()
 
     def _render_search_results(self, results: list, answer: str = "", late: bool = False) -> None:
@@ -6171,7 +6274,9 @@ class MainWindow(QMainWindow):
         # bottom hides leading rows.
         self._seal_stream()
         self.chat_history.set_logo_visible(False)
-        start_pos = self._insert_html_into(self.chat_history, f'<div class="msg-agent">{"".join(parts)}</div>')
+        results_html = f'<div class="msg-agent">{"".join(parts)}</div>'
+        self._log_transcript("search_html", results_html)
+        start_pos = self._insert_html_into(self.chat_history, results_html)
         self._scroll_to_char_pos(self.chat_history, start_pos)
 
     @staticmethod
@@ -6195,11 +6300,13 @@ class MainWindow(QMainWindow):
     def _append_search_user(self, text: str) -> None:
         """Render a web-sweep query in the merged Agents history."""
         self.chat_history.set_logo_visible(False)
+        self._log_transcript("search_user", text)
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         self._insert_html(f'<div class="msg-user"><b>Search:</b> {safe}</div>')
 
     def _append_search_error(self, text: str) -> None:
         """Render a web-sweep error in the merged Agents history."""
+        self._log_transcript("error", text)
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         self._insert_html(f'<div class="msg-error">{safe}</div>')
 
@@ -6211,6 +6318,7 @@ class MainWindow(QMainWindow):
         """Render a user message as a styled bubble."""
         # First user message: hide the logo so the chat turns plain black.
         self.chat_history.set_logo_visible(False)
+        self._log_transcript("user", text)
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         self._insert_html(f'<div class="msg-user"><b>{tr("You:")}</b> {safe}</div>')
         self.agent_panel.append_exchange("user", text)
@@ -6219,7 +6327,16 @@ class MainWindow(QMainWindow):
         self._onboarding.hide()
 
     def _clear_chat(self) -> None:
-        """Clear the merged Agents history and restore the logo background."""
+        """Clear the merged Agents history and restore the logo background.
+
+        Task-session semantics (2026-11-22): the current task was already
+        auto-saved with every turn, so Clear just detaches from it — the
+        saved copy stays in the sidebar until the user deletes it, and the
+        next message starts a NEW task."""
+        self._save_current_session()
+        self._session_id = ""
+        self._session_name = ""
+        self._transcript = []
         self.chat_history.clear()
         self.chat_history.set_logo_visible(True)
         self._stream_content_start = None
@@ -6227,16 +6344,199 @@ class MainWindow(QMainWindow):
         # Reset the agent's conversation history so old context doesn't leak back in.
         self.agent.history.clear()
         self.agent.pending.clear()
+        self.agent_panel.clear_view()
         self._onboarding.show()
+        self._refresh_sessions_bar()
+
+    # ------------------------------------------------------------------
+    # Agent task sessions (sidebar: list / open / rename / delete)
+    # ------------------------------------------------------------------
+
+    def _log_transcript(self, kind: str, text: str) -> None:
+        """Record a rendered chat line for the current task's saved
+        transcript. Replay never routes through the _append_* methods, so
+        no re-entrancy guard is needed."""
+        self._transcript.append({"k": kind, "t": text})
+
+    def _ensure_task(self, first_message: str) -> None:
+        """Lazily start a task on the first message of a fresh chat."""
+        if self._session_id:
+            return
+        self._session_id = new_session_id()
+        self._session_name = auto_name(first_message)
+
+    def _save_current_session(self, extra_user_msg: str = "") -> None:
+        """Persist the current task (atomic file write). Called after each
+        rendered turn, on errors, on switch/delete/new, and at close.
+
+        ``extra_user_msg``: agent.chat() appends the user message on the
+        WORKER thread, so the save issued right after _append_user (GUI
+        thread, pre-turn) must splice the outgoing message in itself —
+        that is exactly the crash-mid-turn state worth persisting."""
+        if not self._session_id:
+            return
+        messages = list(getattr(self.agent, "history", None) or [])
+        if extra_user_msg:
+            messages = messages + [{"role": "user", "content": extra_user_msg}]
+        try:
+            if self._sessions.save(
+                self._session_id, self._session_name, messages, list(self._transcript)
+            ):
+                self._refresh_sessions_bar()
+        except Exception:
+            logger.error("failed to save agent session", exc_info=True)
+
+    def _tasks_locked(self) -> bool:
+        """No task switching/creating/deleting while a turn or sweep runs —
+        the Stop button is the way out; the sidebar is disabled meanwhile.
+
+        Thread-aliveness is checked BESIDES the flags: a web sweep that
+        hit its 60s watchdog clears ``_search_busy`` while its worker is
+        still alive (late results render by design) — allowing a switch
+        then would persist task A's late results into task B's file."""
+        if getattr(self, "_agent_busy", False) or getattr(self, "_search_busy", False):
+            return True
+        for attr in ("_agent_thread", "_search_thread"):
+            thread = getattr(self, attr, None)
+            if thread is not None and thread.is_alive():
+                return True
+        return False
+
+    def _on_task_new(self) -> None:
+        """➕ New — same as Clear: archive the current task, blank chat."""
+        if self._tasks_locked():
+            return
+        self._clear_chat()
+
+    def _on_task_selected(self, session_id: str) -> None:
+        """Sidebar click — save the outgoing task, open the clicked one."""
+        if self._tasks_locked():
+            self._append_event(
+                tr("A search or agent turn is still finishing — wait a moment before switching tasks."))
+            self._sessions_bar.set_current(self._session_id)
+            return
+        if session_id == self._session_id:
+            return
+        self._save_current_session()
+        self._load_session(session_id)
+
+    def _load_session(self, session_id: str) -> None:
+        """Open a saved task: transcript replay + full LLM context."""
+        data = self._sessions.load(session_id)
+        if data is None:
+            self._append_event(tr("Could not open that task (its file is unreadable)."))
+            self._refresh_sessions_bar()
+            return
+        self._session_id = data.id
+        self._session_name = data.name
+        self._transcript = [dict(e) for e in data.transcript]
+        # Re-sanitize on load (belt-and-braces alongside save-time
+        # sanitization): a hand-edited or older-schema file must never
+        # hand the LLM a dangling tool-call exchange.
+        from agent.sessions import sanitize_messages
+        self.agent.history = sanitize_messages([dict(m) for m in data.messages])
+        self.agent.pending.clear()
+        self._stream_content_start = None
+        self._stream_reasoning_started = False
+        self.chat_history.clear()
+        self.agent_panel.clear_view()
+        if self._transcript:
+            self.chat_history.set_logo_visible(False)
+            self._onboarding.hide()
+            self._replay_transcript()
+        else:
+            self.chat_history.set_logo_visible(True)
+            self._onboarding.show()
+        self._refresh_sessions_bar()
+
+    def _replay_transcript(self) -> None:
+        """Re-render the saved transcript with the SAME builders the live
+        chat uses — deliberately not calling _append_* (those mirror to the
+        agent panel, ring the status bell and re-log the transcript)."""
+        def _esc(t: str) -> str:
+            return t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        for entry in self._transcript:
+            kind = entry.get("k")
+            text = entry.get("t", "")
+            if kind == "user":
+                self._insert_html(f'<div class="msg-user"><b>{tr("You:")}</b> {_esc(text)}</div>')
+            elif kind == "search_user":
+                self._insert_html(f'<div class="msg-user"><b>Search:</b> {_esc(text)}</div>')
+            elif kind == "agent":
+                self._insert_html(
+                    f'<div class="msg-agent"><b>{tr("Agent:")}</b><br>{_markdown_to_html(text)}</div>')
+            elif kind == "event":
+                self._insert_html(f'<div class="msg-event">{text}</div>')
+            elif kind == "error":
+                self._insert_html(f'<div class="msg-error"><b>Error:</b> {_esc(text)}</div>')
+            elif kind == "pending":
+                self._insert_html(f'<div class="msg-pending"><b>⚠ Action needed:</b> {_esc(text)}</div>')
+            elif kind == "search_html":
+                self._insert_html(text)
+
+    def _on_task_rename(self, session_id: str) -> None:
+        """✎ Rename — QInputDialog prefilled with the current name."""
+        if self._tasks_locked():
+            return
+        data = self._sessions.load(session_id)
+        current = data.name if data else ""
+        text, ok = QInputDialog.getText(self, tr("Rename task"), tr("Task name:"), text=current)
+        if not ok:
+            return
+        name = text.strip()
+        if not name:
+            return
+        if self._sessions.rename(session_id, name):
+            if session_id == self._session_id:
+                self._session_name = name
+            self._refresh_sessions_bar()
+
+    def _on_task_delete(self, session_id: str) -> None:
+        """🗑 Delete — confirmed; deleting the open task leaves a blank chat."""
+        if self._tasks_locked():
+            return
+        data = self._sessions.load(session_id)
+        name = data.name if data else session_id
+        reply = QMessageBox.question(
+            self, tr("Delete task"),
+            f"{tr('Delete')} '{name}'?\n{tr('This cannot be undone.')}",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+        self._sessions.delete(session_id)
+        if session_id == self._session_id:
+            self._session_id = ""
+            self._session_name = ""
+            self._transcript = []
+            self.agent.history.clear()
+            self.agent.pending.clear()
+            self.chat_history.clear()
+            self.chat_history.set_logo_visible(True)
+            self._stream_content_start = None
+            self._stream_reasoning_started = False
+            self.agent_panel.clear_view()
+            self._onboarding.show()
+        self._refresh_sessions_bar()
+
+    def _refresh_sessions_bar(self) -> None:
+        bar = getattr(self, "_sessions_bar", None)
+        if bar is None:
+            return
+        bar.set_sessions(self._sessions.list_sessions())
+        bar.set_current(self._session_id)
 
     def _append_agent(self, text: str) -> None:
         """Render an agent message as a styled bubble with markdown rendering."""
+        self._log_transcript("agent", text)
         body = _markdown_to_html(text)
         self._insert_html(f'<div class="msg-agent"><b>{tr("Agent:")}</b><br>{body}</div>')
         self.agent_panel.append_exchange("agent", text)
 
     def _append_event(self, text: str) -> None:
         """Render a lightweight progress event (tool call, thinking, etc.)."""
+        self._log_transcript("event", text)
         self._insert_html(f'<div class="msg-event">{text}</div>')
         # Status-bar bell: strip the lightweight events' HTML-ish wrapper so
         # the log stays readable plain text.
@@ -6247,6 +6547,7 @@ class MainWindow(QMainWindow):
 
     def _append_error(self, text: str) -> None:
         """Render an error message."""
+        self._log_transcript("error", text)
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         self._insert_html(f'<div class="msg-error"><b>Error:</b> {safe}</div>')
         self.agent_panel.append_exchange("error", text)
@@ -6265,6 +6566,7 @@ class MainWindow(QMainWindow):
 
     def _append_pending(self, text: str) -> None:
         """Render a pending-confirmation prompt."""
+        self._log_transcript("pending", text)
         safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         self._insert_html(f'<div class="msg-pending"><b>⚠ Action needed:</b> {safe}</div>')
 
@@ -7467,6 +7769,10 @@ class MainWindow(QMainWindow):
             self.tools.shutdown()
         except Exception:
             pass
+        # Stash the live conversation so the rebuilt loop below resumes it
+        # (task sessions own their history — a settings change must not
+        # silently reset the open task's context).
+        self._prev_agent_history = list(getattr(self.agent, "history", []) or [])
         self.tools = ToolRegistry(self.engine, self.config, dl_engine=self._dl_engine,
                                   enable_iptv_tools=_PLAY_TAB_SUPPORTED)
         if getattr(self, "_iptv_bridge", None) is not None:
@@ -7479,6 +7785,10 @@ class MainWindow(QMainWindow):
             self.engine, self.config, tools=self.tools,
             on_event=lambda evt: self._agent_signals.event.emit(evt),
         )
+        # Keep the CURRENT task's LLM context across a settings reload —
+        # the loop is recreated but the conversation it belongs to isn't.
+        self.agent.history = list(getattr(self, "_prev_agent_history", []) or [])
+        self._prev_agent_history = []
         if self.config.watchdog.enabled:
             self.agent.start_watchdog()
         self._rss_monitor = RSSMonitor(self.config.rss)
@@ -7745,6 +8055,9 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         # Closing the window (X) quits the app — no background instance is
         # left running in the tray.
+        # Persist the open task first — every save before this covered
+        # completed turns; this one captures anything still unsaved.
+        self._save_current_session()
         tb = getattr(self, "_taskbar", None)
         if tb is not None:
             try:

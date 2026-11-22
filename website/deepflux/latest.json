@@ -1,8 +1,8 @@
 {
-  "version": "9.6",
-  "file": "DeepFlux9.6Setup.exe",
-  "size": 522105121,
-  "sha256": "982a19d6b0570bb74c860cbe1ea2d7daaf80b91acf729ebbe0b6def819dde78e",
-  "released": "2026-11-22",
-  "notes": "DeepFlux 9.6 - the mini player now opens with an animated logo loop (sound on the first pass, silent loops until you play something or open the full app). Chinese-named IPTV movies get real covers: a new strict title match plus a manual Identify picker and on-demand AI translation on the info panel. IPTV loading got a comfort rework: staged progress bar, chunked grid build (no more freezes on 70k-entry playlists), gentler CPU during loads, instant refreshes when nothing changed. Includes all 9.0-9.5 features."
+  "version": "9.7",
+  "file": "DeepFlux9.7Setup.exe",
+  "size": 522069278,
+  "sha256": "b928e657ad12785aa76bc9851272921c4ff5149a851132e3e954ddfa13aa87a8",
+  "released": "2026-11-23",
+  "notes": "DeepFlux 9.7 - the Agent tab gets a Tasks sidebar: every conversation is saved automatically as a local task you can reopen (full transcript + AI context), rename, or delete. The mini player's logo video now plays once and hands over to the static banner. Default UI is now small font + blue text, with bigger clearer task list text. Agent settings reloads keep the open task's context. Includes all 9.0-9.6 features."
 }

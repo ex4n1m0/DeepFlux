@@ -933,4 +933,25 @@ ZH_CN: dict[str, str] = {
     "Translating…": "翻译中…",
     "Translation failed — check the AI key in Settings.":
         "翻译失败 —— 请检查设置中的 AI 密钥。",
+
+    # Agent tasks sidebar (2026-11-22; labeled buttons 2026-11-23)
+    '🗂 Tasks': '🗂 任务',
+    '➕ New task': '➕ 新任务',
+    '✎ Rename': '✎ 重命名',
+    '🗑 Delete': '🗑 删除',
+    'Start a new task (the current conversation stays saved)':
+        '开始新任务（当前对话仍会保存）',
+    'No saved tasks yet —\nevery conversation is\nsaved automatically.':
+        '还没有保存的任务 ——\n每段对话都会自动保存。',
+    'Rename the selected task': '重命名选中的任务',
+    'Delete the selected task (asks first)': '删除选中的任务（会先确认）',
+    'Rename task': '重命名任务',
+    'Task name:': '任务名称：',
+    'Delete task': '删除任务',
+    'Delete': '删除',
+    'This cannot be undone.': '此操作无法撤销。',
+    'Could not open that task (its file is unreadable).':
+        '无法打开该任务（文件不可读）。',
+    'Start a fresh task — the current conversation stays saved in the tasks sidebar':
+        '开始新任务 —— 当前对话仍保存在任务侧栏中',
 }

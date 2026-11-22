@@ -19,13 +19,14 @@ alive across the transformation would require re-parenting the native mpv
 surface (feasible per the 2026-11-10 spikes, but deliberately not built —
 see the study's appendix §8).
 
-The idle state plays the bundled LOGO LOOP video (repo-root
-``logoloop.mp4``, shipped via app.spec / app_linux.spec datas) — audible on
-its FIRST pass, muted on every loop after (owner 2026-11-22: "play with
-sound one time and mute the after times"). It stops when the user plays a
-real media file or morphs to the full app, and it is what ⏹ returns to.
-When the file (or a backend) is missing, the old owner banner
-(gui/brand_assets) remains the fallback idle page.
+The idle state is the static owner banner (gui/brand_assets). ONCE per
+mini-window lifetime — on open with no media — the bundled LOGO VIDEO
+(repo-root ``logoloop.mp4``, shipped via app.spec / app_linux.spec datas)
+plays a single audible pass (owner 2026-11-22, same-day amendment to the
+9.6 loop: "play only once and after show the static image") and then
+lands on the banner; every later idle return (⏹, morph back) goes
+straight to the banner. When the file (or a backend) is missing, the
+banner is the idle page from the start.
 """
 from __future__ import annotations
 
@@ -52,10 +53,9 @@ logger = logging.getLogger(__name__)
 
 MEDIA_EXTS = tuple(sorted(set(VIDEO_EXTS + AUDIO_EXTS)))
 
-# The logo loop restarts itself a bounded number of times before giving up
-# and falling back to the banner idle page (a missing codec / broken file
-# must not become a silent infinite restart loop).
-_LOGO_MAX_RESTARTS = 3
+# (9.6's bounded logo-loop restart machinery is gone: the video plays ONE
+# pass per window — any "stopped" while in logo mode lands on the static
+# banner, which is also the graceful fallback for a broken file.)
 
 
 def resolve_logo_video_path() -> str:
@@ -233,13 +233,11 @@ class MiniPlayerWindow(QWidget):
         self._last_media = ""        # resume offer after the first morph
         self._pending_target = ""    # open target that triggered a morph
         self._queue: list = []       # on-deck media (multi-target opens)
-        # Logo loop state: _logo_mode while the idle video is the surface;
-        # _logo_muted flips after the first audible pass wraps; _logo_restarts
-        # bounds the give-up fallback; _logo_pos_prev detects the wrap.
+        # Logo intro state: _logo_mode while the one-shot video is the
+        # surface; _logo_played keeps it to ONE pass per window lifetime
+        # (later idle returns go straight to the static banner).
         self._logo_mode = False
-        self._logo_muted = False
-        self._logo_restarts = 0
-        self._logo_pos_prev = -1.0
+        self._logo_played = False
         self._chrome_timer = QTimer(self)
         self._chrome_timer.setInterval(2000)
         self._chrome_timer.timeout.connect(self._hide_chrome_if_fullscreen)
@@ -487,18 +485,22 @@ class MiniPlayerWindow(QWidget):
         backend.set_mute(self._config.mini_player.muted)
         return backend
 
-    # ------------------------------------------------------------- logo loop
+    # ------------------------------------------------------------- logo intro
     def _start_logo_loop(self) -> None:
-        """The idle state (owner 2026-11-22): the bundled logo video loops
-        on the video surface — audible on the first pass, muted after.
+        """The idle surface: the static banner — EXCEPT for ONE video pass
+        per window lifetime, on the first idle after open (owner
+        2026-11-22, same-day amendment to the 9.6 loop: "play only once
+        and after show the static image").
 
-        Exits are explicit: ``open_media`` (real media), ``morph_to_full``
-        (via _stop_playback), and closing the window. ⏹/S is a no-op while
-        the logo is the surface — there is nothing else to stop INTO; after
-        real media stops, ⏹ returns HERE. Falls back to the banner idle
-        page when the file or a backend is unavailable.
+        The pass is audible unless the user muted the mini player (their
+        setting wins). It ends on natural EOF ("stopped" → banner here),
+        on real media opening, on morphing, or on ⏹/S (skip to banner).
+        Falls back to the banner when the file or a backend is missing.
         """
         if self._morphing:
+            return
+        if self._logo_played:
+            self._stack.setCurrentWidget(self._idle_page)
             return
         path = resolve_logo_video_path()
         if not path:
@@ -513,9 +515,8 @@ class MiniPlayerWindow(QWidget):
                 self._stack.setCurrentWidget(self._idle_page)
                 return
         self._logo_mode = True
-        self._logo_muted = False      # first pass carries the sting…
-        self._logo_pos_prev = -1.0
-        self._last_media = ""         # the logo is NOT resumable media
+        self._logo_played = True       # ONE pass per window lifetime
+        self._last_media = ""          # the logo is NOT resumable media
         self._stack.setCurrentWidget(self._video_page)
         self.setWindowTitle(f"DeepFlux Mini {APP_VERSION}")
         self._duration = 0.0
@@ -524,41 +525,20 @@ class MiniPlayerWindow(QWidget):
         self._time_lbl.setText("0:00 / 0:00")
         self._play_btn.setText("⏸")
         try:
-            self._backend.set_loop_file(True)   # native mpv seamless loop
+            self._backend.set_loop_file(False)   # one pass, no looping
         except Exception:
             logger.debug("loop_file set failed", exc_info=True)
-        # …unless the user muted the mini player themselves — their setting
-        # wins over the sting.
+        # Audible pass — unless the user muted the mini player themselves.
         self._backend.set_mute(bool(self._config.mini_player.muted))
         self._backend.play(path)
 
     def _stop_logo_loop(self) -> None:
         """Leave logo mode (real media taking over, morphing, quitting)."""
         self._logo_mode = False
-        self._logo_restarts = 0
-        self._logo_pos_prev = -1.0
         try:
             self._backend.set_loop_file(False)
         except Exception:
             pass
-
-    def _logo_loop_wrapped(self, pos: float, duration: float) -> None:
-        """Mute at the END of the first audible pass (owner 2026-11-22):
-        watch the position signal — a jump from near the end back to the
-        start is a loop wrap on ANY backend (native loop_file or the VLC
-        stop/restart fallback)."""
-        if duration <= 0:
-            return
-        prev = self._logo_pos_prev
-        self._logo_pos_prev = pos
-        if self._logo_muted or prev < duration * 0.5:
-            return
-        if pos < prev - duration * 0.5:   # wrapped back to the start
-            self._logo_muted = True
-            try:
-                self._backend.set_mute(True)
-            except Exception:
-                pass
 
     def open_media(self, path: str) -> None:
         """Play a local media file (association open / drag-drop / picker)."""
@@ -635,22 +615,15 @@ class MiniPlayerWindow(QWidget):
         self.surface.hide_opening()
         if state == "playing":
             self._play_btn.setText("⏸")
-            if self._logo_mode:
-                self._logo_restarts = 0  # healthy pass — reset the budget
         elif state == "paused":
             self._play_btn.setText("▶")
         elif state == "stopped":
             self._play_btn.setText("▶")
             if self._logo_mode:
-                # Native looping never reaches "stopped" — this is the
-                # VLC/restart fallback path (or a decode failure). Bounded
-                # retries, then fall back to the banner idle page.
-                if self._logo_restarts < _LOGO_MAX_RESTARTS and not self._morphing:
-                    self._logo_restarts += 1
-                    QTimer.singleShot(0, self._start_logo_loop)
-                else:
-                    self._logo_mode = False
-                    self._stack.setCurrentWidget(self._idle_page)
+                # One-shot intro finished (natural EOF — or a broken file,
+                # which lands here too): the static banner is the idle page.
+                self._logo_mode = False
+                self._stack.setCurrentWidget(self._idle_page)
                 return
             # Auto-advance the on-deck queue (multi-select "Open with").
             if self._queue and not self._morphing:
@@ -658,8 +631,6 @@ class MiniPlayerWindow(QWidget):
                 QTimer.singleShot(0, lambda: self.open_media(nxt))
 
     def _on_position(self, pos: float, duration: float) -> None:
-        if self._logo_mode:
-            self._logo_loop_wrapped(pos, duration)
         if duration > 0 and abs(duration - self._duration) > 0.5:
             self._duration = duration
             self.seek.setRange(0, int(duration))
@@ -689,8 +660,13 @@ class MiniPlayerWindow(QWidget):
         if self._morphing:
             return
         if self._logo_mode:
-            # The logo IS the idle state — there is nothing else to stop
-            # into, and "stopping" it would just restart the loop.
+            # Skipping the one-shot intro: straight to the static banner.
+            self._logo_mode = False
+            try:
+                self._backend.stop()
+            except Exception:
+                pass
+            self._stack.setCurrentWidget(self._idle_page)
             return
         self._queue.clear()
         self._last_media = ""
@@ -698,7 +674,8 @@ class MiniPlayerWindow(QWidget):
             self._toggle_fullscreen()
         self._stop_playback()
         self.surface.hide_opening()
-        # Idle state = the logo loop (banner page only when it's unavailable).
+        # Idle state = the static banner (the intro video plays only once
+        # per window — _start_logo_loop gates on _logo_played).
         self._start_logo_loop()
         self.setFocus()
 

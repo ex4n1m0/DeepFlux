@@ -114,6 +114,12 @@ class AgentPanel(QFrame):
         bar = self._view.verticalScrollBar()
         bar.setValue(bar.maximum())
 
+    def clear_view(self) -> None:
+        """Drop the mirrored blocks (task switch — the panel shows the NEW
+        conversation only, no stale tail from the previous one)."""
+        self._view.clear()
+        self._blocks = 0
+
     def set_busy(self, busy: bool) -> None:
         self._busy_lbl.setText(tr("· thinking") if busy else "")
         self.input.setEnabled(True)  # typing ahead is fine; send is guarded upstream

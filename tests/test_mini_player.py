@@ -684,9 +684,9 @@ def test_media_queue_autoplays(mini, tmp_path):
 def test_stop_button_returns_to_idle_and_drops_queue(mini, tmp_path):
     """⏹ (owner 2026-11-18 — the mini player shipped without a stop button):
     a deliberate stop halts the backend, drops the on-deck queue (a stop
-    must never auto-advance) and returns to the IDLE state — which since
-    2026-11-22 is the LOGO LOOP playing on the video page (banner page only
-    when the loop file is unavailable)."""
+    must never auto-advance) and returns to the IDLE state — the one-shot
+    logo intro on its FIRST idle (2026-11-22), the static banner after
+    that."""
     from PySide6.QtWidgets import QApplication
     from gui.mini_player import resolve_logo_video_path as _logo
 
@@ -707,19 +707,27 @@ def test_stop_button_returns_to_idle_and_drops_queue(mini, tmp_path):
     app.processEvents()
 
     assert stub.stops == 1, "the stop button must stop the backend"
-    assert win._logo_mode, "stop returns to the logo loop idle state"
+    assert win._logo_mode, "first idle plays the one-shot intro"
     assert win._stack.currentWidget() is win._video_page
     assert win._queue == [], "a deliberate stop drops the on-deck queue"
     assert win._last_media == ""
     assert win._time_lbl.text() == "0:00 / 0:00"
     assert win.seek.value() == 0
     assert stub.played == [first, _logo()], "stop must not auto-advance the queue"
-    # A stray backend "stopped" while the logo loops restarts it (the VLC /
-    # non-native-loop fallback), never the dropped queue.
+    # The intro's natural end (backend "stopped") lands on the static
+    # banner — and a SECOND deliberate stop never replays the intro.
     win._on_state("stopped")
     for _ in range(10):
         app.processEvents()
-    assert stub.played == [first, _logo(), _logo()]
+    assert stub.played == [first, _logo()]
+    assert win._stack.currentWidget() is win._idle_page
+    win.open_media(first)
+    app.processEvents()
+    win._stop_btn.click()
+    app.processEvents()
+    assert stub.played == [first, _logo(), first], "second stop → banner, no replay"
+    assert not win._logo_mode
+    assert win._stack.currentWidget() is win._idle_page
 
 
 def test_stop_key_and_skip_buttons_match_full_player(mini, tmp_path):
@@ -1005,42 +1013,40 @@ def test_morph_suppresses_music_when_media_resumes(qapp, tmp_path, monkeypatch):
 # first pass is audible, every loop after is muted)
 # --------------------------------------------------------------------------
 
-def test_logo_loop_is_the_idle_state(mini):
-    """Starting the loop switches to the video page with looping enabled,
-    starts unmuted (first pass carries the sting) and never counts as
-    resumable media."""
+def test_logo_intro_plays_once_then_lands_on_banner(mini):
+    """Owner 2026-11-22 (same-day amendment to the 9.6 loop): the intro
+    video plays ONE audible, non-looping pass and its natural EOF lands on
+    the static banner — never an endless loop."""
     from gui.mini_player import resolve_logo_video_path as _logo
     win, stub, _ = mini
     win._start_logo_loop()
     assert win._logo_mode
     assert win._stack.currentWidget() is win._video_page
     assert stub.played == [_logo()]
-    assert stub.loop_file is True
+    assert stub.loop_file is False        # one pass — no native looping
     assert stub.mutes == [False]          # config.muted defaults to False
     assert win._last_media == "", "the logo must never offer Play-tab resume"
+    # Natural end of the pass (mpv eof-reached -> "stopped") -> banner.
+    win._on_state("stopped")
+    assert not win._logo_mode
+    assert win._stack.currentWidget() is win._idle_page
 
 
-def test_logo_loop_mutes_after_first_pass_wrap(mini):
-    """Owner 2026-11-22: 'play with sound one time and mute the after
-    times' — the position signal wrapping near-the-end → start mutes the
-    loop exactly once."""
+def test_logo_intro_plays_only_once_per_window(mini):
+    """Every idle return AFTER the one pass goes straight to the static
+    banner — no replay on later stops or morph-backs."""
     win, stub, _ = mini
     win._start_logo_loop()
-    # First pass progressing towards the end…
-    win._on_position(2.5, 5.04)
-    assert stub.mutes == [False]
-    win._on_position(4.8, 5.04)
-    # …wraps to the start → muted from the second pass on.
-    win._on_position(0.2, 5.04)
-    assert stub.mutes == [False, True]
-    assert win._logo_muted
-    # Subsequent wraps never re-unmute.
-    win._on_position(4.9, 5.04)
-    win._on_position(0.1, 5.04)
-    assert stub.mutes == [False, True]
+    win._on_state("stopped")              # intro done -> banner
+    assert win._stack.currentWidget() is win._idle_page
+    plays_before = len(stub.played)
+    win._start_logo_loop()                # e.g. ⏹ from real media later
+    assert win._stack.currentWidget() is win._idle_page
+    assert len(stub.played) == plays_before
+    assert not win._logo_mode
 
 
-def test_logo_loop_respects_user_mute(mini, tmp_path):
+def test_logo_intro_respects_user_mute(mini, tmp_path):
     """A user-muted mini player stays silent — their setting beats the
     one-time sting."""
     win, stub, _ = mini
@@ -1049,14 +1055,11 @@ def test_logo_loop_respects_user_mute(mini, tmp_path):
     assert stub.mutes == [True]
 
 
-def test_real_media_takes_over_from_logo_loop(mini, tmp_path):
+def test_real_media_takes_over_from_logo_intro(mini, tmp_path):
     """Opening media leaves logo mode, un-loops, and restores the user's
     own mute/volume state."""
     win, stub, _ = mini
     win._start_logo_loop()
-    win._on_position(4.9, 5.04)
-    win._on_position(0.1, 5.04)
-    assert win._logo_muted
     media = str(tmp_path / "m.mp4")
     with open(media, "wb") as f:
         f.write(b"v" * 256)
@@ -1068,26 +1071,29 @@ def test_real_media_takes_over_from_logo_loop(mini, tmp_path):
     assert win._last_media == media
 
 
-def test_logo_loop_controls_are_inert(mini):
-    """⏹/S, M and the volume slider do nothing while the logo loops —
-    there is nothing else to stop into, its audio is not adjustable, and
-    the volume path writes the config."""
+def test_logo_intro_controls_skip_to_banner(mini):
+    """⏹/S during the intro SKIPS to the static banner; M and the volume
+    slider stay inert WHILE the intro plays — its audio is not adjustable,
+    and the volume path writes the config."""
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     win, stub, _ = mini
     win._start_logo_loop()
-    QTest.keyClick(win, Qt.Key.Key_S)
-    win._stop_btn.click()
-    assert stub.stops == 0, "⏹ during the logo must be a no-op"
+    # While the intro is the surface, M and the volume slider are inert.
     QTest.keyClick(win, Qt.Key.Key_M)
-    assert stub.mutes == [False], "the logo's self-mute is not user-togglable"
+    assert stub.mutes == [False], "the intro's audio is not user-togglable"
     vol_before = win._config.mini_player.volume
     win.vol.setValue(vol_before - 20)
     assert win._config.mini_player.volume == vol_before
-    assert stub.volumes == [], "volume changes must not reach the logo"
+    assert stub.volumes == [], "volume changes must not reach the intro"
+    # ⏹/S skips the intro: backend stops, static banner shows.
+    QTest.keyClick(win, Qt.Key.Key_S)
+    assert not win._logo_mode, "S skips the intro -> banner"
+    assert win._stack.currentWidget() is win._idle_page
+    assert stub.stops == 1, "the backend is stopped when skipping"
 
 
-def test_logo_loop_missing_file_falls_back_to_banner(mini, monkeypatch):
+def test_logo_intro_missing_file_falls_back_to_banner(mini, monkeypatch):
     import gui.mini_player as mp
     monkeypatch.setattr(mp, "resolve_logo_video_path", lambda: "")
     win, stub, _ = mini
@@ -1097,9 +1103,9 @@ def test_logo_loop_missing_file_falls_back_to_banner(mini, monkeypatch):
     assert stub.played == []
 
 
-def test_morph_stops_the_logo_loop(mini):
-    """morph_to_full must kill the loop (no muted video running under the
-    full app, no restart from a late backend event)."""
+def test_morph_stops_the_logo_intro(mini):
+    """morph_to_full must kill the intro (no video running under the full
+    app, no restart from a late backend event)."""
     from PySide6.QtWidgets import QApplication
     win, stub, mp = mini
     app = QApplication.instance()
