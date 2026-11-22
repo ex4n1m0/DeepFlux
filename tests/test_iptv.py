@@ -610,6 +610,18 @@ def test_tmdb_year_filter_falls_back_to_first_result():
     ("Movies", "Adults in the Room", False),
     ("Movies", "Erotica", False),
     ("Movies", "The Adultery Plot", False),
+    # CJK group-titles (2026-11-22): the TVBox-style adult playlists carry
+    # groups no Latin keyword matches — they must route to the adult chain.
+    ("国产视频", "", True),
+    ("有码中文字幕", "", True),
+    ("日本有码", "", True),
+    ("日本无码", "", True),
+    ("国产新片", "", True),
+    ("猫步毒药", "", True),
+    # …but 欧美高清 is deliberately NOT adult (a legit western-movies group
+    # could be named exactly that) and CJK tokens are group-only, never name.
+    ("欧美高清", "", False),
+    ("Movies", "有码中文字幕的电影", False),
     ("Documentaries", "Regular Movie", False),
 ])
 def test_looks_adult(group, name, expected):
@@ -4065,39 +4077,23 @@ def test_grid_resolves_missing_vod_poster_via_metadata(tmp_path):
 
 
 def test_grid_sweeps_all_artworkless_entries():
-    """Every artwork-less entry in the section gets resolved in the
-    background, not just the handful currently on screen."""
+    """RETIRED 2026-11-22 (owner: comfort beats speed): the whole-section
+    artwork sweep is GONE — a 74k-entry logo-less section used to churn
+    lookups for ~4 hours per view. Artwork resolves for the visible window
+    only; see test_grid_never_bulk_resolves_logo_less_entries, which pins
+    the new doctrine."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     QApplication.instance() or QApplication([])
-    from gui.iptv_tab import ContentGrid, _SWEEP_BATCH
+    from gui.iptv_tab import ContentGrid
 
     manager = mock.Mock()
     grid = ContentGrid(manager)
     items = [Movie(id=f"m{i}", name=f"Movie {i}", url="http://s/x") for i in range(12)]
     items += [Movie(id="has", name="Has Art", url="http://s/y", logo="http://s/a.jpg")]
     grid.set_items(items)
-    assert len(grid._sweep_queue) == 12   # the one with artwork isn't queued
-    assert grid._sweep_timer.isActive()
-
-    grid._sweep_step()
-    assert manager.resolve_poster_async.call_count == _SWEEP_BATCH  # paced
-    for _ in range(5):
-        grid._sweep_step()
-    assert manager.resolve_poster_async.call_count == 12  # …until all are done
-    assert not grid._sweep_timer.isActive()
-
-    # Progress is reported so the (deliberately slow) sweep is visible.
-    seen = []
-    grid.sweep_progress.connect(lambda d, t: seen.append((d, t)))
-    grid._apply_logo(items[0], "http://tmdb/a.jpg")
-    grid._apply_logo(items[1], "")  # a miss still counts as progress
-    assert seen == [(1, 12), (2, 12)]
-
-    # Switching sections abandons the sweep.
-    grid.set_items([Movie(id="z", name="Z", url="http://s/z", logo="http://s/z.jpg")])
-    assert not grid._sweep_queue and not grid._sweep_timer.isActive()
-    assert seen[-1] == (0, 0)  # …and resets the indicator
+    # Nothing is queued for background resolution — not even for a moment.
+    assert manager.resolve_poster_async.call_count == 0
 
 
 def test_grid_prefetches_beyond_the_viewport():
@@ -4711,11 +4707,26 @@ def test_folder_scoped_search_filters_within_selected_folder(tmp_path):
         assert tab._scope_key == ("a", SECTION_LIVE, "News")
         assert tab._scope_label == "News"
 
-        # Scope OFF (default): the query runs over the whole playlist.
-        tab._on_search("chan")
-        assert [c.name for c in tab._current_items] == ["a chan", "Sport Chan B"]
+        # Scope OFF (default): the query runs over the whole playlist —
+        # asynchronously since the 2026-11-22 comfort rework (a 74k-entry
+        # linear scan no longer runs on the GUI thread), so spin the loop
+        # until the marshalled result lands (status flips off "Searching…").
+        def _global_search_names(query):
+            from PySide6.QtWidgets import QApplication
+            tab._on_search(query)
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                QApplication.processEvents()
+                if "match(es)" in tab._status_lbl.text():
+                    break
+                time.sleep(0.01)
+            return [c.name for c in tab._current_items]
 
-        # Scope ON: only matches inside the selected folder.
+        names = _global_search_names("chan")
+        assert names == ["a chan", "Sport Chan B"]
+
+        # Scope ON: only matches inside the selected folder (synchronous —
+        # the scoped slice is already materialized).
         tab._scope_btn.setChecked(True)
         tab._on_search("chan")
         assert [c.name for c in tab._current_items] == ["a chan"]
@@ -4731,8 +4742,8 @@ def test_folder_scoped_search_filters_within_selected_folder(tmp_path):
 
         # Scope OFF again: back to playlist-wide results.
         tab._scope_btn.setChecked(False)
-        tab._on_search("chan")
-        assert len(tab._current_items) == 2
+        names = _global_search_names("chan")
+        assert len(names) == 2
     finally:
         _close_tab(tab)
 
@@ -6188,3 +6199,521 @@ def test_bounded_executor_shutdown_wakes_busy_pool():
         _time.sleep(0.05)
     # workers exit via the sentinels (no 30 s idle wait)
     assert threading.active_count() <= base
+
+
+# ---------------------------------------------------------------------------
+# missav provider + Identify/translate + loading comfort (2026-11-22 rework)
+# ---------------------------------------------------------------------------
+
+# -- CJK matching helpers --------------------------------------------------
+
+def test_cjk_similarity_scoring():
+    from iptv.metadata import cjk_similarity
+    # Identical after normalization.
+    assert cjk_similarity("未婚夫眼前 被侵犯的美女教师！", "未婚夫眼前被侵犯的美女教师") == 1.0
+    # Truncated containment (≥8 normalized chars) scores the strict band.
+    assert cjk_similarity("我好想看最喜欢的男友被闺蜜含屌的样子",
+                          "我好想看最喜欢的男友被闺蜜含屌的样子。完全版") >= 0.9
+    # Short containment gets no bonus (generic fragments).
+    assert cjk_similarity("美少女", "美少女16岁的初体验") < 0.85
+    # Re-phrased titles score below the strict threshold.
+    assert cjk_similarity("未婚夫眼前被不良学生侵犯的美女教师",
+                          "落入不良学生窝的美女教师立花京香") < 0.85
+    # Latin-only strings are not this helper's domain.
+    assert cjk_similarity("", "x") == 0.0
+
+
+def test_split_actress_suffix():
+    from iptv.metadata import split_actress_suffix
+    assert split_actress_suffix("秘密会面中持续中出的日子-翔田千里") == \
+        ("秘密会面中持续中出的日子", "翔田千里")
+    # A 3+ digit tail is a code/part number, not an actress.
+    title, actress = split_actress_suffix("某标题-123")
+    assert title == "某标题-123" and actress == ""
+    # No dash at all.
+    assert split_actress_suffix("普普通通的标题") == ("普普通通的标题", "")
+
+
+# -- MissavProvider --------------------------------------------------------
+
+def _missav_post_response(recs):
+    """A mocked requests.Response carrying a Recombee search reply."""
+    return mock.Mock(
+        status_code=200, ok=True,
+        json=lambda: {"recomms": recs},
+        raise_for_status=lambda: None,
+    )
+
+
+def _mk_missav():
+    from iptv.metadata import MissavProvider
+    prov = MissavProvider()
+    # Skip the per-domain rate-limiter sleeps in tests.
+    limiter = mock.Mock()
+    prov._limiter = limiter
+    return prov
+
+
+def test_missav_search_candidates_signs_url_and_maps_rows():
+    import re as _re
+    prov = _mk_missav()
+    recs = [{
+        "id": "dldss-586",
+        "values": {"title_cn": "开会那天我的文件总是少两页",
+                   "title": "DLDSS-586 日本語タイトル", "duration": 9740},
+    }]
+    with mock.patch.object(prov._session, "post") as post:
+        post.return_value = _missav_post_response(recs)
+        cands = prov.search_candidates("开会那天", count=8)
+    url = post.call_args.args[0]
+    body = post.call_args.kwargs["json"]
+    # HMAC-signed path: db + route + frontend_timestamp + frontend_sign.
+    assert url.startswith(prov.API_BASE + f"/{prov.DATABASE}/search/users/")
+    assert _re.search(r"frontend_timestamp=\d+", url)
+    assert _re.search(r"frontend_sign=[0-9a-f]{40}$", url)
+    assert body["searchQuery"] == "开会那天"
+    assert body["includedProperties"] == ["title_cn", "title", "duration"]
+    assert len(cands) == 1
+    assert cands[0]["code"] == "dldss-586"
+    assert cands[0]["title_cn"] == "开会那天我的文件总是少两页"
+    assert cands[0]["duration"] == 9740
+    assert cands[0]["poster"] == "https://fourhoi.com/dldss-586/cover-t.jpg"
+
+
+def test_missav_fetch_gates_on_cjk_dominance():
+    prov = _mk_missav()
+    with mock.patch.object(prov._session, "post") as post:
+        assert prov.fetch("Regular Western Movie", "", SECTION_MOVIES) is None
+        post.assert_not_called()
+
+
+def test_missav_fetch_accepts_strict_match_with_actress_split():
+    prov = _mk_missav()
+    name = "未婚夫眼前被不良学生侵犯的美女教师-有馬みずき"
+    recs = [{
+        "id": "abc-123",
+        "values": {"title_cn": "未婚夫眼前被不良学生侵犯的美女教师",
+                   "title": "ABC-123 original", "duration": 6000},
+    }]
+    with mock.patch.object(prov._session, "post") as post:
+        post.return_value = _missav_post_response(recs)
+        meta = prov.fetch(name, "", SECTION_MOVIES, raw_name=name)
+    # The query sent excludes the actress suffix.
+    assert post.call_args.kwargs["json"]["searchQuery"] == \
+        "未婚夫眼前被不良学生侵犯的美女教师"
+    assert meta is not None
+    assert meta["provider"] == "missav"
+    assert meta["code"] == "abc-123"
+    assert meta["poster"] == "https://fourhoi.com/abc-123/cover.jpg"
+    assert meta["original_title"] == "ABC-123 original"
+    assert meta["duration_min"] == 100
+
+
+def test_missav_fetch_rejects_loose_matches():
+    """Themed-but-wrong candidates must NOT produce posters (3/108 study)."""
+    prov = _mk_missav()
+    name = "秘密会面中持续中出的日子-翔田千里"
+    recs = [{
+        "id": "gvh-657",
+        "values": {"title_cn": "被精神科同学囚禁并持续中出的巨乳优等生",
+                   "title": "GVH-657", "duration": 9657},
+    }]
+    with mock.patch.object(prov._session, "post") as post:
+        post.return_value = _missav_post_response(recs)
+        assert prov.fetch(name, "", SECTION_MOVIES, raw_name=name) is None
+
+
+def test_missav_fetch_prefers_actress_corroboration():
+    prov = _mk_missav()
+    name = "未婚夫眼前被不良学生侵犯的美女教师-石川阳波"
+    good = {"title_cn": "未婚夫眼前被不良学生侵犯的美女教师 石川阳波"}
+    other = {"title_cn": "未婚夫眼前被不良学生侵犯的美女教师 别人"}
+    recs = [
+        {"id": "zzz-999", "values": {**other, "title": "", "duration": 0}},
+        {"id": "apns-356", "values": {**good, "title": "", "duration": 0}},
+    ]
+    with mock.patch.object(prov._session, "post") as post:
+        post.return_value = _missav_post_response(recs)
+        meta = prov.fetch(name, "", SECTION_MOVIES, raw_name=name)
+    assert meta is not None and meta["code"] == "apns-356"
+
+
+def test_missav_in_adult_no_code_chain(tmp_path):
+    from iptv.cache import IPTVCache
+    from iptv.metadata import MetadataPipeline
+    pipe = MetadataPipeline(IPTVCache(str(tmp_path / "c")))
+    chain = pipe._build_chain(
+        SECTION_MOVIES, "未婚夫眼前被不良学生侵犯的美女教师", "", "有码中文字幕",
+        "未婚夫眼前被不良学生侵犯的美女教师",
+        "未婚夫眼前被不良学生侵犯的美女教师")
+    names = [n for n, _fn in chain]
+    assert "missav" in names
+    # Keyless provider goes FIRST in the adult-no-code branch.
+    assert names[0] == "missav"
+
+    pipe_off = MetadataPipeline(IPTVCache(str(tmp_path / "c2")),
+                                enable_missav=False)
+    chain2 = pipe_off._build_chain(
+        SECTION_MOVIES, "未婚夫眼前被不良学生侵犯的美女教师", "", "有码中文字幕",
+        "未婚夫眼前被不良学生侵犯的美女教师",
+        "未婚夫眼前被不良学生侵犯的美女教师")
+    assert "missav" not in [n for n, _fn in chain2]
+    # The provider object still exists — the Identify picker keeps working.
+    assert pipe_off.missav is not None
+
+
+def test_missav_search_async_degrades_to_empty(tmp_path):
+    from iptv.cache import IPTVCache
+    from iptv.metadata import MetadataPipeline
+    pipe = MetadataPipeline(IPTVCache(str(tmp_path / "c")))
+    with mock.patch.object(pipe.missav, "search_candidates",
+                           side_effect=RuntimeError("net down")):
+        got = []
+        pipe.missav_search_async("x", got.append)
+        deadline = time.time() + 5
+        while not got and time.time() < deadline:
+            time.sleep(0.02)
+    assert got == [[]]
+    pipe.shutdown()
+
+
+# -- manual metadata overrides ----------------------------------------------
+
+def _movie_item(item_id="s1::m1", name="秘密会面中持续中出的日子"):
+    # Ids in real playlists are "<source_id>::<sha1>" — manager.source_id_of
+    # parses that prefix, so tests touching the override API need it.
+    return Movie(id=item_id, name=name, url="http://x/v.m3u8",
+                 group="有码中文字幕", section=SECTION_MOVIES)
+
+
+def test_override_roundtrip_survives_clear_metadata(tmp_path):
+    cache = IPTVCache(str(tmp_path))
+    cache.add_override("s1", "m1", {"poster": "https://fourhoi.com/x/cover.jpg"})
+    assert (cache.get_override("s1", "m1") or {}).get("poster") == \
+        "https://fourhoi.com/x/cover.jpg"
+    assert cache.get_override("s1", "nope") is None
+    # User data: a metadata cache clear must NOT wipe manual matches.
+    cache.clear_metadata()
+    assert cache.get_override("s1", "m1") is not None
+    cache.remove_override("s1", "m1")
+    assert cache.get_override("s1", "m1") is None
+
+
+def test_manager_override_merge_and_apply_on_load(tmp_path):
+    mgr, pl = _manager_with_playlist(tmp_path)
+    movie = _movie_item()
+    pl.movies = [movie]
+    # Identify pick first…
+    mgr.set_entry_override(movie, {"poster": "https://fourhoi.com/a-1/cover.jpg",
+                                   "original_title": "A-1 original"})
+    # …then a translation merges in instead of replacing.
+    mgr.set_entry_override(movie, {"display_title": "The Meeting"})
+    stored = mgr.cache.get_override("s1", movie.id)
+    assert stored["poster"] == "https://fourhoi.com/a-1/cover.jpg"
+    assert stored["display_title"] == "The Meeting"
+    assert movie.poster == "https://fourhoi.com/a-1/cover.jpg"
+    assert movie.display_title == "The Meeting"
+    assert movie.original_title == "A-1 original"
+    assert movie.manual_match is True
+
+    # A freshly loaded playlist (same ids) gets overrides re-stamped.
+    fresh = Playlist(source_id="s1")
+    fresh.movies = [_movie_item()]
+    mgr._apply_overrides(fresh)
+    assert fresh.movies[0].poster == "https://fourhoi.com/a-1/cover.jpg"
+    assert fresh.movies[0].display_title == "The Meeting"
+
+    # Clear resets the stamped fields.
+    mgr.clear_entry_override(movie)
+    assert mgr.cache.get_override("s1", movie.id) is None
+    assert movie.poster == "" and movie.manual_match is False
+
+
+# -- load signature + redundant cache-save skip ------------------------------
+
+def test_refresh_skips_unchanged_cache_save_and_applies_overrides(tmp_path):
+    from iptv.manager import IPTVManager, _playlist_signature
+    from iptv.models import PlaylistSource
+    mgr = IPTVManager(
+        sources=[PlaylistSource(id="s1", name="x", kind="m3u_url",
+                                url="http://example/x.m3u")],
+        data_dir=str(tmp_path))
+    text = ("#EXTM3U\n"
+            '#EXTINF:-1 group-title="有码中文字幕" tvg-logo="",秘密会面中持续中出的日子\n'
+            "http://t27.cdn2020.com/video/m3u8/2025/09/06/abc12345/index.m3u8\n")
+    with mock.patch.object(mgr, "_download_m3u", return_value=text):
+        pl1 = mgr._refresh_source_inner(mgr.sources[0], None, None, False)
+        assert pl1.total == 1
+        assert pl1.signature == _playlist_signature(pl1)
+        assert mgr._saved_cache_state.get("s1") == (pl1.signature, pl1.url_tvg)
+        with mock.patch.object(mgr.cache, "save_playlist",
+                               wraps=mgr.cache.save_playlist) as save:
+            pl2 = mgr._refresh_source_inner(mgr.sources[0], None, None, False)
+            save.assert_not_called()  # byte-identical content
+    # Same ids → identical signature on the fresh object.
+    assert pl2.signature == pl1.signature
+
+    # An override set between refreshes is stamped onto the fresh objects.
+    mgr.set_entry_override(pl1.movies[0],
+                           {"poster": "https://fourhoi.com/q-1/cover.jpg"})
+    with mock.patch.object(mgr, "_download_m3u", return_value=text):
+        pl3 = mgr._refresh_source_inner(mgr.sources[0], None, None, False)
+    assert pl3.movies[0].poster == "https://fourhoi.com/q-1/cover.jpg"
+    mgr.shutdown()
+
+
+def test_identical_republish_keeps_live_generation(tmp_path):
+    """Review HIGH finding 2026-11-22: an unchanged fresh publish must keep
+    the LIVE playlist objects installed — swapping in a byte-identical new
+    generation would orphan the objects the grid binds to, so an Identify
+    pick or favorite toggled AFTER the publish would vanish on the next
+    view switch."""
+    from iptv.manager import IPTVManager
+    from iptv.models import PlaylistSource
+    mgr = IPTVManager(
+        sources=[PlaylistSource(id="s1", name="x", kind="m3u_url",
+                                url="http://example/x.m3u")],
+        data_dir=str(tmp_path))
+    text = ('#EXTM3U\n'
+            '#EXTINF:-1 group-title="有码中文字幕",标题一\n'
+            'http://t27.cdn2020.com/video/m3u8/2025/09/06/abc12345/index.m3u8\n')
+    with mock.patch.object(mgr, "_download_m3u", return_value=text):
+        pl1 = mgr._refresh_source_inner(mgr.sources[0], None, None, False)
+        pl2 = mgr._refresh_source_inner(mgr.sources[0], None, None, False)
+    assert pl2 is pl1  # identical content → the live copy stays published
+
+    # Curation AFTER the republish sticks on the generation the view reads.
+    mgr.set_entry_override(pl2.movies[0],
+                           {"poster": "https://fourhoi.com/z-9/cover.jpg"})
+    served = mgr.playlist_for("s1")
+    assert served is pl1
+    assert served.movies[0].poster == "https://fourhoi.com/z-9/cover.jpg"
+
+    # Changed content installs the NEW generation.
+    text2 = ('#EXTM3U\n'
+             '#EXTINF:-1 group-title="有码中文字幕",标题一\n'
+             'http://t27.cdn2020.com/video/m3u8/2025/09/06/abc12345/index.m3u8\n'
+             '#EXTINF:-1 group-title="有码中文字幕",标题二\n'
+             'http://t27.cdn2020.com/video/m3u8/2025/09/06/def67890/index.m3u8\n')
+    with mock.patch.object(mgr, "_download_m3u", return_value=text2):
+        pl3 = mgr._refresh_source_inner(mgr.sources[0], None, None, False)
+    assert pl3 is not pl1 and len(pl3.movies) == 2
+    mgr.shutdown()
+
+
+def test_late_search_result_cannot_overwrite_cleared_box(tmp_path):
+    """Review MED finding 2026-11-22: a slow global search landing after the
+    user cleared the box (or toggled the folder scope) must be dropped."""
+    tab = _iptv_tab_with_two_sources(tmp_path)
+    try:
+        captured = []
+        tab._manager.search_async = lambda q, cb: captured.append(cb)
+        tab._on_search("chan")
+        assert captured, "global path must go through search_async"
+        tab._on_search("")  # user clears the box while the scan is in flight
+        restored = list(tab._current_items)
+        # The stale global result arrives NOW.
+        captured[0]({SECTION_LIVE: [Channel(id="late", name="late hit",
+                                             url="http://late")]})
+        assert tab._current_items == restored
+    finally:
+        _close_tab(tab)
+
+
+def test_grid_reset_artwork_state_lets_drain_finish():
+    """Review LOW finding 2026-11-22: clearing caches mid-populate must not
+    strand the unbuilt tail rows."""
+    _qt_app()
+    from gui.iptv_tab import ContentGrid
+    grid = ContentGrid(manager=mock.MagicMock())
+    grid.set_items([_movie_item(f"s1::m{i}") for i in range(2200)])
+    assert grid.is_populating()
+    grid.reset_artwork_state()
+    _drain(grid)
+    assert grid.count() == 2200
+
+
+def test_playlist_signature_detects_change(tmp_path):
+    from iptv.manager import _playlist_signature
+    pl = Playlist(source_id="s1")
+    pl.movies = [_movie_item("s1::m1"), _movie_item("s1::m2")]
+    sig1 = _playlist_signature(pl)
+    # In real parsing ids derive from name+url — an entry change moves the id.
+    pl.movies[1].id = "s1::different"
+    assert _playlist_signature(pl) != sig1
+
+
+# -- below-normal load priority ----------------------------------------------
+
+def test_load_priority_guard_reference_counted():
+    from iptv import manager as mgr_mod
+    calls = []
+    with mock.patch.object(mgr_mod, "_win_set_priority_below_normal",
+                           side_effect=lambda below: calls.append(below)):
+        with mgr_mod._LoadPriorityGuard():
+            with mgr_mod._LoadPriorityGuard():
+                pass  # nested — no extra switch
+            assert calls == [True]
+        assert calls == [True, False]  # restored when the LAST guard exits
+
+
+# -- grid comfort: chunked populate, no bulk sweep ---------------------------
+
+def _qt_app():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    return QApplication.instance() or QApplication([])
+
+
+def _drain(grid, timeout=5.0):
+    app = _qt_app()
+    deadline = time.time() + timeout
+    while grid.is_populating() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+
+
+def test_grid_set_items_chunks_large_sections():
+    _qt_app()
+    from gui.iptv_tab import ContentGrid
+    grid = ContentGrid(manager=mock.MagicMock())
+    items = [_movie_item(f"m{i}", name=f"片名第{i}号") for i in range(2500)]
+    grid.set_items(items)
+    # First batch lands synchronously — the grid is never blank.
+    assert grid.count() == 1000
+    assert grid.is_populating()
+    _drain(grid)
+    assert grid.count() == 2500
+    assert not grid.is_populating()
+
+
+def test_grid_set_items_small_sections_synchronous():
+    _qt_app()
+    from gui.iptv_tab import ContentGrid
+    grid = ContentGrid(manager=mock.MagicMock())
+    grid.set_items([_movie_item("m1"), _movie_item("m2")])
+    assert grid.count() == 2
+    assert not grid.is_populating()
+
+
+def test_grid_never_bulk_resolves_logo_less_entries():
+    """The whole-section artwork sweep is RETIRED: a 2000-entry logo-less
+    section must not enqueue a single lookup (offscreen → invisible → the
+    visible-window path is the only resolver)."""
+    _qt_app()
+    from gui.iptv_tab import ContentGrid
+    grid = ContentGrid(manager=mock.MagicMock())
+    grid.set_items([_movie_item(f"m{i}") for i in range(2000)])
+    _drain(grid)
+    assert grid._logo_pending == {}
+    assert grid._logo_tried == set()
+    assert not hasattr(grid, "_sweep_queue")
+
+
+def test_grid_set_tile_title2():
+    _qt_app()
+    from gui.iptv_tab import ContentGrid, _TITLE2_ROLE
+    grid = ContentGrid(manager=mock.MagicMock())
+    it = _movie_item("m1")
+    grid.set_items([it])
+    grid.set_tile_title2(it, "Secret Meeting Days")
+    li = grid.item(0)
+    assert li.data(_TITLE2_ROLE) == "Secret Meeting Days"
+    grid.set_tile_title2(it, "")
+    assert not li.data(_TITLE2_ROLE)
+
+
+# -- DetailPanel: graceful miss, Identify, translate --------------------------
+
+def _detail_manager():
+    m = mock.MagicMock()
+    m.source_id_of = lambda item: "s1"
+    m.epg_guide_for = lambda *a, **k: {"now_next": {}, "programmes": []}
+    return m
+
+
+def _detail_panel(llm_config_fn=None):
+    _qt_app()
+    from gui.iptv_tab import DetailPanel
+    return DetailPanel(_detail_manager(), llm_config_fn=llm_config_fn)
+
+
+def test_detail_panel_graceful_metadata_miss():
+    from iptv.metadata import metadata_key
+    panel = _detail_panel()
+    movie = _movie_item()
+    panel.show_item(movie)
+    assert panel.synopsis.text() == "Loading metadata…"
+    # resolve_metadata captured the worker callback — fire an EMPTY result
+    # (every provider missed): the panel must not stay on Loading forever.
+    cb = panel._manager.resolve_metadata.call_args.args[3]
+    key = metadata_key(movie.section, movie.name, getattr(movie, "year", ""))
+    cb(key, {})
+    assert "No metadata found" in panel.synopsis.text()
+    assert "Identify" in panel.synopsis.text()
+
+
+def test_detail_panel_identify_pick_applies_and_clears():
+    panel = _detail_panel()
+    movie = _movie_item()
+    panel.show_item(movie)
+    title2 = []
+    panel.title2_found.connect(lambda item, text: title2.append(text))
+
+    panel._on_identify_clicked()  # opens + runs the prefilled search
+    assert panel._identify_w.isVisible()
+    cb = panel._manager.missav_search_async.call_args.args[1]
+    cb([{"code": "apns-356", "title_cn": "羞辱的家访",
+         "title": "APNS-356 original", "duration": 6864,
+         "poster": "https://fourhoi.com/apns-356/cover-t.jpg"}])
+    assert panel._identify_results.count() == 1
+
+    li = panel._identify_results.item(0)
+    panel._on_pick_candidate(li)
+    payload = panel._manager.set_entry_override.call_args.args[1]
+    assert payload["code"] == "apns-356"
+    # Thumb URL promoted to the full-size cover.
+    assert payload["poster"] == "https://fourhoi.com/apns-356/cover.jpg"
+    assert title2[-1] == "APNS-356 original"
+    assert not panel._identify_w.isVisible()
+
+    panel._on_clear_match()
+    panel._manager.clear_entry_override.assert_called_once()
+    assert title2[-1] == ""
+
+
+def test_detail_panel_identify_results_stale_guard():
+    panel = _detail_panel()
+    first = _movie_item("m1")
+    panel.show_item(first)
+    panel._identify_for = id(first)
+    panel._current = _movie_item("m2")  # user switched entries meanwhile
+    panel._on_identify_results([{"code": "x", "title_cn": "t", "title": "",
+                                 "duration": 0, "poster": ""}])
+    assert panel._identify_results.count() == 0  # dropped, not applied
+
+
+def test_detail_panel_translate_needs_key_and_applies():
+    cfg = mock.MagicMock(api_key="sk-test", fast_model="")
+    panel = _detail_panel(llm_config_fn=lambda: None)
+    movie = _movie_item()
+    panel.show_item(movie)
+    assert not panel.translate_btn.isVisibleTo(panel)
+
+    panel = _detail_panel(llm_config_fn=lambda: cfg)
+    panel.show_item(movie)
+    assert panel.translate_btn.isVisibleTo(panel)
+
+    translated = "Secret Meeting Days of Continuous Creampies"
+    reply = mock.MagicMock(content=translated)
+    client = mock.MagicMock()
+    client.chat.return_value = reply
+    with mock.patch("agent.llm.create_llm_client", return_value=client):
+        panel._on_translate_clicked()
+        deadline = time.time() + 5
+        while panel._translate_for and time.time() < deadline:
+            _qt_app().processEvents()
+            time.sleep(0.01)
+    payload = panel._manager.set_entry_override.call_args.args[1]
+    assert payload == {"display_title": translated}
+    assert panel.subtitle.text() == translated

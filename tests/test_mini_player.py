@@ -200,6 +200,9 @@ class _StubBackend:
     def __init__(self):
         self.played = []
         self.stops = 0
+        self.mutes = []        # every set_mute call, in order
+        self.volumes = []
+        self.loop_file = None  # last set_loop_file value
 
     def play(self, url, headers=None):
         self.played.append(url)
@@ -215,9 +218,14 @@ class _StubBackend:
 
     def seek_by(self, d): pass
 
-    def set_volume(self, v): pass
+    def set_volume(self, v):
+        self.volumes.append(v)
 
-    def set_mute(self, m): pass
+    def set_mute(self, m):
+        self.mutes.append(bool(m))
+
+    def set_loop_file(self, enabled):
+        self.loop_file = bool(enabled)
 
     def set_hwdec(self, h): pass
 
@@ -464,16 +472,22 @@ def test_morph_cycle_full_roundtrip(mini, tmp_path):
     assert main.isVisible() and not win.isVisible()
     assert win._backend.stops >= 1, "playback must stop before the morph"
 
-    # Reverse morph: hidden full app keeps its engines; mini is back.
+    # Reverse morph: hidden full app keeps its engines; mini is back — and
+    # the mini's idle state is now the LOGO LOOP (owner 2026-11-22), so the
+    # stub plays it the moment the mini re-opens.
     main.morph_to_mini()
     app.processEvents()
     assert win.isVisible() and not main.isVisible()
     assert main._mini_view is True
+    from gui.mini_player import resolve_logo_video_path as _logo
+    assert win._logo_mode and stub.played[-1] == _logo()
 
-    # Control-API routing while in mini view: media → mini window…
+    # Control-API routing while in mini view: media → mini window… (the
+    # media open replaces the logo loop.)
     win.route_open_target(media)
     app.processEvents()
-    assert stub.played == [media, media]
+    assert stub.played == [media, _logo(), media]
+    assert not win._logo_mode
 
     # …non-media → un-hide the full app.
     class _FakeTools:
@@ -561,6 +575,11 @@ def test_full_boot_first_morph_routes_media_to_mini(tmp_path, monkeypatch):
     import gui.mini_player as mp
     from PySide6.QtWidgets import QApplication
     from gui.main_window import MainWindow
+
+    # The logo loop would spin a REAL libmpv here (the fresh window uses the
+    # real factory) — same seam rule as the music autostart: neutralize the
+    # idle video for this test.
+    monkeypatch.setattr(mp, "resolve_logo_video_path", lambda: "")
 
     app = QApplication.instance() or QApplication([])
     cfg_path = str(tmp_path / "config.json")
@@ -664,9 +683,12 @@ def test_media_queue_autoplays(mini, tmp_path):
 
 def test_stop_button_returns_to_idle_and_drops_queue(mini, tmp_path):
     """⏹ (owner 2026-11-18 — the mini player shipped without a stop button):
-    a deliberate stop halts the backend, resets the transport and returns to
-    the idle page; the on-deck queue is dropped so it never auto-advances."""
+    a deliberate stop halts the backend, drops the on-deck queue (a stop
+    must never auto-advance) and returns to the IDLE state — which since
+    2026-11-22 is the LOGO LOOP playing on the video page (banner page only
+    when the loop file is unavailable)."""
     from PySide6.QtWidgets import QApplication
+    from gui.mini_player import resolve_logo_video_path as _logo
 
     win, stub, _ = mini
     app = QApplication.instance()
@@ -685,18 +707,19 @@ def test_stop_button_returns_to_idle_and_drops_queue(mini, tmp_path):
     app.processEvents()
 
     assert stub.stops == 1, "the stop button must stop the backend"
-    assert win._stack.currentWidget() is win._idle_page
+    assert win._logo_mode, "stop returns to the logo loop idle state"
+    assert win._stack.currentWidget() is win._video_page
     assert win._queue == [], "a deliberate stop drops the on-deck queue"
     assert win._last_media == ""
-    assert win._play_btn.text() == "▶"
     assert win._time_lbl.text() == "0:00 / 0:00"
     assert win.seek.value() == 0
-    assert stub.played == [first], "stop must not auto-advance the queue"
-    # The backend's own async "stopped" event must not resurrect it either.
+    assert stub.played == [first, _logo()], "stop must not auto-advance the queue"
+    # A stray backend "stopped" while the logo loops restarts it (the VLC /
+    # non-native-loop fallback), never the dropped queue.
     win._on_state("stopped")
     for _ in range(10):
         app.processEvents()
-    assert stub.played == [first]
+    assert stub.played == [first, _logo(), _logo()]
 
 
 def test_stop_key_and_skip_buttons_match_full_player(mini, tmp_path):
@@ -723,7 +746,9 @@ def test_stop_key_and_skip_buttons_match_full_player(mini, tmp_path):
 
     QTest.keyClick(win, Qt.Key.Key_S)
     assert stub.stops == 1
-    assert win._stack.currentWidget() is win._idle_page
+    # Stop lands on the logo loop (the mini's idle state since 2026-11-22).
+    assert win._logo_mode
+    assert win._stack.currentWidget() is win._video_page
 
 
 def test_missing_media_file_warns(mini, tmp_path, monkeypatch):
@@ -973,3 +998,118 @@ def test_morph_suppresses_music_when_media_resumes(qapp, tmp_path, monkeypatch):
     for _ in range(20):
         qapp.processEvents()
     am._CONTROLLER = None
+
+
+# --------------------------------------------------------------------------
+# Logo loop idle state (owner 2026-11-22: loop until media / full app; the
+# first pass is audible, every loop after is muted)
+# --------------------------------------------------------------------------
+
+def test_logo_loop_is_the_idle_state(mini):
+    """Starting the loop switches to the video page with looping enabled,
+    starts unmuted (first pass carries the sting) and never counts as
+    resumable media."""
+    from gui.mini_player import resolve_logo_video_path as _logo
+    win, stub, _ = mini
+    win._start_logo_loop()
+    assert win._logo_mode
+    assert win._stack.currentWidget() is win._video_page
+    assert stub.played == [_logo()]
+    assert stub.loop_file is True
+    assert stub.mutes == [False]          # config.muted defaults to False
+    assert win._last_media == "", "the logo must never offer Play-tab resume"
+
+
+def test_logo_loop_mutes_after_first_pass_wrap(mini):
+    """Owner 2026-11-22: 'play with sound one time and mute the after
+    times' — the position signal wrapping near-the-end → start mutes the
+    loop exactly once."""
+    win, stub, _ = mini
+    win._start_logo_loop()
+    # First pass progressing towards the end…
+    win._on_position(2.5, 5.04)
+    assert stub.mutes == [False]
+    win._on_position(4.8, 5.04)
+    # …wraps to the start → muted from the second pass on.
+    win._on_position(0.2, 5.04)
+    assert stub.mutes == [False, True]
+    assert win._logo_muted
+    # Subsequent wraps never re-unmute.
+    win._on_position(4.9, 5.04)
+    win._on_position(0.1, 5.04)
+    assert stub.mutes == [False, True]
+
+
+def test_logo_loop_respects_user_mute(mini, tmp_path):
+    """A user-muted mini player stays silent — their setting beats the
+    one-time sting."""
+    win, stub, _ = mini
+    win._config.mini_player.muted = True
+    win._start_logo_loop()
+    assert stub.mutes == [True]
+
+
+def test_real_media_takes_over_from_logo_loop(mini, tmp_path):
+    """Opening media leaves logo mode, un-loops, and restores the user's
+    own mute/volume state."""
+    win, stub, _ = mini
+    win._start_logo_loop()
+    win._on_position(4.9, 5.04)
+    win._on_position(0.1, 5.04)
+    assert win._logo_muted
+    media = str(tmp_path / "m.mp4")
+    with open(media, "wb") as f:
+        f.write(b"v" * 256)
+    win.open_media(media)
+    assert not win._logo_mode
+    assert stub.loop_file is False
+    assert stub.mutes[-1] is False        # restored from config (muted=False)
+    assert stub.played[-1] == media
+    assert win._last_media == media
+
+
+def test_logo_loop_controls_are_inert(mini):
+    """⏹/S, M and the volume slider do nothing while the logo loops —
+    there is nothing else to stop into, its audio is not adjustable, and
+    the volume path writes the config."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    win, stub, _ = mini
+    win._start_logo_loop()
+    QTest.keyClick(win, Qt.Key.Key_S)
+    win._stop_btn.click()
+    assert stub.stops == 0, "⏹ during the logo must be a no-op"
+    QTest.keyClick(win, Qt.Key.Key_M)
+    assert stub.mutes == [False], "the logo's self-mute is not user-togglable"
+    vol_before = win._config.mini_player.volume
+    win.vol.setValue(vol_before - 20)
+    assert win._config.mini_player.volume == vol_before
+    assert stub.volumes == [], "volume changes must not reach the logo"
+
+
+def test_logo_loop_missing_file_falls_back_to_banner(mini, monkeypatch):
+    import gui.mini_player as mp
+    monkeypatch.setattr(mp, "resolve_logo_video_path", lambda: "")
+    win, stub, _ = mini
+    win._start_logo_loop()
+    assert not win._logo_mode
+    assert win._stack.currentWidget() is win._idle_page
+    assert stub.played == []
+
+
+def test_morph_stops_the_logo_loop(mini):
+    """morph_to_full must kill the loop (no muted video running under the
+    full app, no restart from a late backend event)."""
+    from PySide6.QtWidgets import QApplication
+    win, stub, mp = mini
+    app = QApplication.instance()
+    win._start_logo_loop()
+    win.morph_to_full()
+    app.processEvents()
+    assert not win._logo_mode
+    assert stub.loop_file is False
+    # A late "stopped" (the morph's own stop echoing back) must not restart.
+    win._on_state("stopped")
+    for _ in range(10):
+        app.processEvents()
+    assert not win._logo_mode

@@ -914,4 +914,23 @@ ZH_CN: dict[str, str] = {
     'search': '搜索',
     'selected': '已选择',
     'the pasted list must have exactly one name per item': '粘贴的列表必须与项目数量一一对应',
+
+    # --- IPTV Identify / translate (2026-11-22) ---------------------------
+    "🔍 Identify…": "🔍 识别…",
+    "Search the video database by title and pick the right match":
+        "按标题搜索影片数据库，选择正确的匹配",
+    "文A Translate": "文A 翻译",
+    "Translate this title to English with your AI key (cached for this entry)":
+        "使用你的 AI 密钥将标题翻译为英文（该条目将永久缓存）",
+    "Search title… (edit keywords, then press Enter)":
+        "搜索标题…（可修改关键词后回车）",
+    "✕ Clear match": "✕ 清除匹配",
+    "Remove the manual match for this entry": "移除此条目的手动匹配",
+    "No metadata found — try 🔍 Identify to search by title.":
+        "未找到元数据 —— 试试 🔍 识别 按标题搜索。",
+    "Click the correct match to apply it.": "点击正确的匹配以应用。",
+    "No results — try fewer/different keywords.": "无结果 —— 试试更少或不同的关键词。",
+    "Translating…": "翻译中…",
+    "Translation failed — check the AI key in Settings.":
+        "翻译失败 —— 请检查设置中的 AI 密钥。",
 }

@@ -75,7 +75,12 @@ from PySide6.QtWidgets import (
 from config import APP_VERSION, DeeptorrentConfig, IPTVSourceConfig
 from iptv.artwork import PRIORITY_PREFETCH, PRIORITY_VISIBLE
 from iptv.manager import IPTVManager
-from iptv.metadata import extract_year, metadata_key
+from iptv.metadata import (
+    cjk_fraction,
+    extract_year,
+    metadata_key,
+    split_actress_suffix,
+)
 from iptv.models import (
     SECTION_FAVORITES,
     SECTION_LIVE,
@@ -179,6 +184,7 @@ class _IPTVSignals(QObject):
     load_done = Signal(bool, object)      # (ok, Playlist)
     artwork_ready = Signal(str, str)      # (url, local_path)
     metadata_ready = Signal(str, dict)    # (key, metadata)
+    search_done = Signal(object)          # (results dict) — search_async marshal
     status = Signal(str)
     player_state = Signal(str)
     player_position = Signal(float, float)
@@ -2514,20 +2520,25 @@ _MAX_CACHED_PIXMAPS = 800
 _NEUTRAL: Optional[QPixmap] = None
 _ROW_ROLE = Qt.UserRole + 1
 _EPG_ROLE = Qt.UserRole + 2  # per-tile "now playing" text (live channels)
+_TITLE2_ROLE = Qt.UserRole + 3  # dim second line: canonical/translated title
 
 # Tiles fetched ahead of/behind the viewport so scrolling rarely shows a
 # placeholder, and the ceiling on outstanding prefetch downloads that keeps a
-# fast scroll from starving the tiles actually on screen.
-_PREFETCH_TILES = 250
+# fast scroll from starving the tiles actually on screen. 120 (was 250) per
+# the 2026-11-22 comfort rework — owner: comfort beats raw fill speed.
+_PREFETCH_TILES = 120
 _MAX_PENDING_ARTWORK = 800
 # Icons are dropped this far outside the prefetch window (hysteresis: tiles
 # aren't cleared the moment they leave it, so a small scroll doesn't churn).
 _RELEASE_MARGIN = 120
 # Pixmap decodes per event-loop turn (~1.5 ms each).
 _DECODE_BATCH = 12
-# Background artwork sweep pacing (metadata lookups are limited to ~5/s).
-_SWEEP_BATCH = 5
-_SWEEP_INTERVAL_MS = 1000
+# Grid rows built per event-loop turn in set_items. Building 74k QListWidget
+# rows in one synchronous loop froze the GUI for 1-3 s (measured 2026-11-22
+# on the 74,761-entry xxx.m3u); ~1000 rows ≈ 20-40 ms per turn keeps the UI
+# responsive while the viewport fills from the very first batch. Sections
+# smaller than one batch populate fully and synchronously (tests rely on it).
+_POPULATE_BATCH = 1000
 
 
 def _neutral_pixmap() -> QPixmap:
@@ -2661,15 +2672,17 @@ class PosterDelegate(QStyledItemDelegate):
             painter.setPen(QColor(120, 130, 150))
             painter.drawText(icon_rect, Qt.AlignCenter, "—")
 
-        # Title text (wrapped, clipped to the text area). Live tiles with EPG
-        # data get a fixed two-line layout instead: name on line 1, current
-        # programme (dimmed) on line 2 — one line each, elided.
+        # Title text (wrapped, clipped to the text area). Tiles with a second
+        # line — live EPG "now playing" OR the canonical/translated title of a
+        # matched VOD entry — get a fixed two-line layout instead: name on
+        # line 1, the second line dimmed — one line each, elided.
         text = index.data(Qt.DisplayRole) or ""
         epg = index.data(_EPG_ROLE) or ""
+        title2 = index.data(_TITLE2_ROLE) or ""
         # Selected titles follow the app-wide text theme; unselected stays the
         # deliberate dim grey (painted secondary, like the EPG line below).
         painter.setPen(text_color() if selected else QColor(200, 211, 224))
-        if epg:
+        if epg or title2:
             fm = QFontMetrics(option.font)
             line_h = fm.height()
             title_rect = QRect(text_rect.left(), text_rect.top(),
@@ -2680,7 +2693,7 @@ class PosterDelegate(QStyledItemDelegate):
                              fm.elidedText(text, Qt.ElideRight, text_rect.width()))
             painter.setPen(QColor(138, 154, 176))
             painter.drawText(epg_rect, Qt.AlignHCenter | Qt.AlignTop,
-                             fm.elidedText(epg, Qt.ElideRight, text_rect.width()))
+                             fm.elidedText(epg or title2, Qt.ElideRight, text_rect.width()))
         else:
             painter.drawText(text_rect,
                              Qt.AlignTop | Qt.AlignHCenter | Qt.TextWordWrap, text)
@@ -2781,7 +2794,9 @@ class ContentGrid(QListWidget):
     itemActivated = Signal(object)  # double click / context Play -> play it
     itemSelected = Signal(object)   # single click -> show the info panel
     download_requested = Signal(object)  # context Download -> VOD download
-    sweep_progress = Signal(int, int)  # (resolved, total) artwork lookups
+    # (built, total) rows while a chunked set_items populates — feeds the
+    # tab's "Building grid i/N" progress stage.
+    grid_progress = Signal(int, int)
     sig_artwork = Signal(str, object)  # (url, path) — marshals worker -> GUI
     sig_artwork_failed = Signal(str)   # (url) — fetch gave up, worker -> GUI
     sig_logo = Signal(object, str)     # (item, url) — async channel-logo result
@@ -2827,20 +2842,20 @@ class ContentGrid(QListWidget):
         self._logo_pending: Dict[int, List[QListWidgetItem]] = {}  # id(item) -> tiles
         self._logo_tried: set = set()        # id(item) -> artwork lookup attempted
         self._tiles_by_item: Dict[int, QListWidgetItem] = {}
-        # Background sweep: resolve artwork for every entry in the section that
-        # has none, a few per tick so the metadata rate limiter isn't flooded.
-        self._sweep_queue: deque = deque()
-        self._sweep_timer = QTimer(self)
-        self._sweep_timer.setInterval(_SWEEP_INTERVAL_MS)
-        self._sweep_timer.timeout.connect(self._sweep_step)
+        # Chunked row population: a 74k-row synchronous build froze the GUI
+        # for seconds (see _POPULATE_BATCH). The timer drains the remainder
+        # one batch per event-loop turn.
+        self._populate_timer = QTimer(self)
+        self._populate_timer.setInterval(0)
+        self._populate_timer.timeout.connect(self._populate_step)
+        self._populate_pos = 0
+        self._populate_total = 0
         # Scrolling fires continuously; coalesce the (wider) prefetch scans.
         self._scan_timer = QTimer(self)
         self._scan_timer.setSingleShot(True)
         self._scan_timer.setInterval(60)
         self._scan_timer.timeout.connect(self._load_visible_artwork)
         # Pixmap decoding is spread over event-loop turns (see _apply_artwork).
-        self._sweep_total = 0
-        self._sweep_done = 0
         self._decode_queue: deque = deque()
         self._decode_timer = QTimer(self)
         self._decode_timer.setInterval(0)
@@ -2865,9 +2880,23 @@ class ContentGrid(QListWidget):
         self._MAX_RETRIES = 5
 
     def set_items(self, items: List[Any]) -> None:
+        """Reset the grid to ``items``, building rows in event-loop batches.
+
+        The first batch (≥ the viewport) is built synchronously so the grid
+        is never blank; the rest drains via a 0-ms timer so a 74k-entry
+        section never freezes the UI thread (owner directive 2026-11-22:
+        comfort beats speed). Sections of ≤ _POPULATE_BATCH rows complete in
+        this call — tests rely on that.
+
+        The whole-section artwork sweep is GONE (2026-11-22): lookups fire
+        only for the visible window + prefetch margin (_load_visible_artwork)
+        and for tiles the user opens in the detail panel. A 74k-entry
+        logo-less section used to enqueue every entry at 5 lookups/s — a
+        ~4-hour background churn (network + SQLite) after every view switch,
+        hammering providers that can never match these titles anyway.
+        """
         self._items = items
-        self._sweep_timer.stop()
-        self._sweep_queue.clear()
+        self._populate_timer.stop()
         self._decode_timer.stop()
         self._decode_queue.clear()
         self._artwork_requests.clear()
@@ -2880,8 +2909,25 @@ class ContentGrid(QListWidget):
         self._tiles_by_item.clear()
         self._decorated.clear()
         self.clear()
+        self.scrollToTop()
+        self._populate_pos = 0
+        self._populate_total = len(items)
+        self.grid_progress.emit(0, self._populate_total)
+        if items:
+            self._populate_step()  # first batch right now — viewport fills at once
+            if self._populate_pos < self._populate_total:
+                self._populate_timer.start()
+        # Item geometry isn't valid until the layout pass after the widget is
+        # shown — defer slightly so the first visible batch loads immediately.
+        QTimer.singleShot(80, self._load_visible_artwork)
+
+    def _populate_step(self) -> None:
+        """Build the next _POPULATE_BATCH rows (one event-loop turn)."""
+        end = min(self._populate_pos + _POPULATE_BATCH, self._populate_total)
         neutral = QIcon(_neutral_pixmap())
-        for row, it in enumerate(items):
+        items = self._items
+        for row in range(self._populate_pos, end):
+            it = items[row]
             name = getattr(it, "name", "") or getattr(it, "display_name", "")
             li = QListWidgetItem(name)
             # Shared placeholder: a per-name one here would cost ~300 MB on a
@@ -2891,16 +2937,30 @@ class ContentGrid(QListWidget):
             li.setData(_ROW_ROLE, row)  # QListWidget.row() is a linear scan
             self.addItem(li)
             self._tiles_by_item[id(it)] = li
-            if not (getattr(it, "logo", "") or getattr(it, "poster", "")):
-                self._sweep_queue.append(li)
-        self._sweep_total = len(self._sweep_queue)
-        self._sweep_done = 0
-        self.sweep_progress.emit(0, self._sweep_total)
-        # Item geometry isn't valid until the layout pass after the widget is
-        # shown — defer slightly so the first visible batch loads immediately.
-        QTimer.singleShot(80, self._load_visible_artwork)
-        if self._sweep_queue:
-            self._sweep_timer.start()
+            # Dim second line when a canonical/translated title is known
+            # (manual Identify match, AI translation, or provider metadata).
+            t2 = (getattr(it, "display_title", "")
+                  or getattr(it, "original_title", ""))
+            if t2:
+                li.setData(_TITLE2_ROLE, t2)
+        self._populate_pos = end
+        self.grid_progress.emit(end, self._populate_total)
+        if end >= self._populate_total:
+            self._populate_timer.stop()
+            # Rows the visible scan was waiting for now exist.
+            self._load_visible_artwork()
+
+    def set_tile_title2(self, item: Any, text: str) -> None:
+        """Live-update a tile's dim second line (Identify/translate result)."""
+        li = self._tiles_by_item.get(id(item))
+        if li is None:
+            return
+        li.setData(_TITLE2_ROLE, text or "")
+        self.viewport().update()
+
+    def is_populating(self) -> bool:
+        """True while the chunked row build is still draining."""
+        return self._populate_timer.isActive()
 
     def reset_artwork_state(self) -> None:
         """Forget every in-memory artwork memo after an external cache clear.
@@ -2908,8 +2968,10 @@ class ContentGrid(QListWidget):
         Without this the grid keeps serving pixmaps decoded from files that no
         longer exist, and its "already tried" sets stop tiles from ever
         re-resolving. Items keep their artwork URLs (still valid — they just
-        re-download); entries with none go back on the sweep queue."""
-        self._sweep_timer.stop()
+        re-download); artwork-less tiles re-resolve via the visible window.
+        The chunked populate keeps DRAINING (review LOW finding, 2026-11-22):
+        stopping it here would leave the tail rows unbuilt until the next
+        set_items — clearing icons does not need to cancel row creation."""
         self._decode_timer.stop()
         self._decode_queue.clear()
         self._artwork_requests.clear()
@@ -2921,20 +2983,10 @@ class ContentGrid(QListWidget):
         self._logo_tried.clear()
         self._decorated.clear()
         neutral = QIcon(_neutral_pixmap())
-        self._sweep_queue.clear()
         for row in range(self.count()):
             li = self.item(row)
-            if li is None:
-                continue
-            li.setIcon(neutral)
-            it = li.data(Qt.UserRole)
-            if it is not None and not (getattr(it, "logo", "") or getattr(it, "poster", "")):
-                self._sweep_queue.append(li)
-        self._sweep_total = len(self._sweep_queue)
-        self._sweep_done = 0
-        if self._sweep_queue:
-            self.sweep_progress.emit(0, self._sweep_total)
-            self._sweep_timer.start()
+            if li is not None:
+                li.setIcon(neutral)
         QTimer.singleShot(0, self._load_visible_artwork)
 
     def set_playing_item(self, item: Any) -> None:
@@ -3000,31 +3052,18 @@ class ContentGrid(QListWidget):
         if li is not None:
             self.update(self.indexFromItem(li))
 
-    # -- background artwork sweep -------------------------------------------
-    def _sweep_step(self) -> None:
-        """Resolve artwork for the next few entries that have none.
-
-        Visible tiles are handled first by :meth:`_load_visible_artwork`; this
-        walks the rest of the section so covers are already in the cache by
-        the time the user scrolls down to them."""
-        sent = 0
-        while self._sweep_queue and sent < _SWEEP_BATCH:
-            li = self._sweep_queue.popleft()
-            if self._resolve_missing_artwork(li):
-                sent += 1
-        if not self._sweep_queue:
-            self._sweep_timer.stop()
-
+    # -- artwork resolution (visible-window driven since the 2026-11-22
+    #    comfort rework — the whole-section background sweep is retired) ----
     def _resolve_missing_artwork(self, li: QListWidgetItem,
                                  framegrab: bool = False) -> bool:
         """Kick off the artwork lookup for one artwork-less tile.
 
-        Returns True when a lookup was actually started (callers pace
-        themselves against the metadata rate limiter).
+        Returns True when a lookup was actually started. Called only for
+        tiles in/near the viewport or opened in the detail panel.
 
         ``framegrab`` enables the FFmpeg last resort and is only ever set for
         tiles on screen: it opens a video connection to the user's provider,
-        so the background sweep (tens of thousands of entries) must not."""
+        so bulk paths (tens of thousands of entries) must not."""
         it = li.data(Qt.UserRole)
         if it is None:
             return False
@@ -3057,6 +3096,19 @@ class ContentGrid(QListWidget):
         self._logo_tried.add(id(item))
         self._logo_pending.setdefault(id(item), []).append(li)
         self._apply_logo(item, url)
+
+    def reset_tile_artwork(self, item: Any) -> None:
+        """Drop a tile's matched icon (cleared manual match) and make the
+        item eligible for auto-resolution again."""
+        li = self._tiles_by_item.get(id(item))
+        if li is not None:
+            li.setIcon(QIcon(_neutral_pixmap()))
+            row = li.data(_ROW_ROLE)
+            if row is not None:
+                self._decorated.discard(row)
+        self._logo_tried.discard(id(item))
+        self._logo_pending.pop(id(item), None)
+        self.viewport().update()
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
@@ -3232,7 +3284,8 @@ class ContentGrid(QListWidget):
         if not logo or logo in self._failed_urls:
             # No artwork (yet): show the initials tile, and for visible items
             # kick off the lookup — channels fall back to iptv-org,
-            # movies/series to TMDb/TVmaze. The sweep covers the rest.
+            # movies/series to the provider chain. Off-screen tiles resolve
+            # when they scroll into the prefetch window.
             row = li.data(_ROW_ROLE)
             if row is not None and row not in self._decorated:
                 self._set_tile_icon(li, _placeholder_pixmap(li.text()))
@@ -3265,11 +3318,6 @@ class ContentGrid(QListWidget):
 
     def _apply_logo(self, item: Any, url: str) -> None:
         tiles = self._logo_pending.pop(id(item), [])
-        # Every artwork-less entry produces exactly one result (hit or miss),
-        # so this is the honest progress counter for the sweep.
-        if self._sweep_total:
-            self._sweep_done = min(self._sweep_done + 1, self._sweep_total)
-            self.sweep_progress.emit(self._sweep_done, self._sweep_total)
         if not url or url in self._failed_urls:
             return  # nothing matched (or the fallback is dead too) — keep the initials tile
         if isinstance(item, Channel):
@@ -3433,6 +3481,14 @@ class ContentGrid(QListWidget):
             self.download_requested.emit(it)
 
 
+def _clip_text(text: str, limit: int) -> str:
+    """Collapse whitespace and cap length for remote-derived display strings."""
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if len(text) > limit:
+        text = text[:limit - 1].rstrip() + "…"
+    return text
+
+
 def _fmt_prog(title: str, start: int, end: int) -> str:
     """'14:30–16:00 Title' — programme times in the SYSTEM local timezone.
 
@@ -3481,11 +3537,29 @@ class ContentList(QTableWidget):
         self._epg_timer.setInterval(60_000)
         self._epg_timer.timeout.connect(self._refresh_visible_epg)
         self._epg_timer.start()
+        # Chunked row population — same doctrine as ContentGrid (a 74k×3
+        # synchronous cell build froze the GUI for seconds).
+        self._populate_timer = QTimer(self)
+        self._populate_timer.setInterval(0)
+        self._populate_timer.timeout.connect(self._populate_step)
+        self._populate_pos = 0
+        self._populate_total = 0
 
     def set_items(self, items: List[Any]) -> None:
         self._items = items
+        self._populate_timer.stop()
         self.setRowCount(len(items))
-        for r, it in enumerate(items):
+        self._populate_pos = 0
+        self._populate_total = len(items)
+        if items:
+            self._populate_step()
+            if self._populate_pos < self._populate_total:
+                self._populate_timer.start()
+
+    def _populate_step(self) -> None:
+        end = min(self._populate_pos + _POPULATE_BATCH, self._populate_total)
+        for r in range(self._populate_pos, end):
+            it = self._items[r]
             name = getattr(it, "name", "") or getattr(it, "display_name", "")
             self.setItem(r, 0, QTableWidgetItem(name))
             self.setItem(r, 1, QTableWidgetItem(getattr(it, "group", "")))
@@ -3494,6 +3568,9 @@ class ContentList(QTableWidget):
                 now = _fmt_now_title(self._manager.epg_now_next_for(it.tvg_id, it.name))
             self.setItem(r, 2, QTableWidgetItem(now))
             self.item(r, 0).setData(Qt.UserRole, it)
+        self._populate_pos = end
+        if end >= self._populate_total:
+            self._populate_timer.stop()
 
     def _refresh_visible_epg(self) -> None:
         """Update the Now Playing column for rows currently in the viewport."""
@@ -3557,17 +3634,34 @@ class DetailPanel(QScrollArea):
     download_requested = Signal(object)
     download_season_requested = Signal(object, int)
     artwork_found = Signal(object, str)  # (item, poster url) — feeds the grid
+    # (item) — a cleared manual match: the grid tile must drop its icon and
+    # become eligible for auto-resolution again.
+    artwork_reset = Signal(object)
+    # (item, second-line text) — Identify/translate/metadata found a
+    # canonical or translated title; the grid paints it as the dim 2nd line.
+    title2_found = Signal(object, str)
     sig_artwork = Signal(str, object)    # (url, path) — marshals worker -> GUI
     sig_artwork_failed = Signal(str)     # (url) — fetch gave up, worker -> GUI
     sig_metadata = Signal(str, dict)     # (key, metadata) — marshals worker -> GUI
+    sig_identify = Signal(object)        # (candidates) — Identify search, worker -> GUI
+    sig_thumb = Signal(str, object)      # (url, path) — candidate thumbnail, worker -> GUI
+    sig_translated = Signal(str)         # (translation, "" = failed) — worker -> GUI
     closed = Signal()                    # user clicked the close button
 
-    def __init__(self, manager: IPTVManager, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, manager: IPTVManager, parent: Optional[QWidget] = None,
+                 llm_config_fn: Any = None) -> None:
         super().__init__(parent)
         self._manager = manager
+        # Accessor returning the LLM config when an AI key is configured
+        # (None hides the Translate button) — a closure over the tab's live
+        # config so reloads are picked up.
+        self._llm_config_fn = llm_config_fn
         self.sig_artwork.connect(self._apply_artwork)
         self.sig_artwork_failed.connect(self._on_artwork_gone)
         self.sig_metadata.connect(self._apply_metadata)
+        self.sig_identify.connect(self._on_identify_results)
+        self.sig_thumb.connect(self._apply_identify_thumb)
+        self.sig_translated.connect(self._on_translated)
         self.setWidgetResizable(True)
         self.setStyleSheet(
             "QScrollArea { background-color: rgba(5,7,12,0.96); "
@@ -3615,7 +3709,80 @@ class DetailPanel(QScrollArea):
         self.download_btn.clicked.connect(
             lambda: self._on_download_clicked())
         header.insertWidget(1, self.download_btn, 0, Qt.AlignTop)
+
+        # --- Identify (manual metadata match) + Translate (AI) --------------
+        # TVBox-style aggregator playlists carry independent re-phrased
+        # Chinese names no database resolves reliably (measured 3/108 exact
+        # on the 2026-11-22 study) — the HUMAN makes the final call here.
+        # Same button chrome as download_btn.
+        _action_qss = scale_qss(
+            "QPushButton { background-color: rgba(42,122,191,0.25); "
+            "border: 1px solid #2a7abf; border-radius: 4px; "
+            "color: #ffffff; font-size: 17px; font-weight: bold; }\n"
+            "QPushButton:hover { background-color: rgba(42,122,191,0.55); "
+            "border-color: #2a7abf; color: white; }")
+        self.identify_btn = QPushButton(tr('🔍 Identify…'))
+        self.identify_btn.setToolTip(
+            tr('Search the video database by title and pick the right match'))
+        self.identify_btn.setCursor(Qt.PointingHandCursor)
+        self.identify_btn.setStyleSheet(_action_qss)
+        self.identify_btn.clicked.connect(self._on_identify_clicked)
+        header.insertWidget(1, self.identify_btn, 0, Qt.AlignTop)
+        self.translate_btn = QPushButton(tr('文A Translate'))
+        self.translate_btn.setToolTip(
+            tr('Translate this title to English with your AI key (cached for this entry)'))
+        self.translate_btn.setCursor(Qt.PointingHandCursor)
+        self.translate_btn.setStyleSheet(_action_qss)
+        self.translate_btn.clicked.connect(self._on_translate_clicked)
+        header.insertWidget(2, self.translate_btn, 0, Qt.AlignTop)
         self._layout.addLayout(header)
+
+        # Canonical/translated title line (secondary to the 27px bold title:
+        # same themed color, smaller size + normal weight — the EPG-line
+        # dimming idiom is painted-only in this codebase, QSS text sources
+        # stay #ffffff per test_font_scale's pure-white rule).
+        self.subtitle = QLabel("")
+        self.subtitle.setStyleSheet(scale_qss(
+            "color: #ffffff; font-size: 16px; font-weight: 400;"))
+        self.subtitle.setWordWrap(True)
+        shrink_label(self.subtitle)
+        self._layout.addWidget(self.subtitle)
+
+        # Identify candidates area (hidden until Identify… is clicked).
+        self._identify_w = QWidget()
+        idv = QVBoxLayout(self._identify_w)
+        idv.setContentsMargins(0, 4, 0, 4)
+        idv.setSpacing(4)
+        self._identify_query = QLineEdit()
+        self._identify_query.setPlaceholderText(
+            tr('Search title… (edit keywords, then press Enter)'))
+        self._identify_query.returnPressed.connect(self._run_identify_search)
+        self._identify_go = QPushButton(tr('Search'))
+        self._identify_go.clicked.connect(self._run_identify_search)
+        self._identify_clear = QPushButton(tr('✕ Clear match'))
+        self._identify_clear.setToolTip(
+            tr('Remove the manual match for this entry'))
+        self._identify_clear.clicked.connect(self._on_clear_match)
+        id_row = QHBoxLayout()
+        id_row.addWidget(self._identify_query, 1)
+        id_row.addWidget(self._identify_go)
+        id_row.addWidget(self._identify_clear)
+        idv.addLayout(id_row)
+        self._identify_results = QListWidget()
+        self._identify_results.setMaximumHeight(260)
+        self._identify_results.itemClicked.connect(self._on_pick_candidate)
+        idv.addWidget(self._identify_results)
+        self._identify_status = QLabel("")
+        self._identify_status.setStyleSheet(scale_qss(
+            "color: #ffffff; font-size: 15px; font-weight: 400;"))
+        shrink_label(self._identify_status)
+        idv.addWidget(self._identify_status)
+        self._layout.addWidget(self._identify_w)
+        self._identify_w.hide()
+        self._identify_candidates: List[Dict[str, Any]] = []
+        self._identify_for = 0          # id(item) the results belong to
+        self._thumb_rows: Dict[str, List[QListWidgetItem]] = {}
+        self._translate_for = 0         # id(item) a translation is running for
 
         self.meta_lbl = QLabel("")
         self.meta_lbl.setStyleSheet(scale_qss("color: #ffffff; font-size: 18px;"))
@@ -3678,6 +3845,33 @@ class DetailPanel(QScrollArea):
             f"{year}  •  ★ {rating:.1f}  •  {', '.join(genres) if genres else '—'}"
         )
         self.synopsis.setText(getattr(item, "synopsis", "") or "Loading metadata…")
+        # Identify/Translate are VOD-only; Translate additionally needs an
+        # AI key (embedded or user-set).
+        self.identify_btn.setVisible(
+            getattr(item, "section", "") in (SECTION_MOVIES, SECTION_SERIES))
+        llm_cfg = self._llm_config_fn() if callable(self._llm_config_fn) else None
+        self.translate_btn.setVisible(
+            getattr(item, "section", "") in (SECTION_MOVIES, SECTION_SERIES)
+            and llm_cfg is not None)
+        self.subtitle.setText(_clip_text(
+            getattr(item, "display_title", "")
+            or getattr(item, "original_title", ""), 200))
+        self._identify_w.hide()
+        self._identify_results.clear()
+        self._identify_candidates = []
+        self._identify_status.setText("")
+        self._thumb_rows.clear()
+        self._identify_for = 0
+        # The "-actress" split is a CJK-playlist idiom — applying it to a
+        # hyphenated Latin title ("Spider-Man") would prefill a truncated
+        # query (review LOW finding, 2026-11-22).
+        name = getattr(item, "name", "")
+        if cjk_fraction(name) >= 0.30:
+            query, _actress = split_actress_suffix(name)
+        else:
+            query = name
+        self._identify_query.setText(query)
+        self._identify_clear.setVisible(bool(getattr(item, "manual_match", False)))
 
         # Backdrop/poster artwork.
         bd = getattr(item, "backdrop", "") or getattr(item, "poster", "") or getattr(item, "logo", "")
@@ -3752,6 +3946,12 @@ class DetailPanel(QScrollArea):
                                               nn.get("next_start") or 0,
                                               nn.get("next_end") or 0))
         self.meta_lbl.setText(ch.group or "Live TV")
+        # Channels have no catalogue identity — hide the Identify/Translate
+        # lane and the subtitle line entirely for this view.
+        self.identify_btn.hide()
+        self.translate_btn.hide()
+        self.subtitle.setText("")
+        self._identify_w.hide()
         if getattr(ch, "section", "") in (SECTION_MOVIES, SECTION_SERIES) and ch.url:
             # Recent-list VOD rows are transient Channel objects — they're
             # still downloadable even though they render via this path.
@@ -3850,14 +4050,33 @@ class DetailPanel(QScrollArea):
         self._scale_backdrop()
 
     def _on_metadata(self, key: str, meta: Dict[str, Any]) -> None:
-        if not meta or self._current is None:
+        if self._current is None:
             return
-        self.sig_metadata.emit(key, meta)
+        # A provider MISS must reach the GUI too (empty dict) — the panel used
+        # to sit on "Loading metadata…" forever when every provider missed.
+        self.sig_metadata.emit(key, dict(meta or {}))
 
     def _apply_metadata(self, key: str, meta: Dict[str, Any]) -> None:
         # Drop metadata that belongs to a previously shown item.
         if self._current is None or key != self._expected_meta_key:
             return
+        if not meta:
+            # Every provider missed (negative-cached result). Clear the
+            # placeholder instead of leaving "Loading metadata…" forever.
+            if not getattr(self._current, "synopsis", ""):
+                self.synopsis.setText(tr(
+                    "No metadata found — try 🔍 Identify to search by title."))
+            return
+        # Canonical original title from the provider (e.g. missav's Japanese
+        # original for a Chinese-translated playlist name) becomes the dim
+        # second line — unless a manual Identify match/translation overrides.
+        if not getattr(self._current, "display_title", ""):
+            t2 = str(meta.get("original_title") or "")
+            if t2 and t2 != getattr(self._current, "name", ""):
+                self._current.original_title = t2
+                if not getattr(self._current, "manual_match", False):
+                    self.subtitle.setText(_clip_text(t2, 200))
+                    self.title2_found.emit(self._current, t2)
         if meta.get("synopsis"):
             self._current.synopsis = meta["synopsis"]
             self.synopsis.setText(meta["synopsis"])
@@ -3884,6 +4103,185 @@ class DetailPanel(QScrollArea):
         if bd and (not self.backdrop.pixmap() or self.backdrop.pixmap().isNull()):
             self._expected_artwork_url = bd
             self._manager.fetch_artwork(bd, self._on_artwork)
+
+    # -- Identify (manual metadata match) + AI translate --------------------
+    def _on_identify_clicked(self) -> None:
+        """Toggle the Identify area; opening it runs the prefilled search."""
+        if self._identify_w.isVisible():
+            self._identify_w.hide()
+            return
+        self._identify_w.show()
+        if not self._identify_results.count():
+            self._run_identify_search()
+
+    def _run_identify_search(self) -> None:
+        item = self._current
+        if item is None:
+            return
+        query = self._identify_query.text().strip()
+        if not query:
+            return
+        self._identify_for = id(item)
+        self._identify_results.clear()
+        self._identify_candidates = []
+        self._thumb_rows.clear()
+        self._identify_status.setText(tr("Searching…"))
+        self._manager.missav_search_async(query, self.sig_identify.emit)
+
+    def _on_identify_results(self, candidates: List[Dict[str, Any]]) -> None:
+        """Populate the candidate list (GUI thread via sig_identify)."""
+        if self._current is None or id(self._current) != self._identify_for:
+            return  # stale — the user moved on to another entry
+        self._identify_candidates = list(candidates or [])
+        if not self._identify_candidates:
+            self._identify_status.setText(
+                tr("No results — try fewer/different keywords."))
+            return
+        for cand in self._identify_candidates:
+            mins = cand.get("duration") or 0
+            label = (f"{_clip_text(cand.get('title_cn') or cand.get('title') or '?', 110)}"
+                     f"  [{cand.get('code', '?')}]"
+                     + (f"  {mins // 60}m" if mins else ""))
+            li = QListWidgetItem(label)
+            li.setData(Qt.UserRole, cand)
+            li.setToolTip(_clip_text(cand.get("title") or "", 200))
+            self._identify_results.addItem(li)
+            thumb = cand.get("poster") or ""
+            if thumb:
+                self._thumb_rows.setdefault(thumb, []).append(li)
+                self._manager.fetch_artwork(thumb, self._on_identify_thumb)
+        self._identify_status.setText(
+            tr("Click the correct match to apply it."))
+
+    def _on_identify_thumb(self, url: str, path: Optional[str]) -> None:
+        # Worker thread -> GUI thread.
+        if path:
+            self.sig_thumb.emit(url, path)
+        else:
+            self.sig_thumb.emit(url, None)
+
+    def _apply_identify_thumb(self, url: str, path: Optional[str]) -> None:
+        rows = self._thumb_rows.pop(url, [])
+        if not path:
+            return
+        pm = QPixmap(path)
+        if pm.isNull():
+            return
+        pm = pm.scaledToHeight(72, Qt.SmoothTransformation)
+        icon = QIcon(pm)
+        for li in rows:
+            li.setIcon(icon)
+
+    def _on_pick_candidate(self, li: QListWidgetItem) -> None:
+        """User clicked a candidate: persist + apply the manual match."""
+        if self._current is None:
+            return
+        cand = li.data(Qt.UserRole) or {}
+        poster = str(cand.get("poster") or "")
+        if poster.endswith("cover-t.jpg"):
+            poster = poster[:-len("cover-t.jpg")] + "cover.jpg"
+        payload = {
+            "provider": "manual",
+            "code": str(cand.get("code") or ""),
+            "title": str(cand.get("title_cn") or ""),
+            "original_title": str(cand.get("title") or ""),
+            "poster": poster,
+        }
+        duration = int(cand.get("duration") or 0)
+        if duration:
+            payload["duration_min"] = duration // 60
+        self._manager.set_entry_override(self._current, payload)
+        self._apply_override(payload)
+        self._identify_w.hide()
+
+    def _apply_override(self, payload: Dict[str, Any]) -> None:
+        """Refresh the panel after an override was persisted (pick/reload)."""
+        item = self._current
+        if item is None:
+            return
+        t2 = (str(payload.get("display_title") or "")
+              or str(payload.get("original_title") or "")
+              or str(payload.get("title") or ""))
+        self.subtitle.setText(_clip_text(t2, 200))
+        self.title2_found.emit(item, t2)
+        poster = str(payload.get("poster") or "")
+        if poster:
+            # Replace whatever artwork state with the matched cover.
+            item.backdrop = ""
+            self._expected_artwork_url = poster
+            self.backdrop.setText(tr('Loading artwork…'))
+            self.backdrop.setPixmap(QPixmap())
+            self._manager.fetch_artwork(poster, self._on_artwork)
+            self.artwork_found.emit(item, poster)
+        self._identify_clear.setVisible(True)
+        self._translate_for = 0
+
+    def _on_clear_match(self) -> None:
+        if self._current is None:
+            return
+        self._manager.clear_entry_override(self._current)
+        self.title2_found.emit(self._current, "")
+        self.artwork_reset.emit(self._current)
+        self.subtitle.setText("")
+        self.backdrop.setText(tr('No artwork available'))
+        self.backdrop.setPixmap(QPixmap())
+        self._expected_artwork_url = ""
+        if not getattr(self._current, "synopsis", ""):
+            self.synopsis.setText(tr("No metadata found — try 🔍 Identify to search by title."))
+        self._identify_clear.setVisible(False)
+
+    def _on_translate_clicked(self) -> None:
+        """On-demand AI translation of the entry name, cached as an override.
+
+        Off the GUI thread (LLM round trip), marshalled back via sig_translated.
+        Never automatic — one call per click, per entry (API-spend guard)."""
+        item = self._current
+        if item is None or self._translate_for:
+            return
+        cfg = self._llm_config_fn() if callable(self._llm_config_fn) else None
+        if cfg is None or not getattr(cfg, "api_key", ""):
+            return  # button is hidden in this state anyway
+        name = getattr(item, "name", "")
+        if not name:
+            return
+        self._translate_for = id(item)
+        self.translate_btn.setEnabled(False)
+        self.subtitle.setText(tr("Translating…"))
+
+        def _work() -> None:
+            text = ""
+            try:
+                from agent.llm import create_llm_client
+                client = create_llm_client(cfg)
+                reply = client.chat(
+                    [{"role": "user", "content":
+                      "Translate the following video title to English. "
+                      "Output ONLY the translation — no quotes, no notes.\n\n"
+                      + name[:500]}],
+                    effort="low",
+                    model=getattr(cfg, "fast_model", "") or None,
+                )
+                text = (getattr(reply, "content", "") or "").strip()
+            except Exception:
+                logger.exception("IPTV title translation failed")
+            self.sig_translated.emit(text[:200])
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _on_translated(self, text: str) -> None:
+        was_for = self._translate_for
+        self._translate_for = 0
+        self.translate_btn.setEnabled(True)
+        item = self._current
+        if item is None or id(item) != was_for or was_for == 0:
+            return  # stale or already switched
+        if not text:
+            self.subtitle.setText(tr(
+                "Translation failed — check the AI key in Settings."))
+            return
+        # Merge into the entry's override (an Identify poster survives this).
+        self._manager.set_entry_override(item, {"display_title": text})
+        self._apply_override({"display_title": text})
 
     def _on_episode(self, li: QListWidgetItem) -> None:
         ep = li.data(Qt.UserRole)
@@ -3934,6 +4332,7 @@ class IPTVTab(QWidget):
         self._signals.load_done.connect(self._on_load_done)
         self._signals.artwork_ready.connect(self._on_artwork_ready)
         self._signals.metadata_ready.connect(self._on_metadata_ready)
+        self._signals.search_done.connect(self._on_search_results)
         self._signals.status.connect(self._on_status)
         self._signals.player_state.connect(self._on_player_state)
         self._signals.player_position.connect(self._on_player_position)
@@ -3954,6 +4353,7 @@ class IPTVTab(QWidget):
             enable_javlibrary=config.iptv.enable_javlibrary,
             enable_fanza=config.iptv.enable_fanza,
             enable_wikipedia=config.iptv.enable_wikipedia,
+            enable_missav=config.iptv.enable_missav,
             cache_limit_mb=config.iptv.cache_limit_mb,
             epg_url=config.iptv.epg_url,
             enable_epg=config.iptv.enable_epg,
@@ -3972,6 +4372,18 @@ class IPTVTab(QWidget):
         # Which source the content pane is showing. Every enabled source is
         # loaded and listed in the tree; this is just the current view.
         self._current_source_id = ""
+        # Content signature of the playlist currently backing the grid +
+        # sidebar (see manager._playlist_signature): an unchanged fresh
+        # publish skips both rebuilds — the double populate (cache copy +
+        # fresh copy) was a full 74k-row GUI freeze twice per refresh.
+        self._shown_playlist_sig = ""
+        self._sidebar_sigs: Dict[str, str] = {}
+        # Sources still loading (drives the load progress bar's visibility
+        # together with the chunked grid-build stage).
+        self._sources_loading = False
+        # Monotonic guard so a slow search_async result never overwrites a
+        # newer query's results.
+        self._search_seq = 0
         # Folder-scoped search: the tree key of the last node the user actually
         # entered (source/section/category/year/bulk). When the scope toggle is
         # on, the search box filters only the items under this node.
@@ -4114,7 +4526,8 @@ class IPTVTab(QWidget):
         splitter.addWidget(content)
         self._content = content
 
-        self._grid.sweep_progress.connect(self._on_artwork_progress)
+        # Chunked grid build drives the "Building grid i/N" load stage.
+        self._grid.grid_progress.connect(self._on_grid_progress)
 
         # Player pane.
         player_col = QWidget()
@@ -4137,9 +4550,17 @@ class IPTVTab(QWidget):
 
         # Detail/metadata panel — a separate zone overlaid on the player's video
         # area. It shows on selection and disappears when content starts playing.
-        self._detail = DetailPanel(self._manager)
+        # The LLM accessor closure reads the LIVE config so Translate appears
+        # as soon as an AI key is configured (reload_config replaces _config).
+        self._detail = DetailPanel(
+            self._manager,
+            llm_config_fn=lambda: (
+                self._config.llm
+                if getattr(self._config.llm, "api_key", "") else None))
         self._detail.play_requested.connect(self._play_item)
         self._detail.artwork_found.connect(self._grid.apply_external_artwork)
+        self._detail.artwork_reset.connect(self._grid.reset_tile_artwork)
+        self._detail.title2_found.connect(self._grid.set_tile_title2)
         self._detail.closed.connect(self._on_detail_closed)
         self._detail.download_requested.connect(self._on_download_requested)
         self._detail.download_season_requested.connect(self._download_season)
@@ -4189,19 +4610,9 @@ class IPTVTab(QWidget):
         self._status_lbl.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px;"))
         status.addWidget(self._status_lbl)
         status.addStretch()
-        # Artwork sweep indicator — the lookups are deliberately slow (rate
-        # limited), so show the progress rather than leaving the user
-        # wondering whether the blank tiles are ever going to fill in.
-        self._art_lbl = QLabel("")
-        self._art_lbl.setStyleSheet(scale_qss("color: #ffffff; font-size: 17px;"))
-        self._art_lbl.hide()
-        status.addWidget(self._art_lbl)
-        self._art_progress = QProgressBar()
-        self._art_progress.setMaximumWidth(120)
-        self._art_progress.setMaximumHeight(10)
-        self._art_progress.setTextVisible(False)
-        self._art_progress.hide()
-        status.addWidget(self._art_progress)
+        # (The old artwork-sweep indicator is gone with the sweep itself —
+        # artwork now resolves for the visible window, which needs no
+        # hours-long progress bar.)
         self._progress = QProgressBar()
         self._progress.setMaximumWidth(240)
         self._progress.setMaximumHeight(14)
@@ -4225,7 +4636,6 @@ class IPTVTab(QWidget):
         ))
         # Live status text must not grow the window's minimum width.
         shrink_label(self._status_lbl)
-        shrink_label(self._art_lbl)
 
     # -- sources -------------------------------------------------------------
     def _populate_source_dropdown(self) -> None:
@@ -4273,6 +4683,7 @@ class IPTVTab(QWidget):
         self._progress.show()
         self._progress.setRange(0, 0)
         self._pending_sources = len(sources)
+        self._sources_loading = True
         self._set_status(f"Loading {len(sources)} source(s)…"
                          if len(sources) > 1 else f"Loading {sources[0].name}…")
         self._manager.load_all_async(
@@ -4307,7 +4718,12 @@ class IPTVTab(QWidget):
                           f"{self._source_name(pl.source_id)}{stale_note}")
             self._set_status(f"{prefix} — {len(remaining)} source(s) still loading…")
         else:
-            self._progress.hide()
+            self._sources_loading = False
+            # The grid may still be draining its chunked build — its stage
+            # owns the bar until the last chunk lands (whichever ends last
+            # hides it).
+            if not self._grid.is_populating():
+                self._progress.hide()
             total = 0
             stale = []
             empty_messages = []
@@ -4341,6 +4757,16 @@ class IPTVTab(QWidget):
         if first and pl.source_id:
             self._current_source_id = pl.source_id
             self._sync_source_combo(pl.source_id)
+        # Byte-identical republish (cache copy then unchanged fresh copy —
+        # the common refresh case): skip BOTH the sidebar rebuild and the
+        # grid rebuild. The double populate was two full 74k-row GUI freezes
+        # per refresh for content that didn't change.
+        sig = getattr(pl, "signature", "")
+        unchanged = bool(sig) and not first and sig == self._sidebar_sigs.get(pl.source_id)
+        if unchanged and (pl.source_id != self._current_source_id
+                          or sig == self._shown_playlist_sig):
+            return
+        self._sidebar_sigs[pl.source_id] = sig
         self._rebuild_sidebar()
         if first or pl.source_id == self._current_source_id:
             self._show_section(self._current_section, self._current_category,
@@ -4359,17 +4785,18 @@ class IPTVTab(QWidget):
     def _on_metadata_ready(self, key: str, meta: dict) -> None:
         pass
 
-    def _on_artwork_progress(self, done: int, total: int) -> None:
-        """Show how far the missing-artwork sweep has got for this section."""
-        if not total or done >= total:
-            self._art_lbl.hide()
-            self._art_progress.hide()
+    def _on_grid_progress(self, done: int, total: int) -> None:
+        """Chunked grid-build stage of the load progress (B3).
+
+        The bar stays visible while rows are still building AND sources are
+        still loading; whichever stage finishes last hides it."""
+        if done >= total:
+            if not self._sources_loading:
+                self._progress.hide()
             return
-        self._art_lbl.setText(f"Finding artwork  {done}/{total}")
-        self._art_progress.setRange(0, total)
-        self._art_progress.setValue(done)
-        self._art_lbl.show()
-        self._art_progress.show()
+        self._progress.setRange(0, max(1, total))
+        self._progress.setValue(done)
+        self._progress.show()
 
     def _on_status(self, msg: str) -> None:
         self._set_status(msg)
@@ -4790,6 +5217,14 @@ class IPTVTab(QWidget):
             items = items[start:start + BULK_SIZE]
         items = self._folder_filter(items)
         self._set_content_items(items)
+        # Record which playlist content the view now shows (skip-signal for
+        # identical republishes — see _on_load_done).
+        try:
+            pl = self._manager.playlist_for(source_id) if source_id else \
+                self._manager.current_playlist()
+            self._shown_playlist_sig = getattr(pl, "signature", "") if pl else ""
+        except Exception:
+            self._shown_playlist_sig = ""
 
     def _set_content_items(self, items: List[Any]) -> None:
         """Populate only the visible view; the hidden one is filled lazily on
@@ -4851,6 +5286,10 @@ class IPTVTab(QWidget):
 
     def _on_search(self, text: str) -> None:
         text = text.strip()
+        # Invalidate any in-flight async result on EVERY path (review MED
+        # finding, 2026-11-22): a late global result must never overwrite a
+        # restored section view or a freshly applied scoped result.
+        self._search_seq += 1
         if not text:
             self._show_section(self._current_section, self._current_category,
                                year=self._current_year)
@@ -4862,11 +5301,23 @@ class IPTVTab(QWidget):
             self._set_status(
                 f"{len(hits)} match(es) in {self._scope_label or 'folder'}")
             return
-        results = self._manager.search(text)
+        # Global search scans every entry of the current playlist (a 74k-name
+        # linear pass is 100-300 ms) — run it off the GUI thread; the result
+        # is marshalled back via _signals.search_done.
+        seq = self._search_seq
+        self._set_status(tr("Searching…"))
+        self._manager.search_async(
+            text, lambda results: self._signals.search_done.emit((seq, results)))
+
+    def _on_search_results(self, payload: tuple) -> None:
+        seq, results = payload
+        if seq != self._search_seq:
+            return  # a newer query superseded this one
         items: List[Any] = []
         for section in (SECTION_LIVE, SECTION_MOVIES, SECTION_SERIES):
-            items.extend(results.get(section, []))
+            items.extend((results or {}).get(section, []))
         self._set_content_items(items)
+        self._set_status(f"{len(items)} match(es)")
 
     @staticmethod
     def _matches_query(item: Any, q: str) -> bool:

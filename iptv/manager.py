@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import sys
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -52,6 +53,71 @@ _M3U_MAX_BYTES = 64 * 1024 * 1024
 # share one spelling; a 4-digit year can never collide with it.
 YEAR_OTHERS = "Others"
 
+# --- bulk-load CPU budget (owner directive 2026-11-22: "comfort is more
+# important than speed") ----------------------------------------------------
+# While any playlist sweep runs, the whole process drops to BELOW NORMAL
+# priority so the GUI and every OTHER app on the machine stay smooth; NORMAL
+# is restored when the last sweep ends. A hard "50% of the cores" affinity
+# mask was considered and rejected: it starves small machines and does not
+# yield to other processes, which is the actual comfort complaint. Windows
+# only — POSIX nice() cannot be un-done by an unprivileged process.
+_PRIORITY_LOCK = threading.Lock()
+_PRIORITY_REFS = 0
+
+
+def _win_set_priority_below_normal(below: bool) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        import os
+        process_set_information = 0x0200
+        process_query_information = 0x0400
+        normal_priority_class = 0x00000020
+        below_normal_priority_class = 0x00004000
+        kernel32 = ctypes.windll.kernel32
+        # GetCurrentProcess()'s pseudo-handle (-1) is REJECTED by
+        # SetPriorityClass in some host environments (measured 2026-11-22:
+        # ERROR_INVALID_HANDLE under ZCode's process host even unsandboxed;
+        # a real handle from OpenProcess works everywhere).
+        handle = kernel32.OpenProcess(
+            process_set_information | process_query_information,
+            False, os.getpid())
+        if not handle:
+            handle = kernel32.GetCurrentProcess()  # fall back to pseudo
+        try:
+            kernel32.SetPriorityClass(
+                handle,
+                below_normal_priority_class if below else normal_priority_class,
+            )
+        finally:
+            if handle != kernel32.GetCurrentProcess():
+                kernel32.CloseHandle(handle)
+    except Exception:
+        logger.debug("SetPriorityClass failed", exc_info=True)
+
+
+class _LoadPriorityGuard:
+    """Reference-counted BELOW_NORMAL switch shared by all bulk-load paths."""
+
+    def __enter__(self) -> "_LoadPriorityGuard":
+        global _PRIORITY_REFS
+        with _PRIORITY_LOCK:
+            first = _PRIORITY_REFS == 0
+            _PRIORITY_REFS += 1
+        if first:
+            _win_set_priority_below_normal(True)
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        global _PRIORITY_REFS
+        with _PRIORITY_LOCK:
+            _PRIORITY_REFS -= 1
+            last = _PRIORITY_REFS == 0
+        if last:
+            _win_set_priority_below_normal(False)
+        return False
+
 
 class IPTVManager:
     """Coordinates IPTV data flow. Qt-agnostic; uses callbacks for signals."""
@@ -72,6 +138,7 @@ class IPTVManager:
         enable_javlibrary: bool = True,
         enable_fanza: bool = True,
         enable_wikipedia: bool = True,
+        enable_missav: bool = True,
         cache_limit_mb: int = 10240,
         epg_url: str = "",
         enable_epg: bool = True,
@@ -90,7 +157,8 @@ class IPTVManager:
                                          enable_javbus=enable_javbus,
                                          enable_javlibrary=enable_javlibrary,
                                          enable_fanza=enable_fanza,
-                                         enable_wikipedia=enable_wikipedia)
+                                         enable_wikipedia=enable_wikipedia,
+                                         enable_missav=enable_missav)
         # Last-resort poster source when no provider matches (see framegrab.py).
         self.framegrab = FrameGrabber(self.artwork) if framegrab_posters else None
         self.epg = EPGManager(self.cache)
@@ -107,6 +175,13 @@ class IPTVManager:
         self._playlists: Dict[str, Playlist] = {}
         self._active_source_id: Optional[str] = None
         self._lock = threading.RLock()
+
+        # source_id -> (content signature, url_tvg) of the last payload
+        # written to the playlist cache. An unchanged refresh (the common
+        # case) skips re-serializing a potentially tens-of-MB payload, and
+        # the GUI uses the signature on the playlist object to skip a full
+        # grid rebuild for the fresh copy.
+        self._saved_cache_state: Dict[str, tuple] = {}
 
         # Background work tracking.
         self._cancel_flags: Dict[str, threading.Event] = {}
@@ -365,21 +440,51 @@ class IPTVManager:
         if epg_url and epg_url != pl.url_tvg:
             pl.url_tvg = epg_url
 
-        # Persist to cache.
-        self.cache.save_playlist(source.id, _playlist_to_cache(pl), url_tvg=pl.url_tvg)
+        # Content signature — cheap identity of WHAT this playlist contains.
+        # Unchanged across a refresh → the multi-MB cache re-serialize below
+        # is skipped and the GUI skips the grid rebuild for the fresh copy.
+        pl.signature = _playlist_signature(pl)
 
-        # Mark favorites on the loaded items.
+        # Persist to cache — skipped when nothing changed since the last
+        # save: a 74k-entry payload is tens of MB of asdict+json.dumps for
+        # byte-identical content on every refresh.
+        state = (pl.signature, pl.url_tvg)
+        if self._saved_cache_state.get(source.id) != state:
+            self.cache.save_playlist(source.id, _playlist_to_cache(pl), url_tvg=pl.url_tvg)
+            self._saved_cache_state[source.id] = state
+
+        # Mark favorites + manual metadata overrides on the loaded items.
         self._apply_favorites(pl)
+        self._apply_overrides(pl)
 
+        # IDENTICAL-content republish: keep the LIVE copy installed instead
+        # of swapping in this fresh parse (review HIGH finding, 2026-11-22).
+        # Swapping objects the GUI is still bound to would orphan the
+        # displayed generation — an Identify pick or favorite toggled after
+        # the swap mutates the OLD objects while items_for() serves the new
+        # ones, so curated state "vanished" until the next refresh. The
+        # fresh parse is byte-identical (same signature + url_tvg), so
+        # nothing is lost by keeping the objects the user is looking at.
         with self._lock:
-            self._playlists[source.id] = pl
-            self._active_source_id = self._active_source_id or source.id
+            prev = self._playlists.get(source.id)
+        if (prev is not None and prev.total > 0
+                and not getattr(prev, "error", None)
+                and pl.signature == getattr(prev, "signature", "")
+                and pl.url_tvg == prev.url_tvg):
+            if getattr(pl, "stale", False):
+                prev.stale = True
+            published = prev
+        else:
+            published = pl
+            with self._lock:
+                self._playlists[source.id] = pl
+                self._active_source_id = self._active_source_id or source.id
 
         # Kick off EPG if a guide URL resolved for this source.
         if pl.url_tvg and self.enable_epg:
             self.epg.update_async(pl.url_tvg, headers=headers)
 
-        return pl
+        return published
 
     @staticmethod
     def _download_m3u(
@@ -482,31 +587,32 @@ class IPTVManager:
             self._reload_requested = False
 
         def _worker() -> None:
-            while True:
-                with self._lock:
-                    sources = [s for s in self.sources if s.enabled]
-                    self._reload_requested = False
-                for src in sources:
-                    try:
-                        self._load_one(src, on_progress, on_done, use_cache)
-                    except Exception:
-                        logger.exception("load failed for source %s", src.name)
-                        if on_done:
-                            on_done(False, Playlist(source_id=src.id))
-                # A finished sweep means a burst of fresh artwork on disk —
-                # the right moment to keep the cache inside its size cap.
-                self.enforce_cache_limit_async()
-                with self._lock:
-                    if not self._reload_requested:
-                        # Clear the thread ref INSIDE the same critical
-                        # section as the final flag check: a caller that
-                        # arrived between the check and the thread's actual
-                        # death saw is_alive()==True, set the flag, and
-                        # returned — but the worker had already committed to
-                        # exiting, so the requested reload silently never
-                        # happened (review 2026-09-15).
-                        self._refresh_thread = None
-                        break
+            with _LoadPriorityGuard():
+                while True:
+                    with self._lock:
+                        sources = [s for s in self.sources if s.enabled]
+                        self._reload_requested = False
+                    for src in sources:
+                        try:
+                            self._load_one(src, on_progress, on_done, use_cache)
+                        except Exception:
+                            logger.exception("load failed for source %s", src.name)
+                            if on_done:
+                                on_done(False, Playlist(source_id=src.id))
+                    # A finished sweep means a burst of fresh artwork on disk —
+                    # the right moment to keep the cache inside its size cap.
+                    self.enforce_cache_limit_async()
+                    with self._lock:
+                        if not self._reload_requested:
+                            # Clear the thread ref INSIDE the same critical
+                            # section as the final flag check: a caller that
+                            # arrived between the check and the thread's actual
+                            # death saw is_alive()==True, set the flag, and
+                            # returned — but the worker had already committed
+                            # to exiting, so the requested reload silently
+                            # never happened (review 2026-09-15).
+                            self._refresh_thread = None
+                            break
 
         t = threading.Thread(target=_worker, daemon=True)
         with self._lock:
@@ -524,6 +630,14 @@ class IPTVManager:
             cached = self.cache.load_playlist(source.id)
             if cached:
                 playlist = _playlist_from_cache(source.id, cached)
+                # The cached copy IS what the cache holds — record its
+                # signature so an unchanged fresh parse skips the re-save,
+                # and stamp it on the object so the GUI can skip the rebuild.
+                playlist.signature = _playlist_signature(playlist)
+                self._saved_cache_state[source.id] = (
+                    playlist.signature, playlist.url_tvg)
+                self._apply_favorites(playlist)
+                self._apply_overrides(playlist)
                 with self._lock:
                     self._playlists[source.id] = playlist
                     self._active_source_id = self._active_source_id or source.id
@@ -675,6 +789,29 @@ class IPTVManager:
                 out[section] = hits
         return out
 
+    def search_async(
+        self, query: str,
+        on_done: Callable[[Dict[str, List[Any]]], None],
+    ) -> None:
+        """search() off the caller's thread; ``on_done(result)`` fires off-thread.
+
+        A 74k-entry linear name scan runs 100-300 ms — on the GUI thread that
+        was a visible stutter on every debounced keystroke. The caller is
+        responsible for marshalling on_done to the GUI thread.
+        """
+        def _work() -> None:
+            try:
+                result = self.search(query)
+            except Exception:
+                logger.exception("search failed for %r", query)
+                result = {}
+            try:
+                on_done(result)
+            except Exception:
+                logger.exception("search on_done raised")
+
+        threading.Thread(target=_work, daemon=True).start()
+
     def categories_for(self, section: str,
                        source_id: Optional[str] = None) -> List[Category]:
         pl = self.playlist_for(source_id) if source_id else self.current_playlist()
@@ -705,6 +842,79 @@ class IPTVManager:
         favs = {iid: True for iid, _s in self.cache.favorites(pl.source_id)}
         for i in pl.channels + pl.movies + pl.series:
             i.favorite = i.id in favs
+
+    # -- manual metadata overrides (Identify picker / AI translation) --------
+    def missav_search_async(
+        self, query: str,
+        on_done: Callable[[List[Dict[str, Any]]], None],
+    ) -> None:
+        """Live missav catalogue search for the Identify picker (off-thread)."""
+        self.metadata.missav_search_async(query, on_done)
+
+    def set_entry_override(self, item: Any, payload: Dict[str, Any]) -> None:
+        """Persist and immediately apply a manual metadata override.
+
+        Payload keys (all optional): ``poster``, ``backdrop``, ``year``,
+        ``title``, ``original_title``, ``code``, ``display_title``. MERGES
+        into any existing override — a later AI translation must not drop an
+        earlier Identify match's poster. Survives playlist refreshes:
+        reapplied from the override table on every load.
+        """
+        sid = self.source_id_of(item)
+        iid = getattr(item, "id", "")
+        if not sid or not iid:
+            return
+        merged = dict(self.cache.get_override(sid, iid) or {})
+        merged.update(payload)
+        self.cache.add_override(sid, iid, merged)
+        self._apply_override_payload(item, merged)
+
+    def clear_entry_override(self, item: Any) -> None:
+        """Drop a manual override; auto-resolution may re-populate fields."""
+        sid = self.source_id_of(item)
+        iid = getattr(item, "id", "")
+        if not sid or not iid:
+            return
+        self.cache.remove_override(sid, iid)
+        item.poster = ""
+        item.backdrop = ""
+        if getattr(item, "_override_year", ""):
+            item.year = ""
+            item._override_year = ""
+        item.display_title = ""
+        item.original_title = ""
+        item.override_code = ""
+        item.manual_match = False
+
+    def _apply_override_payload(self, item: Any, payload: Dict[str, Any]) -> None:
+        if payload.get("poster"):
+            item.poster = str(payload["poster"])
+        if payload.get("backdrop"):
+            item.backdrop = str(payload["backdrop"])
+        # Remember the override-sourced year so clear can restore the
+        # parse-derived one instead of blanking it (review LOW finding).
+        if payload.get("year"):
+            item.year = str(payload["year"])
+            item._override_year = str(payload["year"])
+        # display_title / original_title / code are RUNTIME attrs, not model
+        # fields: the override table is the source of truth and re-stamps
+        # them on every load (the playlist cache payload stays parse-time
+        # state only).
+        item.display_title = str(payload.get("display_title") or "")
+        item.original_title = str(payload.get("original_title") or
+                                  payload.get("title") or "")
+        item.override_code = str(payload.get("code") or "")
+        item.manual_match = True
+
+    def _apply_overrides(self, pl: Playlist) -> None:
+        """Stamp manual overrides onto freshly loaded VOD items (by entry id)."""
+        overrides = self.cache.overrides(pl.source_id)
+        if not overrides:
+            return
+        for i in pl.movies + pl.series:
+            payload = overrides.get(getattr(i, "id", ""))
+            if payload:
+                self._apply_override_payload(i, payload)
 
     def favorites(self, source_id: Optional[str] = None) -> List[Any]:
         pl = self.playlist_for(source_id) if source_id else self.current_playlist()
@@ -1086,6 +1296,21 @@ class IPTVManager:
 # ---------------------------------------------------------------------------
 # (de)serialization helpers for the SQLite playlist cache
 # ---------------------------------------------------------------------------
+
+
+def _playlist_signature(pl: Playlist) -> str:
+    """Cheap content identity for a playlist: sha1 over every entry id + url_tvg.
+
+    Computed on worker threads only (the load path). Used to skip redundant
+    cache re-serializations and to let the GUI skip a full grid rebuild when
+    a fresh parse is byte-for-byte the same content the grid already shows.
+    """
+    h = hashlib.sha1()
+    for i in pl.channels + pl.movies + pl.series:
+        h.update(getattr(i, "id", "").encode("utf-8", "replace"))
+        h.update(b"\x00")
+    h.update((pl.url_tvg or "").encode("utf-8", "replace"))
+    return h.hexdigest()[:16]
 
 
 def _playlist_to_cache(pl: Playlist) -> Dict[str, Any]:

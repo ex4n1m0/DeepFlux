@@ -1,8 +1,8 @@
 {
-  "version": "9.5",
-  "file": "DeepFlux9.5Setup.exe",
-  "size": 512602090,
-  "sha256": "bd35a01b57e162f4457c7f41b777edaa39e8964131c335c8422a6ae3bd9214de",
+  "version": "9.6",
+  "file": "DeepFlux9.6Setup.exe",
+  "size": 522105121,
+  "sha256": "982a19d6b0570bb74c860cbe1ea2d7daaf80b91acf729ebbe0b6def819dde78e",
   "released": "2026-11-22",
-  "notes": "DeepFlux 9.5 - YOU decide live-vs-VOD: every IPTV playlist source now has a Content option (Auto / Live TV / VOD) in Play -> Sources, forcing the whole playlist into the right section when automatic detection guesses wrong - the agent can set it too. The background-music button is now blue when idle and pure white while playing. Includes all 9.0-9.4 features."
+  "notes": "DeepFlux 9.6 - the mini player now opens with an animated logo loop (sound on the first pass, silent loops until you play something or open the full app). Chinese-named IPTV movies get real covers: a new strict title match plus a manual Identify picker and on-demand AI translation on the info panel. IPTV loading got a comfort rework: staged progress bar, chunked grid build (no more freezes on 70k-entry playlists), gentler CPU during loads, instant refreshes when nothing changed. Includes all 9.0-9.5 features."
 }

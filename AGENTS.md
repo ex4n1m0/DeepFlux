@@ -646,6 +646,38 @@
     ←/→ keys — PlayerWidget.SKIP_SECONDS (10) and the mini's hardcoded
     ±10 are pinned in lockstep by test_mini_player.py; keep the two in
     sync if either ever changes.
+- MINI-PLAYER LOGO LOOP (9.6, owner 2026-11-22 + same-day amendment "play
+  with sound one time and mute the after times"): the mini player's IDLE
+  STATE is the bundled repo-root `logoloop.mp4` (owner file, 9.3 MB / 5.04 s
+  h264 2362x876 + AAC audio bed; committed; ships via app.spec +
+  app_linux.spec datas — macOS has no mini player). Durable rules:
+  * Starts whenever the mini OPENS with no media (run_mini_player's 400 ms
+    timer), when the user ⏹-stops media (stop returns to the loop), and on
+    every full→mini morph (`show_from_main`). Banner idle page
+    (_IdleBanner) is only the FALLBACK when the file/backend is missing.
+  * AUDIO CONTRACT: first pass AUDIBLE (unless the user muted the mini —
+    config wins), muted at the FIRST position wrap-around
+    (`_logo_loop_wrapped`: near-end → back-to-start on the position signal
+    — works for native loop_file AND the stop/restart fallback). While
+    `_logo_mode`, M and the volume slider are inert (the logo's audio is
+    not user-adjustable; the volume path writes config). Real media
+    (`open_media`) restores the user's mute/volume.
+  * Looping: `PlayerBackend.set_loop_file(bool)` — native `loop_file=inf`
+    on mpv; VLC no-ops and `_on_state("stopped")` restarts it (bounded:
+    `_LOGO_MAX_RESTARTS` = 3 consecutive without a "playing", then banner
+    fallback — a broken file must not infinite-restart).
+  * ⏹/S during the logo is a NO-OP (the logo IS idle — stopping it would
+    just restart the loop). `_last_media` stays "" during the logo: it is
+    NOT resumable media (a morph from the logo lands on the music-
+    autostart branch, never a Play-tab resume).
+  * Exits: real media, morph_to_full/_stop_playback (loop off — no muted
+    video under the full app), window close. The logo never touches agent
+    music (mini-only sessions are silent by design; the sting is the
+    mini's own).
+  * Tests: tests/test_mini_player.py — the `mini` fixture's stub backend
+    records mutes/loop_file/volumes; tests that spin a REAL window via
+    show_mini_player must monkeypatch `resolve_logo_video_path` to "" (the
+    same seam rule as the music autostart — else a real libmpv plays).
 - MENU BAR + NAVIGATION (7.6 restructure, owner decision 2026-11-07):
   the v5 left activity rail is GONE (gui/activity_rail.py deleted). Tab
   navigation = small icon-only checkable QActions LEFT of File
@@ -1001,6 +1033,77 @@
   test_gui_render.py::test_iptv_source_edit_dialog_content_type_roundtrip +
   test_agent_setup_tools.py::test_iptv_source_content_type_roundtrip.
   zh: 直播/点播 (i18n_zh_cn.py).
+- IPTV METADATA FOR CHINESE-NAMED VOD + LOADING COMFORT (2026-11-22,
+  owner: "can we find the correct metadata and movie posters?" + "comfort
+  is more important than speed"). Durable rules — do not regress:
+  * **missav provider** (iptv/metadata.py::MissavProvider): keyless JAV
+    search by CHINESE title via missav's Recombee frontend API — POST
+    https://client-rapi-missav.recombee.com/missav-default/search/users/
+    <uuid>/items/?frontend_timestamp=<epoch>&frontend_sign=<HMAC-SHA1 hex
+    of the path-with-timestamp, key = the public token baked in their JS>;
+    item id = JAV code; posters are the deterministic CDN pattern
+    https://fourhoi.com/<code>/cover.jpg|cover-t.jpg (plain HTTP, no CF;
+    raw requests suffice — NO missav.ai page fetches). MEASURED on
+    atsushi444 xxx.m3u: playlist names are independent re-phrasings, exact
+    title match = 3/108 → `fetch` accepts ONLY ≥0.85 CJK similarity
+    (cjk_similarity; ≥8-char containment scores 0.9 for truncated names)
+    with actress-suffix (split_actress_suffix) corroboration as a
+    tie-break — a WRONG poster is worse than none. Lives FIRST in the
+    adult-no-code chain branch; `enable_missav` (IPTVConfig, default on)
+    gates the auto chain only — the DetailPanel Identify picker keeps
+    working when it's off (provider object always constructed). Old
+    negative-cache rows auto-retry it (per-provider misses, 6h TTL).
+  * **CJK adult routing**: `_ADULT_CJK_GROUP_RE` (group-title-only) sends
+    有码/无码/国产视频/国产新片/猫步毒药 groups down the adult chain —
+    欧美高清 is DELIBERATELY excluded (a legit western-movies group could
+    carry that exact name); existing Latin regexes are unchanged.
+  * **Manual overrides are USER DATA**: cache table metadata_overrides
+    (source_id, item_id PK — NOT title-keyed) survives clear_metadata;
+    set_entry_override MERGES into the stored payload (an AI translation
+    must never drop an earlier Identify poster); `_apply_overrides` runs
+    beside `_apply_favorites` on every load (both the cache-first copy and
+    the fresh parse). display_title/original_title/override_code are
+    RUNTIME attrs stamped from the table — never model fields.
+  * **Identify picker** (DetailPanel): 🔍 button → inline candidates from
+    manager.missav_search_async (live, uncached, ≤8) → click applies the
+    override + title2/second-line + poster; ✕ Clear match reverts. All
+    remote strings pass through _clip_text at the sink. "文A Translate"
+    button (visible only when an LLM key is configured) makes ONE
+    on-demand low-effort fast-model call per click, stores the result as
+    the entry's display_title override — NEVER automatic/bulk (API-spend
+    guard). Provider misses now CLEAR "Loading metadata…" (the old
+    forever-stuck state); the canonical title rides the tile's dim second
+    line (_TITLE2_ROLE, painted like the EPG line).
+  * **Loading comfort doctrine (owner directive)**: (1) grid populate is
+    CHUNKED (ContentGrid/ContentList._populate_step, 1000 rows per 0-ms
+    timer turn, first batch synchronous — a 74k-row build was a 1-3 s GUI
+    freeze; measured now: first batch 13 ms). (2) the WHOLE-SECTION
+    artwork sweep is RETIRED — artwork/metadata resolve ONLY for the
+    visible window + prefetch margin and detail-panel opens (the old sweep
+    churned 5 lookups/s for ~4 h per view on a 74k logo-less section);
+    pinned by test_grid_never_bulk_resolves_logo_less_entries. (3) bulk
+    loads run the process at BELOW_NORMAL priority (_LoadPriorityGuard,
+    ref-counted; GetCurrentProcess's pseudo-handle is REJECTED by
+    SetPriorityClass in some hosts — use OpenProcess on os.getpid()) and
+    pools are trimmed (metadata 16→8, artwork 12→8, prefetch 250→120).
+    (4) `_playlist_signature` (sha1 over entry ids + url_tvg, on the
+    playlist object) skips BOTH the redundant multi-MB cache re-serialize
+    AND the grid/sidebar rebuild for unchanged fresh publishes — the
+    cache-copy + fresh-copy double publish used to freeze the UI twice
+    per refresh. CRITICAL invariant (review HIGH finding, pinned by
+    test_identical_republish_keeps_live_generation): on an identical
+    republish the manager keeps the LIVE playlist objects installed
+    (`_refresh_source_inner` returns the previous copy instead of the
+    fresh parse) — swapping in a byte-identical new generation would
+    orphan the objects the grid binds to, and any Identify pick/favorite
+    toggled after the swap would silently vanish on the next view switch.
+    (5) global search runs off the GUI thread (manager.search_async +
+    _signals.search_done, seq-guarded — the seq is bumped on EVERY
+    _on_search path, incl. clearing the box and the folder-scope toggle,
+    so a late result can never overwrite a restored view).
+  * Known gaps (pre-existing, kept): reload_config does not re-apply the
+    enable_* provider flags (manager is constructed once); the scoped
+    folder search still filters on the GUI thread (usually a small slice).
 - 2026-11-09 full-codebase review (8 reviewers over the churn since
   3c9d492: 134 commits, 181 files, +31k/−7k lines). Findings + fix status
   live in REVIEW-2026-11-09.md (tracked). All 4 HIGH + 11 MED + Tier 3

@@ -46,9 +46,11 @@ _BROWSER_UA = (
 _DOWNLOAD_ATTEMPTS = 4
 _RETRY_STATUS = {408, 425, 429, 500, 502, 503, 504}
 # Measured throughput on real playlists (posters + channel logos): 4 workers
-# ~5-9 img/s, 8 ~14-18, 12 ~16-25, 16+ barely better. 12 is the knee; the
-# handful of load-induced resets it costs are absorbed by the retry loop.
-_MAX_WORKERS = 12
+# ~5-9 img/s, 8 ~14-18, 12 ~16-25, 16+ barely better. 12 was the throughput
+# knee; trimmed to 8 in the 2026-11-22 comfort rework (owner: comfort beats
+# speed) — the whole-section sweep that motivated 12 is retired, and the
+# visible window (~viewport + 120 prefetch tiles) rarely feeds 8 workers.
+_MAX_WORKERS = 8
 
 # Fetch priorities (lower runs first).
 PRIORITY_VISIBLE = 0   # on screen right now

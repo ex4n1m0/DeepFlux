@@ -95,6 +95,19 @@ CREATE TABLE IF NOT EXISTS watch_progress (
     updated_at REAL NOT NULL DEFAULT 0,
     PRIMARY KEY (source_id, item_id)
 );
+
+-- Per-entry manual metadata overrides (the DetailPanel "Identify" picker and
+-- the on-demand AI translation write here). USER DATA, like favorites: a
+-- metadata cache clear must never wipe a human-picked match. Keyed by the
+-- entry id (models.make_id = "<source_id>::<sha1[:16]>"), NOT by title —
+-- the same title in two sources can be different videos.
+CREATE TABLE IF NOT EXISTS metadata_overrides (
+    source_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    payload TEXT NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (source_id, item_id)
+);
 """
 
 
@@ -363,6 +376,51 @@ class IPTVCache:
         ).fetchone()
         return row is not None
 
+    # -- manual metadata overrides (Identify picker / AI translation) --------
+    def add_override(self, source_id: str, item_id: str, payload: Dict[str, Any]) -> None:
+        """Upsert the manual override payload for one entry (user data)."""
+        self._conn().execute(
+            "INSERT OR REPLACE INTO metadata_overrides"
+            "(source_id, item_id, payload, updated_at) VALUES(?,?,?,?)",
+            (source_id, item_id, json.dumps(payload, ensure_ascii=False), time.time()),
+        )
+        self._conn().commit()
+
+    def remove_override(self, source_id: str, item_id: str) -> None:
+        self._conn().execute(
+            "DELETE FROM metadata_overrides WHERE source_id=? AND item_id=?",
+            (source_id, item_id),
+        )
+        self._conn().commit()
+
+    def get_override(self, source_id: str, item_id: str) -> Optional[Dict[str, Any]]:
+        row = self._conn().execute(
+            "SELECT payload FROM metadata_overrides WHERE source_id=? AND item_id=?",
+            (source_id, item_id),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            data = json.loads(row["payload"])
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    def overrides(self, source_id: str) -> Dict[str, Dict[str, Any]]:
+        """All overrides for a source: {item_id: payload} — applied on load."""
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in self._conn().execute(
+            "SELECT item_id, payload FROM metadata_overrides WHERE source_id=?",
+            (source_id,),
+        ).fetchall():
+            try:
+                data = json.loads(row["payload"])
+            except Exception:
+                continue
+            if isinstance(data, dict):
+                out[row["item_id"]] = data
+        return out
+
     # -- recent --------------------------------------------------------------
     def add_recent(self, source_id: str, item_id: str, section: str, name: str, url: str) -> None:
         conn = self._conn()
@@ -466,7 +524,7 @@ class IPTVCache:
         conn = self._conn()
         for t in (
             "playlists", "metadata", "epg", "epg_meta", "favorites", "recent",
-            "watch_progress",
+            "watch_progress", "metadata_overrides",
         ):
             conn.execute(f"DELETE FROM {t}")
         conn.commit()

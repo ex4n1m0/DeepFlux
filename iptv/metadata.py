@@ -16,11 +16,14 @@ cached in SQLite via :class:`iptv.cache.IPTVCache`.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import random
 import re
 import threading
 import time
+import uuid
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import requests
@@ -1122,6 +1125,241 @@ class JavBusProvider(MetadataProvider):
         }
 
 
+# --- missav (keyless Chinese-title JAV catalogue) -----------------------------
+#
+# Verified live 2026-11-22 (see memory deeptorrent-iptv-jav-metadata-lanes and
+# the plan for that day): missav's search is NOT an HTML form — the search page
+# defers to a client-side Recombee (recommendation SaaS) API whose "public
+# token" is embedded in their JS bundle. The request is a plain POST whose URL
+# path is HMAC-SHA1-signed with that token:
+#   POST https://client-rapi-missav.recombee.com/<db>/search/users/<any-uuid>/items/
+#        ?frontend_timestamp=<epoch-seconds>&frontend_sign=<hex hmac-sha1 of
+#         "/<db>/search/users/<uuid>/items/?frontend_timestamp=<epoch>",
+#         key = public token>
+# with a JSON body {userId, searchQuery, count, scenario:"search",
+# returnProperties:true, cascadeCreate:true, includedProperties:[...]}. The
+# item id IS the JAV code (e.g. "dldss-586", incl. "-uncensored-leak"
+# variants) and title_cn is the catalogue's own Chinese translation. Posters
+# are a deterministic CDN pattern — https://fourhoi.com/<code>/cover.jpg (full
+# ~150 KB) and cover-t.jpg (thumb) — plain HTTP, no auth, no Cloudflare. Both
+# endpoints answer plain `requests` (no browser impersonation needed).
+#
+# MATCHING DOCTRINE: playlist names from TVBox-style aggregators are usually
+# independent re-phrasings of the title, NOT the catalogue's translation — a
+# measured random sample matched exactly only ~3/108. A loose threshold
+# therefore returns themed-but-WRONG videos, and a wrong poster is worse than
+# none, so `fetch` only accepts a >= 0.85 CJK similarity (with an ≥8-char
+# containment bonus for truncated names) and prefers candidates corroborated
+# by the actress name many of these playlist names carry as a "-女优" suffix.
+# The manual Identify picker (DetailPanel) uses the same search without the
+# threshold — a human makes the final call there.
+
+_CJK_CHAR_RE = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]"
+)
+_CJK_STRIP_RE = re.compile(
+    r"[\s\u3000·・。、，,！？!?…～~「」『』【】()\[\]（）・\-－—–+:：;；.。\"'“”‘’]+"
+)
+
+
+def cjk_fraction(text: str) -> float:
+    """Fraction of characters that are CJK (kana + CJK ideographs)."""
+    text = text or ""
+    if not text:
+        return 0.0
+    return len(_CJK_CHAR_RE.findall(text)) / len(text)
+
+
+def _cjk_normalize(text: str) -> str:
+    """Lowercase latin, drop whitespace/ascii+CJK punctuation for matching."""
+    return _CJK_STRIP_RE.sub("", (text or "").lower())
+
+
+def cjk_similarity(a: str, b: str) -> float:
+    """0..1 similarity between two (mostly CJK) titles.
+
+    :func:`title_similarity` strips every CJK character (its ``[^a-z0-9]``
+    token filter), so it scores 0 on Chinese pairs — this helper compares
+    character sequences instead. A ≥8-character containment in either
+    direction scores 0.9: aggregated playlist names are frequently truncated
+    copies of the catalogue title, and 8+ shared characters is strong
+    evidence for CJK text (shorter fragments are generic).
+    """
+    import difflib
+
+    na = _cjk_normalize(a)
+    nb = _cjk_normalize(b)
+    if not na or not nb:
+        return 0.0
+    ratio = difflib.SequenceMatcher(None, na, nb).ratio()
+    if min(len(na), len(nb)) >= 8 and (na in nb or nb in na):
+        ratio = max(ratio, 0.9)
+    return ratio
+
+
+_ACTRESS_SUFFIX_RE = re.compile(r"[-－]")
+
+
+def split_actress_suffix(name: str) -> Tuple[str, str]:
+    """Split "<title>-<actress>" playlist names into (title, actress).
+
+    Measured on atsushi444's xxx.m3u: thousands of entries carry the actress
+    as a dash suffix (e.g. ``秘密会面中持续中出的日子-翔田千里``). The suffix
+    is 1-12 chars with no 3+ digit run (else it is a code/part number).
+    Returns ("", name) when there is no clean split.
+    """
+    parts = _ACTRESS_SUFFIX_RE.split((name or "").strip(), 1)
+    if len(parts) != 2:
+        return (name or "").strip(), ""
+    title, actress = parts[0].strip(), parts[1].strip()
+    if not title or not actress:
+        return (name or "").strip(), ""
+    if len(actress) > 12 or re.search(r"\d{3,}", actress):
+        return (name or "").strip(), ""
+    return title, actress
+
+
+class MissavProvider(MetadataProvider):
+    """missav — keyless JAV search by Chinese title via its Recombee API.
+
+    Covers the entries no other provider can reach: Chinese-named JAV VOD
+    with no disc code in the name (the JavBus/JavLibrary/FANZA scrapers all
+    gate on :func:`jav_code_info`). Keyless and Cloudflare-free — the Recombee
+    API and the fourhoi poster CDN both accept plain requests. Strict
+    ≥0.85 CJK-similarity matching only (see the doctrine comment above);
+    loose matches are left to the manual Identify picker.
+    """
+
+    name = "missav"
+    API_BASE = "https://client-rapi-missav.recombee.com"
+    DATABASE = "missav-default"
+    PUBLIC_TOKEN = (
+        "Ikkg568nlM51RHvldlPvc2GzZPE9R4XGzaH9Qj4zK9npbbbTly1gj9K4mgRn0QlV"
+    )
+    POSTER_CDN = "https://fourhoi.com"
+    MATCH_THRESHOLD = 0.85
+    #: auto-match only fires on CJK-dominant names — Latin titles belong to
+    #: TPDB/StashDB/TMDb, and sending them to a Chinese-title index wastes a
+    #: round trip (and risks keyword-soup false positives).
+    CJK_MIN_FRACTION = 0.30
+    SEARCH_TIMEOUT = 15
+
+    def __init__(self) -> None:
+        self._limiter = _DomainRateLimiter(min_interval=1.0)
+        self._session = requests.Session()
+        self._session.headers.update({
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": _JAV_BROWSER_UA,
+        })
+
+    # -- public API -----------------------------------------------------------
+    def search_candidates(self, query: str, count: int = 8) -> List[Dict[str, Any]]:
+        """Search the catalogue and return ranked candidates.
+
+        Each candidate: ``{code, title_cn, title, duration, poster}`` where
+        ``poster`` is the thumb-size fourhoi cover. Raises on transport/API
+        errors — callers decide how to degrade. Also the backend of the GUI's
+        manual Identify picker (no similarity threshold there).
+        """
+        self._limiter.acquire(self.API_BASE)
+        # The uuid stands in for the site's anonymous visitor id — Recombee
+        # only uses it for recommendation history, any stable value works.
+        path = (f"/{self.DATABASE}/search/users/{uuid.uuid4()}/items/"
+                f"?frontend_timestamp={int(time.time())}")
+        sign = hmac.new(self.PUBLIC_TOKEN.encode("utf-8"),
+                        path.encode("utf-8"), hashlib.sha1).hexdigest()
+        url = self.API_BASE + path + "&frontend_sign=" + sign
+        body = {
+            "userId": str(uuid.uuid4()),
+            "searchQuery": query,
+            "count": count,
+            "scenario": "search",
+            "returnProperties": True,
+            "cascadeCreate": True,
+            # Invented property names are a hard 404 that names the offender —
+            # keep this list exactly what the site's own page requests.
+            "includedProperties": ["title_cn", "title", "duration"],
+        }
+        r = self._session.post(url, json=body, timeout=self.SEARCH_TIMEOUT)
+        r.raise_for_status()
+        out: List[Dict[str, Any]] = []
+        for rec in r.json().get("recomms", [])[:count]:
+            code = str(rec.get("id") or "").strip()
+            if not code:
+                continue
+            values = rec.get("values") or {}
+            try:
+                duration = int(values.get("duration") or 0)
+            except (TypeError, ValueError):
+                duration = 0
+            out.append({
+                "code": code,
+                "title_cn": str(values.get("title_cn") or ""),
+                "title": str(values.get("title") or ""),
+                "duration": duration,
+                "poster": self.poster_url(code, thumb=True),
+            })
+        return out
+
+    def poster_url(self, code: str, thumb: bool = False) -> str:
+        """Deterministic fourhoi cover URL for a catalogue code."""
+        return f"{self.POSTER_CDN}/{code.lower()}/{'cover-t' if thumb else 'cover'}.jpg"
+
+    def fetch(self, title: str, year: str, section: str,
+              raw_name: str = "") -> Optional[Dict[str, Any]]:
+        name = (raw_name or title or "").strip()
+        if not name or cjk_fraction(name) < self.CJK_MIN_FRACTION:
+            return None
+        query, actress = split_actress_suffix(name)
+        try:
+            candidates = self.search_candidates(query, count=8)
+        except Exception:
+            logger.debug("missav search failed for %r", name, exc_info=True)
+            return None
+        return self.best_match(query, actress, candidates)
+
+    def best_match(self, query: str, actress: str,
+                   candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Strict-match a query against search candidates.
+
+        Accepts only ≥ :attr:`MATCH_THRESHOLD` CJK similarity; when several
+        candidates clear it, an actress-name corroboration breaks ties.
+        Returns the provider result dict or ``None``.
+        """
+        best = None
+        best_score = 0.0
+        for cand in candidates:
+            score = cjk_similarity(query, cand.get("title_cn") or "")
+            if score < self.MATCH_THRESHOLD:
+                continue
+            if actress:
+                hay = _cjk_normalize(
+                    (cand.get("title_cn") or "") + " " + (cand.get("title") or ""))
+                if actress and _cjk_normalize(actress) in hay:
+                    score += 0.05  # corroborated — wins ties
+            if score > best_score:
+                best_score = score
+                best = cand
+        if not best:
+            return None
+        code = best.get("code") or ""
+        duration = int(best.get("duration") or 0)
+        return {
+            "title": best.get("title_cn") or best.get("title") or "",
+            "original_title": best.get("title") or "",
+            "code": code,
+            "duration_min": max(0, duration // 60),
+            "year": "",
+            "rating": 0,
+            "synopsis": "",
+            "genres": [],
+            "poster": self.poster_url(code),
+            "backdrop": "",
+            "provider": self.name,
+        }
+
+
 class JavLibraryProvider(MetadataProvider):
     """JavLibrary — keyless HTML scrape, highest JAV coverage.
 
@@ -1381,6 +1619,18 @@ _ADULT_WEAK_RE = re.compile(
     r"(?:^|[^a-z0-9])(?:adults?|erotic\w*|for\s+adults)(?:[^a-z0-9]|$)",
     re.IGNORECASE,
 )
+# CJK adult group-titles (measured 2026-11-22 on atsushi444's xxx.m3u: 74,761
+# VOD entries under groups like 有码中文字幕/国产视频/日本无码/猫步毒药 match NO
+# Latin keyword, so they used to route to the TMDb/Wikipedia chain — a
+# guaranteed miss plus a Wikipedia HTTP round-trip per entry). Group-only by
+# the same contract as _ADULT_WEAK_RE. 有码/无码/猫步毒药/国产成人 are
+# unmistakably adult; 国产视频/国产新片 are the de-facto adult-amateur group
+# names in these TVBox-style lists. 欧美高清 is deliberately EXCLUDED — a
+# legitimate playlist could name a western-movies group exactly that, and the
+# 0.85-threshold missav provider covers those entries via Identify anyway.
+_ADULT_CJK_GROUP_RE = re.compile(
+    r"有码|無碼|无码|猫步毒药|貓步毒藥|国产成人|國產成人|国产视频|國產視頻|国产新片|國產新片"
+)
 
 # JAV disc codes: "ABP-123", "SSNI 456", "abp00123".
 _JAV_CODE_RE = re.compile(r"\b([A-Za-z]{2,6})([-\s_]?)(\d{2,5})\b")
@@ -1445,6 +1695,7 @@ def looks_adult(group: str, name: str = "") -> bool:
     return bool(
         _ADULT_STRONG_RE.search(g)
         or _ADULT_WEAK_RE.search(g)
+        or _ADULT_CJK_GROUP_RE.search(g)
         or _ADULT_STRONG_RE.search(name or "")
     )
 
@@ -1897,6 +2148,7 @@ class MetadataPipeline:
         enable_javlibrary: bool = True,
         enable_fanza: bool = True,
         enable_wikipedia: bool = True,
+        enable_missav: bool = True,
     ) -> None:
         self.cache = cache
         self.tmdb = TMDBProvider(tmdb_api_key) if tmdb_api_key else None
@@ -1916,17 +2168,22 @@ class MetadataPipeline:
         self.fanza = FanzaProvider() if enable_fanza else None
         self.javbus = JavBusProvider() if enable_javbus else None
         self.javlibrary = JavLibraryProvider() if enable_javlibrary else None
+        # missav is ALWAYS constructed — `enable_missav` only gates the auto
+        # chain; the DetailPanel's manual Identify picker is an explicit user
+        # action and keeps working with the provider disabled.
+        self.missav = MissavProvider()
+        self.enable_missav = enable_missav
         self.logos = IptvOrgLogos(cache)
         self.logo_chain = ChannelLogoChain(self.logos)
         self._limiter = _RateLimiter(rate=rate_per_second, per=1.0)
         # Workers only hold a provider chain open (the limiter is the real
-        # API-politeness gate). A chain lasts ~2-4s (sequential TPDB parse →
-        # fallbacks → StashDB → TMDb round-trips), so 4 workers capped
-        # throughput at ~1.6 lookups/s — the 5/s limiter budget was never
-        # reached and a 48k-entry adult section swept for 8+ hours. 16
-        # workers keeps the queue short enough that the limiter is the
-        # bottleneck; threads are cheap (they block on HTTP).
-        self._executor = _BoundedExecutor(max_workers=16)
+        # API-politeness gate). Historically 16 workers so a whole-section
+        # sweep could keep the 5/s limiter fed; since the sweep was retired
+        # (2026-11-22 comfort rework — artwork resolves only for visible
+        # tiles now), 8 workers cover the visible window comfortably while
+        # halving the thread/CPU footprint. Threads are cheap (they block on
+        # HTTP), but comfort beats throughput now.
+        self._executor = _BoundedExecutor(max_workers=8)
         self._inflight: Dict[str, threading.Event] = {}
         self._lock = threading.Lock()
 
@@ -1995,11 +2252,18 @@ class MetadataPipeline:
                         "", year, section, raw_name=raw_name)))
                 return chain
 
-        # Adult VOD (no JAV code) goes to TPDB first, then StashDB: TMDb
+        # Adult VOD (no JAV code): missav FIRST — it is the only keyless
+        # provider that indexes CHINESE titles (TVBox-style aggregators name
+        # entries in Chinese, which TPDB/StashDB never match), and it
+        # self-verifies with a strict CJK-similarity threshold, so a miss is
+        # cheap and safe. Then TPDB → StashDB for western scenes: TMDb
         # filters adult titles out of its search results entirely, so it can
         # only ever miss on these. StashDB is the second source for western
         # adult scenes — community-driven, complements TPDB's coverage.
         if is_adult:
+            if self.enable_missav:
+                chain.append(("missav", lambda: self.missav.fetch(
+                    name, year, section, raw_name=raw_name)))
             adult_title = adult_clean_title(name)
             if self.tpdb:
                 chain.append(("tpdb", lambda: self.tpdb.fetch(
@@ -2029,6 +2293,29 @@ class MetadataPipeline:
                 query, year, section, raw_name=raw_name)))
 
         return chain
+
+    def missav_search_async(
+        self, query: str, on_done: Callable[[List[Dict[str, Any]]], None],
+    ) -> None:
+        """Queue a raw missav catalogue search for the Identify picker.
+
+        ``on_done(candidates)`` fires off-thread with a possibly-empty list —
+        transport/API errors degrade to empty, never an exception into the
+        GUI. No cache: a manual search is always live.
+        """
+        def _work() -> None:
+            try:
+                candidates = self.missav.search_candidates(query, count=8)
+            except Exception:
+                logger.debug("missav identify search failed for %r", query,
+                             exc_info=True)
+                candidates = []
+            try:
+                on_done(candidates)
+            except Exception:
+                logger.exception("missav identify on_done raised")
+
+        self._executor.submit(_work)
 
     def resolve_async(
         self,

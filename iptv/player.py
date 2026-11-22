@@ -168,6 +168,11 @@ class PlayerBackend:
         raise NotImplementedError
     def set_mute(self, muted: bool) -> None:
         raise NotImplementedError
+    def set_loop_file(self, enabled: bool) -> None:
+        """Loop the current file forever (mini-player logo loop). Native on
+        mpv (loop-file=inf); backends without native looping should no-op and
+        let the caller's end-of-file restart fallback handle it."""
+        return
     def set_hwdec(self, mode: str) -> None:
         raise NotImplementedError
     def set_cache(self, seconds: int, max_bytes: Optional[int] = None) -> None:
@@ -465,6 +470,13 @@ class MpvBackend(PlayerBackend):
     def set_mute(self, muted: bool) -> None:
         if self._mpv is not None:
             self._mpv.mute = bool(muted)
+
+    def set_loop_file(self, enabled: bool) -> None:
+        if self._mpv is not None:
+            try:
+                self._mpv.loop_file = "inf" if enabled else "no"
+            except Exception:
+                logger.debug("loop_file property failed", exc_info=True)
 
     def set_hwdec(self, mode: str) -> None:
         if self._mpv is not None:

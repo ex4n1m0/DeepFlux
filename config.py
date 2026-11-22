@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "9.5"
+APP_VERSION = "9.6"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -536,6 +536,10 @@ class IPTVConfig:
     enable_javlibrary: bool = True
     enable_fanza: bool = True
     enable_wikipedia: bool = True
+    # missav — keyless JAV catalogue search by Chinese title (Recombee API;
+    # strict ≥0.85 CJK-similarity auto-match + the backend of the manual
+    # Identify picker, which keeps working even when this is off).
+    enable_missav: bool = True
     # ThePornDB — metadata/posters for adult VOD, which TMDb filters out of
     # its search results entirely. Empty = adult entries just fall through to
     # TMDb (and usually stay artwork-less).
@@ -1162,6 +1166,7 @@ class DeeptorrentConfig:
                 enable_javlibrary=bool(data.get("iptv", {}).get("enable_javlibrary", True)),
                 enable_fanza=bool(data.get("iptv", {}).get("enable_fanza", True)),
                 enable_wikipedia=bool(data.get("iptv", {}).get("enable_wikipedia", True)),
+                enable_missav=bool(data.get("iptv", {}).get("enable_missav", True)),
                 framegrab_posters=bool(data.get("iptv", {}).get("framegrab_posters", True)),
                 opensubtitles_api_key=data.get("iptv", {}).get("opensubtitles_api_key", ""),
                 opensubtitles_username=data.get("iptv", {}).get("opensubtitles_username", ""),

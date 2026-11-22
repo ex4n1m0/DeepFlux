@@ -116,6 +116,9 @@ _wanted_datas = [
     # Agent-tab background music (owner 2026-11-18): looping MP3 on a
     # dedicated audio-only mpv (libmpv ships in _internal/mpvlibs here).
     (os.path.join(project_root, "backgroundmusic.mp3"), "."),
+    # Mini-player logo loop (owner 2026-11-22) — mini-player-only, loops as
+    # its idle surface (audible first pass, muted after).
+    (os.path.join(project_root, "logoloop.mp4"), "."),
     (os.path.join(project_root, "packaging", "icons", "back.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "forward.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "reload.svg"), "packaging/icons"),

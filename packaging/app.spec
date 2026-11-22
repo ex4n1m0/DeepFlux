@@ -139,6 +139,10 @@ _wanted_datas = [
     # a dedicated audio-only mpv. macOS ships no player stack → no button
     # there, and app_macos.spec deliberately does NOT carry this entry.
     (os.path.join(project_root, "backgroundmusic.mp3"), "."),
+    # Mini-player logo loop (owner 2026-11-22): 9.3 MB looping MP4 that plays
+    # as the mini player's idle surface — audible first pass, muted after.
+    # MINI-player-only (never in the full app); macOS has no mini player.
+    (os.path.join(project_root, "logoloop.mp4"), "."),
     (os.path.join(project_root, "packaging", "icons", "back.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "forward.svg"), "packaging/icons"),
     (os.path.join(project_root, "packaging", "icons", "reload.svg"), "packaging/icons"),
