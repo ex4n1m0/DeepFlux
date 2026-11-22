@@ -689,11 +689,14 @@
   full app morphs back to mini KEEPS playing (no toggle there — the
   contract hooks stop it on media); MainWindow.closeEvent terminates the
   handle (live-libmpv-at-exit class). Button colors (owner 2026-11-18;
-  idle color darkened by owner request 2026-11-19):
+  idle darkened 2026-11-19, then idle changed to BLUE accent like the
+  sibling buttons by owner request 2026-11-22 — "pure white while playing
+  and normal blue when not playing, like the other buttons"):
   WHITE fill while playing (`QPushButton#btn_music_on`, dark #0a1a2e text
-  — the one non-white color literal, in SEMANTIC_TEXT_COLORS), DARK
-  btn_secondary chip when idle; swapped via the YOLO objectName+repolish
-  pattern in `_sync_music_button`. Tests: tests/test_agent_music.py
+  — the one non-white color literal, in SEMANTIC_TEXT_COLORS), BLUE
+  btn_accent chip (#2a7abf, same as Search/Ask Agent) when idle; swapped
+  via the YOLO objectName+repolish pattern in `_sync_music_button`.
+  Tests: tests/test_agent_music.py
   (fake-mpv seam + source-pinned hooks), tests/test_mini_player.py (button
   e2e incl. color contract, morph-autostart + media suppression,
   no-mini-button pin).
@@ -977,6 +980,27 @@
   tests/test_iptv.py::test_classify_entry_dated_url_path_is_vod. NOTE:
   the sqlite cache stores the CLASSIFIED result — existing sources keep
   their old (wrong) sections until refreshed.
+  PER-SOURCE OVERRIDE (owner request 2026-11-22: "the user can also decide
+  if this is a live stream or a VOD, so like this would cover the gap for
+  all cases"): `content_type` field on IPTVSourceConfig/PlaylistSource —
+  "auto" (default, heuristics) | "live" | "vod". `classify(pl,
+  forced=source.content_type)` — forced LIVE pins every entry to channels
+  (even .mp4 URLs); forced VOD promotes every entry (SxxExx names →
+  Series, rest → Movies); the override beats BOTH the heuristics AND
+  local_folder's extra["local_section"] stamp (explicit user intent
+  wins). UI = "Content:" dropdown (Auto (detected)/Live TV/VOD) in the
+  source edit dialog (gui/iptv_settings_dialog.py); agent gets
+  content_type on iptv_add_source/iptv_update_source (validated, ToolError
+  on bad values) and in iptv_list_sources. Takes effect via the normal
+  refresh (dialog OK → reload_config → background re-fetch re-classifies
+  and replaces the cached sections — classify() is NOT idempotent, never
+  run it twice on one playlist). Pinned by
+  test_classify_forced_override_beats_heuristics +
+  test_refresh_source_content_type_override +
+  test_config_source_content_type_roundtrip +
+  test_gui_render.py::test_iptv_source_edit_dialog_content_type_roundtrip +
+  test_agent_setup_tools.py::test_iptv_source_content_type_roundtrip.
+  zh: 直播/点播 (i18n_zh_cn.py).
 - 2026-11-09 full-codebase review (8 reviewers over the churn since
   3c9d492: 134 commits, 181 files, +31k/−7k lines). Findings + fix status
   live in REVIEW-2026-11-09.md (tracked). All 4 HIGH + 11 MED + Tier 3

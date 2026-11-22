@@ -215,6 +215,16 @@ class _SourceEditDialog(QDialog):
         self.epg_url.setPlaceholderText("http://provider/epg.xml (optional)")
         form.addRow(tr('EPG URL:'), self.epg_url)
 
+        # Content override (owner request 2026-11-22): force the whole
+        # playlist into Live TV or VOD when the classifier's heuristics
+        # guess wrong; "Auto" keeps the detected behavior. Applies to every
+        # kind (even media folders — explicit user intent wins).
+        self.content_type = QComboBox()
+        self.content_type.addItem(tr('Auto (detected)'), "auto")
+        self.content_type.addItem(tr('Live TV'), "live")
+        self.content_type.addItem(tr('VOD'), "vod")
+        form.addRow(tr('Content:'), self.content_type)
+
         self.auto_refresh = QSpinBox()
         self.auto_refresh.setRange(0, 10080)
         self.auto_refresh.setSuffix(" min")
@@ -275,6 +285,9 @@ class _SourceEditDialog(QDialog):
         self.password.setText(s.password)
         self.auto_refresh.setValue(s.auto_refresh_minutes)
         self.epg_url.setText(getattr(s, "epg_url", ""))
+        ct_map = {"auto": 0, "live": 1, "vod": 2}
+        self.content_type.setCurrentIndex(
+            ct_map.get(getattr(s, "content_type", "auto"), 0))
         self.enabled.setChecked(s.enabled)
 
     def accept(self) -> None:
@@ -299,6 +312,7 @@ class _SourceEditDialog(QDialog):
             password=self.password.text(),
             auto_refresh_minutes=self.auto_refresh.value(),
             epg_url=self.epg_url.text().strip(),
+            content_type=self.content_type.currentData() or "auto",
             enabled=self.enabled.isChecked(),
         )
 

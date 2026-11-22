@@ -353,7 +353,9 @@ class IPTVManager:
                 return keep
             return Playlist(source_id=source.id)
 
-        classify.classify(pl)
+        # Per-source content-type override ("live"/"vod") — explicit user
+        # intent beats every heuristic (see classify.classify).
+        classify.classify(pl, forced=getattr(source, "content_type", "auto") or "auto")
         classify.populate_years(pl)
         _rebuild_categories(pl)
 

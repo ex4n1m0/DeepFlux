@@ -81,6 +81,34 @@ def test_iptv_add_list_update_remove(tools, public_urls):
     assert tools.config.iptv.sources == []
 
 
+def test_iptv_source_content_type_roundtrip(tools, public_urls):
+    # Per-source content override (owner request 2026-11-22): add with
+    # content_type, visible in the listing, updatable; invalid values raise
+    # ToolError; omitting the field on update keeps it.
+    with patch("agent.tools._peek_playlist", return_value=None):
+        result = tools.call("iptv_add_source", {
+            "url": "https://provider.example/vod.m3u8", "name": "VOD lib",
+            "content_type": "vod"})
+    assert result["success"], result
+    assert result["source"]["content_type"] == "vod"
+    listing = tools.call("iptv_list_sources", {})
+    assert listing["sources"][0]["content_type"] == "vod"
+
+    updated = tools.call("iptv_update_source",
+                         {"source": "vod lib", "content_type": "live"})
+    assert updated["success"], updated
+    assert updated["source"]["content_type"] == "live"
+    # Omitting the field leaves it untouched.
+    tools.call("iptv_update_source", {"source": "vod lib", "enabled": False})
+    assert tools.config.iptv.sources[0].content_type == "live"
+
+    with pytest.raises(ToolError):
+        tools.call("iptv_add_source", {"url": "https://provider.example/other.m3u8",
+                                       "content_type": "films"})
+    with pytest.raises(ToolError):
+        tools.call("iptv_update_source", {"source": "vod lib", "content_type": "films"})
+
+
 def test_iptv_add_requests_bridge_reload(tools, public_urls):
     bridge = FakeBridge()
     tools.set_iptv_bridge(bridge)

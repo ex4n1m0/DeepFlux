@@ -116,6 +116,32 @@ def test_rss_and_sources_dialogs_construct_offscreen():
     app.processEvents()
 
 
+def test_iptv_source_edit_dialog_content_type_roundtrip():
+    # Per-source content override (owner request 2026-11-22): the Content
+    # dropdown loads an existing source's value and survives to_source();
+    # new dialogs default to "auto" (detected).
+    from PySide6.QtWidgets import QApplication
+    from config import IPTVSourceConfig
+    from gui.iptv_settings_dialog import _SourceEditDialog
+
+    app = QApplication.instance() or QApplication([])
+    src = IPTVSourceConfig(id="a", name="A", kind="m3u_url",
+                           url="http://x/pl.m3u", content_type="vod")
+    dlg = _SourceEditDialog(source=src)
+    assert dlg.content_type.currentData() == "vod"
+    assert dlg.to_source(existing=src).content_type == "vod"
+
+    dlg2 = _SourceEditDialog()  # add-new: defaults to auto
+    assert dlg2.content_type.currentData() == "auto"
+    assert dlg2.to_source().content_type == "auto"
+
+    dlg3 = _SourceEditDialog(source=IPTVSourceConfig(
+        id="b", name="B", kind="m3u_url", url="http://y/pl.m3u"))
+    assert dlg3.content_type.currentData() == "auto"
+    dlg.close(); dlg2.close(); dlg3.close()
+    app.processEvents()
+
+
 def test_sources_dialog_save_preserves_provenance_fields():
     """Regression (2026-11-09 review, M2): _save_and_accept rebuilt every row
     from the five visible table columns, silently wiping origin/torznab_caps/

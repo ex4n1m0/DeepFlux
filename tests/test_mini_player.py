@@ -796,12 +796,12 @@ def test_agent_music_button_toggles_and_yields_to_media(mini, tmp_path, monkeypa
     # The button exists on player-stack platforms and toggles the track on.
     assert main.music_btn is not None
     assert not main.music_btn.isChecked()
-    assert main.music_btn.objectName() == "btn_secondary"   # dark when idle
+    assert main.music_btn.objectName() == "btn_accent"   # blue like the sibling buttons when idle (owner 2026-11-22)
     main.music_btn.click()
     app.processEvents()
     assert main.music_btn.isChecked(), "button must reflect music started"
-    # Owner 2026-11-18 color contract (idle darkened 2026-11-19): WHITE
-    # while playing, dark btn_secondary chip when idle.
+    # Owner color contract: WHITE while playing (2026-11-18), BLUE accent
+    # chip when idle (2026-11-22; dark btn_secondary 2026-11-19→11-22).
     assert main.music_btn.objectName() == "btn_music_on"
     assert made and made[0].kw["loop_file"] == "inf"
     assert made[0].loads and made[0].loads[0].endswith("t.mp3")
@@ -817,7 +817,7 @@ def test_agent_music_button_toggles_and_yields_to_media(mini, tmp_path, monkeypa
     app.processEvents()
     assert made[0].term == 1, "media open must stop the background music"
     assert not main.music_btn.isChecked(), "button must uncheck itself"
-    assert main.music_btn.objectName() == "btn_secondary"   # back to dark
+    assert main.music_btn.objectName() == "btn_accent"   # back to blue idle
 
     # Graceful teardown path also terminates the (restarted) player.
     main.music_btn.click()

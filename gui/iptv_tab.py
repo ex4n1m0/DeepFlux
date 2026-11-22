@@ -5241,6 +5241,7 @@ def _source_from_config(s: IPTVSourceConfig):
         enabled=s.enabled,
         auto_refresh_minutes=s.auto_refresh_minutes,
         epg_url=getattr(s, "epg_url", ""),
+        content_type=getattr(s, "content_type", "auto") or "auto",
     )
 
 

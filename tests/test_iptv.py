@@ -163,6 +163,68 @@ def test_classify_entry_dated_url_path_is_vod():
     assert classify_entry("国产", "https://cdn/live/index.m3u8", "某频道") == SECTION_LIVE
 
 
+def test_classify_forced_override_beats_heuristics():
+    # Per-source content_type override (owner request 2026-11-22: "the user
+    # can also decide if this is a live stream or a VOD"). forced="vod"
+    # promotes EVERY entry — Movies, or Series when the name has SxxExx —
+    # even when heuristics say live (.m3u8, no keywords); forced="live"
+    # keeps everything a live Channel, even .mp4 movie URLs; the override
+    # also beats local_folder's extra["local_section"] stamp (explicit user
+    # intent wins); "auto" (and anything unrecognized) = today's behavior.
+    def _ch(name, url, group="", extra=None):
+        return Channel(id=name, name=name, url=url, group=group, extra=extra or {})
+
+    # forced="vod": plain names -> Movies, SxxExx names -> Series.
+    pl = Playlist(
+        source_id="s",
+        channels=[_ch("国产视频 之一", "https://cdn/live/index.m3u8"),
+                  _ch("Show S01E02", "https://cdn/live/ep.m3u8"),
+                  _ch("Plain Film", "https://cdn/movie/x.mp4")],
+    )
+    classify(pl, forced="vod")
+    assert pl.channels == []
+    assert {m.name for m in pl.movies} == {"国产视频 之一", "Plain Film"}
+    assert len(pl.series) == 1 and pl.series[0].episodes[0].episode == 2
+    assert all(m.section == SECTION_MOVIES for m in pl.movies)
+
+    # forced="live": everything stays a live Channel, .mp4 included.
+    pl = Playlist(
+        source_id="s",
+        channels=[_ch("Some Film (2021)", "https://cdn/movie/x.mp4", group="Movies"),
+                  _ch("Local Item", "file.mkv", extra={"local_section": SECTION_MOVIES})],
+    )
+    classify(pl, forced="live")
+    assert len(pl.channels) == 2 and not pl.movies and not pl.series
+    assert all(c.section == SECTION_LIVE for c in pl.channels)
+
+    # forced="vod" also beats the local_section stamp (series stays series
+    # only via SxxExx, not the stamp).
+    pl = Playlist(
+        source_id="s",
+        channels=[_ch("Local Movie", "file.mkv", extra={"local_section": SECTION_SERIES})],
+    )
+    classify(pl, forced="vod")
+    assert len(pl.movies) == 1 and not pl.series
+
+    # "auto" (default) keeps heuristic behavior: the stamped entry stays a
+    # Series, the .mp4 group keyword stays Movies, the .m3u8 stays live.
+    # (classify() is NOT idempotent — always feed it a freshly parsed copy.)
+    def _auto_playlist():
+        return Playlist(
+            source_id="s",
+            channels=[_ch("Local Ep", "file.mkv", extra={"local_section": SECTION_SERIES}),
+                      _ch("Heuristic Film", "https://cdn/movie/y.mp4", group="Movies"),
+                      _ch("News Chan", "https://cdn/live/index.m3u8")],
+        )
+
+    pl = _auto_playlist()
+    classify(pl)  # no forced kwarg = auto
+    assert len(pl.series) == 1 and len(pl.movies) == 1 and len(pl.channels) == 1
+    pl = _auto_playlist()
+    classify(pl, forced="auto")  # explicit auto = same as default
+    assert len(pl.series) == 1 and len(pl.movies) == 1 and len(pl.channels) == 1
+
+
 def test_classify_promotes_movies_and_groups_series():
     pl = parse_m3u("src1", text=SAMPLE_M3U)
     classify(pl)
@@ -3430,6 +3492,64 @@ def test_refresh_source_applies_epg_url_override(tmp_path):
     assert pl.url_tvg == "http://x/epg.xml"
     epg_update.assert_called_once()
     assert epg_update.call_args[0][0] == "http://x/epg.xml"
+
+
+def test_refresh_source_content_type_override(tmp_path):
+    """The per-source content_type override flows through the manager's
+    refresh: "vod" promotes live-looking entries to Movies, "live" pins
+    movie-looking entries to Live TV (owner request 2026-11-22)."""
+    from iptv.manager import IPTVManager
+    body = b"#EXTM3U\n#EXTINF:-1,Some Show\nhttp://s/1.m3u8\n"
+
+    src = PlaylistSource(id="s", name="S", kind="m3u_url", url="http://x/pl.m3u",
+                         content_type="vod")
+    mgr = IPTVManager(sources=[src], tmdb_api_key="", data_dir=str(tmp_path))
+    with mock.patch("iptv.manager.requests.get", return_value=_m3u_resp(body)):
+        with mock.patch.object(mgr.epg, "update_async"):
+            pl = mgr._refresh_source(src, None, None, False)
+    assert pl.channels == [] and len(pl.movies) == 1
+    assert pl.movies[0].name == "Some Show"
+    # The classified result is what the cache keeps — re-loading from cache
+    # preserves the override without a re-fetch.
+    cached = mgr.cache.load_playlist("s")
+    assert len(cached.get("movies", [])) == 1 and not cached.get("channels")
+
+    movie_body = b'#EXTM3U\n#EXTINF:-1 group-title="Movies",A Film (2021)\nhttp://s/a.mp4\n'
+    src = PlaylistSource(id="s2", name="S2", kind="m3u_url", url="http://x/pl2.m3u",
+                         content_type="live")
+    mgr = IPTVManager(sources=[src], tmdb_api_key="", data_dir=str(tmp_path))
+    with mock.patch("iptv.manager.requests.get", return_value=_m3u_resp(movie_body)):
+        with mock.patch.object(mgr.epg, "update_async"):
+            pl = mgr._refresh_source(src, None, None, False)
+    assert len(pl.channels) == 1 and pl.movies == [] and pl.series == []
+    assert pl.channels[0].section == "live"
+
+
+def test_config_source_content_type_roundtrip(tmp_path):
+    """content_type persists through save/load; old configs without the
+    field load as "auto" (temp path — never the real config.json)."""
+    import json
+    from config import DeeptorrentConfig, IPTVSourceConfig
+    path = str(tmp_path / "config.json")
+    cfg = DeeptorrentConfig()
+    cfg.iptv.sources.append(IPTVSourceConfig(id="a", name="A", kind="m3u_url",
+                                             url="http://x/pl.m3u", content_type="vod"))
+    cfg.to_file(path)
+    loaded = DeeptorrentConfig.from_file(path)
+    assert loaded.iptv.sources[0].content_type == "vod"
+    assert DeeptorrentConfig().iptv.sources == []  # default: no sources
+
+    # An OLD config (pre-override) carries sources without the key.
+    old = {
+        "iptv": {
+            "sources": [{"id": "b", "name": "B", "kind": "m3u_url",
+                         "url": "http://y/pl.m3u"}],
+        },
+    }
+    old_path = str(tmp_path / "old.json")
+    with open(old_path, "w", encoding="utf-8") as fh:
+        json.dump(old, fh)
+    assert DeeptorrentConfig.from_file(old_path).iptv.sources[0].content_type == "auto"
 
 
 def _m3u_resp(body: bytes):

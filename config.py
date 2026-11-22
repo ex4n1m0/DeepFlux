@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "9.4"
+APP_VERSION = "9.5"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -512,6 +512,9 @@ class IPTVSourceConfig:
     enabled: bool = True
     auto_refresh_minutes: int = 0  # 0 = manual only
     epg_url: str = ""              # optional XMLTV EPG URL (when the playlist doesn't declare one)
+    content_type: str = "auto"     # "auto" | "live" | "vod" — force the whole
+                                   # playlist into that section (user override
+                                   # for providers where heuristics guess wrong)
 
 
 @dataclass

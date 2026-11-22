@@ -84,6 +84,11 @@ _ADULT_GROUP_KEYWORDS = ("xxx", "adult", "porn", "jav", "18+", "erotic")
 # signal for such providers.
 _VOD_DATE_PATH_RE = re.compile(r"/(?:19|20)\d{2}/\d{1,2}/\d{1,2}/")
 
+# Episode-numbered name — the strong "this is a series episode" signal,
+# consulted by classify_entry (two places) and the per-source forced="vod"
+# override in classify().
+_SXXEXX_RE = re.compile(r"[Ss]\d{1,2}\s?[Ee]\d{1,3}")
+
 
 def _is_adult_group(group: str) -> bool:
     g = (group or "").lower()
@@ -128,7 +133,7 @@ def classify_entry(group: str, url: str, name: str) -> str:
     ext = os.path.splitext(u)[1]
 
     # Series first: a name with SxxExx is a strong series signal regardless of group.
-    if re.search(r"[Ss]\d{1,2}\s?[Ee]\d{1,3}", name or ""):
+    if _SXXEXX_RE.search(name or ""):
         if any(p in u for p in CLASSIFICATION_RULES[SECTION_SERIES]["url_patterns"]) or \
            any(k in g for k in CLASSIFICATION_RULES[SECTION_SERIES]["group_keywords"]) or \
            ext not in LIVE_EXTENSIONS:
@@ -152,32 +157,55 @@ def classify_entry(group: str, url: str, name: str) -> str:
     # whose group names match no keyword. An SxxExx name rides the same
     # signal into Series; 24/7 channel naming already returned LIVE above.
     if _VOD_DATE_PATH_RE.search(u):
-        if re.search(r"[Ss]\d{1,2}\s?[Ee]\d{1,3}", name or ""):
+        if _SXXEXX_RE.search(name or ""):
             return SECTION_SERIES
         return SECTION_MOVIES
 
     return SECTION_LIVE
 
 
-def classify(playlist: Playlist) -> Playlist:
+def classify(playlist: Playlist, forced: str = "auto") -> Playlist:
     """Reorganize a parsed playlist into channels/movies/series in place.
 
     The parser stores every entry as a :class:`Channel`; this pass promotes
     movies and series into their own collections and groups series episodes.
     Returns the same playlist for convenience.
+
+    ``forced`` is the per-source content-type override (owner request
+    2026-11-22: let the USER decide live-vs-VOD for a whole playlist, for
+    providers where every heuristic guesses wrong):
+
+    * ``"live"`` — every entry stays a live Channel, heuristics AND the
+      local_folder ``extra["local_section"]`` stamp ignored (explicit user
+      intent wins).
+    * ``"vod"``  — every entry is VOD: Series when the name carries SxxExx,
+      Movie otherwise — even for .m3u8 URLs with no VOD keyword.
+    * ``"auto"`` (default, and any unrecognized value) — heuristic
+      classification, exactly the pre-override behavior.
     """
     if not playlist.channels:
         return playlist
 
     series_index: dict[str, Series] = {}
     leftover_channels: List[Channel] = []
+    mode = (forced or "auto").lower()
 
     for ch in playlist.channels:
+        if mode == "live":
+            ch.section = SECTION_LIVE
+            leftover_channels.append(ch)
+            continue
+        if mode == "vod":
+            if _SXXEXX_RE.search(ch.name or ""):
+                _add_series_episode(series_index, ch)
+            else:
+                playlist.movies.append(_channel_to_movie(ch))
+            continue
         # local_folder sources pre-classify: the URL/extension heuristics
         # misfire on filesystem paths (a local .m2ts is a movie, not live).
-        forced = (ch.extra or {}).get("local_section")
-        if forced in (SECTION_MOVIES, SECTION_SERIES):
-            section = forced
+        stamped = (ch.extra or {}).get("local_section")
+        if stamped in (SECTION_MOVIES, SECTION_SERIES):
+            section = stamped
         else:
             section = classify_entry(ch.group, ch.url, ch.name)
         if section == SECTION_MOVIES:

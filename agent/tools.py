@@ -1624,6 +1624,7 @@ class ToolRegistry:
                         "url": {"type": "string", "description": "Playlist URL (m3u_url/xtream) or folder/file path (local_folder/m3u_file)."},
                         "name": {"type": "string", "description": "Display name (default: the hostname).", "default": ""},
                         "kind": {"type": "string", "description": "'m3u_url' (default), 'xtream', 'local_folder' or 'm3u_file'.", "default": "m3u_url"},
+                        "content_type": {"type": "string", "description": "'auto' (default — detect Live TV vs Movies/Series per entry), 'live' or 'vod' to force the WHOLE playlist into that section. Use when the provider's playlists classify wrong (e.g. VOD that looks like live channels).", "default": "auto"},
                         "epg_url": {"type": "string", "description": "Optional XMLTV EPG URL for this source.", "default": ""},
                         "username": {"type": "string", "description": "Xtream Codes username (xtream only).", "default": ""},
                         "password": {"type": "string", "description": "Xtream Codes password (xtream only).", "default": ""},
@@ -1653,6 +1654,7 @@ class ToolRegistry:
                         "user_agent": {"type": "string", "description": "Custom User-Agent header (omit to keep)."},
                         "referer": {"type": "string", "description": "Custom Referer header (omit to keep)."},
                         "auto_refresh_minutes": {"type": "integer", "description": "Auto-refresh interval in minutes; 0 = manual only (omit to keep)."},
+                        "content_type": {"type": "string", "description": "'auto', 'live' or 'vod' — force the whole playlist's section (omit to keep)."},
                     },
                     required=["source"],
                 ),
@@ -4313,6 +4315,7 @@ class ToolRegistry:
                 "id": s.id, "name": s.name, "kind": s.kind,
                 "url": redact_source_credentials(s.url),
                 "enabled": s.enabled, "auto_refresh_minutes": s.auto_refresh_minutes,
+                "content_type": getattr(s, "content_type", "auto") or "auto",
             }
             if s.epg_url:
                 entry["epg_url"] = redact_source_credentials(s.epg_url)
@@ -4330,12 +4333,16 @@ class ToolRegistry:
     def _iptv_add_source(self, url: str, name: str = "", kind: str = "m3u_url",
                          epg_url: str = "", username: str = "", password: str = "",
                          user_agent: str = "", referer: str = "", enabled: bool = True,
-                         auto_refresh_minutes: int = 0, validate: bool = True) -> Dict[str, Any]:
+                         auto_refresh_minutes: int = 0, validate: bool = True,
+                         content_type: str = "auto") -> Dict[str, Any]:
         from config import IPTVSourceConfig
 
         kind = (kind or "m3u_url").strip().lower()
         if kind not in ("m3u_url", "m3u_file", "xtream", "local_folder"):
             raise ToolError("kind must be 'm3u_url', 'm3u_file', 'xtream' or 'local_folder'")
+        content_type = (content_type or "auto").strip().lower()
+        if content_type not in ("auto", "live", "vod"):
+            raise ToolError("content_type must be 'auto', 'live' or 'vod'")
         url = (url or "").strip()
         if not url:
             raise ToolError("url is required")
@@ -4367,14 +4374,15 @@ class ToolRegistry:
             user_agent=(user_agent or "").strip(), referer=(referer or "").strip(),
             username=(username or "").strip(), password=password or "",
             enabled=bool(enabled), auto_refresh_minutes=max(0, int(auto_refresh_minutes or 0)),
-            epg_url=(epg_url or "").strip(),
+            epg_url=(epg_url or "").strip(), content_type=content_type,
         )
         self.config.iptv.sources.append(source)
         self._persist_config()
         return {
             "success": True,
             "source": {"id": source.id, "name": source.name, "kind": source.kind,
-                       "url": source.url, "enabled": source.enabled},
+                       "url": source.url, "enabled": source.enabled,
+                       "content_type": source.content_type},
             "note": f"Source saved. {self._apply_iptv_config_live()}",
         }
 
@@ -4382,7 +4390,8 @@ class ToolRegistry:
                             epg_url: Optional[str] = None, enabled: Optional[bool] = None,
                             username: Optional[str] = None, password: Optional[str] = None,
                             user_agent: Optional[str] = None, referer: Optional[str] = None,
-                            auto_refresh_minutes: Optional[int] = None) -> Dict[str, Any]:
+                            auto_refresh_minutes: Optional[int] = None,
+                            content_type: Optional[str] = None) -> Dict[str, Any]:
         target, error = self._find_iptv_source(source)
         if target is None:
             return {"success": False, "error": error}
@@ -4411,11 +4420,17 @@ class ToolRegistry:
             target.referer = referer.strip()
         if auto_refresh_minutes is not None:
             target.auto_refresh_minutes = max(0, int(auto_refresh_minutes))
+        if content_type is not None:
+            content_type = (content_type or "auto").strip().lower()
+            if content_type not in ("auto", "live", "vod"):
+                raise ToolError("content_type must be 'auto', 'live' or 'vod'")
+            target.content_type = content_type
         self._persist_config()
         return {
             "success": True,
             "source": {"id": target.id, "name": target.name, "kind": target.kind,
-                       "url": target.url, "enabled": target.enabled},
+                       "url": target.url, "enabled": target.enabled,
+                       "content_type": getattr(target, "content_type", "auto") or "auto"},
             "note": f"Source updated. {self._apply_iptv_config_live()}",
         }
 

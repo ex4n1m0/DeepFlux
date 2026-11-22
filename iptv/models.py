@@ -127,6 +127,11 @@ class PlaylistSource:
     # Optional XMLTV EPG URL — used when the playlist itself doesn't declare
     # one (providers often hand out the EPG link separately).
     epg_url: str = ""
+    # Per-source section override (owner request 2026-11-22): "auto" =
+    # heuristic classification; "live"/"vod" force EVERY entry into that
+    # section. Beats both the heuristics and local_folder's local_section
+    # stamp — explicit user intent wins.
+    content_type: str = "auto"  # "auto" | "live" | "vod"
     # Populated after a successful load:
     url_tvg: str = ""  # XMLTV EPG url declared by the playlist
 

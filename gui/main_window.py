@@ -1639,11 +1639,11 @@ class MainWindow(QMainWindow):
                 color: #ffffff;
             }
 
-            /* === ♫ Music toggle WHILE PLAYING (owner 2026-11-18; idle color
-               darkened 2026-11-19: white when playing, dark btn_secondary
-               chip when idle) — a white FILL with deliberately DARK text
-               (themeable white would vanish on it; same keep-white-exception
-               family, inverted). === */
+            /* === ♫ Music toggle WHILE PLAYING (owner 2026-11-18; idle went
+               dark 2026-11-19, then BLUE accent like the sibling buttons
+               2026-11-22: white when playing, btn_accent when idle) — a
+               white FILL with deliberately DARK text (themeable white would
+               vanish on it; same keep-white-exception family, inverted). === */
             QPushButton#btn_music_on {
                 background-color: #ffffff;
                 border-left: 6px solid #05070c;
@@ -2092,7 +2092,7 @@ class MainWindow(QMainWindow):
         self.music_btn = None
         if MUSIC_SUPPORTED:
             music_btn = QPushButton(tr('♫'))
-            music_btn.setObjectName("btn_secondary")   # dark when not playing
+            music_btn.setObjectName("btn_accent")   # blue like the sibling buttons when idle (owner 2026-11-22; dark chip 2026-11-19→11-22)
             music_btn.setCheckable(True)
             music_btn.setFixedWidth(44)
             music_btn.setToolTip(tr(
@@ -3711,17 +3711,17 @@ class MainWindow(QMainWindow):
     def _sync_music_button(self, playing: bool) -> None:
         """Reflect the music controller's state on the ♫ toggle (also fires
         when a media-open hook stopped the music — the button must revert
-        even though nobody clicked it). Owner 2026-11-18 color contract,
-        idle color darkened 2026-11-19: WHITE fill while playing, DARK
-        (btn_secondary) when idle (the YOLO-style objectName swap +
-        repolish)."""
+        even though nobody clicked it). Owner color contract: WHITE fill
+        while playing (2026-11-18), BLUE accent chip like the sibling
+        buttons when idle (2026-11-22; dark btn_secondary chip
+        2026-11-19→11-22) — the YOLO-style objectName swap + repolish."""
         btn = getattr(self, "music_btn", None)
         if btn is None:
             return
         btn.blockSignals(True)
         btn.setChecked(playing)
         btn.blockSignals(False)
-        wanted = "btn_music_on" if playing else "btn_secondary"
+        wanted = "btn_music_on" if playing else "btn_accent"
         if btn.objectName() != wanted:
             btn.setObjectName(wanted)
             btn.style().unpolish(btn)

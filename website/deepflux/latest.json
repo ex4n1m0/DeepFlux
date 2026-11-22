@@ -1,8 +1,8 @@
 {
-  "version": "9.4",
-  "file": "DeepFlux9.4Setup.exe",
-  "size": 512618358,
-  "sha256": "c36c866b68c21b01e243c8adb0c2e2c596155931e342c78d25571c3917314044",
+  "version": "9.5",
+  "file": "DeepFlux9.5Setup.exe",
+  "size": 512602090,
+  "sha256": "bd35a01b57e162f4457c7f41b777edaa39e8964131c335c8422a6ae3bd9214de",
   "released": "2026-11-22",
-  "notes": "DeepFlux 9.4 - VOD downloads work on far more IPTV playlists: sources whose videos hide behind dated stream URLs (no movie keywords, plain .m3u8 links - e.g. non-English adult libraries) are now recognized as Movies instead of Live TV, so the Download button finally appears on them. Existing sources pick up the fix after a refresh in Play -> Sources. Includes all 9.0-9.3 features."
+  "notes": "DeepFlux 9.5 - YOU decide live-vs-VOD: every IPTV playlist source now has a Content option (Auto / Live TV / VOD) in Play -> Sources, forcing the whole playlist into the right section when automatic detection guesses wrong - the agent can set it too. The background-music button is now blue when idle and pure white while playing. Includes all 9.0-9.4 features."
 }
