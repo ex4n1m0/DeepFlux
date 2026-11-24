@@ -1163,3 +1163,17 @@ field, pages, APK downloaded back, counter route, Windows feed
 untouched). The owner had been told the two gaps before saying so: the
 build never ran on a device or emulator, and 5 unit tests only run on
 Linux — no CI job runs the Android unit tests at all.
+
+**RUN ON THE EMULATOR, same evening** — the owner pointed out that
+ZCode ships an Android-emulator plugin. It could not see the SDK on this
+machine; with the emulator package and an Android 15 image added to that
+SDK, the published 1.4.13 APK ran end to end on a Pixel 6 profile:
+every Save-location path, background downloads with their service and
+notifications, the torrent lane fed by a seeder on this PC, the player,
+Live TV sections and search, the browser, and the in-app update
+1.4.12 → 1.4.13 — zero crashes, zero ANRs. It produced four small
+findings for 1.4.14 (a refused link-torrent says "not a valid file";
+file-added torrents are listed by info-hash; "-1%" in the background
+notification; the app is not reopened after an update) and settled the
+symbolic-link question. Details and the emulator recipe: `AGENTS.md`,
+end of the "Android parity + review rounds" section.

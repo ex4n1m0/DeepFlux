@@ -3664,12 +3664,14 @@ field, both pages, APK downloaded back, counter route, Windows feed
 untouched). The code is COMMITTED on branch `android-1.4.13` — two
 commits ahead of `svp-out-of-process`, NOT pushed (to bring it there:
 `git checkout svp-out-of-process && git merge --ff-only android-1.4.13`).
-TWO GAPS THIS RELEASE WENT OUT WITH — close them first thing: (1) it was
-never run on a device or an emulator (there is none on the build
-machine) — the device-only list is at the end of this section; (2) 5
-unit tests skip on a Windows host (symlink privilege x4, the real
-FileProvider round trip) and NO CI job runs the Android unit tests at
-all (`android-build.yml` only builds). Baseline before this work was 35
+THIS RELEASE WENT OUT WITH TWO GAPS: (1) it had not been run on a device
+or an emulator when it shipped — CLOSED the same evening on the emulator
+that now exists on this machine (Android 15 x86_64; see "Verified on the
+emulator" at the end of this section: the published APK, zero crashes,
+four small findings for 1.4.14); (2) STILL OPEN: 5 unit tests skip on a
+Windows host (symlink privilege x4, the real FileProvider round trip)
+and NO CI job runs the Android unit tests at all (`android-build.yml`
+only builds). Baseline before this work was 35
 tests; `./gradlew :app:testDebugUnitTest` → 330 tests, 0 failures, 5
 skips on Windows. `assembleDebug` builds. A rollback copy of the 1.4.12
 APK was left in `%LOCALAPPDATA%\Temp\df_release_backup\` (deletable).
@@ -3678,8 +3680,46 @@ Toolchain on THIS machine (user `igorc`): portable JDK 21 + SDK under
 `C:\Users\igorc\android-toolchain` (the `D:\android-toolchain` notes above
 belong to the other machine). Helper: `bash
 /c/Users/igorc/android-toolchain/scripts/adb-build.sh compile|test
-["pkg.Class"]|assemble`. No emulator here — every device-only behaviour
-below is UNVERIFIED on hardware (listed at the end).
+["pkg.Class"]|assemble`.
+
+EMULATOR on this machine (since 2026-11-24 evening — the owner pointed
+out that ZCode ships an Android-emulator plugin; it could not see this
+SDK and the packages were missing): `emulator` (37.3.10) and
+`system-images;android-35;default;x86_64` live in the same SDK; the AVD
+is `medium_phone` (pixel_6 profile — the plugin's default name and
+image); acceleration is WHPX (`emulator -accel-check`: "installed and
+usable"; a hypervisor already runs on this Windows). Start it headless
+from Git Bash:
+`SDK=C:/Users/igorc/android-toolchain/sdk;
+"$SDK/emulator/emulator.exe" -avd medium_phone -no-window -no-audio
+-no-boot-anim -no-snapshot -gpu swiftshader -memory 4096 -cores 4
+-netspeed full -netdelay none` — booted in ~45 s
+(`adb -e shell getprop sys.boot_completed` → 1); stop it with
+`adb -e emu kill`. Drive it with the SDK's adb (the Bash tool allows an
+installed-SDK adb): `adb -e install -r <apk>`, `adb -e shell am start -W
+-n space.deepflux.android/.MainActivity`, `adb -e exec-out screencap -p
+> shot.png` (works headless; Read the PNG), `adb -e shell uiautomator
+dump /sdcard/ui.xml` + `adb -e pull /sdcard/ui.xml` for the element tree,
+`adb -e shell input tap|text|keyevent`; `adb root` works on this image.
+TRAPS: Git Bash rewrites device paths (`/sdcard/x` becomes a Windows
+path) — `export MSYS_NO_PATHCONV=1` first; an `&` in `adb shell input
+text` must be `\&`; Compose labels only the SELECTED bottom tab (switch
+tabs by coordinates); a dialog title can carry a button's exact label
+(tap buttons by coordinates); exact-label matches must outrank
+substrings. The plugin's own MCP tools (screenshot, ui_describe, tap)
+stay unusable until its `sdk_path` option points at this SDK (plugin
+settings, or `~/.zcode/cli/config.json` →
+plugins.options["android-emulator@zcode-plugins-official"]; jdk_major
+21). NEVER `adb shell settings put global http_proxy …` to intercept
+traffic: clearing it leaves running apps proxied (the WebView kept it
+across an app restart) — reset with `settings put global http_proxy
+':0'`, delete every `*proxy*` global setting, then force-stop the app.
+The emulator reaches this PC as 10.0.2.2 (the PC's loopback): serve
+test files from a loopback listener, or seed a torrent from one. A
+torrent-lane seeder must NOT flag its torrent private (a libtorrent
+seed then does not advertise `ut_metadata`, so a magnet stays on
+"Fetching info" forever); hand the peer over in the magnet itself
+(`&x.pe=10.0.2.2:<port>`).
 
 Seams the tests rely on (keep them; nothing else lets the logic run on the
 JVM): `TorrentEngineApi` (+ `hasSymlinkEntries`), `RecordingContext`,
@@ -3939,21 +3979,59 @@ to the test, or on counts before/after). An uncaught-exception handler
 swapped in by a test must be swapped back only after a pause: the pool's
 counter drops before the dying thread reaches the handler.
 
-Device-only, UNVERIFIED here: whether libtorrent4j would create a symlink
-entry on disk (the refusal does not depend on it), the wake lock after a 60 s
-stall (does an inbound peer wake the radio?), Android 12+ foreground-service
-start timing, `pauseTimers()` semantics across activity recreation, all
-WebView glue (per-tab listener, `hasGesture`, the agent-tab block, the
-bridge), the player's focus/immersion/track switch, Compose rendering of
-markdown + IPTV filter row. SAVE LOCATION on a real provider (unique
-names, characters a torrent file name may carry, multi-GB copies,
-`takePersistableUriPermission` refusals, the service waiting and the wake
-lock during a copy, a provider that hangs), the `MainActivity` picker
-glue (no JVM test builds the activity — its app object wires the native
-engine), the Settings row, the symlink refusal in `exportTorrentFile`
-(its test skips on this Windows host), `Result.NoDestination` on an
-Android 9 image, and two open libtorrent questions: does
-`TorrentFinishedAlert` re-fire for a torrent that is already complete
-at session start (the folder lane is protected by `AlreadyThere`, the
+Verified on the EMULATOR (2026-11-24, Android 15 x86_64, the published
+1.4.13 APK; zero crashes, zero ANRs and zero foreground-service policy
+violations in the whole session): launch, notification permission and
+first-run prompt; SAVE LOCATION end to end through the real system
+picker (kept grant `persisted=0x3`; a PDF, a 58 MB APK and an
+extension-less file copied under their exact names with identical
+hashes — no ".bin"; nothing in public Downloads while a folder is
+chosen; "Use Downloads folder" → a MediaStore row; survives force-stop;
+a deleted folder → a clean failure and a "Not copied to your folder"
+notification); a 58 MB download finishing in the background (service up
+one second after Home, "Download finished" notification, service stops
+by itself); a dead link → "Download failed"; the torrent lane (9.2 MB in
+3 s from the PC seeder; all four files incl. the non-video ones copied
+with their sub-folders; no padding files); the player (a video file and
+a live HLS channel, the rotation button, audio focus taken and
+released); the Live TV section chip and search; the browser (a rotation
+round trip and the ".torrent" hand-off dialog); Commander; Room; the
+in-app updater 1.4.12 → 1.4.13 (unknown-sources consent, "App
+installed", data kept). Symbolic links: libtorrent 2.x flags a link
+entry ONLY for `"attr": "l"` (a string) plus a `"symlink path"` list —
+the old integer `attr: 1` is ignored and becomes a plain EMPTY file; for
+a real link entry the app refuses the torrent on the device
+("addTorrentFile: refused"), and libtorrent itself rewrites a link
+target outside the torrent folder to point at itself.
+
+Found on the emulator, for 1.4.14 (none is a crash or a data loss):
+- A .torrent refused for symbolic links tells the user "Not a valid
+  .torrent file": `importTorrentFile` maps every engine null to
+  `noticeNotTorrent`. The magnet route has the proper message.
+- A torrent added from a .torrent FILE is listed under its 40-character
+  info-hash instead of its name (`Entry.name = hash` in
+  `importTorrentFile`; magnet adds carry `dn=`). Take the name from the
+  parsed torrent.
+- The foreground-service notification shows "-1%" for a download whose
+  size is unknown and always says "files" (`notif_files` receives -1 as
+  the percentage).
+- After an in-app update the app is not reopened: the first-time
+  unknown-sources detour leaves the system "Install unknown apps" screen
+  in the back stack, so the user lands there or on the home screen. Ask
+  for that consent BEFORE starting the installer, and say that the app
+  closes and must be reopened ("Open" on the system's "App installed"
+  screen starts it).
+- A magnet's one-time peer hint (`x.pe=`) is not retried after that peer
+  goes away (libtorrent behaviour; noted).
+
+Still unverified anywhere: the wake lock after a 60 s stall (does an
+inbound peer wake the radio?), a physical device's battery policy for
+the foreground service (the emulator is always plugged in), the
+player's audio-track switch (needs a multi-track file), Compose
+rendering of agent markdown (not exercised — it would spend the owner's
+AI key), `Result.NoDestination` on an Android 9 image, a hung folder
+provider, multi-GB copies, and two open libtorrent questions: does
+`TorrentFinishedAlert` re-fire for a torrent that is already complete at
+session start (the folder lane is protected by `AlreadyThere`, the
 Downloads lane is not), and is `alert.handle()` still valid when the
 export reads it after the callback returned (pre-existing pattern).
