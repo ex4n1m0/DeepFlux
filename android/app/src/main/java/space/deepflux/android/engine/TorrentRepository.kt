@@ -129,6 +129,15 @@ class TorrentRepository(
     private val copyingHashes = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /**
+     * Torrents whose kept file the engine would not take at a start, but that
+     * was kept because it may be all a private torrent will ever get. Suspect:
+     * the metadata is written over such a file when the info arrives — a file
+     * the app's lenient reader accepts may be truncated in its last byte, and
+     * "there is a file" would keep the good one from ever being written.
+     */
+    private val suspectKept = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
      * Torrents this process watched download — added here, or seen downloading.
      * Only those are announced when they finish ([onFinished]).
      */
@@ -381,12 +390,13 @@ class TorrentRepository(
                     // start that was cut short is no torrent. Only one that has been lying
                     // there for a minute — an import writes its own copy through such a
                     // file right now.
-                    val aMinuteAgo = System.currentTimeMillis() - 60_000
+                    val aMinuteAgo = clock() - 60_000
                     runCatching {
                         File(context.filesDir, "torrents")
                             .listFiles { f -> f.name.endsWith(".tmp") && f.lastModified() < aMinuteAgo }
                             ?.forEach { it.delete() }
                     }
+                    adoptOrphanKeptFiles()
                     entries.forEach { e ->
                         // Sequential preference is (re)applied post-metadata by the poller.
                         // Prefer the saved .torrent (metadata intact) — private-tracker
@@ -398,17 +408,35 @@ class TorrentRepository(
                             null
                         }
                         if (kept is TorrentFileAdd.Added) {
-                            // It must be THIS torrent (the v2 prefix: a magnet may carry
-                            // a torrent's v2 hash under `btih:`). A kept file that is some
-                            // OTHER torrent would add what nobody asked for — invisible
+                            // It must be THIS torrent — by EITHER of its hashes. The engine
+                            // names a hybrid torrent by its v2 hash; the entry is keyed by the
+                            // magnet's, which is the v1 one for every torrent a site links by
+                            // v1. Asked by the engine's name alone, the kept file of such an
+                            // entry read as some OTHER torrent's at every start: deleted, the
+                            // magnet asked again (emulator, 2026-11-25). A kept file that really
+                            // is another torrent's would add what nobody asked for — invisible
                             // in the list, its files copied out when it completes.
-                            if (kept.infoHash == e.infoHash || kept.v2Prefix == e.infoHash) {
+                            if (kept.infoHash == e.infoHash || kept.v1Hash == e.infoHash) {
                                 // The torrent's own name beats a placeholder: adds from a
                                 // .torrent file used to be stored under their info-hash.
                                 renameEntry(e.infoHash, kept.name)
+                                // A magnet's own peer addresses (`x.pe=`) are not in a .torrent: a
+                                // torrent restored from the kept file is told them again — a
+                                // trackerless magnet had no peer at all after a restart
+                                // (emulator, 2026-11-25).
+                                // (Held together: nothing that goes wrong with a magnet's addresses
+                                // may stop the entries after this one from being restored.)
+                                runCatching {
+                                    MagnetParser.peerHints(e.magnetUri).takeIf { it.isNotEmpty() }?.let { peers ->
+                                        runCatching { engine.addPeers(e.infoHash, peers) }
+                                            .onFailure { Log.w(TAG, "could not hand the magnet's peer addresses over: ${it.message}") }
+                                    }
+                                }.onFailure { Log.w(TAG, "could not read the magnet's peer addresses: ${it.message}") }
                             } else {
-                                // (Not when another entry owns that torrent: its own turn adds it.)
-                                if (entries.none { it.infoHash == kept.infoHash }) runCatching { engine.removeTorrent(kept.infoHash) }
+                                // (Not when another entry owns that torrent — by either hash: its
+                                // own turn may already be over, and this would take it away again.)
+                                val owned = entries.any { it.infoHash == kept.infoHash || it.infoHash == kept.v1Hash }
+                                if (!owned) runCatching { engine.removeTorrent(kept.infoHash) }
                                 runCatching { saved.delete() }
                                 runCatching { engine.addMagnet(e.magnetUri, saveDir) }
                             }
@@ -420,12 +448,14 @@ class TorrentRepository(
                             // "no torrent" is taken from the app's own reader too — a
                             // moment's read error is not a verdict — and one the engine merely
                             // could not take just now stays as it is.
-                            val noTorrentByOurReader = runCatching { TorrentMeta.readTorrent(saved.readBytes()) == null }.getOrDefault(false)
+                            // (The file is read only when the engine says "no torrent": up to 32 MiB.)
                             if (kept === TorrentFileAdd.HasSymbolicLinks ||
-                                (kept === TorrentFileAdd.NotATorrent && noTorrentByOurReader)
+                                (kept === TorrentFileAdd.NotATorrent &&
+                                    runCatching { TorrentMeta.readTorrent(saved.readBytes()) == null }.getOrDefault(false))
                             ) {
                                 runCatching { saved.delete() }
                             }
+                            if (kept === TorrentFileAdd.NotATorrent && saved.isFile) suspectKept.add(e.infoHash)
                             runCatching { engine.addMagnet(e.magnetUri, saveDir) }
                         }
                     }
@@ -438,6 +468,37 @@ class TorrentRepository(
             }
             refreshNow()
             poller()
+        }
+    }
+
+    /**
+     * Gives kept files that no entry is NAMED by to the entry whose torrent they
+     * hold — by either hash — renaming them to that entry's name, so the start
+     * that follows reads them like any other. The first 1.4.14 test build kept a
+     * hybrid torrent's metadata under the engine's name (its v2 hash) while the
+     * entry is keyed by the magnet's (its v1 one): on a device that ran it, that
+     * entry would still have had to be handed its info by some peer after the
+     * update (review, 2026-11-25). A file that is no waiting entry's torrent is
+     * not kept in the session. Runs on the engine thread, before the entries are
+     * restored.
+     */
+    private suspend fun adoptOrphanKeptFiles() {
+        val named = entries.mapTo(HashSet()) { torrentFileOf(it.infoHash).name }
+        val orphans = File(context.filesDir, "torrents")
+            .listFiles { f -> f.name.endsWith(".torrent") && f.name !in named }
+            ?.toList()
+            .orEmpty()
+        for (orphan in orphans) {
+            val added = runCatching { engine.addTorrentFile(orphan.absolutePath, saveDir) }.getOrNull() as? TorrentFileAdd.Added
+                ?: continue // no torrent, one with a link, or one the engine could not take just now: left as it is
+            val owner = entries.firstOrNull { e ->
+                !torrentFileOf(e.infoHash).isFile && (e.infoHash == added.infoHash || e.infoHash == added.v1Hash)
+            }
+            if (owner != null && orphan.renameTo(torrentFileOf(owner.infoHash))) {
+                Log.i(TAG, "a kept file named by another hash was given to its entry")
+            } else if (owner == null) {
+                runCatching { engine.removeTorrent(added.infoHash) }
+            }
         }
     }
 
@@ -508,6 +569,9 @@ class TorrentRepository(
 
     /** True while a metadata keep for this torrent is running — a test waits on it. */
     internal fun isKeeping(infoHash: String): Boolean = infoHash in keeping
+
+    /** The name a torrent is listed under — a test reads it (the engine's snapshot cannot be built on the JVM). */
+    internal fun listedNameOf(infoHash: String): String? = entries.firstOrNull { it.infoHash == infoHash }?.name
 
     // ------------------------------------------------------------------ public API
 
@@ -878,7 +942,13 @@ class TorrentRepository(
                 runCatching { engine.addTorrentFile(tmp.absolutePath, saveDir) }.getOrElse { TorrentFileAdd.Failed(it.message) }
             }
             val hash = (outcome as? TorrentFileAdd.Added)?.infoHash
-            if (hash != null) {
+            // One torrent can be in the list under its OTHER hash: a hybrid torrent added
+            // from a magnet that carried its v1 one. It is the same torrent then — said so,
+            // not listed twice; and the file is kept for the entry there, under ITS key, so
+            // the next start has its metadata. (What the engine holds is left alone: whether
+            // it took a second torrent or gave back the first is not this app's to tell.)
+            val listed = (outcome as? TorrentFileAdd.Added)?.v1Hash?.takeIf { v1 -> v1 != hash && entries.any { it.infoHash == v1 } }
+            if (hash != null && listed == null) {
                 // Restart-proof .torrent store (private-tracker fix, 2026-11-16):
                 // keep the bytes under filesDir/torrents/<hash>.torrent so start()
                 // can re-add WITH metadata — a bare magnet can't recover it when
@@ -894,8 +964,12 @@ class TorrentRepository(
                 }.onFailure { Log.w(TAG, "could not keep the added .torrent: ${it.message}") }
                 unfinishedSeen.add(hash) // its finish is news
             }
+            if (listed != null) {
+                runCatching { torrentFileOf(listed).takeIf { !it.isFile }?.let { tmp.copyTo(it) } }
+                    .onFailure { Log.w(TAG, "could not keep the added .torrent for the entry already listed: ${it.message}") }
+            }
             tmp.delete()
-            if (hash == null || entries.any { it.infoHash == hash }) {
+            if (hash == null || listed != null || entries.any { it.infoHash == hash }) {
                 if (hash != null) _notices.tryEmit(Strings.t.noticeAlreadyInList)
                 else _notices.tryEmit(outcome.refusalNotice())
                 return false
@@ -1036,12 +1110,16 @@ class TorrentRepository(
         scope.launch {
             withContext(engineDispatcher) {
                 runCatching { engine.removeTorrent(infoHash) }
+                // The keep's retry bookkeeping is this thread's alone.
+                keepTries.remove(infoHash)
+                keepNextAt.remove(infoHash)
             }
             // By what identifies it, never by the copy taken above: that copy's
             // name may have been replaced meanwhile (a magnet's real name
             // arrived), and a copy that no longer equals its entry used to stay
             // in — and come back at the next start (review, 2026-11-25).
             entries.removeIf { it.infoHash == infoHash && it.addedAt == entry.addedAt }
+            suspectKept.remove(infoHash)
             pausedHashes.remove(infoHash)
             pauseAllHashes.remove(infoHash)
             copiedHashes.remove(infoHash)
@@ -1268,7 +1346,7 @@ class TorrentRepository(
             state = TorrentState.PAUSED
         }
         val dnName = magnetUri.substringAfter("dn=", "").substringBefore('&').takeIf { it.isNotBlank() }?.let { listedName(it) }
-        val name = runCatching { st.name() }.getOrNull().orIfBlank(name).orIfBlank(dnName ?: "Fetching…")
+        val name = runCatching { st.name() }.getOrNull()?.let { listedName(it) }.orIfBlank(name).orIfBlank(dnName ?: "Fetching…")
         val ec = runCatching { st.errorCode() }.getOrNull()
         return TorrentItem(
             infoHash = infoHash,
@@ -1309,11 +1387,11 @@ class TorrentRepository(
         override fun alert(alert: Alert<*>) {
             when (alert) {
                 is TorrentFinishedAlert -> {
+                    // Read from the alert's own handle. WHICH entry's hash that is is
+                    // asked on the engine's thread — see [finishedFromEngine]. Nothing else
+                    // is taken from the alert: it does not outlive this callback.
                     val hex = runCatching { alert.handle()?.infoHash()?.toHex()?.lowercase() }.getOrNull()
-                    onFinished(hex)
-                    scope.launch { refreshNow() }
-                    // v0.9: export completed video files to public Downloads
-                    exportFinishedFiles(alert, hex)
+                    scope.launch { finishedFromEngine(hex) }
                 }
                 is TorrentErrorAlert -> {
                     val name = alertTorrentName(alert)
@@ -1373,10 +1451,16 @@ class TorrentRepository(
      * the metadata itself — written as a .torrent, so the next start needs
      * no peer to hand it back (a finished torrent came back as "Fetching
      * info", with nothing to play, whenever nobody was there to serve it) —
-     * and the torrent's own name. Internal for the tests: the alert itself
-     * cannot be built on the JVM, this is what it comes down to.
+     * and the torrent's own name. The hash is the ENGINE's name for the torrent
+     * (see [entryOfEngineHash]); all of it happens under the ENTRY's key, and
+     * nothing is kept when no entry owns that torrent. Internal for the tests:
+     * the alert itself cannot be built on the JVM, this is what it comes to.
      */
-    internal suspend fun metadataArrived(infoHash: String) {
+    internal suspend fun metadataArrived(engineHash: String) {
+        // Said by the engine's hash — of a hybrid torrent its v2 one, while the
+        // entry may be keyed by the magnet's v1 one (see [entryOfEngineHash]).
+        // Kept, renamed and remembered under the ENTRY's key, as everything else is.
+        val infoHash = entryOfEngineHash(engineHash) ?: return
         // The alert and a retry can meet here; one of the two is enough.
         if (!keeping.add(infoHash)) return
         keepMetadata(infoHash)
@@ -1394,8 +1478,10 @@ class TorrentRepository(
             }
             val saved = torrentFileOf(infoHash)
             val name = withContext(engineDispatcher) {
-                if (!saved.isFile) {
+                // Over a kept file the engine would not take (see [suspectKept]) as well.
+                if (!saved.isFile || infoHash in suspectKept) {
                     val keptNow = runCatching { engine.saveTorrentFile(infoHash, saved) }.getOrDefault(false)
+                    if (keptNow) suspectKept.remove(infoHash)
                     if (!keptNow) {
                         // (The engine says why.) Not tried again at the very next poll: the
                         // disk rarely has room again a second later.
@@ -1448,7 +1534,9 @@ class TorrentRepository(
         items.forEach {
             if (it.state == TorrentState.DOWNLOADING) {
                 unfinishedSeen.add(it.infoHash)
-                copiedHashes.remove(it.infoHash)
+                // Saved at once: a copy that fails later must be tried again at the
+                // next start — in memory alone, the entry read as "copied" there.
+                if (copiedHashes.remove(it.infoHash)) persist()
             }
         }
     }
@@ -1467,7 +1555,11 @@ class TorrentRepository(
     }
 
     internal suspend fun removeSymlinkTorrent(infoHash: String) {
-        withContext(engineDispatcher) { runCatching { engine.removeTorrent(infoHash) } }
+        withContext(engineDispatcher) {
+            runCatching { engine.removeTorrent(infoHash) }
+            keepTries.remove(infoHash) // the keep's retry bookkeeping is this thread's alone
+            keepNextAt.remove(infoHash)
+        }
         // By what identifies it, never by a copy taken earlier — see remove().
         if (entries.none { it.infoHash == infoHash }) return
         entries.removeIf { it.infoHash == infoHash }
@@ -1475,11 +1567,45 @@ class TorrentRepository(
         pauseAllHashes.remove(infoHash)
         copiedHashes.remove(infoHash)
         unfinishedSeen.remove(infoHash)
+        suspectKept.remove(infoHash)
+        appliedSequential.remove(infoHash)
         publishPauseAll()
         persist()
         _torrents.value = _torrents.value.filterNot { it.infoHash == infoHash }
         Log.w(TAG, "torrent removed: it contains symbolic links")
         _notices.tryEmit(Strings.t.noticeTorrentHasSymlinks)
+    }
+
+    /**
+     * What the engine's "finished" comes to. The engine says it by ITS hash for
+     * the torrent — the v2 one of a hybrid torrent — and the entry may be keyed
+     * by the magnet's, its v1 one. Read as the entry's key, that was no
+     * announcement and no saved copy mark for such a torrent (emulator,
+     * 2026-11-25). So it is looked up whose torrent it is, and THAT key
+     * announces, copies and is marked. (No alert can be built on the JVM: the
+     * lookup itself is [entryOfEngineHash], tested; this is how it is wired.)
+     */
+    private suspend fun finishedFromEngine(engineHash: String?) {
+        val entry = entryOfEngineHash(engineHash)
+        runCatching { onFinished(entry) }.onFailure { Log.w(TAG, "could not announce a finished torrent: ${it.message}") }
+        refreshNow()
+        if (entry != null) exportFinishedFiles(entry)
+    }
+
+    /**
+     * The entry a hash coming FROM the engine belongs to, by that entry's own
+     * key. A hybrid torrent has two hashes: the engine names it by its v2 one,
+     * the entry is keyed by the magnet's — the v1 one for every torrent a site
+     * links by v1. Two strings, one torrent, and nothing that compared them
+     * directly ever matched. Asks the engine, on its thread. Null when no entry
+     * owns that torrent.
+     */
+    internal suspend fun entryOfEngineHash(engineHash: String?): String? {
+        if (engineHash == null) return null
+        if (entries.any { it.infoHash == engineHash }) return engineHash
+        return withContext(engineDispatcher) {
+            entries.firstOrNull { e -> runCatching { engine.engineHashOf(e.infoHash) }.getOrNull() == engineHash }?.infoHash
+        }
     }
 
     /**
@@ -1494,28 +1620,27 @@ class TorrentRepository(
      * launch). A run with any failure is not marked, and so is finished at
      * the next start.
      */
-    private fun exportFinishedFiles(alert: org.libtorrent4j.alerts.TorrentFinishedAlert, infoHash: String?) {
-        if (infoHash == null || !needsCopy(infoHash) || !copyingHashes.add(infoHash)) return
+    private fun exportFinishedFiles(infoHash: String) {
+        if (!needsCopy(infoHash) || !copyingHashes.add(infoHash)) return
         scope.launch(Dispatchers.IO) {
             var queued = false
             try {
                 runCatching {
-                    // libtorrent is touched on its own dispatcher only. The handle is read
-                    // after the alert's callback returned (as it always was): null once it
-                    // is gone — the torrent was removed meanwhile, as a rule.
+                    // libtorrent is touched on its own dispatcher only. The torrent is looked up in
+                    // the session — never through the alert that reported it: the engine frees an
+                    // alert once the listener has returned, and its handle is a view into it
+                    // (that read killed the app: SIGSEGV, emulator, 2026-11-25). Null once the
+                    // torrent is gone — it was removed meanwhile, as a rule.
                     val paths = kotlinx.coroutines.withContext(engineDispatcher) {
-                        runCatching {
-                            val info = alert.handle().torrentFile() ?: return@runCatching null
-                            val files = info.files()
-                            (0 until files.numFiles()).mapNotNull { files.filePath(it) }
-                        }.getOrNull()
+                        runCatching { engine.filePathsOf(infoHash) }.getOrNull()
                     }
                     // The pool runs the copy in its own good time: the torrent stays marked
                     // "being copied" until the copy itself is over — not until it is queued.
                     // (Released at the queueing, a second "finished" a moment later started
                     // a second run before the first could say it was done.)
-                    queued = true
-                    space.deepflux.android.dlmgr.FinishedExport.submit {
+                    // Only when the pool took the job is it responsible for the mark: a
+                    // job it did not take must not leave the torrent "being copied" for good.
+                    queued = space.deepflux.android.dlmgr.FinishedExport.submit {
                         try {
                             copyFinishedOnce(infoHash, paths)
                         } finally {
@@ -1553,8 +1678,16 @@ class TorrentRepository(
     /** True while a finished torrent's files still have to be copied out for the user. */
     internal fun needsCopy(infoHash: String): Boolean = infoHash !in copiedHashes
 
-    /** The files were copied out (or there was nothing to copy): never again for this torrent. */
+    /**
+     * The files were copied out (or there was nothing to copy): never again for
+     * this torrent — as long as it IS this torrent's finish. Not one whose
+     * entry was removed while the copy ran: the mark would outlive the entry
+     * and greet the same torrent added afresh. And not one seen DOWNLOADING
+     * again since: what was copied is not its final files, and its next finish
+     * copies again.
+     */
     internal fun markCopied(infoHash: String) {
+        if (infoHash in unfinishedSeen || entries.none { it.infoHash == infoHash }) return
         if (copiedHashes.add(infoHash)) persist()
     }
 
@@ -1708,9 +1841,10 @@ class TorrentRepository(
                 if (o.optBoolean("pa", false)) pauseAllHashes.add(hash)
                 // Its files were copied out for the user; "finished" is reported again at each
                 // start. A list saved before the copy was remembered (1.4.13 and earlier) says
-                // nothing about it: what is in the user's folder is left as it is — copied
-                // again at the first start, a deleted copy came back. A torrent that is still
-                // downloading is taken off this the moment a poll sees it so.
+                // nothing about it: what is in the user's folder is left as it is — NOT
+                // copied again (copying everything once more at the first start brought
+                // deleted copies back). A torrent that is still downloading is taken off
+                // this the moment a poll sees it so.
                 if (!o.has("c") || o.optBoolean("c", false)) copiedHashes.add(hash)
                 entries.add(
                     Entry(
@@ -1721,7 +1855,9 @@ class TorrentRepository(
                         magnetUri = o.optString("m", "").ifBlank {
                             "magnet:?xt=urn:btih:" + o.getString("h")
                         },
-                        name = o.optString("n", ""),
+                        // Cleaned as every name is: a list saved by an earlier version
+                        // may hold a magnet's title raw, invisible marks included.
+                        name = listedName(o.optString("n", "")),
                         sequential = o.optBoolean("s", false),
                         addedAt = o.optLong("a", 0L),
                     ),

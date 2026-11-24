@@ -89,6 +89,8 @@ class AppUpdater(
     private val installAddress: (File) -> Uri = { f -> FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", f) },
     /** Starts the system installer; false when it could not be. A parameter for the same reason. */
     private val startInstaller: (Intent) -> Boolean = { i -> runCatching { context.startActivity(i) }.isSuccess },
+    /** The clock the installer's double-tap guard reads — a parameter so that a test can let time pass. */
+    private val elapsedRealtime: () -> Long = { android.os.SystemClock.elapsedRealtime() },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -106,6 +108,20 @@ class AppUpdater(
     /** Non-null ⇒ the update dialog is shown. Cleared by Later/Skip. */
     private val _available = MutableStateFlow<UpdateInfo?>(null)
     val available: StateFlow<UpdateInfo?> = _available.asStateFlow()
+
+    /**
+     * An update trouble that no dialog can show — in a process started again
+     * for the consent answer there is none. The app's own notice flow keeps
+     * nothing for a listener that is not there yet, so it is HELD here until
+     * the app has shown it ([undialoggedShown]). A state, so whoever comes
+     * later still finds it.
+     */
+    private val _undialogged = MutableStateFlow<String?>(null)
+    val undialogged: StateFlow<String?> = _undialogged.asStateFlow()
+
+    fun undialoggedShown() {
+        _undialogged.value = null
+    }
 
     private val _progress = MutableStateFlow<UpdateProgress>(UpdateProgress.Idle)
     val progress: StateFlow<UpdateProgress> = _progress.asStateFlow()
@@ -250,6 +266,10 @@ class AppUpdater(
     @Volatile
     private var installerStartedFor: File? = null
 
+    /** When the installer was last started for it: a tap twice in a heartbeat must not stack two screens. */
+    @Volatile
+    private var installerStartedAt = 0L
+
     fun cancelDownload() {
         cancelledDownload.set(currentDownload.get())
         currentCall?.cancel()
@@ -336,13 +356,18 @@ class AppUpdater(
     )
 
     /** The user came back from [consentIntent] without allowing installs. */
-    fun installsNotAllowed() = notify(Strings.t.updatePermissionDenied)
+    fun installsNotAllowed() = tell(Strings.t.updatePermissionDenied)
 
     /**
-     * Fire the system installer for a verified APK (one-tap user confirm).
-     * Does nothing while installs from DeepFlux are not allowed — and says
-     * so; the consent screen comes first (see [consentIntent]).
+     * Says an update trouble where it can be seen. While the update dialog is
+     * up, in the app; with no dialog — a process started again for the consent
+     * answer — held in [undialogged] for the app to say once it is up. (Sent
+     * to the notice flow there, it was dropped: nobody was listening yet.)
      */
+    private fun tell(text: String) {
+        if (_available.value == null) _undialogged.value = text else notify(text)
+    }
+
     /**
      * Fire the system installer for a verified APK (one-tap user confirm).
      * Does nothing while installs from DeepFlux are not allowed — and says
@@ -350,13 +375,19 @@ class AppUpdater(
      * [expectedSize]: the offered update's size, when the caller kept it
      * across the consent screen — in a process that was started again for
      * that answer, the offer itself is no longer in memory.
+     * [userTap]: the user's own tap on "Update now". It starts the installer
+     * again although one was started for this file already — that one may
+     * have been cancelled, or Android may have said "not installed" — but not
+     * twice in a heartbeat ([RETAP_DEBOUNCE_MS]). The automatic asks (the
+     * dialog's effect, the consent screen's answer) stay once per download,
+     * so two installer screens never stack up.
      */
-    fun install(file: File, expectedSize: Long? = null) {
+    fun install(file: File, expectedSize: Long? = null, userTap: Boolean = false) {
         if (!canInstallApps()) {
             installsNotAllowed()
             return
         }
-        if (installerStartedFor == file) return
+        if (installerStartedFor == file && (!userTap || elapsedRealtime() - installerStartedAt < RETAP_DEBOUNCE_MS)) return
         // Looked at again at the last moment: the system's consent screen may
         // have kept the app away for minutes, and what is handed to the
         // installer must still be the whole verified download.
@@ -365,12 +396,15 @@ class AppUpdater(
             Log.w(TAG, "the update file is no longer whole: ${file.length()} of $expected bytes")
             file.delete()
             _progress.value = UpdateProgress.Error(Strings.t.updateFileIncomplete)
+            // With no dialog to show it (a process started again for the consent
+            // answer), it is held for the app to say — see [undialogged].
+            tell(Strings.t.updateFileIncomplete)
             return
         }
         val uri: Uri = runCatching { installAddress(file) }
             .getOrElse {
                 Log.w(TAG, "the update file could not be handed to the installer: ${it.message}")
-                notify(Strings.t.noticeInstallerFailed)
+                tell(Strings.t.noticeInstallerFailed)
                 return
             }
         val intent = Intent(Intent.ACTION_VIEW).apply {
@@ -380,9 +414,10 @@ class AppUpdater(
         }
         if (startInstaller(intent)) {
             installerStartedFor = file
+            installerStartedAt = elapsedRealtime()
         } else {
             Log.w(TAG, "the installer could not be started")
-            notify(Strings.t.noticeInstallerFailed)
+            tell(Strings.t.noticeInstallerFailed)
         }
     }
 
@@ -416,6 +451,13 @@ class AppUpdater(
 
     companion object {
         private const val TAG = "AppUpdater"
+
+        /**
+         * A second tap on "Update now" this soon after the installer was started
+         * starts nothing. A tap that comes later is the user's own second try —
+         * the first installer was cancelled, or Android said "not installed".
+         */
+        private const val RETAP_DEBOUNCE_MS = 800L
         const val BASE_URL = "https://deepflux.space/deepflux"
         const val FEED_URL = "$BASE_URL/latest-android.json"
         private const val CHECK_INTERVAL_MS = 20L * 60 * 60 * 1000 // ~daily, fuzzed under midnight relaunches

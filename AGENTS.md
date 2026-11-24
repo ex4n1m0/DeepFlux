@@ -3657,15 +3657,30 @@ STATE (2026-11-25): Android 1.4.14 / versionCode 30 is on the site as an
 UNLINKED TEST BUILD (owner: "keep polishing what you find that needs
 polish … deploy to the website, I will test on a real phone"):
 `website/deepflux/DeepFlux-1.4.14-Android.apk` (58359944 bytes, sha256
-6afc327a359b89f9abf6867f5385df4ce154cfcbfdbddf2ea94e3bd675032946, same signing cert, installs over 1.4.13). Page buttons and
+41251d18ac73a0b6bd3d8d817a8d8d00d91cb300e15b14d99d2f0df2aae29588, same signing cert, installs over 1.4.13). Page buttons and
 `latest-android.json` STAY ON 1.4.13 until the owner's word. To release:
 swap the 4 page hrefs + the version/size/sha lines (EN + ZH), write the
 feed from the file in the deploy dir, delete the 1.4.13 APK there,
 `vercel --prod --yes --scope timedivision`, verify live. Unit suite
-398 tests / 0 failures / 5 Windows-host skips; 84 mutations
+423 tests / 0 failures / 5 Windows-host skips; 119 mutations
 each fail their own test against this code; two independent review
-passes (correctness + security) and a re-review of the final diff, every
-finding fixed or written down, and every fix run on the emulator
+passes (correctness + security), a re-review of the final diff and a review
+of the last round's changes — every finding fixed or written down, and
+every fix run on the emulator. The LAST round came from the emulator, not
+a review: a hybrid torrent added from a magnet in the v1 form (how sites
+link torrents) was not recognised at a start — its kept file deleted
+every time (see IDENTITY below); three rounds had passed with magnets in
+the v2 form only. Fixed, and both magnet forms run on the emulator.
+A last pair of independent reviews (correctness; security and
+reliability) of all of it found no blocker: kept files the first test
+build had left under another hash (adopted at a start now), an update
+message that reached no one, a double tap that stacked two installer
+screens, an uncapped list of peer addresses, copy marks that could
+outlive their entry — each fixed with its test; the rest written down
+("KNOWN GAPS IN 1.4.14" below). Then the system's exit records on the
+emulator showed one SIGSEGV that no check had caught — a torrent's finish
+read the finished alert's handle after the callback (fixed: see NO ALERT
+OUTLIVES ITS CALLBACK).
 ("1.4.14" rules below). Code on branch `android-1.4.13` — NOT pushed.
 
 STATE (2026-11-24, evening): RELEASED. Android 1.4.13 / versionCode 29
@@ -4042,11 +4057,9 @@ target outside the torrent folder to point at itself.
   apart — not at the very next poll; reserved where it is launched:
   reserved when the coroutine got going, two refreshes a moment apart
   spent a try on nothing). At start a kept file counts only if it is
-  THIS torrent — by v1 hash, or by the v2 prefix a magnet may carry
-  under `btih:` (the test seeder's magnets are that shape: a hybrid
-  torrent whose `btih:` is its truncated v2 hash, which libtorrent
-  accepts) — else the other torrent is removed from the session (unless
-  another entry owns it), the file dropped and the magnet used. A kept
+  THIS torrent — by EITHER of its hashes, see IDENTITY below — else the
+  other torrent is removed from the session (unless an entry owns it by
+  either hash), the file dropped and the magnet used. A kept
   file that carries a link, or is no torrent, is dropped so the metadata
   is kept again — "no torrent" only when the app's own reader agrees
   (`TorrentMeta`): a moment's read error is no verdict on what may be a
@@ -4055,6 +4068,90 @@ target outside the torrent folder to point at itself.
   through such a file). The binding cannot hand out v2 piece layers:
   the kept file is info section + trackers + web seeds (libtorrent 2.1
   loads that for the hybrid test torrent).
+- A MAGNET'S OWN PEER ADDRESSES (`x.pe=`) ARE NOT IN A .TORRENT: a
+  torrent restored from the kept file is handed them again
+  (`MagnetParser.peerHints` → `TorrentEngineApi.addPeers` →
+  `connect_peer`); one added as a magnet is not — the engine reads them
+  itself. Without that a trackerless magnet had NO peer after a restart
+  — 0 B, 0 peers — where 1.4.13, which re-added the magnet at every
+  start, still downloaded (emulator, 2026-11-25). The engine's OWN
+  reading of `x.pe`, measured on the shipped libtorrent 2.1.0 at a
+  magnet add and again with 2.1.1's Python binding: a plain `host:port`
+  is used; a comma list — raw OR `%2C`-encoded — yields only its FIRST
+  entry; `%3A`, a hostname or a port outside 1..65535 yield nothing;
+  repeated `&x.pe=` add up; `[::1]:51413` works. So `peerHints` reads
+  the value as a URL does (`%XX` decoded, "+" left alone) and hands over
+  EVERY well-formed entry — never fewer than the add used: read raw,
+  `a:1%2Cb:2` was one junk address, and the restored torrent had lost
+  the one the add had. Only what can be a literal address passes
+  (`[0-9A-Fa-f:.]+`, port 1..65535, each once) — a magnet is anyone's
+  text, and a name or an escaped line break is left out there, not
+  passed on to be logged. At most 64, the first as listed, and nothing
+  past them is even read — a hostile magnet must not be a list of knocks
+at every start (`MAX_PEER_HINTS`; the chain is lazy). A kept file the engine would not take but that
+  was kept is SUSPECT (`suspectKept`): the metadata is written over it
+  when the info arrives — the app's lenient reader accepts a file
+  truncated in its last byte, and "there is a file" kept the good one
+  from ever coming.
+- IDENTITY — A HYBRID TORRENT HAS TWO HASHES (emulator, 2026-11-25; it
+  made the kept-metadata fix void for the commonest magnet, through
+  three "verified" rounds). The ENGINE names a hybrid torrent by its
+  v2 hash (the first 40 hex) — `handle.infoHash()`, `TorrentInfo
+  .infoHash()` — whichever of its hashes found it. An ENTRY is keyed by
+  the magnet's `btih`: for every torrent a site links by v1 that is the
+  torrent's v1 hash (current tools create hybrid torrents by default).
+  Two strings, one torrent; compared directly they never matched, and
+  such a torrent (a) read its OWN kept file as another torrent's —
+  deleted at every start, the magnet asked again, "Fetching info" with
+  nobody seeding; (b) got no "Download finished" (the alert is said by
+  the v2 hash, the watch list holds the entry's); (c) was copied at every
+  start (the mark was saved under a hash no entry has); (d) kept its row
+  after a symbolic-link removal. Rules now: `TorrentFileAdd.Added(infoHash,
+  name, v1Hash)` — the engine's name and the v1 hash; there is no third
+  (the engine's name IS the first 40 hex of the v2 hash, so a
+  `v2Prefix` of its own was dead logic: once the fake told the truth, no
+  break of it failed a test); start() accepts a kept file when the
+  entry's hash is EITHER and takes another torrent's out of the session
+  only when no entry owns it by either; a kept file NAMED by a hash no
+  entry has — what the first 1.4.14 test build left for such torrents,
+  under the engine's name — is given to the entry whose torrent it
+  holds and renamed to that entry's name (`adoptOrphanKeptFiles`, before
+  the entries are restored); a `.torrent` file for a torrent already
+  listed under its OTHER hash is "already in the list", and the file
+  is kept for that entry under its key; `TorrentEngineApi
+  .engineHashOf` is the engine's name for a torrent, found by either
+  hash; `TorrentRepository.entryOfEngineHash` translates what comes FROM
+  the engine to the entry's key — `metadataArrived` keeps, renames and
+  remembers under the ENTRY's key, `finishedFromEngine` announces,
+  copies and marks by it. NEVER compare an engine-reported hash with an
+  entry key directly. (The kept file the engine writes carries no v2
+  piece layers; libtorrent reads it back with BOTH hashes all the same
+  — pulled off the emulator and parsed, 2026-11-25.) WHY NO TEST SAW IT: the test fake answered
+  `addTorrentFile` with the file's v1 hash as "the engine's name" (a
+  natural guess) and every emulator magnet was in the v2 form (the
+  Python seeder prints `info_hash()`, which is v2). The fake now names
+  torrents as the real engine does (`v2Prefixes`), and the "a hybrid
+  torrent from a v1 magnet" tests in TorrentIdentityTest pin all four
+  symptoms. After ANY change touching identity, run BOTH magnet forms on
+  the emulator. Still a gap (pre-existing): a MAGNET for a torrent
+  already listed under its other hash becomes a second entry — the
+  magnet's hash is neither that entry's key nor the engine's name, and
+  finding it would ask the engine for both hashes of every entry.
+- NO ALERT OUTLIVES ITS CALLBACK (a native crash at a torrent's finish;
+emulator, 2026-11-25: SIGSEGV in `torrent_handle.is_valid`). The binding
+wraps an alert's handle WITHOUT owning it — a view into the alert — and the
+engine frees an alert once the listener has returned. The copy-out read the
+finished alert's handle in a coroutine AFTER the callback (older than this
+version, and its comment called it safe: "null once it is gone"); it
+worked only while the delay stayed under the engine's recycling. The
+identity change put a lookup and a refresh in front of that read, and it
+went off on the first try: the app died a quarter of a second after the
+metadata was kept, the system restarted it at once, and three checks
+read the new process as a pass. It surfaced only in the system's exit
+records, as one SIGNALED exit. Now the copy-out asks the SESSION for the
+torrent (`TorrentEngineApi.filePathsOf`, a handle of the app's own), and
+inside the listener only the alert's own hash and message are read. Rule:
+take from an alert what is needed IN the callback; never keep the alert.
 - "FINISHED" RE-FIRES AT EVERY START. libtorrent reports
   TorrentFinishedAlert for every complete torrent at each start (the
   app saves no resume data; the files are re-checked). That was
@@ -4073,8 +4170,19 @@ target outside the torrent folder to point at itself.
   by 1.4.13 says nothing about copies: such entries count as copied from
   the start (copied again at the first start after the update, a
   deleted copy came back), and a torrent a poll sees DOWNLOADING is
-  taken off the mark — so one still downloading is copied when it
-  finishes. Files that cannot be listed are no copy: nothing is marked
+  taken off the mark — SAVED AT ONCE (in memory alone the entry read as
+  "copied" again at the next start, so a copy that failed was never
+  retried; on the emulator the saved mark flips within a second) — so
+  one still downloading is downloaded, announced, copied and marked when
+  it finishes. Files that cannot be listed are no copy: nothing is marked.
+  The mark is a FINISH'S only while the entry is that torrent: not for
+  one whose entry was removed while the copy ran (the mark would outlive
+  it and greet the same torrent added afresh), not for one a poll saw
+  DOWNLOADING again meanwhile (what was copied is not its final files;
+  its next finish copies again) — `markCopied` asks both. The copy pool
+  SAYS whether it took the job (`FinishedExport.submit` returns a
+  Boolean): before, a job it did not take left the torrent "being
+  copied" for the rest of the process.
   and the next start asks again (`copyFinishedOnce`).
 - NO SECOND COPY IN DOWNLOADS (`MediaStoreExport.alreadyInDownloads`:
   name + size + `is_pending = 0`, asked of a recording provider in a
@@ -4117,7 +4225,9 @@ target outside the torrent folder to point at itself.
   the next start. Listed names are cleaned exactly as the confirmation
   shows them (`confirmationName`: no line breaks, no invisible direction
   marks — a right-to-left override made a name read as another — and at
-  most 200 characters).
+  most 200 characters) — a name READ FROM THE SAVED LIST too: a list
+  saved by 1.4.13 may hold a magnet's title raw, invisible marks and
+  line breaks included.
 - REFUSALS SAY WHY: a .torrent with a symbolic link →
   `noticeTorrentHasSymlinksFile`; one the engine could not take →
   `noticeCouldNotAddTorrent` (`TorrentFileAdd`, a sealed result).
@@ -4132,8 +4242,19 @@ target outside the torrent folder to point at itself.
   last moment — with the size kept beside the path, so the look
   survives Android starting the process again for that answer — and
   drops a file that is no longer whole; the installer is started ONCE
-  per download however often asked (the consent answer and the dialog
-  returning with the activity both ask). The file's address and the
+  per download BY THE APP — but the USER'S OWN TAP on "Update now"
+  starts it again (`install(…, userTap = true)`): that one may have been
+  cancelled, or Android may have said "not installed" — except a tap
+  within 800 ms of the start (`RETAP_DEBOUNCE_MS`): a double tap stacked
+  two installer screens. The consent screen's answer is the user's own
+  act too (`userTap = true`). An update trouble with NO dialog to show
+  it — a process started again for the consent answer — is HELD by the
+  updater (`AppUpdater.undialogged`, a StateFlow) and said by the app
+  once it is up; sent to the notice flow (a no-replay SharedFlow) it was
+  dropped, nobody listening yet — which is all the first fix of the
+  not-whole file did, its test wiring the flow to a list. The guard as
+  first written made the button dead for the rest of the session — a
+  regression the delta review caught. The file's address and the
   start of the installer are constructor parameters of `AppUpdater`,
   so the installer's path is tested on any host (the real FileProvider
   call refuses every Windows path — it compares separators; the test
@@ -4181,11 +4302,86 @@ target outside the torrent folder to point at itself.
   --uri content://media/external_primary/downloads --where
   "_display_name='…'"`). (e) Edit files by exact-text anchors; a
   line-range edit doubled an `@Test` and broke a test file — restore
-  it from the frozen copy and redo. (f) A test that waits for a test
+  it from the frozen copy and redo; a wrap-around edit kept a second
+  copy of the first lines (a second, unregistered recorder). (f) A test that waits for a test
   double's internal list and then asks the unit under test has a race
   (TorrentAddConfirmationTest had one for weeks; it surfaced when a
   name-cleaning change widened the gap by a regex): await what the unit
-  RECORDS.
+  RECORDS. (g) The emulator helper sets MSYS_NO_PATHCONV=1: give adb
+  WINDOWS paths (C:/…). With /c/… `adb install` fails and the OLD build
+  keeps running — a staged scenario was consumed by the old build that
+  way. After `adb root` adbd restarts; after an emulator reboot it is
+  not root. Install first, compare the installed package's sha256 with
+  the build's, THEN start the scenario. (h) Read the app's own log
+  before concluding: a copy that was "not marked" had FAILED on a
+  stale media row (my raw `rm`), it was not a lost mark. (i) A fresh
+  emulator's link to the host can be slow and drop (uTP timeouts,
+  18 KB/s) — give a transfer minutes, and suspect the link before the
+  code. (j) An edit script's anchor is exact text: count 1 or it stops
+  BEFORE writing, and a dry run with the writes disabled comes first —
+  a wrapped line and a replacement that would have repeated the
+  sentence it replaced were both caught that way on 2026-11-25.
+  (k) A FAKE MUST SAY WHAT THE REAL THING SAYS: the test engine's
+  `addTorrentFile` answered with the v1 hash as the engine's name — a
+  guess — and so could not show that the real engine names a hybrid
+  torrent by its v2 hash. Every identity a fake reports is a claim
+  about the real one: measure it on the device and write the fake to
+  match. (l) VARY THE SHAPE OF THE INPUT ON THE DEVICE: every emulator
+  magnet was in the v2 form because the seeder prints that hash. One
+  magnet in the v1 form — how sites link torrents — showed the kept
+  file deleted at every start. (m) A BARE TCP CONNECT IS NO SIGNAL: the
+  emulator's network path shows a TCP connection to the seeder that
+  carries no handshake in EVERY case, hints or none. The proof that an
+  address was used is a completed handshake naming the torrent (the
+  seeder's `peer_connect_alert` with the torrent's hash), or data.
+  (n) A number on the list with 0 peers is protocol chatter in a
+  trailing window (the engine's `downloadRate` includes it) — the app
+  announces to the public DHT, so crawlers and anything answering for a
+  dummy hash come; stage entries only with content that may be public.
+  (o) A MUTATION RUN NEEDS THE MACHINE TO ITSELF: with two full-suite
+  runs competing, steps finished in 0 s and reported the previous
+  step's failures as their own — stale result files where a Gradle
+  invocation died at once. A run with 0 s steps is no run. (p) A CHECK
+  CAN BE WRONG WHERE THE PRODUCT IS RIGHT: a live check looked for the
+  file size in decimal MB; the page says MiB. Read the page (the log,
+  the device) before believing a FAIL. (q) A CRASH CHECK BY LOG TEXT IS
+  NO CRASH CHECK: a native crash is "F libc: Fatal signal 11" and
+  "F DEBUG" frames — not "AndroidRuntime" — and Android restarts a
+  foreground activity at once, so a later read sees a healthy process
+  (that is how a SIGSEGV at a torrent's finish passed three checks).
+  The proof of "no crash" is `dumpsys activity exit-info <pkg>` grouped
+  by REASON — anything but one's own force-stops (10/21) is a crash — and
+  the pid being the same before and after the step. (r) A CHECK WHOSE
+  PRECONDITION DID NOT HAPPEN PROVES NOTHING: nine "no crash" rounds
+  were empty — the torrent never got its metadata (mark still False, no
+  kept file), because the emulator's network path makes TCP and uTP
+  attempts to the SAME peer race and the app dropped the connection that
+  carried it. A test seeder listens on ONE transport
+  (`enable_incoming_tcp`/`enable_outgoing_tcp` false), and a script
+  verifies what it staged (the orphan exists, the kept file is there)
+  BEFORE it starts the app. (s) Nothing can be handed to the app as a
+  `.torrent` from adb on this rig (file:// and content:// addresses
+  arrive, no confirmation shows) — that path is unit-tested only.
+- KNOWN GAPS IN 1.4.14 (from the reviews of 2026-11-25 — written down,
+  not changed): (1) A torrent that completes within ONE POLL of its
+  check at a start is not announced (no poll saw it DOWNLOADING; the
+  copy still runs). Polls cannot tell it from a complete torrent being
+  re-checked — it wants resume data saved with the engine. (2) The
+  same window on a list saved by 1.4.13: an INCOMPLETE torrent that
+  finishes before a poll sees it downloading is neither announced nor
+  copied ("no `c`" counts as copied). (3) A copy that can never succeed
+  (a different file of the same name where it would go) is not marked,
+  so "finished" at every start tells the user at every launch. (4) A
+  magnet for a torrent listed under its other hash makes a second
+  entry. (5) Raw torrent and file names reach logcat and the "failed"
+  notification uncleaned. (6) The saved list's `h` is not validated when
+  read (a private file; the `.torrent` suffix bounds what it can name).
+  (7) "Later" during an update download lets it finish to Ready. (8)
+  Peer addresses are handed to a restored torrent even when it is
+  paused — deliberate: a paused torrent connects to nothing, and on
+  resume the magnet's own addresses are what it needs. (9) The
+  bracketed-IPv6 form `[fe80::1%3A51413]` (an encoded colon inside the
+  brackets) is dropped.
 
 Still unverified anywhere: the wake lock after a 60 s stall (does an
 inbound peer wake the radio?), a physical device's battery policy for

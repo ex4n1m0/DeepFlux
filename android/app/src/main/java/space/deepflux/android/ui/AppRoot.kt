@@ -401,7 +401,9 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
         installConsentFor.value = null
         val file = path?.let { java.io.File(it) }
         if (file != null) {
-            if (appUpdater.canInstallApps()) appUpdater.install(file, installConsentSize.value) else appUpdater.installsNotAllowed()
+            // The user's own "Allow" answers: it may start the installer although one was
+            // started for this file already (one that was cancelled) — as a tap does.
+            if (appUpdater.canInstallApps()) appUpdater.install(file, installConsentSize.value, userTap = true) else appUpdater.installsNotAllowed()
         }
     }
     installConsentFor.value?.let {
@@ -434,6 +436,29 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
         )
     }
 
+    // An update trouble with no dialog to show it — a process started again for the
+    // consent answer. The updater holds it until the app is up to say it: the
+    // notice flow keeps nothing for a listener that is not there yet.
+    LaunchedEffect(appUpdater) {
+        appUpdater.undialogged.collect { text ->
+            if (text != null) {
+                snackbarHostState.showSnackbar(text)
+                appUpdater.undialoggedShown()
+            }
+        }
+    }
+
+    /** Hand the verified file to the installer — or ask for the system's consent first. */
+    val installOrAsk = { file: java.io.File, userTap: Boolean ->
+        if (appUpdater.canInstallApps()) {
+            appUpdater.install(file, userTap = userTap)
+        } else {
+            installConsentAsked.value = false
+            installConsentFor.value = file.absolutePath
+            installConsentSize.value = appUpdater.available.value?.size
+        }
+    }
+
     // Update dialog (§13 #7) — never over the first-run picker.
     val upd = updateInfo
     if (upd != null && prefs.uiMode.isNotBlank()) {
@@ -444,15 +469,8 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
             onCancel = { appUpdater.cancelDownload(); appUpdater.dismiss() },
             onLater = { appUpdater.dismiss() },
             onSkip = { appUpdater.skip(upd.version) { repository.setUpdateSkipVersion(it) } },
-            onInstall = {
-                if (appUpdater.canInstallApps()) {
-                    appUpdater.install(it)
-                } else {
-                    installConsentAsked.value = false
-                    installConsentFor.value = it.absolutePath
-                    installConsentSize.value = appUpdater.available.value?.size
-                }
-            },
+            onInstall = { installOrAsk(it, false) },
+            onInstallTap = { installOrAsk(it, true) },
         )
     }
     } // CompositionLocalProvider(LocalDensity)
@@ -472,6 +490,8 @@ private fun UpdateDialog(
     onLater: () -> Unit,
     onSkip: () -> Unit,
     onInstall: (java.io.File) -> Unit,
+    /** The user's own tap on "Update now" — it starts the installer again (see `AppUpdater.install`). */
+    onInstallTap: (java.io.File) -> Unit,
 ) {
     // Hand the verified file to the installer as soon as it lands.
     LaunchedEffect(progress) {
@@ -536,9 +556,9 @@ private fun UpdateDialog(
                 // Re-fireable install: the first intent may have been eaten by
                 // the one-time "install unknown apps" SETTINGS detour — the
                 // user returns to a dialog that can still act (found live
-                // 2026-11-16).
+                // 2026-11-16) — or cancelled, or answered with "not installed".
                 is space.deepflux.android.data.UpdateProgress.Ready ->
-                    androidx.compose.material3.TextButton(onClick = { onInstall(p.file) }) { Text(Strings.t.updateNow) }
+                    androidx.compose.material3.TextButton(onClick = { onInstallTap(p.file) }) { Text(Strings.t.updateNow) }
                 space.deepflux.android.data.UpdateProgress.Verifying -> Unit
             }
         },

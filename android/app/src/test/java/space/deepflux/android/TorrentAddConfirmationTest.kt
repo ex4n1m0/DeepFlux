@@ -69,8 +69,11 @@ class FakeTorrentEngine : TorrentEngineApi {
     /** While set, the engine reports every .torrent file as no torrent — as a moment's read error would. */
     @Volatile var refuseKeptFiles = false
 
-    /** For each kept torrent's v1 hash (what `addTorrentFile` reports): the v2 prefix it also answers to. */
+    /** For each torrent's v1 hash: the v2 hash it also has — a hybrid torrent. The engine names such a torrent by that one. */
     val v2Prefixes = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** Every "try these addresses as peers" the app asked of the engine: hash → addresses. */
+    val peers = java.util.concurrent.ConcurrentHashMap<String, List<Pair<String, Int>>>()
 
     /**
      * When [holdName] is set, `torrentName` — the last engine step of a keep —
@@ -125,15 +128,25 @@ class FakeTorrentEngine : TorrentEngineApi {
         if (refuseKeptFiles) return TorrentFileAdd.NotATorrent
         if (info.infoHash in symlinkHashes) return TorrentFileAdd.HasSymbolicLinks
         files.add(path)
-        return TorrentFileAdd.Added(info.infoHash, info.name, v2Prefixes[info.infoHash])
+        // As the real engine names it: by the v2 hash of a hybrid torrent, else by its v1
+        // hash. (This fake used to answer by the v1 hash alone, and so could not show what
+        // the emulator did — TorrentIdentityTest, "a hybrid torrent from a v1 magnet".)
+        val v2 = v2Prefixes[info.infoHash]
+        return TorrentFileAdd.Added(v2 ?: info.infoHash, info.name, info.infoHash)
     }
-    override fun hasSymlinkEntries(infoHashHex: String): Boolean = infoHashHex in symlinkHashes
+    override fun hasSymlinkEntries(infoHashHex: String): Boolean =
+        infoHashHex in symlinkHashes || symlinkHashes.any { v2Prefixes[it] == infoHashHex } // found by either hash, as the real engine finds a torrent
+    override fun engineHashOf(infoHashHex: String): String? = v2Prefixes[infoHashHex] ?: infoHashHex
+    override fun filePathsOf(infoHashHex: String): List<String>? = null
     override fun torrentName(infoHashHex: String): String? {
         holdName?.let {
             it.asked.countDown()
             it.await()
         }
         return names[infoHashHex]
+    }
+    override fun addPeers(infoHashHex: String, peers: List<Pair<String, Int>>) {
+        this.peers[infoHashHex] = peers
     }
     override fun saveTorrentFile(infoHashHex: String, to: File): Boolean {
         saveCalls++

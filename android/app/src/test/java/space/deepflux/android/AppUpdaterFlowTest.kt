@@ -94,6 +94,13 @@ class AppUpdaterFlowTest {
         networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
     )
 
+    /** A source file of the app, found from the test's working folder. */
+    private fun appSource(relative: String): String? {
+        var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
+        while (dir != null && !File(dir, "src/main/java/space/deepflux/android/data/AppUpdater.kt").isFile) dir = dir.parentFile
+        return dir?.let { File(it, relative).takeIf { f -> f.isFile }?.readText() }
+    }
+
     // ---------------------------------------------------------------- install consent
 
     @Test
@@ -105,7 +112,9 @@ class AppUpdaterFlowTest {
         updater.install(File(context.cacheDir, "update.apk"))
 
         assertNull("the system installer did not open", Shadows.shadowOf(context as Application).peekNextStartedActivity())
-        assertEquals(listOf(Strings.t.updatePermissionDenied), notices.toList())
+        // No update dialog is up: held for the app to say once it is listening.
+        assertEquals(Strings.t.updatePermissionDenied, updater.undialogged.value)
+        assertTrue("nothing for a notice flow nobody listens to yet", notices.isEmpty())
     }
 
     @Test
@@ -185,7 +194,9 @@ class AppUpdaterFlowTest {
         val notices = java.util.concurrent.CopyOnWriteArrayList<String>()
         val updater = AppUpdater(context, settings, notify = { notices.add(it) }, networkGateOpen = { true })
         updater.installsNotAllowed()
-        assertEquals(listOf(Strings.t.updatePermissionDenied), notices.toList())
+        // No update dialog is up (a process started again for the consent answer): held for the app.
+        assertEquals(Strings.t.updatePermissionDenied, updater.undialogged.value)
+        assertTrue(notices.isEmpty())
     }
 
     @Test
@@ -219,6 +230,127 @@ class AppUpdaterFlowTest {
         again.install(file, expectedSize = apk.size.toLong())
         assertTrue("looked at without the offer too", again.progress.value is UpdateProgress.Error)
         assertFalse(file.exists())
+    }
+
+    @Test
+    fun theUsersOwnTapStartsTheInstallerAgain() {
+        var clock = 0L
+        // The first installer was cancelled, or Android said "not installed": the button must still act.
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        val started = java.util.concurrent.CopyOnWriteArrayList<android.content.Intent>()
+        val updater = AppUpdater(
+            context, settings, notify = {}, networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
+            installAddress = { android.net.Uri.parse("content://space.deepflux.android.fileprovider/updates/update.apk") },
+            startInstaller = { started.add(it); true },
+            elapsedRealtime = { clock },
+        )
+        val file = File(context.cacheDir, "update.apk").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+        updater.install(file)
+        updater.install(file)
+        assertEquals("asked twice by the app: once", 1, started.size)
+
+        clock = 5_000 // the installer was cancelled, the user is back at the dialog
+        updater.install(file, userTap = true)
+        assertEquals("asked by the user: again", 2, started.size)
+    }
+
+    @Test
+    fun aDoubleTapOnUpdateNowStartsTheInstallerOnce() {
+        // Two installer screens must not stack — the tap that comes in a heartbeat after the first is one tap too many.
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        var clock = 0L
+        val started = java.util.concurrent.CopyOnWriteArrayList<android.content.Intent>()
+        val updater = AppUpdater(
+            context, settings, notify = {}, networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
+            installAddress = { android.net.Uri.parse("content://space.deepflux.android.fileprovider/updates/update.apk") },
+            startInstaller = { started.add(it); true },
+            elapsedRealtime = { clock },
+        )
+        val file = File(context.cacheDir, "update.apk").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+        updater.install(file, userTap = true)
+        clock = 200
+        updater.install(file, userTap = true)
+        assertEquals("a double tap: one installer", 1, started.size)
+
+        clock = 5_000
+        updater.install(file, userTap = true)
+        assertEquals("a later tap is a second try", 2, started.size)
+    }
+
+    @Test
+    fun aWholeFileWithTheKeptSizeIsInstalled() {
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        val started = java.util.concurrent.CopyOnWriteArrayList<android.content.Intent>()
+        val updater = AppUpdater(
+            context, settings, notify = {}, networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
+            installAddress = { android.net.Uri.parse("content://space.deepflux.android.fileprovider/updates/update.apk") },
+            startInstaller = { started.add(it); true },
+        )
+        val file = File(context.cacheDir, "update.apk").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+        updater.install(file, expectedSize = 3L)
+
+        assertEquals(1, started.size)
+        assertTrue("the file is left for the installer", file.isFile)
+    }
+
+    @Test
+    fun aNotWholeFileIsToldAboutWhereNoDialogCanShowIt() {
+        // A process started again for the consent answer has no dialog. Sent to the app's notice flow there, it
+        // was dropped — nobody is listening yet — so the updater HOLDS it for the app.
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        val notices = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val updater = AppUpdater(
+            context, settings, notify = { notices.add(it) }, networkGateOpen = { gateOpen },
+            installAddress = { android.net.Uri.parse("content://space.deepflux.android.fileprovider/updates/update.apk") },
+            startInstaller = { true },
+        )
+        val file = File(context.cacheDir, "update.apk").apply { writeBytes(byteArrayOf(1, 2)) }
+
+        updater.install(file, expectedSize = 3L)
+
+        assertEquals(Strings.t.updateFileIncomplete, updater.undialogged.value)
+        assertTrue("nothing for a notice flow nobody listens to yet", notices.isEmpty())
+        assertFalse(file.exists())
+
+        updater.undialoggedShown()
+        assertNull("said once", updater.undialogged.value)
+    }
+
+    @Test
+    fun withTheUpdateDialogUpTheTroubleIsSaidInTheApp() {
+        serveFeed()
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        val notices = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val updater = AppUpdater(
+            context, settings, notify = { notices.add(it) }, networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
+            installAddress = { android.net.Uri.parse("content://space.deepflux.android.fileprovider/updates/update.apk") },
+            startInstaller = { true },
+        )
+        val answered = CountDownLatch(1)
+        updater.checkNow { answered.countDown() }
+        assertTrue("the check never answered", answered.await(10, TimeUnit.SECONDS))
+        val file = File(context.cacheDir, "update.apk").apply { writeBytes(byteArrayOf(1, 2)) }
+
+        updater.install(file, expectedSize = 3L)
+
+        assertEquals("said in the app, where the dialog is", listOf(Strings.t.updateFileIncomplete), notices.toList())
+        assertNull("nothing held", updater.undialogged.value)
+    }
+
+    @Test
+    fun theAppSaysWhatTheUpdaterHoldsForIt_andTheConsentAnswerIsTheUsersOwnTap() {
+        // The wiring itself is Compose, which no JVM test drives: this reads it.
+        val root = appSource("src/main/java/space/deepflux/android/ui/AppRoot.kt")
+            ?: throw AssertionError("could not find the app's source from the test's working folder")
+        val wiring = root.substringAfter("LaunchedEffect(appUpdater) {").substringBefore("/** Hand the verified file to the installer")
+        assertTrue("the held trouble is shown: ${wiring.take(200)}", "appUpdater.undialogged.collect" in wiring && "snackbarHostState.showSnackbar(text)" in wiring)
+        assertTrue("and given back only once it was shown", wiring.indexOf("showSnackbar(text)") < wiring.indexOf("appUpdater.undialoggedShown()"))
+        assertTrue(
+            "the consent answer may start the installer again, as a tap does",
+            "appUpdater.install(file, installConsentSize.value, userTap = true)" in root,
+        )
     }
 
     private fun check(): CheckResult {

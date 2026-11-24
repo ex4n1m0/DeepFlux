@@ -87,7 +87,7 @@ class TorrentEngine : TorrentEngineApi {
     override fun libtorrentVersion(): String =
         runCatching { org.libtorrent4j.LibTorrent.version() }.getOrDefault("unknown")
 
-    /** Adds a magnet (fetches metadata via DHT). Returns the v1 info-hash, or null for an invalid magnet. */
+    /** Adds a magnet (fetches metadata via DHT). Returns the magnet's `btih` hash, or null for an invalid magnet. */
     override fun addMagnet(magnet: String, saveDir: File): String? {
         val hash = MagnetParser.infoHashHex(magnet) ?: return null
         // 3-arg overload verified against the 2.1.0-39 sources: flags is
@@ -116,7 +116,7 @@ class TorrentEngine : TorrentEngineApi {
                 session.download(info, saveDir)
             }
         }.onFailure { Log.w(TAG, "addTorrentFile: ${it.message}"); return TorrentFileAdd.Failed(it.message) }
-        return TorrentFileAdd.Added(hash, runCatching { info.name() }.getOrNull().orEmpty(), v2Prefix(info))
+        return TorrentFileAdd.Added(hash, runCatching { info.name() }.getOrNull().orEmpty(), v1Hash(info))
     }
 
     /**
@@ -142,6 +142,12 @@ class TorrentEngine : TorrentEngineApi {
 
     override fun torrentName(infoHashHex: String): String? = runCatching {
         session.find(Sha1Hash.parseHex(infoHashHex))?.torrentFile()?.name()?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    override fun filePathsOf(infoHashHex: String): List<String>? = runCatching {
+        val info = session.find(Sha1Hash.parseHex(infoHashHex))?.torrentFile() ?: return null
+        val files = info.files()
+        (0 until files.numFiles()).mapNotNull { files.filePath(it) }
     }.getOrNull()
 
     override fun saveTorrentFile(infoHashHex: String, to: File): Boolean {
@@ -194,15 +200,34 @@ class TorrentEngine : TorrentEngineApi {
         }.onFailure { Log.w(TAG, "could not keep the torrent's metadata: ${it.message}") }.getOrDefault(false)
     }
 
+    override fun addPeers(infoHashHex: String, peers: List<Pair<String, Int>>) {
+        val handle = runCatching { session.find(Sha1Hash.parseHex(infoHashHex)) }.getOrNull() ?: return
+        peers.forEach { (host, port) ->
+            runCatching {
+                val endpoint = org.libtorrent4j.swig.tcp_endpoint(org.libtorrent4j.Address.parseIp(host).swig(), port)
+                handle.swig().connect_peer(endpoint)
+            }.onFailure { Log.w(TAG, "a peer address of the magnet could not be used ($host:$port): ${it.javaClass.simpleName}: ${it.message}") }
+        }
+    }
+
     /**
-     * The first 40 hex of the torrent's v2 info-hash — which is what a
-     * magnet may carry under `btih:` for a torrent that has a v2 hash. Null
-     * when there is none (a plain v1 torrent: libtorrent hands out zeroes).
+     * The torrent's v1 info-hash — which a magnet may carry under `btih:` just
+     * the same as the v2 hash the engine names a hybrid torrent by. Null
+     * without one (a v2-only torrent).
      */
-    private fun v2Prefix(info: TorrentInfo): String? = runCatching {
+    private fun v1Hash(info: TorrentInfo): String? = runCatching {
         val hashes = info.swig().info_hashes()
-        if (hashes.has_v2()) hashes.getV2().to_hex().lowercase().take(40) else null
+        if (hashes.has_v1()) hashes.getV1().to_hex().lowercase() else null
     }.getOrNull()?.takeIf { it.any { c -> c != '0' } }
+
+    /**
+     * The engine finds a torrent by either of its hashes and names it by one:
+     * the v2 one of a hybrid torrent (emulator, 2026-11-25 — the alert's handle
+     * said the v2 hash for a torrent whose magnet had carried the v1 one).
+     */
+    override fun engineHashOf(infoHashHex: String): String? = runCatching {
+        session.find(Sha1Hash.parseHex(infoHashHex))?.infoHash()?.toHex()?.lowercase()
+    }.getOrNull()
 
     /**
      * Applies whole-torrent sequential piece order. No `setSequentialDownload`

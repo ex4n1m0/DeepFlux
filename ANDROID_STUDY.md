@@ -1194,10 +1194,34 @@ engine re-reports "finished" at each start), no numbered copies in
 Downloads, the notification's wording, the install consent before the
 installer, Open for finished files, a feed item's refusal reported, the
 tab label that shrinks instead of being cut, and a failed settings save
-that no longer ends the process. 398 unit tests (5 skip on a
-Windows host), 84 mutations each fail their own test, zero
+that no longer ends the process. A third pass — a review of this
+version's own changes, then the emulator — added: a torrent restored
+from the kept file is told the magnet's own peer addresses again (a
+trackerless magnet had none after a restart), the "copied" mark that
+comes off a still-downloading torrent is saved at once (a failed
+copy is retried at the next start), names read from the saved list
+are cleaned, a kept file the engine refuses is written over when the
+metadata arrives, and "Update now" starts the installer again after
+one that was cancelled. A fourth pass began with a magnet in the v1
+form — how sites link torrents — and found that a hybrid torrent
+(v1 and v2 hash) was known at a start only by the hash the engine
+names it by: its own kept metadata deleted at every start, no
+"Download finished", a copy at every launch. It is recognised by
+either of its hashes now, and everything the engine reports is
+taken to the entry's key. Two independent reviews of all of it
+followed — kept files the first test build had left under another
+hash are adopted at a start, an update message that reached no one is
+held until the app can say it, a double tap on "Update now" no longer
+stacks two installer screens, a magnet's peer addresses are capped,
+a copy mark can no longer outlive its entry; narrow cases are written
+down in AGENTS.md. The system's own exit records then showed a native
+crash no check had caught: at a torrent's finish the app read the
+finished alert's handle after the callback had returned — the binding
+does not own that handle. The files are read from the session now.
+ 423 unit tests (5 skip on a
+Windows host), 119 mutations each fail their own test, zero
 crashes and zero ANRs on the emulator. versionCode 30,
-58359944 bytes, sha256 6afc327a359b89f9abf6867f5385df4ce154cfcbfdbddf2ea94e3bd675032946, signer as before. Live as
+58359944 bytes, sha256 41251d18ac73a0b6bd3d8d817a8d8d00d91cb300e15b14d99d2f0df2aae29588, signer as before. Live as
 `/deepflux/DeepFlux-1.4.14-Android.apk`, DELIBERATELY UNLINKED: the
 pages and `latest-android.json` stay on 1.4.13 until the owner's word.
 Rules: `AGENTS.md`, end of the "Android parity + review rounds"

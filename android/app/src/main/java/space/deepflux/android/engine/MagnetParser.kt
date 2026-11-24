@@ -24,6 +24,43 @@ object MagnetParser {
 
     private val DN_RE = Regex("[?&]dn=([^&]*)", RegexOption.IGNORE_CASE)
 
+    private val XPE_RE = Regex("[?&]x\\.pe=([^&]+)", RegexOption.IGNORE_CASE)
+    private val ESCAPE_RE = Regex("%([0-9A-Fa-f]{2})")
+    private val LITERAL_RE = Regex("[0-9A-Fa-f:.]+")
+
+    /** How many addresses one magnet may make the app try. No honest one needs more; a hostile one, unbounded, would be tried at every start. */
+    private const val MAX_PEER_HINTS = 64
+
+    /**
+     * The addresses a magnet names as peers (`x.pe=host:port`; several, comma-separated
+     * or repeated), the value read the way a URL is read — `%2C` is a comma, `%3A` a
+     * colon ("+" stays what it is). The engine's own reading of a magnet decodes
+     * nothing, so this can hand over MORE than the magnet add did — never fewer: an
+     * encoded list must not lose the address the add had. A torrent restored from its
+     * kept .torrent file has to be told them again: trackers are in that file, these
+     * are not. Each address once, and only what can be one at all — digits, hex
+     * letters, dots and colons, then a port 1..65535: a magnet is anyone's text, and
+     * a name or a control character is left out here, not passed on to be logged.
+     * Whether it really is an address is the engine's to say. At most
+     * [MAX_PEER_HINTS], the first ones as listed — and nothing past them is even
+     * read (the whole chain is lazy).
+     */
+    fun peerHints(magnet: String): List<Pair<String, Int>> =
+        XPE_RE.findAll(magnet)
+            .flatMap { unescape(it.groupValues[1]).split(',').asSequence() }
+            .mapNotNull { entry ->
+                val host = entry.substringBeforeLast(':', "").removeSurrounding("[", "]")
+                val port = entry.substringAfterLast(':', "").toIntOrNull()
+                if (host.isBlank() || !LITERAL_RE.matches(host) || port == null || port !in 1..65535) null else host to port
+            }
+            .distinct()
+            .take(MAX_PEER_HINTS)
+            .toList()
+
+    /** Every `%XX` of the value as the character it stands for; anything else is left as it is. */
+    private fun unescape(value: String): String =
+        ESCAPE_RE.replace(value) { it.groupValues[1].toInt(16).toChar().toString() }
+
     fun infoHashHex(magnet: String): String? {
         val raw = XT_RE.find(magnet)?.groupValues?.get(1) ?: return null
         return when {

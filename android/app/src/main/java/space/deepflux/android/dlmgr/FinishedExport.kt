@@ -143,9 +143,10 @@ object FinishedExport {
      * copy writes the same storage, and a page of downloads finishing
      * together must not become a thread swarm. Nothing in a job may reach
      * past this point: it runs on a thread of its own, where an uncaught
-     * exception ends the process.
+     * exception ends the process. False when the pool took nothing — the
+     * caller then still owns whatever it was going to hand over with the job.
      */
-    fun submit(job: () -> Unit) {
+    fun submit(job: () -> Unit): Boolean {
         pending.incrementAndGet()
         lastActivityAt.set(now())
         try {
@@ -158,9 +159,11 @@ object FinishedExport {
                     pending.decrementAndGet()
                 }
             }
+            return true
         } catch (e: Exception) {
             pending.decrementAndGet()
             Log.w(TAG, "could not start a copy for the user: ${forLog(e.message ?: "")}")
+            return false
         }
     }
 

@@ -704,27 +704,41 @@ class FinishedExportTest {
     fun theLookUpInDownloadsAsksForTheNameTheSizeAndFinishedRowsOnly() {
         // The real look-up, against what the media store is asked — every other test stands in for it.
         val media = RecordingMediaProvider()
+        // Registered for this test only: left in place it would answer the other tests'
+        // inserts into Downloads. The framework has no "unregister"; its registry is a map.
+        val registered = org.robolectric.shadows.ShadowContentResolver::class.java
+            .getDeclaredField("providers").apply { isAccessible = true }
+            .get(null) as MutableMap<String, android.content.ContentProvider>
+        val before = registered[MediaStore.AUTHORITY]
         org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, media)
-        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        try {
+            val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
 
-        org.junit.Assert.assertNull("nothing there", space.deepflux.android.dlmgr.MediaStoreExport.alreadyInDownloads(context, "movie.mkv", 500))
-        assertEquals("the Downloads collection of the primary volume", collection, media.uri)
-        assertEquals(listOf("movie.mkv", "500"), media.args?.toList())
-        val asked = media.selection.orEmpty()
-        assertTrue("by name: $asked", asked.contains("${MediaStore.MediaColumns.DISPLAY_NAME} = ?"))
-        assertTrue("…and by size: $asked", asked.contains("${MediaStore.MediaColumns.SIZE} = ?"))
-        assertTrue("…and not one still being written: $asked", asked.contains("${MediaStore.MediaColumns.IS_PENDING} = 0"))
+            org.junit.Assert.assertNull("nothing there", space.deepflux.android.dlmgr.MediaStoreExport.alreadyInDownloads(context, "movie.mkv", 500))
+            assertEquals("the Downloads collection of the primary volume", collection, media.uri)
+            assertEquals(listOf("movie.mkv", "500"), media.args?.toList())
+            val asked = media.selection.orEmpty()
+            assertTrue("by name: $asked", asked.contains("${MediaStore.MediaColumns.DISPLAY_NAME} = ?"))
+            assertTrue("…and by size: $asked", asked.contains("${MediaStore.MediaColumns.SIZE} = ?"))
+            assertTrue("…and not one still being written: $asked", asked.contains("${MediaStore.MediaColumns.IS_PENDING} = 0"))
 
-        media.rows = 1
-        assertEquals(
-            "a row is its address",
-            collection.buildUpon().appendPath("77").build(),
-            space.deepflux.android.dlmgr.MediaStoreExport.alreadyInDownloads(context, "movie.mkv", 500),
-        )
+            media.rows = 1
+            assertEquals(
+                "a row is its address",
+                collection.buildUpon().appendPath("77").build(),
+                space.deepflux.android.dlmgr.MediaStoreExport.alreadyInDownloads(context, "movie.mkv", 500),
+            )
 
-        media.args = null
-        org.junit.Assert.assertNull("nothing to look for", space.deepflux.android.dlmgr.MediaStoreExport.alreadyInDownloads(context, "movie.mkv", 0))
-        org.junit.Assert.assertNull("…asks nothing", media.args)
+            media.args = null
+            org.junit.Assert.assertNull("nothing to look for", space.deepflux.android.dlmgr.MediaStoreExport.alreadyInDownloads(context, "movie.mkv", 0))
+            org.junit.Assert.assertNull("…asks nothing", media.args)
+        } finally {
+            if (before != null) {
+                org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, before)
+            } else {
+                registered.remove(MediaStore.AUTHORITY)
+            }
+        }
     }
 
     // ---------------------------------------------------------------- the choice itself
