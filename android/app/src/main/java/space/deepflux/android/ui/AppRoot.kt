@@ -34,6 +34,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import space.deepflux.android.ui.theme.DimText
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.deepflux.android.engine.TorrentRepository
@@ -198,14 +199,25 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
                                 },
                                 label = if (showLabels) {
                                     {
+                                        // Whole, or a little smaller — never cut. At a large system
+                                        // font "Download" was cut to "Downlo" in its 52dp item
+                                        // (emulator, 2026-11-24); hiding what did not fit took the
+                                        // label away at the normal font size too (2026-11-25).
+                                        val style = if (smallLabels) {
+                                            androidx.compose.material3.MaterialTheme.typography.labelSmall
+                                        } else {
+                                            androidx.compose.material3.MaterialTheme.typography.labelMedium
+                                        }
                                         Text(
                                             dest.label,
-                                            style = if (smallLabels) {
-                                                androidx.compose.material3.MaterialTheme.typography.labelSmall
-                                            } else {
-                                                androidx.compose.material3.MaterialTheme.typography.labelMedium
-                                            },
+                                            style = style,
                                             maxLines = 1,
+                                            softWrap = false,
+                                            autoSize = androidx.compose.foundation.text.TextAutoSize.StepBased(
+                                                minFontSize = 7.sp,
+                                                maxFontSize = if (style.fontSize == androidx.compose.ui.unit.TextUnit.Unspecified) 12.sp else style.fontSize,
+                                                stepSize = 0.25.sp,
+                                            ),
                                         )
                                     }
                                 } else {
@@ -366,6 +378,62 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
         )
     }
 
+    // Update → install. Android lets the installer start only once the user
+    // allowed installs from DeepFlux, so that is asked for FIRST: the
+    // installer is then the last thing on top of the app, and its "Done" /
+    // "Open" lead back here. (Asked by the installer itself, the Settings
+    // screen stayed in the back stack, and the user was left in Settings or
+    // on the home screen with the app closed — emulator, 2026-11-24.)
+    // The PATH, kept across the activity being rebuilt: Android may kill the
+    // app while the system's screen is in front, and the activity that gets
+    // the answer is a new one — it used to have forgotten what was being
+    // installed, and nothing was installed and nothing was said (review).
+    val installConsentFor = rememberSaveable { mutableStateOf<String?>(null) }
+    val installConsentAsked = rememberSaveable { mutableStateOf(false) }
+    // The offered update's size, kept the same way: the look at the file before
+    // the installer starts must not depend on the offer still being in memory.
+    val installConsentSize = rememberSaveable { mutableStateOf<Long?>(null) }
+    val installConsent = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult(),
+    ) {
+        installConsentAsked.value = false
+        val path = installConsentFor.value
+        installConsentFor.value = null
+        val file = path?.let { java.io.File(it) }
+        if (file != null) {
+            if (appUpdater.canInstallApps()) appUpdater.install(file, installConsentSize.value) else appUpdater.installsNotAllowed()
+        }
+    }
+    installConsentFor.value?.let {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { installConsentFor.value = null },
+            text = { Text(Strings.t.updateNeedsPermission) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(
+                    onClick = {
+                        // Asked once, however many taps: two system screens on top of
+                        // each other had the first answer arrive under the second. And a
+                        // device without that screen is told, not dropped.
+                        if (!installConsentAsked.value) {
+                            installConsentAsked.value = true
+                            runCatching { installConsent.launch(appUpdater.consentIntent()) }
+                                .onFailure {
+                                    installConsentAsked.value = false
+                                    installConsentFor.value = null
+                                    appUpdater.installsNotAllowed()
+                                }
+                        }
+                    },
+                ) {
+                    Text(Strings.t.updateAllowInstalls)
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { installConsentFor.value = null }) { Text(Strings.t.cancel) }
+            },
+        )
+    }
+
     // Update dialog (§13 #7) — never over the first-run picker.
     val upd = updateInfo
     if (upd != null && prefs.uiMode.isNotBlank()) {
@@ -376,7 +444,15 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
             onCancel = { appUpdater.cancelDownload(); appUpdater.dismiss() },
             onLater = { appUpdater.dismiss() },
             onSkip = { appUpdater.skip(upd.version) { repository.setUpdateSkipVersion(it) } },
-            onInstall = { appUpdater.install(it) },
+            onInstall = {
+                if (appUpdater.canInstallApps()) {
+                    appUpdater.install(it)
+                } else {
+                    installConsentAsked.value = false
+                    installConsentFor.value = it.absolutePath
+                    installConsentSize.value = appUpdater.available.value?.size
+                }
+            },
         )
     }
     } // CompositionLocalProvider(LocalDensity)

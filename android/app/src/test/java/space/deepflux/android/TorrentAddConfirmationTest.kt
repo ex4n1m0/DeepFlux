@@ -20,6 +20,7 @@ import org.libtorrent4j.AlertListener
 import org.libtorrent4j.TorrentStatus
 import space.deepflux.android.engine.MagnetParser
 import space.deepflux.android.engine.TorrentEngineApi
+import space.deepflux.android.engine.TorrentFileAdd
 import space.deepflux.android.engine.TorrentMeta
 import space.deepflux.android.engine.TorrentRepository
 import space.deepflux.android.service.TorrentService
@@ -50,6 +51,43 @@ class FakeTorrentEngine : TorrentEngineApi {
     /** `start()` takes this long — an add that arrives meanwhile must wait, not fail. */
     @Volatile var startDelayMs = 0L
 
+    /** Names the fake reports as a torrent's own name once its metadata is known. */
+    val names = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** Every .torrent the fake wrote out as a torrent's metadata: hash → path. */
+    val savedTorrents = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** How many times the app asked the fake to write a torrent's metadata — successful or not. */
+    @Volatile var saveCalls = 0
+
+    /** True while `saveTorrentFile` should fail, as a full disk would make it. */
+    @Volatile var failSaving = false
+
+    /** While set, every attempt to add a .torrent file fails with this reason — as a disk error would make it. */
+    @Volatile var failFileAdds: String? = null
+
+    /** While set, the engine reports every .torrent file as no torrent — as a moment's read error would. */
+    @Volatile var refuseKeptFiles = false
+
+    /** For each kept torrent's v1 hash (what `addTorrentFile` reports): the v2 prefix it also answers to. */
+    val v2Prefixes = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * When [holdName] is set, `torrentName` — the last engine step of a keep —
+     * reports that it was asked and then waits to be let go: a test taps
+     * Remove in exactly that moment.
+     */
+    class Hold {
+        val asked = java.util.concurrent.CountDownLatch(1)
+        private val go = java.util.concurrent.CountDownLatch(1)
+        fun release() = go.countDown()
+        fun await() {
+            go.await(10, java.util.concurrent.TimeUnit.SECONDS)
+        }
+    }
+
+    @Volatile var holdName: Hold? = null
+
     /** Hashes the fake reports as "this torrent carries a symbolic link". */
     val symlinkHashes: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
@@ -78,14 +116,38 @@ class FakeTorrentEngine : TorrentEngineApi {
         if (!startedOk) return null
         return MagnetParser.infoHashHex(magnet)?.also { magnets.add(magnet) }
     }
-    override fun addTorrentFile(path: String, saveDir: File): String? {
-        if (!startedOk) return null
+    override fun addTorrentFile(path: String, saveDir: File): TorrentFileAdd {
+        if (!startedOk) return TorrentFileAdd.Failed("engine not running")
+        failFileAdds?.let { return TorrentFileAdd.Failed(it) }
         // The real engine derives the hash from the file; mirror TorrentMeta here.
-        val info = File(path).takeIf { it.isFile }?.let { TorrentMeta.readTorrent(it.readBytes()) } ?: return null
+        val info = File(path).takeIf { it.isFile }?.let { TorrentMeta.readTorrent(it.readBytes()) }
+            ?: return TorrentFileAdd.NotATorrent
+        if (refuseKeptFiles) return TorrentFileAdd.NotATorrent
+        if (info.infoHash in symlinkHashes) return TorrentFileAdd.HasSymbolicLinks
         files.add(path)
-        return info.infoHash
+        return TorrentFileAdd.Added(info.infoHash, info.name, v2Prefixes[info.infoHash])
     }
     override fun hasSymlinkEntries(infoHashHex: String): Boolean = infoHashHex in symlinkHashes
+    override fun torrentName(infoHashHex: String): String? {
+        holdName?.let {
+            it.asked.countDown()
+            it.await()
+        }
+        return names[infoHashHex]
+    }
+    override fun saveTorrentFile(infoHashHex: String, to: File): Boolean {
+        saveCalls++
+        if (failSaving) return false
+        to.parentFile?.mkdirs()
+        val tmp = File(to.path + ".tmp")
+        TestTorrents.write(tmp, names[infoHashHex] ?: KEPT_NAME, "file.bin")
+        if (!tmp.renameTo(to)) {
+            tmp.delete()
+            return false
+        }
+        savedTorrents[infoHashHex] = to.absolutePath
+        return true
+    }
     override fun firstVideoFile(infoHashHex: String, saveDir: File): String? = null
     override fun applySequential(infoHashHex: String) = false
     override fun pauseTorrent(infoHashHex: String) { paused.add(infoHashHex) }
@@ -99,6 +161,19 @@ class FakeTorrentEngine : TorrentEngineApi {
     }
     override fun trackerUrls(infoHashHex: String): List<String> = emptyList()
     override fun libtorrentVersion() = "fake"
+
+    companion object {
+        /** The name of the torrent the fake writes as kept metadata unless `names` has one for the hash. */
+        const val KEPT_NAME = "Kept torrent"
+
+        /**
+         * The info-hash of the torrent the fake keeps under [KEPT_NAME] — so the
+         * hash a test's magnet carries is that of the very torrent a restart
+         * finds in the kept file, as it is for a real one.
+         */
+        fun keptHash(name: String = KEPT_NAME): String =
+            TorrentMeta.readTorrent(TestTorrents.bytes(name, "file.bin"))!!.infoHash
+    }
 }
 
 /** A context that records service starts instead of launching the real foreground service. */
@@ -259,7 +334,10 @@ class TorrentAddConfirmationTest {
     fun aTorrentAlreadyInTheListIsNotOfferedAgain() {
         repo.requestAddMagnet(magnet)
         repo.confirmPendingAdd()
-        await("the first add") { engine.magnets.isNotEmpty() }
+        // What the repository RECORDS, not what the engine was asked: the entry is
+        // noted a moment after the engine has it, and the next line asks the repository.
+        val savedList = File(context.filesDir, "torrents_state.json")
+        await("the first add is saved") { runCatching { hash in savedList.readText() }.getOrDefault(false) }
         repo.requestAddMagnet(magnet, sourceHost = "page.example")
         assertNull("already listed torrents never prompt", repo.pendingAdd.value)
     }

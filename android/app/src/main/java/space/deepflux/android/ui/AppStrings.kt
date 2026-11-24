@@ -272,6 +272,11 @@ interface AppStrings {
     val updateDownloading: String
     val updateVerifying: String
     val updateReady: String
+    /** Shown before the system's "Install unknown apps" screen is opened from the update dialog. */
+    val updateNeedsPermission: String
+    val updateAllowInstalls: String
+    /** The user came back without allowing installs from DeepFlux. */
+    val updatePermissionDenied: String
     val upToDate: String
     val updateFailedFmt: String
     val addPlaylist: String
@@ -346,6 +351,15 @@ interface AppStrings {
     val noticePageAddStorm: String
     // A torrent whose files include a symbolic link is not kept
     val noticeTorrentHasSymlinks: String
+    /** Same refusal, for a .torrent FILE: nothing to remove — it never got in. */
+    val noticeTorrentHasSymlinksFile: String
+    /** An RSS item's "Download" could not even be started (link refused or not a magnet). */
+    val noticeRssItemRefused: String
+    /** A setting could not be written (the storage is full, most likely); the app goes on. */
+    val noticeSettingNotSaved: String
+    /** The downloaded update is not whole any more when the installer is about to start. */
+    val updateFileIncomplete: String
+    val noticeCouldNotAddTorrent: String
     /** Settings → "Save location": the system would not keep access to the picked folder. */
     val noticeFolderNotKept: String
     /** A finished download could not be copied out for the user. %s = the file's name. */

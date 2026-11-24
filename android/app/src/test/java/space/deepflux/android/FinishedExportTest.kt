@@ -387,6 +387,17 @@ class FinishedExportTest {
     }
 
     @Test
+    fun aDifferentFileOfTheSameNameAndSizeInTheChosenFolderGoesBesideIt() {
+        // Told apart by name and size alone, the finished download went nowhere.
+        val other = ByteArray(500) { 9 }
+        File(folder, "movie.mkv").writeBytes(other)
+        val src = source("movie.mkv", 500)
+        assertCopied("the copy beside a different file", FinishedExport.export(context, src, treeUri.toString(), access = allowed))
+        assertArrayEquals("the other file is untouched", other, inFolder("movie.mkv")!!.readBytes())
+        assertArrayEquals(src.readBytes(), inFolder("movie (2).mkv")!!.readBytes())
+    }
+
+    @Test
     fun aProviderThatHandsBackTheOldFileHasItLeftAlone() {
         // Some providers never pick another name: the create request comes
         // back with the file that is already there. That file is the user's.
@@ -591,6 +602,129 @@ class FinishedExportTest {
         assertFalse("a torrent of thousands of small files must not flood Downloads", FinishedExport.isCopied("Album/01 - Track.flac", ""))
         assertTrue(FinishedExport.isCopied("Ubuntu/ubuntu-24.04.iso", ""))
         assertTrue(FinishedExport.isCopied("Movie.MKV", ""))
+    }
+
+    /** A file already in Downloads, served back the way the collection would. */
+    private fun inDownloads(content: ByteArray): android.net.Uri =
+        android.net.Uri.parse("content://media/external_primary/downloads/${nextDownloadsId++}").also {
+            shadowOf(context.contentResolver).registerInputStream(it, java.io.ByteArrayInputStream(content))
+        }
+
+    private var nextDownloadsId = 70L
+
+    @Test
+    fun aFileAlreadyInDownloadsIsNotCopiedThereAgain() {
+        val src = source("movie.mkv", 500)
+        val there = inDownloads(src.readBytes())
+        val asked = mutableListOf<String>()
+        val result = FinishedExport.export(context, src, "", access = allowed, alreadyInDownloads = { name, size ->
+            asked.add(name)
+            if (name == src.name && size == src.length()) there else null
+        })
+        assertEquals(FinishedExport.Result.AlreadyThere, result)
+        assertEquals("looked for the download by its own name", listOf("movie.mkv"), asked.toList())
+        assertEquals("nothing new was asked of the Downloads collection", 0, shadowOf(context.contentResolver).insertStatements.count { it.uri.authority == MediaStore.AUTHORITY })
+    }
+
+    @Test
+    fun aFileNotYetInDownloadsStillGoesThere() {
+        val src = source("movie.mkv", 500)
+        val result = FinishedExport.export(context, src, "", access = allowed, alreadyInDownloads = { _, _ -> null })
+        assertCopied("the export to Downloads", result)
+        await("the copy to Downloads") { "movie.mkv" in downloadsAskedFor() }
+    }
+
+    @Test
+    fun aDifferentFileOfTheSameNameAndSizeIsCopiedAgain() {
+        // Same name, same size, other bytes — a re-release under the old name.
+        // Told apart by name and size alone, the finished download went nowhere.
+        val src = source("movie.mkv", 500)
+        val other = inDownloads(ByteArray(500) { 9 })
+        val result = FinishedExport.export(context, src, "", access = allowed, alreadyInDownloads = { _, _ -> other })
+        assertCopied("the export to Downloads", result)
+        await("the copy to Downloads") { "movie.mkv" in downloadsAskedFor() }
+    }
+
+    @Test
+    fun aFileThereThatCannotBeReadIsCopiedAgain() {
+        // Not the other way round: an unreadable match must never swallow a download.
+        val src = source("movie.mkv", 500)
+        val nowhere = android.net.Uri.parse("content://media/external_primary/downloads/999")
+        val result = FinishedExport.export(context, src, "", access = allowed, alreadyInDownloads = { _, _ -> nowhere })
+        assertCopied("the export to Downloads", result)
+    }
+
+    @Test
+    fun aBigFileIsRecognisedByItsBeginningAlone() {
+        // Only the beginning is looked at: the middle of a multi-gigabyte file is never
+        // pulled through a provider to compare the end — one name, one size and one
+        // beginning is the same file.
+        val src = source("big.mkv", 5 * 1024 * 1024)
+        val almostTheSame = src.readBytes().also { it[2 * 1024 * 1024] = 99 }
+        val twin = inDownloads(almostTheSame)
+        val result = FinishedExport.export(context, src, "", access = allowed, alreadyInDownloads = { _, _ -> twin })
+        assertEquals(FinishedExport.Result.AlreadyThere, result)
+    }
+
+    @Test
+    fun aMatchThatHandsBackLessThanTheBeginningIsCopiedAgain() {
+        // Not the other way round either: a match that cannot be read as far as asked is no match.
+        // A source that a lenient read would mistake for it: the first 100 bytes as the match hands
+        // them back, and nothing but zeros where it stops short.
+        val bytes = ByteArray(500).also { it[3] = 5; it[60] = 9 }
+        val src = File(sources, "short-match.mkv").apply { writeBytes(bytes) }
+        val cut = inDownloads(bytes.copyOf(100))
+        val result = FinishedExport.export(context, src, "", access = allowed, alreadyInDownloads = { _, _ -> cut })
+        assertCopied("the export to Downloads", result)
+    }
+
+    /** Answers what the app asks the media store, and remembers it. */
+    class RecordingMediaProvider : android.content.ContentProvider() {
+        var uri: android.net.Uri? = null
+        var projection: Array<out String>? = null
+        var selection: String? = null
+        var args: Array<out String>? = null
+        var rows = 0
+
+        override fun onCreate() = true
+        override fun getType(uri: android.net.Uri): String? = null
+        override fun insert(uri: android.net.Uri, values: android.content.ContentValues?): android.net.Uri? = null
+        override fun delete(uri: android.net.Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
+        override fun update(uri: android.net.Uri, values: android.content.ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
+        override fun query(uri: android.net.Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): android.database.Cursor {
+            this.uri = uri
+            this.projection = projection
+            this.selection = selection
+            this.args = selectionArgs
+            return android.database.MatrixCursor(arrayOf("_id")).also { c -> repeat(rows) { c.addRow(arrayOf<Any>(77)) } }
+        }
+    }
+
+    @Test
+    fun theLookUpInDownloadsAsksForTheNameTheSizeAndFinishedRowsOnly() {
+        // The real look-up, against what the media store is asked — every other test stands in for it.
+        val media = RecordingMediaProvider()
+        org.robolectric.shadows.ShadowContentResolver.registerProviderInternal(MediaStore.AUTHORITY, media)
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+
+        org.junit.Assert.assertNull("nothing there", space.deepflux.android.dlmgr.MediaStoreExport.alreadyInDownloads(context, "movie.mkv", 500))
+        assertEquals("the Downloads collection of the primary volume", collection, media.uri)
+        assertEquals(listOf("movie.mkv", "500"), media.args?.toList())
+        val asked = media.selection.orEmpty()
+        assertTrue("by name: $asked", asked.contains("${MediaStore.MediaColumns.DISPLAY_NAME} = ?"))
+        assertTrue("…and by size: $asked", asked.contains("${MediaStore.MediaColumns.SIZE} = ?"))
+        assertTrue("…and not one still being written: $asked", asked.contains("${MediaStore.MediaColumns.IS_PENDING} = 0"))
+
+        media.rows = 1
+        assertEquals(
+            "a row is its address",
+            collection.buildUpon().appendPath("77").build(),
+            space.deepflux.android.dlmgr.MediaStoreExport.alreadyInDownloads(context, "movie.mkv", 500),
+        )
+
+        media.args = null
+        org.junit.Assert.assertNull("nothing to look for", space.deepflux.android.dlmgr.MediaStoreExport.alreadyInDownloads(context, "movie.mkv", 0))
+        org.junit.Assert.assertNull("…asks nothing", media.args)
     }
 
     // ---------------------------------------------------------------- the choice itself
@@ -812,7 +946,7 @@ class FinishedExportTest {
         val posted = copyFailedNotifications().last()
         val extras = posted.extras
         assertEquals(context.getString(R.string.notif_copy_failed_title), extras.getCharSequence(android.app.Notification.EXTRA_TITLE).toString())
-        assertEquals(context.getString(R.string.notif_files_fmt, 2), extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
+        assertEquals(context.resources.getQuantityString(R.plurals.notif_files_count, 2, 2), extras.getCharSequence(android.app.Notification.EXTRA_TEXT).toString())
         backToDefault(repo)
     }
 

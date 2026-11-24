@@ -10,6 +10,7 @@ import org.json.JSONObject
 import space.deepflux.android.dlmgr.HttpDownloadRepository
 import space.deepflux.android.engine.MagnetParser
 import space.deepflux.android.engine.TorrentRepository
+import space.deepflux.android.ui.Strings
 import java.io.File
 import java.net.URL
 import java.security.MessageDigest
@@ -254,6 +255,11 @@ class RssRepository(
         return handToEngine(item) { ok ->
             if (ok) markSeen(feedId, guid)
             done(ok)
+        }.also { accepted ->
+            // Refused on the spot — its link leads somewhere the app will
+            // not fetch from, or it is no magnet at all. The button used to
+            // do nothing at all (emulator, 2026-11-24).
+            if (!accepted) torrents.postNotice(Strings.t.noticeRssItemRefused)
         }
     }
 

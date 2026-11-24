@@ -3,6 +3,7 @@ package space.deepflux.android.data
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import android.util.Log
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CoroutineScope
@@ -80,6 +81,14 @@ class AppUpdater(
     private val networkGateOpen: () -> Boolean = { true },
     /** Feed + APK base URL; only tests point this at a local server. */
     private val baseUrl: String = BASE_URL,
+    /**
+     * The update file's address for the installer — the manifest's FileProvider.
+     * A parameter so the installer's path can be tested on any host: the real
+     * call refuses every Windows path (it compares separators).
+     */
+    private val installAddress: (File) -> Uri = { f -> FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", f) },
+    /** Starts the system installer; false when it could not be. A parameter for the same reason. */
+    private val startInstaller: (Intent) -> Boolean = { i -> runCatching { context.startActivity(i) }.isSuccess },
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -184,7 +193,11 @@ class AppUpdater(
                 // Stamped only once the feed was really read. It used to be
                 // stamped BEFORE the probe, so one offline launch silenced
                 // the auto-check for the next 20 hours.
-                settings.setLastUpdateCheck(System.currentTimeMillis())
+                // The stamp is bookkeeping: one that cannot be written (a full disk) must
+                // neither fail the check that just succeeded nor escape, as on a phone
+                // an error escaping a coroutine ends the process.
+                runCatching { settings.setLastUpdateCheck(System.currentTimeMillis()) }
+                    .onFailure { Log.w(TAG, "could not stamp the update check: ${it.message}") }
                 lastFailureAt = 0
                 when {
                     !force && info.version == prefsNow.updateSkipVersion -> CheckResult.UpToDate
@@ -208,6 +221,7 @@ class AppUpdater(
             return
         }
         val gen = currentDownload.incrementAndGet()
+        installerStartedFor = null
         _progress.value = UpdateProgress.Downloading(0, info.size)
         scope.launch {
             val result = runCatching { downloadLocked(info, gen) }
@@ -226,6 +240,15 @@ class AppUpdater(
     /** The request of the download in flight — cancel tears its socket down at once. */
     @Volatile
     private var currentCall: okhttp3.Call? = null
+
+    /**
+     * The update file the system installer was started for. It is started once
+     * per download however often the dialog asks: asked both by the consent
+     * screen's answer and by the dialog coming back with the activity, two
+     * installer screens ended up on top of each other (review, 2026-11-25).
+     */
+    @Volatile
+    private var installerStartedFor: File? = null
 
     fun cancelDownload() {
         cancelledDownload.set(currentDownload.get())
@@ -295,17 +318,70 @@ class AppUpdater(
         }
     }
 
-    /** Fire the system installer for a verified APK (one-tap user confirm). */
-    fun install(file: File) {
-        val uri: Uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    /** True once Android lets THIS app start the installer (Settings → "Install unknown apps" → DeepFlux). */
+    fun canInstallApps(): Boolean =
+        runCatching { context.packageManager.canRequestPackageInstalls() }.getOrDefault(false)
+
+    /**
+     * The system screen where the user allows installs from DeepFlux. It is
+     * asked for FIRST, for a result — then the installer is the last thing
+     * on top of the app, and "Done" / "Open" on its final screen lead back
+     * into it. (Asked by the installer itself, that screen stayed in the
+     * back stack: the user ended up in Settings, or on the home screen,
+     * with the app closed — emulator, 2026-11-24.)
+     */
+    fun consentIntent(): Intent = Intent(
+        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+        Uri.parse("package:${context.packageName}"),
+    )
+
+    /** The user came back from [consentIntent] without allowing installs. */
+    fun installsNotAllowed() = notify(Strings.t.updatePermissionDenied)
+
+    /**
+     * Fire the system installer for a verified APK (one-tap user confirm).
+     * Does nothing while installs from DeepFlux are not allowed — and says
+     * so; the consent screen comes first (see [consentIntent]).
+     */
+    /**
+     * Fire the system installer for a verified APK (one-tap user confirm).
+     * Does nothing while installs from DeepFlux are not allowed — and says
+     * so; the consent screen comes first (see [consentIntent]).
+     * [expectedSize]: the offered update's size, when the caller kept it
+     * across the consent screen — in a process that was started again for
+     * that answer, the offer itself is no longer in memory.
+     */
+    fun install(file: File, expectedSize: Long? = null) {
+        if (!canInstallApps()) {
+            installsNotAllowed()
+            return
+        }
+        if (installerStartedFor == file) return
+        // Looked at again at the last moment: the system's consent screen may
+        // have kept the app away for minutes, and what is handed to the
+        // installer must still be the whole verified download.
+        val expected = expectedSize ?: _available.value?.size
+        if (expected != null && file.length() != expected) {
+            Log.w(TAG, "the update file is no longer whole: ${file.length()} of $expected bytes")
+            file.delete()
+            _progress.value = UpdateProgress.Error(Strings.t.updateFileIncomplete)
+            return
+        }
+        val uri: Uri = runCatching { installAddress(file) }
+            .getOrElse {
+                Log.w(TAG, "the update file could not be handed to the installer: ${it.message}")
+                notify(Strings.t.noticeInstallerFailed)
+                return
+            }
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        runCatching { context.startActivity(intent) }
-            .onFailure {
-            Log.w(TAG, "install intent failed: ${it.message}")
+        if (startInstaller(intent)) {
+            installerStartedFor = file
+        } else {
+            Log.w(TAG, "the installer could not be started")
             notify(Strings.t.noticeInstallerFailed)
         }
     }

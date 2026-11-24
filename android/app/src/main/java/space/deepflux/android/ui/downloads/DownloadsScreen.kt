@@ -59,6 +59,7 @@ import space.deepflux.android.dlmgr.HttpState
 import space.deepflux.android.engine.MagnetParser
 import space.deepflux.android.engine.TorrentItem
 import space.deepflux.android.engine.TorrentRepository
+import space.deepflux.android.R
 import space.deepflux.android.engine.TorrentState
 import space.deepflux.android.engine.isActive
 import space.deepflux.android.ui.theme.Accent
@@ -298,7 +299,10 @@ private fun HttpDownloadList(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(12.dp),
+        // Room below the last card for the floating "Add download" button: it
+        // covers the bottom of the list, and the last card's buttons sat under
+        // it for good — the video's Play among them (emulator, 2026-11-25).
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(items, key = { it.id }) { item ->
@@ -315,7 +319,24 @@ private fun HttpCard(
     onRemove: (HttpDownload) -> Unit,
 ) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
+    val opener = androidx.compose.runtime.remember(ctx) {
+        space.deepflux.android.filecmd.DownloadOpener(ctx.applicationContext ?: ctx)
+    }
+    // A finished download opens in one tap — played by the app itself when it
+    // can, else in whatever app the user picks. It used to have no way to be
+    // opened from here unless it was a video.
+    val play = {
+        torrentRepo.playFile(File(torrentRepo.downloadsDir, item.fileName).absolutePath, item.fileName, ctx)
+    }
+    val openFinished = {
+        if (!opener.open(File(torrentRepo.downloadsDir, item.fileName))) {
+            torrentRepo.postNotice(Strings.t.noticeCannotOpenItem)
+        }
+    }
+    val finished = item.state == HttpState.DONE
+    val playable = Playables.isPlayable(item.fileName)
     Card(
+        modifier = Modifier.fillMaxWidth().clickable(enabled = finished) { if (playable) play() else openFinished() },
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
@@ -375,15 +396,18 @@ private fun HttpCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
-                if (item.state == HttpState.DONE && Playables.isPlayable(item.fileName)) {
-                    IconButton(onClick = {
-                        torrentRepo.playFile(
-                            File(torrentRepo.downloadsDir, item.fileName).absolutePath,
-                            item.fileName,
-                            ctx,
-                        )
-                    }) {
+                if (finished && playable) {
+                    // As before 1.4.14: a finished video keeps its Play button (the row plays too).
+                    IconButton(onClick = { play() }) {
                         Icon(Icons.Filled.PlayArrow, contentDescription = Strings.t.play, tint = OkGreen)
+                    }
+                } else if (finished) {
+                    IconButton(onClick = openFinished) {
+                        Icon(
+                            androidx.compose.ui.res.painterResource(R.drawable.ic_open),
+                            contentDescription = Strings.t.openAction,
+                            tint = OkGreen,
+                        )
                     }
                 } else if ((item.state == HttpState.RUNNING || item.state == HttpState.QUEUED) &&
                     Playables.isPlayable(item.fileName)
@@ -627,7 +651,10 @@ private fun TorrentList(
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().then(modifier),
-        contentPadding = PaddingValues(12.dp),
+        // Room below the last card for the floating "Add download" button: it
+        // covers the bottom of the list, and the last card's buttons sat under
+        // it for good — the video's Play among them (emulator, 2026-11-25).
+        contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(torrents, key = { "${it.infoHash}-${it.addedAt}" }) { torrent ->
@@ -756,7 +783,10 @@ private fun RssSection(rss: space.deepflux.android.rss.RssRepository) {
     } else {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(12.dp),
+            // Room below the last card for the floating "Add download" button: it
+            // covers the bottom of the list, and the last card's buttons sat under
+            // it for good — the video's Play among them (emulator, 2026-11-25).
+            contentPadding = PaddingValues(start = 12.dp, top = 12.dp, end = 12.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             items(feeds, key = { it.id }) { feed ->

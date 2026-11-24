@@ -8,7 +8,11 @@
     <string name="channel_events_desc">下载完成与错误通知</string>
     <string name="notif_idle">没有活跃的下载</string>
     <string name="notif_active">%1$d 个活跃 · ↓ %2$s · %3$d%%</string>
-    <string name="notif_files">%1$d 个文件 · ↓ %2$s · %3$d%%</string>
+    <plurals name="notif_files">
+        <item quantity="other">%1$d 个文件 · ↓ %2$s · %3$s</item>
+    </plurals>
+    <string name="notif_progress_pct">%1$d%%</string>
+    <string name="notif_progress_unknown">…</string>
 
     <!-- 通知按钮与下载事件（2026-11-23） -->
     <string name="notif_pause_all">全部暂停</string>
@@ -16,7 +20,9 @@
     <string name="notif_finished_title">下载完成</string>
     <string name="notif_failed_title">下载失败</string>
     <string name="notif_copy_failed_title">未复制到您的文件夹</string>
-    <string name="notif_files_fmt">%1$d 个文件</string>
+    <plurals name="notif_files_count">
+        <item quantity="other">%1$d 个文件</item>
+    </plurals>
     <string name="notif_error_fmt">%1$s：%2$s</string>
     <string name="notif_generic_torrent">种子</string>
     <string name="notif_limit_title">已达到后台时限</string>

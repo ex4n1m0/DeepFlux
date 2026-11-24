@@ -374,22 +374,12 @@ class CommanderRepository(
         else -> Uri.parse(entry.path)
     }
 
-    fun shareIntent(entry: Entry): android.content.Intent? = runCatching {
-        val send = android.content.Intent(android.content.Intent.ACTION_SEND)
-        send.setType(entry.mime.ifBlank { "*/*" })
-        send.putExtra(android.content.Intent.EXTRA_STREAM, shareableUri(entry))
-        send.addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        android.content.Intent.createChooser(send, entry.name)
-    }.onFailure { Log.w(TAG, "share: ${it.message}") }.getOrNull()
+    fun shareIntent(entry: Entry): android.content.Intent? =
+        FileIntents.share(entry.name, shareableUri(entry), entry.mime)
 
     /** "Open with" for anything the app itself cannot render. */
-    fun openWithIntent(entry: Entry): android.content.Intent? = runCatching {
-        val uri = shareableUri(entry)
-        android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
-            setDataAndType(uri, entry.mime.ifBlank { "*/*" })
-            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-    }.onFailure { Log.w(TAG, "open with: ${it.message}") }.getOrNull()
+    fun openWithIntent(entry: Entry): android.content.Intent? =
+        FileIntents.open(entry.name, shareableUri(entry), entry.mime)
 
     // ------------------------------------------------------------------ sizes (off the UI thread)
 

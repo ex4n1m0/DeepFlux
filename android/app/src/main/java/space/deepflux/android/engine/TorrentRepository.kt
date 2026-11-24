@@ -117,6 +117,33 @@ class TorrentRepository(
     /** Pause is app-level state (TorrentStatus has no paused flag in libtorrent4j); saved with the entry by [persist]. */
     private val pausedHashes = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
+    /**
+     * Torrents whose finished files were copied out for the user. The engine
+     * reports "finished" again for every complete torrent at each start
+     * (emulator, 2026-11-25): without this the copy ran at every launch — a
+     * numbered copy of each file in Downloads (1.4.13), or a copy the user had
+     * deleted put back. A run with a failure is not marked, so it is finished
+     * at the next start. Saved with the entry.
+     */
+    private val copiedHashes = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val copyingHashes = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * Torrents this process watched download — added here, or seen downloading.
+     * Only those are announced when they finish ([onFinished]).
+     */
+    private val unfinishedSeen = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** A metadata keep in progress, per torrent — the alert and a retry can meet. */
+    private val keeping = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Keep attempts per torrent this process, and when the next may run (engine thread only). */
+    private val keepTries = HashMap<String, Int>()
+    private val keepNextAt = HashMap<String, Long>()
+    private val keepTriesMax = 3
+    /** How long before a failed keep is tried again; a test sets 0. */
+    internal var keepRetryEveryMs = 60_000L
+
     /** Info-hashes whose sequential piece order has been applied post-metadata. */
     private val appliedSequential = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
@@ -350,17 +377,55 @@ class TorrentRepository(
             }
             if (startEngine()) {
                 withContext(engineDispatcher) {
+                    // What a keep writes and then moves into place: one left behind by a
+                    // start that was cut short is no torrent. Only one that has been lying
+                    // there for a minute — an import writes its own copy through such a
+                    // file right now.
+                    val aMinuteAgo = System.currentTimeMillis() - 60_000
+                    runCatching {
+                        File(context.filesDir, "torrents")
+                            .listFiles { f -> f.name.endsWith(".tmp") && f.lastModified() < aMinuteAgo }
+                            ?.forEach { it.delete() }
+                    }
                     entries.forEach { e ->
                         // Sequential preference is (re)applied post-metadata by the poller.
                         // Prefer the saved .torrent (metadata intact) — private-tracker
                         // torrents cannot re-fetch metadata from DHT (disabled by design).
-                        val saved = File(File(context.filesDir, "torrents"), "${e.infoHash}.torrent")
-                        val added = if (saved.isFile) {
+                        val saved = torrentFileOf(e.infoHash)
+                        val kept = if (saved.isFile) {
                             runCatching { engine.addTorrentFile(saved.absolutePath, saveDir) }.getOrNull()
                         } else {
                             null
                         }
-                        if (added == null) {
+                        if (kept is TorrentFileAdd.Added) {
+                            // It must be THIS torrent (the v2 prefix: a magnet may carry
+                            // a torrent's v2 hash under `btih:`). A kept file that is some
+                            // OTHER torrent would add what nobody asked for — invisible
+                            // in the list, its files copied out when it completes.
+                            if (kept.infoHash == e.infoHash || kept.v2Prefix == e.infoHash) {
+                                // The torrent's own name beats a placeholder: adds from a
+                                // .torrent file used to be stored under their info-hash.
+                                renameEntry(e.infoHash, kept.name)
+                            } else {
+                                // (Not when another entry owns that torrent: its own turn adds it.)
+                                if (entries.none { it.infoHash == kept.infoHash }) runCatching { engine.removeTorrent(kept.infoHash) }
+                                runCatching { saved.delete() }
+                                runCatching { engine.addMagnet(e.magnetUri, saveDir) }
+                            }
+                        } else {
+                            // A kept file that is no torrent, or carries a symbolic link, is
+                            // of no use to anyone — and in the way: the metadata is kept only
+                            // while there is none. Dropped, it is kept afresh when the info
+                            // arrives. But it may be all a private torrent will ever get, so
+                            // "no torrent" is taken from the app's own reader too — a
+                            // moment's read error is not a verdict — and one the engine merely
+                            // could not take just now stays as it is.
+                            val noTorrentByOurReader = runCatching { TorrentMeta.readTorrent(saved.readBytes()) == null }.getOrDefault(false)
+                            if (kept === TorrentFileAdd.HasSymbolicLinks ||
+                                (kept === TorrentFileAdd.NotATorrent && noTorrentByOurReader)
+                            ) {
+                                runCatching { saved.delete() }
+                            }
                             runCatching { engine.addMagnet(e.magnetUri, saveDir) }
                         }
                     }
@@ -438,6 +503,12 @@ class TorrentRepository(
         scope.cancel()
     }
 
+    /** One poll, on demand — a test has no poller to wait for. */
+    internal suspend fun refreshForTests() = refreshNow()
+
+    /** True while a metadata keep for this torrent is running — a test waits on it. */
+    internal fun isKeeping(infoHash: String): Boolean = infoHash in keeping
+
     // ------------------------------------------------------------------ public API
 
     fun addMagnet(text: String, sequentialOverride: Boolean? = null, onDone: (Boolean) -> Unit = {}) {
@@ -470,7 +541,8 @@ class TorrentRepository(
                 } else {
                     val h = runCatching { engine.addMagnet(magnet, saveDir) }.getOrNull()
                     if (h != null) {
-                        entries.add(Entry(h, magnet, "", sequential, System.currentTimeMillis()))
+                        entries.add(Entry(h, magnet, listedName(MagnetParser.displayName(magnet)), sequential, System.currentTimeMillis()))
+                        unfinishedSeen.add(h) // its finish is news
                         h
                     } else {
                         null
@@ -802,22 +874,30 @@ class TorrentRepository(
                 return false
             }
             val sequential = prefs.value.sequentialDefault
-            val hash = withContext(engineDispatcher) {
-                runCatching { engine.addTorrentFile(tmp.absolutePath, saveDir) }.getOrNull()
+            val outcome = withContext(engineDispatcher) {
+                runCatching { engine.addTorrentFile(tmp.absolutePath, saveDir) }.getOrElse { TorrentFileAdd.Failed(it.message) }
             }
+            val hash = (outcome as? TorrentFileAdd.Added)?.infoHash
             if (hash != null) {
                 // Restart-proof .torrent store (private-tracker fix, 2026-11-16):
                 // keep the bytes under filesDir/torrents/<hash>.torrent so start()
                 // can re-add WITH metadata — a bare magnet can't recover it when
                 // the torrent is PRIVATE (DHT disabled by design; the restored
                 // zombie stays "Fetching info" forever).
-                val saved = File(File(context.filesDir, "torrents").apply { mkdirs() }, "$hash.torrent")
-                runCatching { tmp.copyTo(saved, overwrite = true) }
+                // In one move: a copy cut short would be no torrent.
+                val dir = File(context.filesDir, "torrents").apply { mkdirs() }
+                val saved = File(dir, "$hash.torrent")
+                runCatching {
+                    val part = File(dir, "$hash.torrent.tmp")
+                    tmp.copyTo(part, overwrite = true)
+                    if (!part.renameTo(saved)) throw java.io.IOException("could not be moved into place")
+                }.onFailure { Log.w(TAG, "could not keep the added .torrent: ${it.message}") }
+                unfinishedSeen.add(hash) // its finish is news
             }
             tmp.delete()
             if (hash == null || entries.any { it.infoHash == hash }) {
                 if (hash != null) _notices.tryEmit(Strings.t.noticeAlreadyInList)
-                else _notices.tryEmit(Strings.t.noticeNotTorrent)
+                else _notices.tryEmit(outcome.refusalNotice())
                 return false
             }
             // Persist a hash-magnet so restarts can re-add the torrent (an
@@ -827,7 +907,7 @@ class TorrentRepository(
                 Entry(
                     hash,
                     "magnet:?xt=urn:btih:$hash",
-                    hash,
+                    listedName((outcome as? TorrentFileAdd.Added)?.name).ifBlank { hash },
                     sequential,
                     System.currentTimeMillis(),
                 ),
@@ -957,9 +1037,15 @@ class TorrentRepository(
             withContext(engineDispatcher) {
                 runCatching { engine.removeTorrent(infoHash) }
             }
-            entries.remove(entry)
+            // By what identifies it, never by the copy taken above: that copy's
+            // name may have been replaced meanwhile (a magnet's real name
+            // arrived), and a copy that no longer equals its entry used to stay
+            // in — and come back at the next start (review, 2026-11-25).
+            entries.removeIf { it.infoHash == infoHash && it.addedAt == entry.addedAt }
             pausedHashes.remove(infoHash)
             pauseAllHashes.remove(infoHash)
+            copiedHashes.remove(infoHash)
+            unfinishedSeen.remove(infoHash)
             publishPauseAll()
             appliedSequential.remove(infoHash)
             runCatching { File(File(context.filesDir, "torrents"), "$infoHash.torrent").delete() }
@@ -988,23 +1074,43 @@ class TorrentRepository(
 
     // ------------------------------------------------------------------ settings passthrough (UI)
 
-    fun setWifiOnly(value: Boolean) = scope.launch { settings.setWifiOnly(value) }
+    /**
+     * Saves one setting off the UI thread. A save that fails is TOLD,
+     * not fatal: the error used to escape the coroutine — on a phone that
+     * ends the process (a full disk at the moment of a toggle, or of the
+     * chat-history save after every reply). The store keeps handing out
+     * the new value until a later save writes everything, so the change
+     * is lost if the app goes first — which is why the user hears of it
+     * now (measured on this library 2026-11-25).
+     */
+    internal fun saveSetting(block: suspend () -> Unit) = scope.launch {
+        try {
+            block()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "could not save a setting: ${e.message}")
+            _notices.tryEmit(Strings.t.noticeSettingNotSaved)
+        }
+    }
 
-    fun setChargingOnly(value: Boolean) = scope.launch { settings.setChargingOnly(value) }
+    fun setWifiOnly(value: Boolean) = saveSetting { settings.setWifiOnly(value) }
 
-    fun setSequentialDefault(value: Boolean) = scope.launch { settings.setSequentialDefault(value) }
+    fun setChargingOnly(value: Boolean) = saveSetting { settings.setChargingOnly(value) }
 
-    fun setCustomApiKey(value: String) = scope.launch { settings.setCustomApiKey(value) }
+    fun setSequentialDefault(value: Boolean) = saveSetting { settings.setSequentialDefault(value) }
 
-    fun setOpensubtitlesApiKey(value: String) = scope.launch { settings.setOpensubtitlesApiKey(value) }
+    fun setCustomApiKey(value: String) = saveSetting { settings.setCustomApiKey(value) }
 
-    fun setHomepage(value: String) = scope.launch { settings.setHomepage(value) }
+    fun setOpensubtitlesApiKey(value: String) = saveSetting { settings.setOpensubtitlesApiKey(value) }
 
-    fun setUiMode(value: String) = scope.launch { settings.setUiMode(value) }
+    fun setHomepage(value: String) = saveSetting { settings.setHomepage(value) }
 
-    fun setUpdatesAutoCheck(value: Boolean) = scope.launch { settings.setUpdatesAutoCheck(value) }
+    fun setUiMode(value: String) = saveSetting { settings.setUiMode(value) }
 
-    fun setUpdateSkipVersion(value: String) = scope.launch { settings.setUpdateSkipVersion(value) }
+    fun setUpdatesAutoCheck(value: Boolean) = saveSetting { settings.setUpdatesAutoCheck(value) }
+
+    fun setUpdateSkipVersion(value: String) = saveSetting { settings.setUpdateSkipVersion(value) }
 
     /** Direct DataStore access for the backup card (plan §13 #6). */
     val appSettings: AppSettings get() = settings
@@ -1018,7 +1124,7 @@ class TorrentRepository(
     fun loadChatHistory(): String = settings.loadChatHistory()
 
     fun setLanguage(chinese: Boolean) =
-        scope.launch { settings.setLanguage(if (chinese) "zh" else "en") }
+        saveSetting { settings.setLanguage(if (chinese) "zh" else "en") }
 
     fun loadLanguageIsChinese(): Boolean = settings.loadLanguage() == "zh"
 
@@ -1028,12 +1134,12 @@ class TorrentRepository(
      * access to it across launches — when it does not, the folder is no use
      * as a destination: the earlier choice stands and the user is told.
      */
-    fun pickedFinishedDownloadsFolder(uri: Uri, kept: Boolean) = scope.launch {
+    fun pickedFinishedDownloadsFolder(uri: Uri, kept: Boolean) = saveSetting {
         if (kept) settings.setCustomSaveDir(uri.toString()) else _notices.tryEmit(Strings.t.noticeFolderNotKept)
     }
 
     /** Back to the public Downloads folder for finished downloads. */
-    fun clearCustomSaveDir() = scope.launch { settings.clearCustomSaveDir() }
+    fun clearCustomSaveDir() = saveSetting { settings.clearCustomSaveDir() }
 
     /**
      * The folder finished downloads are copied to ("" = the public
@@ -1050,7 +1156,7 @@ class TorrentRepository(
     @Volatile
     var pickFolder: (() -> Unit)? = null
 
-    fun saveChatHistory(json: String) = scope.launch { settings.saveChatHistory(json) }
+    fun saveChatHistory(json: String) = saveSetting { settings.saveChatHistory(json) }
 
     // ------------------------------------------------------------------ refresh + gates
 
@@ -1096,6 +1202,7 @@ class TorrentRepository(
             // Retry sequential application until metadata exists (once per torrent).
             entries.filter { it.sequential && infoHashPending(it.infoHash) }
                 .forEach { e -> if (engine.applySequential(e.infoHash)) appliedSequential.add(e.infoHash) }
+            retryKeeps(System.currentTimeMillis())
             engine.snapshot(entries.map { it.infoHash })
         }
 
@@ -1105,6 +1212,7 @@ class TorrentRepository(
             entry.toItem(st)
         }
         _torrents.value = items
+        watchDownloading(items)
 
         // The foreground service follows ACTIVITY — never merely the app
         // being launched. It starts when torrents become active, which
@@ -1159,7 +1267,7 @@ class TorrentRepository(
         if (state != TorrentState.ERROR && pausedHashes.contains(infoHash)) {
             state = TorrentState.PAUSED
         }
-        val dnName = magnetUri.substringAfter("dn=", "").substringBefore('&').takeIf { it.isNotBlank() }
+        val dnName = magnetUri.substringAfter("dn=", "").substringBefore('&').takeIf { it.isNotBlank() }?.let { listedName(it) }
         val name = runCatching { st.name() }.getOrNull().orIfBlank(name).orIfBlank(dnName ?: "Fetching…")
         val ec = runCatching { st.errorCode() }.getOrNull()
         return TorrentItem(
@@ -1201,11 +1309,11 @@ class TorrentRepository(
         override fun alert(alert: Alert<*>) {
             when (alert) {
                 is TorrentFinishedAlert -> {
-                    val name = alertTorrentName(alert)
-                    postEventNotification(EventKind.FINISHED, name.ifBlank { context.getString(R.string.notif_generic_torrent) })
+                    val hex = runCatching { alert.handle()?.infoHash()?.toHex()?.lowercase() }.getOrNull()
+                    onFinished(hex)
                     scope.launch { refreshNow() }
                     // v0.9: export completed video files to public Downloads
-                    exportFinishedFiles(alert)
+                    exportFinishedFiles(alert, hex)
                 }
                 is TorrentErrorAlert -> {
                     val name = alertTorrentName(alert)
@@ -1218,18 +1326,8 @@ class TorrentRepository(
                     scope.launch { refreshNow() }
                 }
                 is MetadataReceivedAlert -> {
-                    // Metadata arrived. A magnet could not be checked when it
-                    // was added — now its files are known: one that carries a
-                    // symbolic link goes again, at once (such a link can point
-                    // at any file of the app's private storage). Otherwise
-                    // re-poll so the name shows up immediately.
                     val hex = runCatching { alert.handle()?.infoHash()?.toHex()?.lowercase() }.getOrNull()
-                    scope.launch {
-                        val linked = hex != null && withContext(engineDispatcher) {
-                            runCatching { engine.hasSymlinkEntries(hex) }.getOrDefault(false)
-                        }
-                        if (hex != null && linked) removeSymlinkTorrent(hex) else refreshNow()
-                    }
+                    if (hex != null) scope.launch { metadataArrived(hex) } else scope.launch { refreshNow() }
                 }
                 else -> Unit
             }
@@ -1237,12 +1335,146 @@ class TorrentRepository(
     }
 
     @androidx.annotation.VisibleForTesting
+    /** What to tell the user when the engine did not take a .torrent file. */
+    private fun TorrentFileAdd.refusalNotice(): String =
+        if (this === TorrentFileAdd.HasSymbolicLinks) Strings.t.noticeTorrentHasSymlinksFile
+        else if (this is TorrentFileAdd.Failed) Strings.t.noticeCouldNotAddTorrent
+        else Strings.t.noticeNotTorrent
+
+    /** Where a torrent's metadata is kept once the engine knows it. */
+    private fun torrentFileOf(infoHash: String) = File(File(context.filesDir, "torrents"), "$infoHash.torrent")
+
+    /**
+     * A name as it is listed and saved — cleaned exactly as the confirmation
+     * shows it ([confirmationName]: it comes from the torrent, i.e. from
+     * strangers), so what was agreed to is what the list shows.
+     */
+    private fun listedName(raw: String?): String = confirmationName(raw.orEmpty())
+
+    /**
+     * Gives a torrent its real name — once the engine knows it. Blank
+     * names and no-ops are ignored; the list is saved when something changed.
+     * An entry is replaced in one step (never an index found earlier and used
+     * later), so a Remove running alongside still finds its entry — or the
+     * entry is gone, as a whole.
+     */
+    private fun renameEntry(infoHash: String, name: String?) {
+        val clean = listedName(name)
+        if (clean.isEmpty()) return
+        var changed = false
+        entries.replaceAll { if (it.infoHash == infoHash && it.name != clean) { changed = true; it.copy(name = clean) } else it }
+        if (changed) persist()
+    }
+
+    /**
+     * The engine now knows a magnet's files. One that carries a symbolic
+     * link goes again, at once (it can point at any file of the app's
+     * private storage). Otherwise two things are kept that used to be lost:
+     * the metadata itself — written as a .torrent, so the next start needs
+     * no peer to hand it back (a finished torrent came back as "Fetching
+     * info", with nothing to play, whenever nobody was there to serve it) —
+     * and the torrent's own name. Internal for the tests: the alert itself
+     * cannot be built on the JVM, this is what it comes down to.
+     */
+    internal suspend fun metadataArrived(infoHash: String) {
+        // The alert and a retry can meet here; one of the two is enough.
+        if (!keeping.add(infoHash)) return
+        keepMetadata(infoHash)
+    }
+
+    /** The keep itself. Callers hold the torrent in [keeping] for its duration and release it. */
+    private suspend fun keepMetadata(infoHash: String) {
+        try {
+            val linked = withContext(engineDispatcher) {
+                runCatching { engine.hasSymlinkEntries(infoHash) }.getOrDefault(false)
+            }
+            if (linked) {
+                removeSymlinkTorrent(infoHash)
+                return
+            }
+            val saved = torrentFileOf(infoHash)
+            val name = withContext(engineDispatcher) {
+                if (!saved.isFile) {
+                    val keptNow = runCatching { engine.saveTorrentFile(infoHash, saved) }.getOrDefault(false)
+                    if (!keptNow) {
+                        // (The engine says why.) Not tried again at the very next poll: the
+                        // disk rarely has room again a second later.
+                        keepNextAt[infoHash] = System.currentTimeMillis() + keepRetryEveryMs
+                    }
+                }
+                runCatching { engine.torrentName(infoHash) }.getOrNull()
+            }
+            renameEntry(infoHash, name)
+            refreshNow()
+        } finally {
+            keeping.remove(infoHash)
+        }
+    }
+
+    /**
+     * Keeps, again, the metadata of torrents that have it and no kept file —
+     * a keep fails when the disk is full at that moment. At most
+     * [keepTriesMax] times per torrent and process, [keepRetryEveryMs] apart,
+     * each on a refresh. Runs on the engine thread.
+     */
+    private fun retryKeeps(now: Long) {
+        entries.filter { e -> !torrentFileOf(e.infoHash).isFile }.forEach { e ->
+            val tries = keepTries[e.infoHash] ?: 0
+            if (tries >= keepTriesMax || now < (keepNextAt[e.infoHash] ?: 0L)) return@forEach
+            // Reserved here, where it is launched — not when the coroutine gets going:
+            // two refreshes a moment apart otherwise launched two, and one of the
+            // tries was spent on nothing.
+            if (!keeping.add(e.infoHash)) return@forEach
+            val hasMetadata = runCatching { engine.torrentName(e.infoHash) != null }.getOrDefault(false)
+            if (!hasMetadata) {
+                keeping.remove(e.infoHash)
+                return@forEach // the metadata is not here yet
+            }
+            keepTries[e.infoHash] = tries + 1
+            keepNextAt[e.infoHash] = now + keepRetryEveryMs
+            scope.launch { keepMetadata(e.infoHash) }
+        }
+    }
+
+    /**
+     * What a poll found DOWNLOADING is watched: its finish is news — and its
+     * files are no longer "copied out", they are being written anew. Only that
+     * state counts as watched, not "bytes still to get": a complete torrent
+     * has its files re-checked at each start, reads that way until the check
+     * is done, and was announced on every launch (emulator, 2026-11-25).
+     * Internal for the tests: the engine's status cannot be built on the JVM.
+     */
+    internal fun watchDownloading(items: List<TorrentItem>) {
+        items.forEach {
+            if (it.state == TorrentState.DOWNLOADING) {
+                unfinishedSeen.add(it.infoHash)
+                copiedHashes.remove(it.infoHash)
+            }
+        }
+    }
+
+    /**
+     * The engine says a torrent finished. News only when this process watched
+     * it download — added here, or seen downloading. The engine reports
+     * "finished" again for every complete torrent at each start (emulator,
+     * 2026-11-25); that used to be a "Download finished" on every launch.
+     * Internal for the tests: the alert itself cannot be built on the JVM.
+     */
+    internal fun onFinished(infoHash: String?) {
+        if (infoHash == null || !unfinishedSeen.remove(infoHash)) return
+        val name = entries.firstOrNull { it.infoHash == infoHash }?.name.orEmpty()
+        postEventNotification(EventKind.FINISHED, name.ifBlank { context.getString(R.string.notif_generic_torrent) })
+    }
+
     internal suspend fun removeSymlinkTorrent(infoHash: String) {
         withContext(engineDispatcher) { runCatching { engine.removeTorrent(infoHash) } }
-        val entry = entries.firstOrNull { it.infoHash == infoHash } ?: return
-        entries.remove(entry)
+        // By what identifies it, never by a copy taken earlier — see remove().
+        if (entries.none { it.infoHash == infoHash }) return
+        entries.removeIf { it.infoHash == infoHash }
         pausedHashes.remove(infoHash)
         pauseAllHashes.remove(infoHash)
+        copiedHashes.remove(infoHash)
+        unfinishedSeen.remove(infoHash)
         publishPauseAll()
         persist()
         _torrents.value = _torrents.value.filterNot { it.infoHash == infoHash }
@@ -1251,23 +1483,79 @@ class TorrentRepository(
     }
 
     /**
-     * Copies a finished torrent's files out for the user: every file into
-     * the folder chosen in Settings, or — with no folder chosen (or one the
+     * Copies a finished torrent's files out for the user — once: every file
+     * into the folder chosen in Settings, or — with none chosen (or one the
      * app can no longer open) — the video files into the public Downloads
      * collection ([space.deepflux.android.dlmgr.FinishedExport.isCopied]).
+     *
+     * The engine reports "finished" again for every complete torrent at each
+     * start, so this is asked then too: [copiedHashes] is what tells the first
+     * time from a re-run (which added a numbered copy in Downloads at every
+     * launch). A run with any failure is not marked, and so is finished at
+     * the next start.
      */
-    private fun exportFinishedFiles(alert: org.libtorrent4j.alerts.TorrentFinishedAlert) {
+    private fun exportFinishedFiles(alert: org.libtorrent4j.alerts.TorrentFinishedAlert, infoHash: String?) {
+        if (infoHash == null || !needsCopy(infoHash) || !copyingHashes.add(infoHash)) return
         scope.launch(Dispatchers.IO) {
-            runCatching {
-                // libtorrent is touched on its own dispatcher only.
-                val paths = kotlinx.coroutines.withContext(engineDispatcher) {
-                    val info = alert.handle().torrentFile() ?: return@withContext emptyList()
-                    val files = info.files()
-                    (0 until files.numFiles()).mapNotNull { files.filePath(it) }
-                }
-                space.deepflux.android.dlmgr.FinishedExport.submit { exportFinishedFiles(saveDir, paths) }
-            }.onFailure { Log.w(TAG, "export failed: " + it.message) }
+            var queued = false
+            try {
+                runCatching {
+                    // libtorrent is touched on its own dispatcher only. The handle is read
+                    // after the alert's callback returned (as it always was): null once it
+                    // is gone — the torrent was removed meanwhile, as a rule.
+                    val paths = kotlinx.coroutines.withContext(engineDispatcher) {
+                        runCatching {
+                            val info = alert.handle().torrentFile() ?: return@runCatching null
+                            val files = info.files()
+                            (0 until files.numFiles()).mapNotNull { files.filePath(it) }
+                        }.getOrNull()
+                    }
+                    // The pool runs the copy in its own good time: the torrent stays marked
+                    // "being copied" until the copy itself is over — not until it is queued.
+                    // (Released at the queueing, a second "finished" a moment later started
+                    // a second run before the first could say it was done.)
+                    queued = true
+                    space.deepflux.android.dlmgr.FinishedExport.submit {
+                        try {
+                            copyFinishedOnce(infoHash, paths)
+                        } finally {
+                            copyingHashes.remove(infoHash)
+                        }
+                    }
+                }.onFailure { Log.w(TAG, "export failed: " + it.message) }
+            } finally {
+                if (!queued) copyingHashes.remove(infoHash)
+            }
         }
+    }
+
+    /**
+     * One copy run for a finished torrent, on the export pool. [paths] as the
+     * torrent names its files; null when they could not be listed — nothing is
+     * marked then, and the next start asks again. True once the torrent is done
+     * being copied (marked so that it is never asked again).
+     */
+    internal fun copyFinishedOnce(
+        infoHash: String,
+        paths: List<String>?,
+        copyOne: (String, String, space.deepflux.android.dlmgr.FinishedExport.Run) -> space.deepflux.android.dlmgr.FinishedExport.Result? =
+            { path, folder, run -> exportTorrentFile(saveDir, path, folder, run) },
+    ): Boolean {
+        if (paths == null) {
+            Log.w(TAG, "the files of a finished torrent could not be listed; the copy is tried again at the next start")
+            return false
+        }
+        if (exportFinishedFiles(saveDir, paths, copyOne) != 0) return false
+        markCopied(infoHash)
+        return true
+    }
+
+    /** True while a finished torrent's files still have to be copied out for the user. */
+    internal fun needsCopy(infoHash: String): Boolean = infoHash !in copiedHashes
+
+    /** The files were copied out (or there was nothing to copy): never again for this torrent. */
+    internal fun markCopied(infoHash: String) {
+        if (copiedHashes.add(infoHash)) persist()
     }
 
     /**
@@ -1300,7 +1588,7 @@ class TorrentRepository(
         if (failed > 0) {
             _notices.tryEmit(Strings.t.noticeExportFailedCountFmt.format(failed))
             // Told outside the app too: a snackbar is seen only while it is open.
-            postEventNotification(EventKind.COPY_FAILED, context.resources.getString(R.string.notif_files_fmt, failed))
+            postEventNotification(EventKind.COPY_FAILED, context.resources.getQuantityString(R.plurals.notif_files_count, failed, failed))
         }
         return failed
     }
@@ -1418,6 +1706,12 @@ class TorrentRepository(
                 // The pause is the user's: a hand pause and a "Pause all" pause both survive a restart.
                 if (o.optBoolean("p", false)) pausedHashes.add(hash)
                 if (o.optBoolean("pa", false)) pauseAllHashes.add(hash)
+                // Its files were copied out for the user; "finished" is reported again at each
+                // start. A list saved before the copy was remembered (1.4.13 and earlier) says
+                // nothing about it: what is in the user's folder is left as it is — copied
+                // again at the first start, a deleted copy came back. A torrent that is still
+                // downloading is taken off this the moment a poll sees it so.
+                if (!o.has("c") || o.optBoolean("c", false)) copiedHashes.add(hash)
                 entries.add(
                     Entry(
                         infoHash = hash,
@@ -1467,13 +1761,38 @@ class TorrentRepository(
                         .put("s", e.sequential)
                         .put("a", e.addedAt)
                         .put("p", pausedHashes.contains(e.infoHash))
-                        .put("pa", pauseAllHashes.contains(e.infoHash)),
+                        .put("pa", pauseAllHashes.contains(e.infoHash))
+                        .put("c", copiedHashes.contains(e.infoHash)),
                 )
             }
             val tmp = File(context.filesDir, "torrents_state.json.tmp")
             tmp.writeText(arr.toString())
-            Files.move(tmp.toPath(), stateFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            moveIntoPlace(tmp, stateFile)
         }.onFailure { Log.w(TAG, "state persist failed: ${it.message}") }
+    }
+
+    private val moveAttempts = 8
+    private val moveRetryMs = 15L
+
+    /**
+     * The move that makes a save atomic — tried a few times. On some file systems
+     * (Windows) it is refused while anything else has the target open, and a save
+     * dropped for that moment is a change lost: a torrent's real name was seen to
+     * stay unsaved in a test that read this file in a tight loop (2026-11-25). A
+     * refusal that stays is still an error, after about a tenth of a second.
+     */
+    private fun moveIntoPlace(from: File, to: File) {
+        var refusal: java.io.IOException? = null
+        repeat(moveAttempts) { attempt ->
+            try {
+                Files.move(from.toPath(), to.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                return
+            } catch (e: java.io.IOException) {
+                refusal = e
+                if (attempt < moveAttempts - 1) Thread.sleep(moveRetryMs)
+            }
+        }
+        throw refusal ?: java.io.IOException("$from could not be moved into place")
     }
 
     companion object {

@@ -21,6 +21,7 @@ import space.deepflux.android.data.CheckResult
 import space.deepflux.android.data.UpdateInfo
 import space.deepflux.android.data.UpdateProgress
 import space.deepflux.android.data.UpdateProgress.Ready
+import space.deepflux.android.ui.Strings
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.security.MessageDigest
@@ -64,6 +65,8 @@ class AppUpdaterFlowTest {
         server.close()
         // Leave a non-Store installer behind for the next test.
         Shadows.shadowOf(context.packageManager).setInstallSourceInfo(context.packageName, null, null)
+        // …and installs not allowed, as a fresh profile has it: the installer tests allow them.
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(false)
     }
 
     private fun feedJson(mutate: (JSONObject) -> Unit = {}): JSONObject = JSONObject()
@@ -90,6 +93,133 @@ class AppUpdaterFlowTest {
         context, settings, notify = {},
         networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
     )
+
+    // ---------------------------------------------------------------- install consent
+
+    @Test
+    fun theInstallerIsNotStartedBeforeAndroidAllowsInstalls() {
+        val notices = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val updater = AppUpdater(context, settings, notify = { notices.add(it) }, networkGateOpen = { true })
+        assertFalse("nothing allowed yet", updater.canInstallApps())
+
+        updater.install(File(context.cacheDir, "update.apk"))
+
+        assertNull("the system installer did not open", Shadows.shadowOf(context as Application).peekNextStartedActivity())
+        assertEquals(listOf(Strings.t.updatePermissionDenied), notices.toList())
+    }
+
+    @Test
+    fun theConsentScreenIsThisAppsOwn() {
+        val intent = updater().consentIntent()
+        assertEquals(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, intent.action)
+        assertEquals("package:${context.packageName}", intent.data.toString())
+    }
+
+    @Test
+    fun withTheSystemsOkTheInstallerOpensWithTheVerifiedFile() {
+        // The file's address comes from the manifest's FileProvider, which refuses every
+        // Windows path (it compares separators); it and the start of the installer are
+        // stood in for, so the whole path runs on any host.
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        val started = java.util.concurrent.CopyOnWriteArrayList<android.content.Intent>()
+        val address = android.net.Uri.parse("content://space.deepflux.android.fileprovider/updates/update.apk")
+        val updater = AppUpdater(
+            context, settings, notify = {}, networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
+            installAddress = { address }, startInstaller = { started.add(it); true },
+        )
+        assertTrue(updater.canInstallApps())
+        val file = File(context.cacheDir, "update.apk").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+        updater.install(file)
+
+        assertEquals("started", 1, started.size)
+        assertEquals(android.content.Intent.ACTION_VIEW, started[0].action)
+        assertEquals("application/vnd.android.package-archive", started[0].type)
+        assertEquals(address, started[0].data)
+        assertEquals("the installer may read exactly this file — and not write it", android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION, started[0].flags and (android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION))
+    }
+
+    @Test
+    fun theInstallerIsStartedOnceHoweverOftenAsked() {
+        // The consent screen's answer asks, and so does the dialog when it comes back with the activity.
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        val started = java.util.concurrent.CopyOnWriteArrayList<android.content.Intent>()
+        val updater = AppUpdater(
+            context, settings, notify = {}, networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
+            installAddress = { android.net.Uri.parse("content://space.deepflux.android.fileprovider/updates/update.apk") },
+            startInstaller = { started.add(it); true },
+        )
+        val file = File(context.cacheDir, "update.apk").apply { writeBytes(byteArrayOf(1, 2, 3)) }
+
+        repeat(3) { updater.install(file) }
+
+        assertEquals(1, started.size)
+    }
+
+    @Test
+    fun aNewDownloadIsInstalledThoughTheLastOneWasStartedAlready() {
+        serveFeed()
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        val started = java.util.concurrent.CopyOnWriteArrayList<android.content.Intent>()
+        val updater = AppUpdater(
+            context, settings, notify = {}, networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
+            installAddress = { android.net.Uri.parse("content://space.deepflux.android.fileprovider/updates/update.apk") },
+            startInstaller = { started.add(it); true },
+        )
+        updater.startDownload(servedInfo)
+        await("the verified download") { updater.progress.value is Ready }
+        val file = (updater.progress.value as Ready).file
+        updater.install(file)
+        assertEquals(1, started.size)
+
+        // Downloaded afresh — "Later", then a new check and "Update" again: the same place on disk.
+        updater.startDownload(servedInfo)
+        await("the new download") { updater.progress.value is Ready }
+        updater.install((updater.progress.value as Ready).file)
+
+        assertEquals("the new download has the installer started for it too", 2, started.size)
+    }
+
+    @Test
+    fun comingBackWithoutTheOkIsReportedNotIgnored() {
+        val notices = java.util.concurrent.CopyOnWriteArrayList<String>()
+        val updater = AppUpdater(context, settings, notify = { notices.add(it) }, networkGateOpen = { true })
+        updater.installsNotAllowed()
+        assertEquals(listOf(Strings.t.updatePermissionDenied), notices.toList())
+    }
+
+    @Test
+    fun anUpdateFileThatIsNoLongerWholeIsNotInstalled() {
+        serveFeed()
+        Shadows.shadowOf(context.packageManager).setCanRequestPackageInstalls(true)
+        val u = updater()
+        val answered = CountDownLatch(1)
+        u.checkNow { answered.countDown() }
+        assertTrue("the check never answered", answered.await(10, TimeUnit.SECONDS))
+        u.startDownload(servedInfo)
+        await("the verified download") { u.progress.value is Ready }
+        val file = (u.progress.value as Ready).file
+        // Cut short after it was verified — as a disk cleaned up behind the app's back would leave it.
+        java.io.RandomAccessFile(file, "rw").use { it.setLength(file.length() - 1) }
+
+        u.install(file)
+
+        assertNull("the installer was not started", Shadows.shadowOf(context as Application).peekNextStartedActivity())
+        assertTrue("and the dialog says so, offering a new download", u.progress.value is UpdateProgress.Error)
+        assertFalse("the broken file is gone", file.exists())
+
+        // …and the same look with only the size the consent screen kept: in a process
+        // started again for that answer the offer itself is no longer in memory.
+        file.writeBytes(apk.copyOf(apk.size - 1))
+        val again = AppUpdater(
+            context, settings, notify = {}, networkGateOpen = { gateOpen }, baseUrl = server.url("").trimEnd('/'),
+            installAddress = { android.net.Uri.parse("content://space.deepflux.android.fileprovider/updates/update.apk") },
+            startInstaller = { true },
+        )
+        again.install(file, expectedSize = apk.size.toLong())
+        assertTrue("looked at without the offer too", again.progress.value is UpdateProgress.Error)
+        assertFalse(file.exists())
+    }
 
     private fun check(): CheckResult {
         val latch = CountDownLatch(1)

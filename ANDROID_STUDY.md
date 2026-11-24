@@ -1177,3 +1177,28 @@ file-added torrents are listed by info-hash; "-1%" in the background
 notification; the app is not reopened after an update) and settled the
 symbolic-link question. Details and the emulator recipe: `AGENTS.md`,
 end of the "Android parity + review rounds" section.
+
+**1.4.14 TEST BUILD (2026-11-25)** — the owner: "keep polishing what you
+find that needs polish … deploy to the website, I will test on a real
+phone". A second emulator pass on 1.4.13 found eight issues; two
+independent reviews (correctness, security) and two more emulator rounds
+found as many again in the fixes themselves — each one caught before it
+shipped: a kept-torrent file that was no torrent while every unit test
+was green; a label fix that hid the label at the normal font size; an
+announcement rule that re-announced a re-checked torrent; a Play button
+lost on finished videos; a Remove that could be cancelled by a rename.
+What it fixes: a magnet's metadata is kept (a finished magnet torrent is
+playable after a restart with nobody seeding), real names, refusals that
+say why, no "Download finished" and no second copy at every launch (the
+engine re-reports "finished" at each start), no numbered copies in
+Downloads, the notification's wording, the install consent before the
+installer, Open for finished files, a feed item's refusal reported, the
+tab label that shrinks instead of being cut, and a failed settings save
+that no longer ends the process. 398 unit tests (5 skip on a
+Windows host), 84 mutations each fail their own test, zero
+crashes and zero ANRs on the emulator. versionCode 30,
+58359944 bytes, sha256 6afc327a359b89f9abf6867f5385df4ce154cfcbfdbddf2ea94e3bd675032946, signer as before. Live as
+`/deepflux/DeepFlux-1.4.14-Android.apk`, DELIBERATELY UNLINKED: the
+pages and `latest-android.json` stay on 1.4.13 until the owner's word.
+Rules: `AGENTS.md`, end of the "Android parity + review rounds"
+section.

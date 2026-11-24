@@ -10,6 +10,12 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import java.util.concurrent.CopyOnWriteArrayList
+import space.deepflux.android.ui.Strings
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import space.deepflux.android.dlmgr.HttpDownloadRepository
 import space.deepflux.android.dlmgr.HttpState
 import space.deepflux.android.engine.TorrentRepository
@@ -55,6 +61,7 @@ class RssLinkPolicyTest {
 
     @After
     fun tearDown() {
+        collectors.forEach { it.cancel() }
         server.close()
         torrents.shutdownForTests()
     }
@@ -169,6 +176,43 @@ class RssLinkPolicyTest {
 
         assertFalse(rss.downloadItem(f.id, "g0"))
         assertTrue(engine.files.isEmpty() && engine.magnets.isEmpty())
+    }
+
+    // ---------------------------------------------------------------- a refused item is reported
+
+    private val collectors = mutableListOf<Job>()
+
+    private fun notices(): MutableList<String> {
+        val seen = CopyOnWriteArrayList<String>()
+        collectors += CoroutineScope(Dispatchers.Unconfined).launch { torrents.notices.collect { seen.add(it) } }
+        return seen
+    }
+
+    @Test
+    fun aRefusedTorrentLinkIsReportedNotSilent() {
+        val notices = notices()
+        val start = redirectIntoLan("/start.torrent")
+        allowedUrl = start
+        val f = rss.addFeed(serveFeed("Innocent torrent", start)).getOrThrow()
+
+        assertFalse(rss.downloadItem(f.id, "g0"))
+
+        assertEquals("the button does something visible", listOf(Strings.t.noticeRssItemRefused), notices.toList())
+    }
+
+    @Test
+    fun anAcceptedItemIsNotComplainedAbout() {
+        val notices = notices()
+        server.route("/ok.torrent") {
+            TinyHttpServer.Response(body = torrentBytes, headers = mapOf("Content-Type" to "application/x-bittorrent"))
+        }
+        val start = server.url("/ok.torrent")
+        allowedUrl = start
+        val f = rss.addFeed(serveFeed("Good torrent", start)).getOrThrow()
+
+        assertTrue(rss.downloadItem(f.id, "g0"))
+        await("the torrent added") { engine.files.size == 1 }
+        assertTrue(notices.none { it == Strings.t.noticeRssItemRefused })
     }
 
     // ---------------------------------------------------------------- the feed's own address (second review round)

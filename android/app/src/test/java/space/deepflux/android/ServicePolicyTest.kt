@@ -129,6 +129,44 @@ class ServicePolicyTest {
         assertFalse(p.look(movedBytes = 6_000_000, active = false))
     }
 
+    // ---------------------------------------------------------------- notification wording
+
+    @Test
+    fun theBackgroundNotificationNeverSaysMinusOnePercentOrOneFiles() {
+        val res = context.resources
+        // one file whose size is unknown — it used to read "1 files · ↓ 0 B/s · -1%"
+        val unknown = TorrentService.describeProgress(res, 0, "0 B/s", 0f, 1, "0 B/s", null)
+        assertEquals("1 file · ↓ 0 B/s · …", unknown.text)
+        assertTrue("the bar does not pretend to know", unknown.indeterminate)
+        assertTrue("a download runs", unknown.active)
+
+        val known = TorrentService.describeProgress(res, 0, "0 B/s", 0f, 2, "6 MB/s", 0.5f)
+        assertEquals("2 files · ↓ 6 MB/s · 50%", known.text)
+        assertEquals(50, known.overallPercent)
+        assertFalse(known.indeterminate)
+
+        val both = TorrentService.describeProgress(res, 1, "300 KB/s", 0.25f, 3, "0 B/s", 0.75f)
+        assertEquals("1 active · ↓ 300 KB/s · 25% · 3 files · ↓ 0 B/s · 75%", both.text)
+        assertEquals("the bar averages what is known", 50, both.overallPercent)
+
+        val mixed = TorrentService.describeProgress(res, 1, "0 B/s", 1f, 1, "0 B/s", null)
+        assertEquals("1 active · ↓ 0 B/s · 100% · 1 file · ↓ 0 B/s · …", mixed.text)
+        assertFalse("a known torrent progress still moves the bar", mixed.indeterminate)
+
+        val idle = TorrentService.describeProgress(res, 0, "0 B/s", 0f, 0, "0 B/s", null)
+        assertEquals("No active downloads", idle.text)
+        assertFalse("nothing runs, so no bar — it said the opposite through every idle grace", idle.active)
+    }
+
+    @Test
+    @org.robolectric.annotation.Config(qualifiers = "zh")
+    fun theBackgroundNotificationIsChineseToo() {
+        val res = context.resources
+        assertEquals("1 个文件 · ↓ 0 B/s · …", TorrentService.describeProgress(res, 0, "0 B/s", 0f, 1, "0 B/s", null).text)
+        assertEquals("2 个文件 · ↓ 6 MB/s · 50%", TorrentService.describeProgress(res, 0, "0 B/s", 0f, 2, "6 MB/s", 0.5f).text)
+        assertEquals("没有活跃的下载", TorrentService.describeProgress(res, 0, "0 B/s", 0f, 0, "0 B/s", null).text)
+    }
+
     @Test
     fun aHashCheckHoldsTheCpuWithoutTheNetwork() {
         val p = policy(Clock())

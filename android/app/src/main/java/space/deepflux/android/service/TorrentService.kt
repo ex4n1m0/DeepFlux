@@ -355,41 +355,30 @@ class TorrentService : Service() {
             it.state == HttpState.RUNNING ||
                 it.state == HttpState.QUEUED
         }
-        val parts = ArrayList<String>()
-        var progressSum = 0f
-        var progressCount = 0
-        if (activeTorrents.isNotEmpty()) {
-            val avg = activeTorrents.map { it.progress }.average().toFloat()
-            parts.add(
-                getString(
-                    R.string.notif_active, activeTorrents.size,
-                    Fmt.speed(items.sumOf { it.downloadRate }), (avg * 100).toInt()
-                )
-            )
-            progressSum += avg; progressCount++
-        }
-        if (activeHttp.isNotEmpty()) {
-            val withProgress = activeHttp.filter { it.hasProgress }
-            val avg = if (withProgress.isEmpty()) -1f
-            else withProgress.map { it.progress }.average().toFloat()
-            parts.add(
-                getString(
-                    R.string.notif_files, activeHttp.size,
-                    Fmt.speed(http.sumOf { it.speed }),
-                    if (avg < 0) -1 else (avg * 100).toInt()
-                )
-            )
-            if (avg >= 0) { progressSum += avg; progressCount++ }
-        }
-        val text = if (parts.isEmpty()) getString(R.string.notif_idle) else parts.joinToString(" · ")
-        val overall = if (progressCount == 0) 0 else (progressSum / progressCount * 100).toInt()
+        val progress = describeProgress(
+            resources,
+            torrents = activeTorrents.size,
+            torrentSpeed = Fmt.speed(items.sumOf { it.downloadRate }),
+            torrentProgress = activeTorrents.takeIf { it.isNotEmpty() }?.map { it.progress }?.average()?.toFloat() ?: 0f,
+            files = activeHttp.size,
+            fileSpeed = Fmt.speed(http.sumOf { it.speed }),
+            // null while no file download knows its size yet (a chunked
+            // transfer, HLS before its last segment): the text then says
+            // so — it used to print "-1%".
+            fileProgress = activeHttp.filter { it.hasProgress }.takeIf { it.isNotEmpty() }?.map { it.progress }?.average()?.toFloat(),
+        )
+        val text = progress.text
         val builder = androidx.core.app.NotificationCompat.Builder(this, DeepFluxApp.CHANNEL_PROGRESS)
             .setSmallIcon(R.drawable.ic_stat_deepflux)
             .setContentTitle("DeepFlux")
             .setContentText(text)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setProgress(100, overall, progressCount == 0)
+            // No bar while nothing runs: "No active downloads" over a moving
+            // bar said the opposite — through the idle grace after every finish.
+            .apply {
+                if (progress.active) setProgress(100, progress.overallPercent, progress.indeterminate) else setProgress(0, 0, false)
+            }
             .setContentIntent(contentIntent)
         // One transport control: "Pause all" while anything runs, else
         // "Resume all" while there is something a "Pause all" left paused.
@@ -414,6 +403,45 @@ class TorrentService : Service() {
 
         /** The standing "paused" notice — a normal notification, no service behind it. */
         const val NOTIFICATION_ID_PAUSED = 1002
+
+        /** What the standing notification says, and how far its bar is. */
+        /** [active]: anything is running — the bar is shown then and only then. */
+        internal class ProgressText(val text: String, val overallPercent: Int, val indeterminate: Boolean, val active: Boolean)
+
+        /**
+         * The progress notification's wording — pure, on the app's
+         * resources, so it can be tested: a download whose size is unknown
+         * used to print "-1%", and a single one was "1 files".
+         */
+        internal fun describeProgress(
+            res: android.content.res.Resources,
+            torrents: Int,
+            torrentSpeed: String,
+            torrentProgress: Float,
+            files: Int,
+            fileSpeed: String,
+            fileProgress: Float?,
+        ): ProgressText {
+            val parts = ArrayList<String>()
+            val known = ArrayList<Float>()
+            if (torrents > 0) {
+                parts.add(res.getString(R.string.notif_active, torrents, torrentSpeed, (torrentProgress * 100).toInt()))
+                known.add(torrentProgress)
+            }
+            if (files > 0) {
+                val shown = if (fileProgress == null) res.getString(R.string.notif_progress_unknown)
+                else res.getString(R.string.notif_progress_pct, (fileProgress * 100).toInt())
+                parts.add(res.getQuantityString(R.plurals.notif_files, files, files, fileSpeed, shown))
+                if (fileProgress != null) known.add(fileProgress)
+            }
+            val text = if (parts.isEmpty()) res.getString(R.string.notif_idle) else parts.joinToString(" · ")
+            return ProgressText(
+                text,
+                if (known.isEmpty()) 0 else (known.average() * 100).toInt(),
+                known.isEmpty(),
+                torrents > 0 || files > 0,
+            )
+        }
 
         private const val IDLE_GRACE_MS = 20_000L
         /** How often the idle grace re-checks whether a copy for the user is still running. */

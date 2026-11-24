@@ -102,12 +102,12 @@ class TorrentEngine : TorrentEngineApi {
         return hash
     }
 
-    /** Adds a local .torrent file. Returns the v1 info-hash, or null if unparseable — or if it carries a symbolic link. */
-    override fun addTorrentFile(path: String, saveDir: File): String? {
-        val info = runCatching { TorrentInfo(File(path)) }.getOrNull() ?: return null
+    /** Adds a local .torrent file — see [TorrentFileAdd]. */
+    override fun addTorrentFile(path: String, saveDir: File): TorrentFileAdd {
+        val info = runCatching { TorrentInfo(File(path)) }.getOrNull() ?: return TorrentFileAdd.NotATorrent
         if (hasSymlinkEntries(info)) {
             Log.w(TAG, "addTorrentFile: refused, the torrent contains symbolic links")
-            return null
+            return TorrentFileAdd.HasSymbolicLinks
         }
         val hash = info.infoHash().toHex().lowercase()
         runCatching {
@@ -115,8 +115,8 @@ class TorrentEngine : TorrentEngineApi {
                 saveDir.mkdirs()
                 session.download(info, saveDir)
             }
-        }.onFailure { Log.w(TAG, "addTorrentFile: ${it.message}"); return null }
-        return hash
+        }.onFailure { Log.w(TAG, "addTorrentFile: ${it.message}"); return TorrentFileAdd.Failed(it.message) }
+        return TorrentFileAdd.Added(hash, runCatching { info.name() }.getOrNull().orEmpty(), v2Prefix(info))
     }
 
     /**
@@ -139,6 +139,70 @@ class TorrentEngine : TorrentEngineApi {
         val files = info.files()
         (0 until files.numFiles()).any { i -> files.fileFlags(i).and_(FileStorage.FLAG_SYMLINK).non_zero() }
     }.getOrDefault(false)
+
+    override fun torrentName(infoHashHex: String): String? = runCatching {
+        session.find(Sha1Hash.parseHex(infoHashHex))?.torrentFile()?.name()?.takeIf { it.isNotBlank() }
+    }.getOrNull()
+
+    override fun saveTorrentFile(infoHashHex: String, to: File): Boolean {
+        val handle = runCatching { session.find(Sha1Hash.parseHex(infoHashHex)) }.getOrNull() ?: return false
+        val info = runCatching { handle.torrentFile() }.getOrNull() ?: return false // metadata not here yet
+        return runCatching {
+            // The binding hands the info dict out one byte at a time.
+            val section = info.swig().get_info_section()
+            val size = section.size()
+            if (size <= 0 || size > MAX_KEPT_METADATA_BYTES) return false
+            val bytes = ByteArray(size.toInt())
+            for (i in bytes.indices) bytes[i] = section.at(i.toLong())
+            // Trackers by tier, as the torrent itself would list them: a
+            // private torrent finds its peers nowhere else.
+            val byTier = LinkedHashMap<Int, MutableList<String>>()
+            handle.trackers().forEach { entry ->
+                val url = entry.url()?.trim().orEmpty()
+                if (url.isNotEmpty()) byTier.getOrPut(entry.tier()) { mutableListOf() }.let { if (url !in it) it.add(url) }
+            }
+            val webSeeds = handle.urlSeeds().mapNotNull { it.trim().takeIf(String::isNotEmpty) }
+            to.parentFile?.mkdirs()
+            val tmp = File(to.path + ".tmp")
+            try {
+                tmp.writeBytes(KeptTorrent.bytes(byTier.values.toList(), webSeeds, bytes))
+                // Checked before it counts: the restart reads this very file with this
+                // very parser, so nothing is kept that the restart cannot use — the
+                // same torrent, and no symbolic link in it. (The first build of this
+                // wrote a file that was no torrent; the unit tests were green, since
+                // the real engine cannot run in them. Only reading the file back on a
+                // device showed it — 2026-11-25. The bytes are made by [KeptTorrent]
+                // now, which a test decodes with a decoder of its own.)
+                val kept = runCatching { TorrentInfo(tmp) }.getOrNull()
+                val sound = kept != null &&
+                    !hasSymlinkEntries(kept) &&
+                    kept.infoHash().toHex() == info.infoHash().toHex()
+                if (!sound) {
+                    Log.w(TAG, "could not keep the torrent's metadata: it does not read back as the same torrent")
+                    return false
+                }
+                if (!tmp.renameTo(to)) {
+                    Log.w(TAG, "could not keep the torrent's metadata: the file could not be moved into place")
+                    return false
+                }
+            } finally {
+                // After a successful move nothing is left; after anything else nothing may be.
+                tmp.delete()
+            }
+            Log.i(TAG, "kept the torrent's metadata as ${to.name}")
+            true
+        }.onFailure { Log.w(TAG, "could not keep the torrent's metadata: ${it.message}") }.getOrDefault(false)
+    }
+
+    /**
+     * The first 40 hex of the torrent's v2 info-hash — which is what a
+     * magnet may carry under `btih:` for a torrent that has a v2 hash. Null
+     * when there is none (a plain v1 torrent: libtorrent hands out zeroes).
+     */
+    private fun v2Prefix(info: TorrentInfo): String? = runCatching {
+        val hashes = info.swig().info_hashes()
+        if (hashes.has_v2()) hashes.getV2().to_hex().lowercase().take(40) else null
+    }.getOrNull()?.takeIf { it.any { c -> c != '0' } }
 
     /**
      * Applies whole-torrent sequential piece order. No `setSequentialDownload`
@@ -208,6 +272,8 @@ class TorrentEngine : TorrentEngineApi {
 
     private companion object {
         const val TAG = "TorrentEngine"
+        /** Metadata larger than this is not written out (it would hold the engine for seconds); rare. */
+        const val MAX_KEPT_METADATA_BYTES = 8L * 1024 * 1024
         // Matches the A4-matrix-verified playable set (2026-11-14).
         val VIDEO_EXTENSIONS = listOf(".mp4", ".m4v", ".webm", ".mkv", ".mov", ".avi", ".ts", ".flv", ".3gp")
     }

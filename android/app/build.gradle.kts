@@ -42,8 +42,8 @@ android {
         applicationId = "space.deepflux.android"
         minSdk = 28
         targetSdk = 36
-        versionCode = 29
-        versionName = "1.4.13"
+        versionCode = 30
+        versionName = "1.4.14"
 
         ndk {
             // libtorrent4j ships one .so per ABI. x86 (32-bit) dropped —

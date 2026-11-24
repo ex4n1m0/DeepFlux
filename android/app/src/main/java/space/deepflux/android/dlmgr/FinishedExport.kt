@@ -186,13 +186,16 @@ object FinishedExport {
         access: (Uri) -> Boolean = { canWriteTo(context, it) },
         run: Run? = null,
         fallbackToDownloads: Boolean = true,
+        alreadyInDownloads: (String, Long) -> Uri? = { name, size ->
+            MediaStoreExport.alreadyInDownloads(context, name, size)
+        },
     ): Result {
         val tree = chosenTree(folderUri, access)
         if (tree == null) {
             if (!fallbackToDownloads && folderUri.isNotBlank()) {
                 return Result.Failed("the chosen folder can no longer be opened")
             }
-            return toDownloads(context, source)
+            return toDownloads(context, source, alreadyInDownloads)
         }
         return try {
             copyIntoTree(context, source, tree, relativePath, run)
@@ -214,8 +217,42 @@ object FinishedExport {
         return runCatching { DocumentsContract.getTreeDocumentId(tree) }.map { tree }.getOrNull()
     }
 
-    private fun toDownloads(context: Context, source: File): Result {
+    /** How much of a file's beginning is looked at to tell it from another of the same name and size. */
+    private const val SAMPLE_BYTES = 64L * 1024
+
+    /**
+     * Whether the file behind [uri] begins like [source] — the caller has
+     * seen to it that both are of one size. The beginning only: another file
+     * of one name, one size and one beginning is not a real case, and the end
+     * of a big file cannot be had from a provider that hands out a pipe
+     * without pulling the whole file through (a chosen folder may be a cloud
+     * provider's). Anything that cannot be read — or that hands back less
+     * than its beginning — counts as different: the caller then copies, and
+     * at worst a numbered copy appears, where the other way round a file
+     * would go missing.
+     */
+    private fun sameContent(context: Context, uri: Uri, source: File): Boolean = runCatching {
+        val head = minOf(SAMPLE_BYTES, source.length()).toInt()
+        val sourceHead = java.io.RandomAccessFile(source, "r").use { file -> ByteArray(head).also { file.readFully(it) } }
+        val thereHead = context.contentResolver.openInputStream(uri)?.use { raw ->
+            ByteArray(head).also { bytes -> java.io.DataInputStream(raw).readFully(bytes) }
+        }
+        thereHead?.contentEquals(sourceHead) ?: false
+    }.getOrDefault(false)
+
+    private fun toDownloads(
+        context: Context,
+        source: File,
+        alreadyInDownloads: (String, Long) -> Uri?,
+    ): Result {
         if (Build.VERSION.SDK_INT < 29) return Result.NoDestination
+        // The same file (name and size) is already there: an earlier export,
+        // or the torrent was downloaded again. Each finish used to add a
+        // numbered copy — "ep1.mp4", "(1).mp4", "(2).mp4". Its bytes are
+        // looked at too: a different file that merely has the same name and
+        // size must not make a finished download go nowhere.
+        val there = alreadyInDownloads(source.name, source.length())
+        if (there != null && sameContent(context, there, source)) return Result.AlreadyThere
         return if (MediaStoreExport.exportToDownloads(context, source) != null) Result.Copied
         else Result.Failed("the public Downloads folder did not take the file")
     }
@@ -237,7 +274,12 @@ object FinishedExport {
         }
         val listing = listing(resolver, treeUri, dirId, run)
         val existing = listing[name]
-        if (existing != null && !existing.directory && existing.size == source.length()) return FinishedExport.Result.AlreadyThere
+        // The same file (name, size and beginning) is already there: an earlier
+        // export, or the torrent was downloaded again. Another file that merely
+        // has the same name and size is not taken for it: it goes beside.
+        if (existing != null && !existing.directory && existing.size == source.length() &&
+            sameContent(context, DocumentsContract.buildDocumentUriUsingTree(treeUri, existing.id), source)
+        ) return FinishedExport.Result.AlreadyThere
         val parent = DocumentsContract.buildDocumentUriUsingTree(treeUri, dirId)
         val document = DocumentsContract.createDocument(resolver, parent, mimeFor(name), name)
             ?: throw IOException("the folder would not take the file")

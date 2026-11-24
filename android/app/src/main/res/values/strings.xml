@@ -7,7 +7,13 @@
     <string name="channel_events_desc">Finished downloads and errors</string>
     <string name="notif_idle">No active downloads</string>
     <string name="notif_active">%1$d active · ↓ %2$s · %3$d%%</string>
-    <string name="notif_files">%1$d files · ↓ %2$s · %3$d%%</string>
+    <!-- the third argument is "42%", or "…" while the size is unknown -->
+    <plurals name="notif_files">
+        <item quantity="one">%1$d file · ↓ %2$s · %3$s</item>
+        <item quantity="other">%1$d files · ↓ %2$s · %3$s</item>
+    </plurals>
+    <string name="notif_progress_pct">%1$d%%</string>
+    <string name="notif_progress_unknown">…</string>
 
     <!-- Notification buttons + download events (2026-11-23) -->
     <string name="notif_pause_all">Pause all</string>
@@ -15,7 +21,10 @@
     <string name="notif_finished_title">Download finished</string>
     <string name="notif_failed_title">Download failed</string>
     <string name="notif_copy_failed_title">Not copied to your folder</string>
-    <string name="notif_files_fmt">%1$d files</string>
+    <plurals name="notif_files_count">
+        <item quantity="one">%1$d file</item>
+        <item quantity="other">%1$d files</item>
+    </plurals>
     <string name="notif_error_fmt">%1$s: %2$s</string>
     <string name="notif_generic_torrent">Torrent</string>
     <string name="notif_limit_title">Background time limit reached</string>

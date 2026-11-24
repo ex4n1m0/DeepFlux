@@ -64,6 +64,28 @@ object MediaStoreExport {
         }
     }
 
+    /**
+     * The address of a file with exactly this name and size in the
+     * public Downloads collection, or null. Only files this app put
+     * there are visible to it — which is the case that matters: the
+     * app's own earlier copies are what used to pile up.
+     */
+    fun alreadyInDownloads(context: Context, name: String, size: Long): Uri? {
+        if (android.os.Build.VERSION.SDK_INT < 29 || size <= 0) return null
+        return runCatching {
+            val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            context.contentResolver.query(
+                collection,
+                arrayOf(MediaStore.MediaColumns._ID),
+                // Not one that is still being written: a start cut short leaves such a row behind.
+                "${MediaStore.MediaColumns.DISPLAY_NAME} = ? AND ${MediaStore.MediaColumns.SIZE} = ? " +
+                    "AND ${MediaStore.MediaColumns.IS_PENDING} = 0",
+                arrayOf(name, size.toString()),
+                null,
+            )?.use { c -> if (c.moveToFirst()) android.content.ContentUris.withAppendedId(collection, c.getLong(0)) else null }
+        }.onFailure { Log.w(TAG, "could not look in Downloads for $name: ${it.message}") }.getOrNull()
+    }
+
     internal fun guessMimeType(name: String): String = when {
         name.endsWith(".mp4", true) || name.endsWith(".m4v", true) -> "video/mp4"
         name.endsWith(".webm", true) -> "video/webm"

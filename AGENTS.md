@@ -3653,6 +3653,21 @@ gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regre
 
 ## Android parity + review rounds (2026-11-23/24) — durable rules (1.4.13, RELEASED 2026-11-24)
 
+STATE (2026-11-25): Android 1.4.14 / versionCode 30 is on the site as an
+UNLINKED TEST BUILD (owner: "keep polishing what you find that needs
+polish … deploy to the website, I will test on a real phone"):
+`website/deepflux/DeepFlux-1.4.14-Android.apk` (58359944 bytes, sha256
+6afc327a359b89f9abf6867f5385df4ce154cfcbfdbddf2ea94e3bd675032946, same signing cert, installs over 1.4.13). Page buttons and
+`latest-android.json` STAY ON 1.4.13 until the owner's word. To release:
+swap the 4 page hrefs + the version/size/sha lines (EN + ZH), write the
+feed from the file in the deploy dir, delete the 1.4.13 APK there,
+`vercel --prod --yes --scope timedivision`, verify live. Unit suite
+398 tests / 0 failures / 5 Windows-host skips; 84 mutations
+each fail their own test against this code; two independent review
+passes (correctness + security) and a re-review of the final diff, every
+finding fixed or written down, and every fix run on the emulator
+("1.4.14" rules below). Code on branch `android-1.4.13` — NOT pushed.
+
 STATE (2026-11-24, evening): RELEASED. Android 1.4.13 / versionCode 29
 is LIVE (owner: "release", told about the two gaps below): both pages (EN
 + ZH) and `latest-android.json` point at
@@ -4004,25 +4019,173 @@ a real link entry the app refuses the torrent on the device
 ("addTorrentFile: refused"), and libtorrent itself rewrites a link
 target outside the torrent folder to point at itself.
 
-Found on the emulator, for 1.4.14 (none is a crash or a data loss):
-- A .torrent refused for symbolic links tells the user "Not a valid
-  .torrent file": `importTorrentFile` maps every engine null to
-  `noticeNotTorrent`. The magnet route has the proper message.
-- A torrent added from a .torrent FILE is listed under its 40-character
-  info-hash instead of its name (`Entry.name = hash` in
-  `importTorrentFile`; magnet adds carry `dn=`). Take the name from the
-  parsed torrent.
-- The foreground-service notification shows "-1%" for a download whose
-  size is unknown and always says "files" (`notif_files` receives -1 as
-  the percentage).
-- After an in-app update the app is not reopened: the first-time
-  unknown-sources detour leaves the system "Install unknown apps" screen
-  in the back stack, so the user lands there or on the home screen. Ask
-  for that consent BEFORE starting the installer, and say that the app
-  closes and must be reopened ("Open" on the system's "App installed"
-  screen starts it).
-- A magnet's one-time peer hint (`x.pe=`) is not retried after that peer
-  goes away (libtorrent behaviour; noted).
+1.4.14 (2026-11-25) — durable rules, do not regress:
+- KEPT METADATA. A magnet's metadata is written as a .torrent when it
+  arrives (`TorrentRepository.metadataArrived` →
+  `TorrentEngine.saveTorrentFile`), so a restart needs no peer — a
+  FINISHED magnet torrent came back as "Fetching info" with nothing to
+  play whenever nobody was seeding (1.4.13 never kept it; verified fixed
+  with the seeder switched off). The bytes come from the PURE builder
+  `engine/KeptTorrent.kt` (`d`, `announce`, `announce-list` by tier,
+  `url-list`, `info` = the raw info section); `KeptTorrentTest` decodes
+  them with an independent decoder. LESSON (cost a build): the first
+  writer lived inside the engine — where no JVM test can run it — and
+  wrote no opening `d`; every unit test was green while the file was no
+  torrent, and the restart silently fell back to the magnet. Only
+  pulling the file off the emulator and parsing it showed it. So the
+  engine now reads the file back with the parser the restart uses and
+  keeps it only if it is the same torrent without symbolic links, and a
+  source pin makes it write through the builder. After ANY change to
+  what only the real engine can do: pull the artifact off the emulator
+  and parse it — a green unit suite says nothing about it.
+  A failed keep is retried on later refreshes (3 per process, a minute
+  apart — not at the very next poll; reserved where it is launched:
+  reserved when the coroutine got going, two refreshes a moment apart
+  spent a try on nothing). At start a kept file counts only if it is
+  THIS torrent — by v1 hash, or by the v2 prefix a magnet may carry
+  under `btih:` (the test seeder's magnets are that shape: a hybrid
+  torrent whose `btih:` is its truncated v2 hash, which libtorrent
+  accepts) — else the other torrent is removed from the session (unless
+  another entry owns it), the file dropped and the magnet used. A kept
+  file that carries a link, or is no torrent, is dropped so the metadata
+  is kept again — "no torrent" only when the app's own reader agrees
+  (`TorrentMeta`): a moment's read error is no verdict on what may be a
+  private torrent's only metadata. Half-written `*.tmp` keeps are swept
+  at start once they are a minute old (an import writes its own copy
+  through such a file). The binding cannot hand out v2 piece layers:
+  the kept file is info section + trackers + web seeds (libtorrent 2.1
+  loads that for the hybrid test torrent).
+- "FINISHED" RE-FIRES AT EVERY START. libtorrent reports
+  TorrentFinishedAlert for every complete torrent at each start (the
+  app saves no resume data; the files are re-checked). That was
+  1.4.13's real cause of "ep1 (1).mp4, (2).mp4" in Downloads — a copy
+  at every launch — and would have been a "Download finished" on every
+  launch once magnet torrents come back complete. Rules: (a) announced
+  only when this process watched the torrent DOWNLOADING
+  (`unfinishedSeen`: added here, or a poll reporting
+  `TorrentState.DOWNLOADING` — NOT "bytes still to get": a complete
+  torrent being re-checked reads that way, and was announced at every
+  launch); (b) copied out ONCE per torrent (`copiedHashes`, saved with
+  the entry as `"c"`, set after a run with no failure; a run with a
+  failure is not marked, so it is finished at the next start; a copy
+  the user deleted is not put back; the "being copied" mark is held
+  until the copy job itself is over — the pool queues it). A list saved
+  by 1.4.13 says nothing about copies: such entries count as copied from
+  the start (copied again at the first start after the update, a
+  deleted copy came back), and a torrent a poll sees DOWNLOADING is
+  taken off the mark — so one still downloading is copied when it
+  finishes. Files that cannot be listed are no copy: nothing is marked
+  and the next start asks again (`copyFinishedOnce`).
+- NO SECOND COPY IN DOWNLOADS (`MediaStoreExport.alreadyInDownloads`:
+  name + size + `is_pending = 0`, asked of a recording provider in a
+  test; then `FinishedExport.sameContent` compares the FIRST 64 KiB —
+  in the chosen folder as well, so another file of the same name and
+  size goes beside / is copied again). Only the beginning: a chosen
+  folder may be a cloud provider's, and the end of a big file cannot be
+  had from a pipe without pulling the whole file through. Checked
+  against the emulator's real MediaProvider (Android 15): rows the app
+  inserts into the Downloads collection with a video MIME type ARE
+  returned by it.
+- A FAILED SETTINGS SAVE IS TOLD, NOT FATAL (`saveSetting` wraps every
+  write in TorrentRepository, the updater's daily stamp likewise;
+  `SettingsSaveGuardTest` pins it, incl. a source pin that no setter
+  launches a bare coroutine). Found by experiment: the exception used
+  to escape a plain `scope.launch` — on a phone that ends the process
+  (a full disk at a toggle, or at the chat-history save after every
+  reply). The settings library keeps handing out the NEW value after a
+  failed write until a later save writes everything, so the change is
+  lost if the app goes first — which is why the user is told.
+- WINDOWS TEST-RIG TRAP (this machine): an atomic move is refused while
+  another handle has the target open ("The process cannot access the
+  file because it is being used by another process") — the state
+  save's and DataStore's alike. A test that polls a file in a tight loop
+  can make the app's own save fail (seen: a torrent's name stayed
+  unsaved) or DataStore's (seen twice in 21 full runs: each time five
+  15 s timeouts in FinishedExportTest, all five at once — one refused
+  save leaves the shared store stuck for the rest of that run; the next
+  runs were clean). The app's save now retries the move (8 × 15 ms);
+  test helpers answer a colliding read with the last good one. If
+  FinishedExportTest times out on "the public Downloads folder being
+  the destination", suspect this first and re-run before hunting code.
+- NAMES: file-added torrents by their torrent's name (were listed by
+  info-hash); a magnet by `dn=` until the metadata arrives, then the
+  real name. The engine's status never carries a name (`QUERY_NAME` is
+  never asked): `TorrentEngine.torrentName` asks the handle.
+  `renameEntry` replaces entries in one step and `remove()` (and the
+  removal for symbolic links) go by `infoHash` — a captured copy whose
+  name had changed meanwhile used to survive a Remove and come back at
+  the next start. Listed names are cleaned exactly as the confirmation
+  shows them (`confirmationName`: no line breaks, no invisible direction
+  marks — a right-to-left override made a name read as another — and at
+  most 200 characters).
+- REFUSALS SAY WHY: a .torrent with a symbolic link →
+  `noticeTorrentHasSymlinksFile`; one the engine could not take →
+  `noticeCouldNotAddTorrent` (`TorrentFileAdd`, a sealed result).
+- NOTIFICATION: `TorrentService.describeProgress` (pure) — plurals,
+  "…" for an unknown size (was "-1%"), and no bar while idle (the
+  idle grace used to show a moving bar under "No active downloads").
+- UPDATER: the "install unknown apps" consent is asked BEFORE the
+  installer (a dialog in AppRoot; the path survives process death
+  through `rememberSaveable`; asked once) — asked by the installer
+  itself, the system screen stayed in the back stack and the user was
+  left in Settings. `install()` looks at the file's size again at the
+  last moment — with the size kept beside the path, so the look
+  survives Android starting the process again for that answer — and
+  drops a file that is no longer whole; the installer is started ONCE
+  per download however often asked (the consent answer and the dialog
+  returning with the activity both ask). The file's address and the
+  start of the installer are constructor parameters of `AppUpdater`,
+  so the installer's path is tested on any host (the real FileProvider
+  call refuses every Windows path — it compares separators; the test
+  that used to skip on Windows for that now runs).
+- DOWNLOADS TAB: "Open" (the system's viewer) for finished files the
+  app cannot play; finished videos keep Play; the row itself opens or
+  plays (`filecmd/FileIntents`, `DownloadOpener`; Commander's share /
+  open-with delegate to FileIntents). One tap on a downloaded APK
+  reaches the SYSTEM installer prompt — intended (it is the system's
+  own confirmation); an in-app confirm first is the owner's call. The
+  three lists leave 96dp below the last card: the floating "Add
+  download" button covers the bottom of the list and the last card's
+  buttons sat under it for good (pre-existing).
+- BOTTOM TAB LABEL shrinks to fit (`TextAutoSize.StepBased`, 7sp
+  floor): at 1.3× "Downloads" was cut to "Downlo"; hiding what did
+  not fit (a first attempt) took the label away at the NORMAL font
+  size too.
+- RSS: a feed item refused on the spot is reported
+  (`noticeRssItemRefused`); plain-file links are queued and refused
+  later by the engine as the item's error (intended). A feed's items
+  show only when its card is expanded, and everything present when a
+  feed is added is baselined as seen — give a test feed new guids.
+- A direct video link in the browser plays in the page (WebView); it
+  does not download — "Add download" is the way for a video URL.
+- TOOLING LESSONS (2026-11-25): (a) A failed assertion in an edit script
+  stops the chain BEFORE the build — the old APK stays on disk next to
+  BUILD_EXIT=1; compare the APK's timestamp and sha256 before trusting
+  a build (it happened twice). (b) The mutation check can run on a
+  private COPY of android/ while the working tree stays frozen — no
+  secrets needed (the key, keystore and local.properties files are
+  optional to the build script): `teeth_dir.py <spec> <copy's android
+  dir>` in the toolchain's scripts dir, with `make_teeth_1_4_14.py`
+  reading DF_SRC_ROOT / DF_RESULTS_DIR / DF_TEETH_OUT / DF_HALF /
+  DF_ONLY; two copies halve the time. On Windows the driver must launch
+  `gradlew` through bash (to CreateProcess it is "not a valid Win32
+  application" — a run that ends in 5 s tested nothing). List the
+  copy's sources with sha256sum before and verify after. (c) A break
+  that does not compile is not a mutation — the compiler enforces that
+  rule — and a test listed under a break must really FAIL under it: an
+  over-listed expectation is a finding about the test, not the code.
+  (d) Deleting a file on the emulator with a raw `rm` leaves its
+  media-store row behind; the app's copy then fails once ("UNIQUE
+  constraint failed: files._data"), says so, and is recognised at the
+  next start. Delete through the media store instead (`content delete
+  --uri content://media/external_primary/downloads --where
+  "_display_name='…'"`). (e) Edit files by exact-text anchors; a
+  line-range edit doubled an `@Test` and broke a test file — restore
+  it from the frozen copy and redo. (f) A test that waits for a test
+  double's internal list and then asks the unit under test has a race
+  (TorrentAddConfirmationTest had one for weeks; it surfaced when a
+  name-cleaning change widened the gap by a regex): await what the unit
+  RECORDS.
 
 Still unverified anywhere: the wake lock after a 60 s stall (does an
 inbound peer wake the radio?), a physical device's battery policy for
@@ -4030,8 +4193,16 @@ the foreground service (the emulator is always plugged in), the
 player's audio-track switch (needs a multi-track file), Compose
 rendering of agent markdown (not exercised — it would spend the owner's
 AI key), `Result.NoDestination` on an Android 9 image, a hung folder
-provider, multi-GB copies, and two open libtorrent questions: does
-`TorrentFinishedAlert` re-fire for a torrent that is already complete at
-session start (the folder lane is protected by `AlreadyThere`, the
-Downloads lane is not), and is `alert.handle()` still valid when the
-export reads it after the callback returned (pre-existing pattern).
+provider, multi-GB copies; and from 1.4.14: the install-consent dialog's
+return path on a device (no newer public build exists to install from —
+its pieces are unit-tested), the "…" wording for an unknown-size
+download (unit-tested only), a torrent restored UNFINISHED and then
+finishing (the DOWNLOADING-state rule — only "added here" ran on the
+emulator), and a v2-only torrent (its kept file would lack piece
+layers). Accepted trade-off (narrow): a torrent restored UNFINISHED
+whose whole downloading phase falls between two 1 s polls is not
+announced (its copy still runs — only the announcement depends on being
+watched); for an entry saved by 1.4.13, which counts as copied until a
+poll sees it download, that case is not copied either. Settled since:
+TorrentFinishedAlert DOES re-fire for an already-complete torrent at
+each start (see 1.4.14 above).
