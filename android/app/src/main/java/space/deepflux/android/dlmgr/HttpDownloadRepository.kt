@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import space.deepflux.android.agent.PublicUrls
+import space.deepflux.android.ui.Strings
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -38,6 +40,22 @@ data class HttpDownload(
     val hls: Boolean = false,
     val segmentsDone: Int = 0,
     val segmentsTotal: Int = 0,
+    /**
+     * Added through the agent (`download_url`): EVERY address this download
+     * touches — each redirect hop, every HLS playlist / key / segment URL —
+     * must be a public internet address (PublicUrls). A public server can
+     * otherwise 302 the phone into its own network. User- and browser-added
+     * downloads are the user's own choice and are not restricted.
+     */
+    val publicOnly: Boolean = false,
+    /**
+     * Paused by the NETWORK GATE, not by the user: goes back to the queue
+     * when the gate reopens. Persisted, so it survives the process dying
+     * (routine on Android) — it used to be a memory-only id set.
+     */
+    val gatePaused: Boolean = false,
+    /** Paused by "Pause all": "Resume all" restores exactly these. Persisted. */
+    val pauseAll: Boolean = false,
 ) {
     val progress: Float
         get() = when {
@@ -70,9 +88,29 @@ class HttpDownloadRepository(
     private val gateOk: () -> Boolean,
     /** Snackbar/notice channel — same sink the torrent repository uses. */
     private val notify: (String) -> Unit = {},
+    /**
+     * "Not a public internet address" check for agent-added downloads
+     * ([HttpDownload.publicOnly]) — null = allowed. Injectable so a test
+     * can play "public start URL, LAN redirect" against a loopback server.
+     */
+    private val urlPolicy: (String) -> String? = { PublicUrls.rejection(it) },
+    /**
+     * The folder finished files are copied to ("" = the public Downloads
+     * folder) — the user's choice in Settings → "Save location".
+     */
+    private val exportFolder: () -> String = { "" },
 ) {
 
     private val lock = Any()
+
+    /** A download finished (file promoted + exported). Wired to a notification by DeepFluxApp. */
+    var onFinished: ((String) -> Unit)? = null
+
+    /** A finished download could not be copied out for the user. Wired to a notification by DeepFluxApp. */
+    var onCopyFailed: ((String) -> Unit)? = null
+
+    /** A download gave up (retries exhausted / permanent failure). Wired to a notification by DeepFluxApp. */
+    var onFailed: ((fileName: String, reason: String) -> Unit)? = null
 
     private val _items = MutableStateFlow<List<HttpDownload>>(emptyList())
     val items: StateFlow<List<HttpDownload>> = _items.asStateFlow()
@@ -131,12 +169,18 @@ class HttpDownloadRepository(
      * `headers` ride every request incl. resumed ones (the grabber passes
      * Referer/Cookie/UA; they persist across restarts). `hls` marks an HLS
      * stream; a URL ending in .m3u8 is recognised without it.
+     *
+     * [fileName] is whatever the caller was told the file is called — an
+     * agent tool argument, a Content-Disposition header, a page title — so it
+     * is untrusted: it is reduced to a plain file name here, once, for every
+     * caller (see [safeFileName]).
      */
     fun add(
         url: String,
         headers: Map<String, String> = emptyMap(),
         fileName: String? = null,
         hls: Boolean = false,
+        publicOnly: Boolean = false,
     ): HttpDownload? {
         val trimmed = url.trim()
         if (!trimmed.startsWith("http://", true) && !trimmed.startsWith("https://", true)) return null
@@ -144,15 +188,16 @@ class HttpDownloadRepository(
         synchronized(lock) {
             val existing = _items.value.find { it.url == trimmed && it.state != HttpState.ERROR }
             if (existing != null) {
-                notify("Already in the list")
+                notify(Strings.t.noticeAlreadyInList)
                 return existing
             }
             val item = HttpDownload(
                 id = newId(),
                 url = trimmed,
-                fileName = dedupe(fileName ?: nameFromUrl(trimmed)),
+                fileName = dedupe(safeFileName(fileName ?: "").ifBlank { nameFromUrl(trimmed) }),
                 headers = headers,
                 hls = hls || trimmed.substringBefore('?').endsWith(".m3u8", ignoreCase = true),
+                publicOnly = publicOnly,
             )
             _items.value = _items.value + item
             persistLocked()
@@ -165,8 +210,14 @@ class HttpDownloadRepository(
         awaitLoaded()
         synchronized(lock) {
             updateLocked(id) {
-                if (it.state == HttpState.RUNNING || it.state == HttpState.QUEUED)
-                    it.copy(state = HttpState.PAUSED, speed = 0) else it
+                when {
+                    it.state == HttpState.RUNNING || it.state == HttpState.QUEUED ->
+                        it.copy(state = HttpState.PAUSED, speed = 0, gatePaused = false, pauseAll = false)
+                    // A pause is the user's from now on: the gate reopening
+                    // must not undo it and "Resume all" no longer owns it.
+                    it.gatePaused || it.pauseAll -> it.copy(gatePaused = false, pauseAll = false)
+                    else -> it
+                }
             }
             controls[id]?.pauseRequested = true
             persistLocked()
@@ -178,11 +229,86 @@ class HttpDownloadRepository(
         synchronized(lock) {
             updateLocked(id) {
                 if (it.state == HttpState.PAUSED || it.state == HttpState.ERROR)
-                    it.copy(state = HttpState.QUEUED, error = "", speed = 0) else it
+                    it.copy(state = HttpState.QUEUED, error = "", speed = 0, gatePaused = false, pauseAll = false) else it
             }
             // Deliberately NOT clearing the old worker's pause flag: it must
             // still unwind. The re-queued item gets a fresh worker (and a
             // fresh Control) from scheduleLocked once the old one is gone.
+            persistLocked()
+            scheduleLocked()
+        }
+    }
+
+    /** Pause every running/queued download (the notification's "Pause all"). */
+    fun pauseAll() {
+        awaitLoaded()
+        synchronized(lock) {
+            for (item in _items.value) {
+                val live = item.state == HttpState.RUNNING || item.state == HttpState.QUEUED
+                // A download the GATE paused is waiting too: left alone, it
+                // came back with the next Wi-Fi reconnect despite "Pause all".
+                if (!live && !item.gatePaused) continue
+                updateLocked(item.id) {
+                    it.copy(state = HttpState.PAUSED, speed = 0, gatePaused = false, pauseAll = true)
+                }
+                controls[item.id]?.pauseRequested = true
+            }
+            persistLocked()
+        }
+    }
+
+    /** True while something is paused by [pauseAll] (drives "Resume all"). Lock-free: read from any thread. */
+    fun anyPausedByPauseAll(): Boolean = _items.value.any { it.pauseAll }
+
+    /** Resume exactly what [pauseAll] paused. */
+    fun resumeAll() {
+        awaitLoaded()
+        synchronized(lock) {
+            for (item in _items.value.filter { it.pauseAll }) {
+                updateLocked(item.id) {
+                    it.copy(
+                        pauseAll = false,
+                        // Resumed by hand meanwhile: it already moved on.
+                        state = if (it.state == HttpState.PAUSED) HttpState.QUEUED else it.state,
+                        speed = 0,
+                    )
+                }
+            }
+            persistLocked()
+            scheduleLocked()
+        }
+    }
+
+    /** True while something waits for the network gate. Lock-free and cheap: the torrent lane's poll asks every second. */
+    fun hasGatePaused(): Boolean = _items.value.any { it.gatePaused }
+
+    /**
+     * The network gate opened again (Wi-Fi back, charger attached — the
+     * torrent lane's gate watcher calls this). Everything the GATE paused
+     * returns to the queue, and downloads added while the gate was closed
+     * (they sat Queued because nothing may start behind a closed gate)
+     * finally start.
+     *
+     * Called on every poll while the gate is open, not only on a transition:
+     * a gate blip shorter than the poll interval used to leave downloads
+     * paused with nothing left to notice the change.
+     */
+    fun onGateReopened() {
+        if (!hasGatePaused()) return
+        awaitLoaded()
+        if (!gateOk()) return
+        synchronized(lock) {
+            for (item in _items.value.filter { it.gatePaused }) {
+                updateLocked(item.id) {
+                    it.copy(
+                        gatePaused = false,
+                        // Queued behind the closed gate, or paused by it
+                        // mid-transfer. Resumed by hand meanwhile: it already moved on.
+                        state = if (it.state == HttpState.PAUSED || it.state == HttpState.QUEUED) HttpState.QUEUED else it.state,
+                        speed = 0,
+                    )
+                }
+            }
             persistLocked()
             scheduleLocked()
         }
@@ -219,20 +345,39 @@ class HttpDownloadRepository(
     private fun scheduleLocked() {
         var slots = MAX_ACTIVE - activeWorkers.size
         if (slots <= 0) return
-        if (!gateOk()) return // wifi/charging gate closed: nothing starts; workers also self-pause
+        if (!gateOk()) {
+            // Nothing starts behind a closed gate. Remember that these wait on
+            // the GATE — not on a free worker slot — so the gate watcher's
+            // nudge (hasGatePaused) knows to look here when it reopens.
+            for (item in _items.value) {
+                if (item.state == HttpState.QUEUED && !item.gatePaused) {
+                    updateLocked(item.id) { it.copy(gatePaused = true) }
+                }
+            }
+            return
+        }
+        var started = 0
         for (item in _items.value) {
             if (slots <= 0) break
             if (item.state != HttpState.QUEUED) continue
             // Its previous worker is still unwinding (pause → quick resume):
             // that worker's exit re-runs this scheduler and picks it up then.
             if (item.id in activeWorkers) continue
-            updateLocked(item.id) { it.copy(state = HttpState.RUNNING, speed = 0) }
+            updateLocked(item.id) { it.copy(state = HttpState.RUNNING, speed = 0, gatePaused = false) }
             val ctl = Control()
             controls[item.id] = ctl
             activeWorkers.add(item.id)
             pool.execute { runWorker(item.id, ctl) }
             slots--
+            started++
         }
+        // The first RUNNING item is what makes this lane "active", and the
+        // foreground service starts on that edge. Every caller persists
+        // BEFORE scheduling, so the next look used to be a worker's 5 s
+        // tick — too late for a user who leaves the app within seconds of
+        // starting a download (Android 12+ refuses the start from the
+        // background; second review, 2026-11-24).
+        if (started > 0) checkActive()
     }
 
     // ------------------------------------------------------------------ worker
@@ -253,11 +398,15 @@ class HttpDownloadRepository(
                     if (ctl.pauseRequested) return
                     attempt++
                     if (e is PermanentFailure || attempt >= MAX_ATTEMPTS) {
+                        val reason = (e.message ?: "network error").take(160)
                         update(id) {
-                            it.copy(state = HttpState.ERROR, error = (e.message ?: "network error").take(160), speed = 0)
+                            it.copy(state = HttpState.ERROR, error = reason, speed = 0)
                         }
                         persist()
-                        notify("Download failed: ${snapshot.fileName}")
+                        notify(Strings.t.noticeDownloadFailedFmt.format(snapshot.fileName))
+                        // A notification too: the snackbar is only seen while
+                        // the app is open, and downloads usually run while it is not.
+                        onFailed?.let { cb -> runCatching { cb(snapshot.fileName, reason) } }
                         Log.w(
                             TAG,
                             "download failed (${if (e is PermanentFailure) "not retryable" else "after $attempt attempts"}): ${e.message}"
@@ -298,11 +447,12 @@ class HttpDownloadRepository(
         }
         if (!gateOk()) {
             // wifi/charging policy closed mid-transfer — same PAUSED
-            // semantics as the torrent engine's session pause.
+            // semantics as the torrent engine's session pause. Remembered as
+            // gate-paused so onGateReopened() can put it back.
             ctl.pauseRequested = true
             update(id) {
                 if (it.state == HttpState.RUNNING)
-                    it.copy(state = HttpState.PAUSED, speed = 0, doneBytes = part.length()) else it
+                    it.copy(state = HttpState.PAUSED, speed = 0, doneBytes = part.length(), gatePaused = true) else it
             }
             persist()
             return true
@@ -319,8 +469,9 @@ class HttpDownloadRepository(
         if (item.hls) return transferHls(id, ctl)
         var fileName = item.fileName
         var part = File(saveDir, fileName + PART_SUFFIX)
+        dropIfLink(part)
         var have = part.length()
-        val conn = openFollowing(item.url, item.headers, have)
+        val conn = openFollowing(item.url, item.headers, have, item.publicOnly)
         try {
             var code = conn.code
             if (code == 416) {
@@ -369,8 +520,10 @@ class HttpDownloadRepository(
             // Content-Disposition wins only when the URL gave no usable extension.
             if (!fileName.contains('.')) {
                 dispositionName(conn.header("Content-Disposition"))?.let { dn ->
-                    val deduped = dedupe(dn)
+                    // A server-chosen name is untrusted too: it must not carry a path.
+                    val deduped = dedupe(safeFileName(dn))
                     val newPart = File(saveDir, deduped + PART_SUFFIX)
+                    dropIfLink(newPart)
                     if (have == 0L || part.renameTo(newPart)) {
                         fileName = deduped
                         part = newPart
@@ -434,12 +587,12 @@ class HttpDownloadRepository(
     private fun transferHls(id: String, ctl: Control) {
         val item = _items.value.find { it.id == id } ?: return
         val media = try {
-            var text = fetchText(item.url, item.headers)
+            var text = fetchText(item.url, item.headers, item.publicOnly)
             if (!HlsPlaylist.isPlaylist(text)) throw PermanentFailure("not an HLS playlist")
             var mediaUrl = item.url
             if (HlsPlaylist.isMaster(text)) {
                 mediaUrl = HlsPlaylist.pickVariant(text, item.url)
-                text = fetchText(mediaUrl, item.headers)
+                text = fetchText(mediaUrl, item.headers, item.publicOnly)
             }
             HlsPlaylist.parseMedia(text, mediaUrl)
         } catch (e: HlsPlaylist.Unsupported) {
@@ -448,6 +601,13 @@ class HttpDownloadRepository(
         if (!media.ended) throw PermanentFailure("live stream — cannot be downloaded")
         val total = media.segments.size
         if (total == 0) throw PermanentFailure("stream has no segments")
+        // The variant was picked from the (untrusted) playlist text: check it
+        // and every URL derived from it before the first byte is fetched.
+        if (item.publicOnly) {
+            for (u in listOfNotNull(media.initUrl, media.segments.firstOrNull()?.url) + media.segments.mapNotNull { it.key?.uri }) {
+                urlPolicy(u)?.let { throw PermanentFailure(it) }
+            }
+        }
 
         val ext = if (media.initUrl != null) ".mp4" else ".ts"
         var fileName = item.fileName
@@ -463,6 +623,7 @@ class HttpDownloadRepository(
             persist()
         }
         val part = File(saveDir, fileName + PART_SUFFIX)
+        dropIfLink(part)
         val sidecar = File(saveDir, fileName + PART_SUFFIX + HLS_SIDECAR)
 
         var index = 0
@@ -484,17 +645,17 @@ class HttpDownloadRepository(
             raf.seek(have)
             val initUrl = media.initUrl
             if (index == 0 && initUrl != null) {
-                val init = fetchBytes(initUrl, item.headers, MAX_SEGMENT_BYTES)
+                val init = fetchBytes(initUrl, item.headers, MAX_SEGMENT_BYTES, item.publicOnly)
                 raf.write(init)
                 have += init.size
             }
             while (index < total) {
                 if (shouldStop(id, ctl, part)) return
                 val seg = media.segments[index]
-                var bytes = fetchSegment(seg.url, item.headers, ctl) ?: return // stop asked mid-retry
+                var bytes = fetchSegment(seg.url, item.headers, ctl, item.publicOnly) ?: return // stop asked mid-retry
                 val k = seg.key
                 if (k != null) {
-                    val key = keys.getOrPut(k.uri) { fetchBytes(k.uri, item.headers, 1024) }
+                    val key = keys.getOrPut(k.uri) { fetchBytes(k.uri, item.headers, 1024, item.publicOnly) }
                     if (key.size != 16) throw PermanentFailure("unexpected AES key length (${key.size})")
                     bytes = decryptAes128(bytes, key, k.iv ?: HlsPlaylist.sequenceIv(seg.sequence))
                 }
@@ -531,11 +692,11 @@ class HttpDownloadRepository(
      * die on its fourth network blip (the per-download budget is 4 passes).
      * Returns null when a pause/cancel arrived while waiting to retry.
      */
-    private fun fetchSegment(url: String, headers: Map<String, String>, ctl: Control): ByteArray? {
+    private fun fetchSegment(url: String, headers: Map<String, String>, ctl: Control, publicOnly: Boolean): ByteArray? {
         var attempt = 0
         while (true) {
             try {
-                return fetchBytes(url, headers, MAX_SEGMENT_BYTES)
+                return fetchBytes(url, headers, MAX_SEGMENT_BYTES, publicOnly)
             } catch (e: PermanentFailure) {
                 throw e
             } catch (e: IOException) {
@@ -551,8 +712,8 @@ class HttpDownloadRepository(
     }
 
     /** Whole small body (playlist, key, init section, segment) with a hard size cap. */
-    private fun fetchBytes(url: String, headers: Map<String, String>, cap: Int): ByteArray {
-        val conn = openFollowing(url, headers, 0)
+    private fun fetchBytes(url: String, headers: Map<String, String>, cap: Int, publicOnly: Boolean = false): ByteArray {
+        val conn = openFollowing(url, headers, 0, publicOnly)
         try {
             val code = conn.code
             if (code != 200) {
@@ -575,8 +736,17 @@ class HttpDownloadRepository(
         }
     }
 
-    private fun fetchText(url: String, headers: Map<String, String>): String =
-        String(fetchBytes(url, headers, MAX_PLAYLIST_BYTES), Charsets.UTF_8)
+    private fun fetchText(url: String, headers: Map<String, String>, publicOnly: Boolean): String =
+        String(fetchBytes(url, headers, MAX_PLAYLIST_BYTES, publicOnly), Charsets.UTF_8)
+
+    /**
+     * A one-off fetch for callers that only need the bytes (an RSS item's
+     * .torrent link): every redirect hop must be a public address — exactly
+     * like a download the agent added — and the body is capped at [cap]
+     * bytes. Blocking: call off the main thread. Null on any failure.
+     */
+    fun fetchPublic(url: String, cap: Int, headers: Map<String, String> = emptyMap()): ByteArray? =
+        runCatching { fetchBytes(url, headers, cap, publicOnly = true) }.getOrNull()
 
     private fun decryptAes128(data: ByteArray, key: ByteArray, iv: ByteArray): ByteArray {
         return try {
@@ -615,6 +785,13 @@ class HttpDownloadRepository(
      * failed rename falls back to copy+delete before giving up.
      */
     private fun finish(id: String, part: File, finalFile: File, have: Long, total: Long) {
+        // Belt and braces behind safeFileName(): a file is only ever written
+        // directly inside the save dir — whatever name a server, a page or
+        // the agent came up with.
+        if (finalFile.canonicalFile.parentFile != saveDir.canonicalFile) {
+            part.delete()
+            throw PermanentFailure("refused a file name outside the download folder")
+        }
         if (!part.exists()) {
             if (finalFile.exists() && (total <= 0 || finalFile.length() == total)) {
                 Log.i(TAG, ".part already promoted — marking done: ${finalFile.name}")
@@ -631,10 +808,22 @@ class HttpDownloadRepository(
         }
         update(id) { it.copy(state = HttpState.DONE, doneBytes = have, totalBytes = if (total > 0) total else have, speed = 0) }
         persist()
-        notify("Download finished: ${finalFile.name}")
-        Thread({
-            runCatching { MediaStoreExport.exportToDownloads(context, finalFile) }
-        }, "http-dl-export").apply { isDaemon = true }.start()
+        notify(Strings.t.noticeDownloadFinishedFmt.format(finalFile.name))
+        // A notification too — the snackbar is only seen while the app is open.
+        onFinished?.let { cb -> runCatching { cb(finalFile.name) } }
+        // The copy for the user: into the folder chosen in Settings, or the
+        // public Downloads folder when none is. On the shared export pool,
+        // folder lookup included: a big file, or a slow settings read, must
+        // not hold up the queue — and nothing in there can take the app down.
+        FinishedExport.submit {
+            val result = FinishedExport.export(context, finalFile, exportFolder())
+            if (result is FinishedExport.Result.Failed) {
+                Log.w(TAG, "copy for the user failed for ${finalFile.name}: ${result.reason}")
+                runCatching { notify(Strings.t.noticeExportFailedFmt.format(finalFile.name)) }
+                // Told outside the app too: a snackbar is seen only while it is open.
+                onCopyFailed?.let { cb -> runCatching { cb(finalFile.name) } }
+            }
+        }
     }
 
     /** The 416-recovery pass: identical to [transfer] but guaranteed offset 0. */
@@ -652,6 +841,12 @@ class HttpDownloadRepository(
      * https→http chains are common on video CDNs — verified with the tv123
      * hosts, 2026-11-13).
      *
+     * With [publicOnly] (agent-added downloads) EVERY address is checked
+     * before it is requested — the first one again and each redirect target:
+     * a public server can otherwise 302 the phone into its own network, and
+     * the check the agent did on the original URL would never see it.
+     * Blocking (DNS) — worker threads only.
+     *
      * Transport is OkHttp (1.3.4): it negotiates HTTP/2, which a Chrome
      * User-Agent is expected to speak. HttpURLConnection's HTTP/1.1 +
      * Conscrypt shape gets Cloudflare-403'd by media CDNs (surrit.com)
@@ -663,10 +858,18 @@ class HttpDownloadRepository(
         .followRedirects(false)
         .build()
 
-    private fun openFollowing(url: String, headers: Map<String, String>, offset: Long): okhttp3.Response {
+    private fun openFollowing(
+        url: String,
+        headers: Map<String, String>,
+        offset: Long,
+        publicOnly: Boolean = false,
+    ): okhttp3.Response {
         var current = url
         var hops = 0
         while (true) {
+            if (publicOnly) {
+                urlPolicy(current)?.let { throw PermanentFailure(it) }
+            }
             val rb = okhttp3.Request.Builder().url(current)
             if (offset > 0) rb.header("Range", "bytes=$offset-")
             for ((k, v) in headers) rb.header(k, v)
@@ -740,6 +943,9 @@ class HttpDownloadRepository(
                         .put("hls", it.hls)
                         .put("segmentsDone", it.segmentsDone)
                         .put("segmentsTotal", it.segmentsTotal)
+                        .put("po", it.publicOnly)
+                        .put("gp", it.gatePaused)
+                        .put("pa", it.pauseAll)
                 )
             }
             val tmp = File(stateFile.parentFile, stateFile.name + ".tmp")
@@ -781,14 +987,31 @@ class HttpDownloadRepository(
                     hls = o.optBoolean("hls", false),
                     segmentsDone = o.optInt("segmentsDone", 0),
                     segmentsTotal = o.optInt("segmentsTotal", 0),
+                    publicOnly = o.optBoolean("po", false),
+                    gatePaused = o.optBoolean("gp", false),
+                    pauseAll = o.optBoolean("pa", false),
                 )
             }
         }.getOrDefault(emptyList())
         if (loaded.isEmpty()) return
         synchronized(lock) {
             _items.value = loaded.map {
-                val partLen = File(saveDir, it.fileName + PART_SUFFIX).length()
-                if (it.state == HttpState.QUEUED) it.copy(doneBytes = partLen) else it
+                // Names saved before safeFileName() existed are repaired for
+                // EVERY item. This used to be the third branch of the `when`,
+                // so a download that was running when the process died (it
+                // comes back QUEUED, or gate-paused) kept a traversal name —
+                // and wrote its `.part` outside the folder for a whole run.
+                val safe = if (it.fileName != safeFileName(it.fileName)) dedupe(safeFileName(it.fileName)) else it.fileName
+                val partLen = File(saveDir, safe + PART_SUFFIX).length()
+                val renamed = if (safe != it.fileName) it.copy(fileName = safe) else it
+                when {
+                    // Paused by the gate when the process died: back into the
+                    // queue; the scheduler re-evaluates the gate and starts it
+                    // as soon as it permits — no hand resume needed.
+                    renamed.gatePaused -> renamed.copy(state = HttpState.QUEUED, gatePaused = false, speed = 0, doneBytes = partLen)
+                    renamed.state == HttpState.QUEUED -> renamed.copy(doneBytes = partLen)
+                    else -> renamed
+                }
             }
             persistLocked()
             scheduleLocked()
@@ -798,11 +1021,45 @@ class HttpDownloadRepository(
 
     // ------------------------------------------------------------------ naming
 
+    /**
+     * Reduces any proposed file name — an agent tool argument, a
+     * Content-Disposition header, a page title, a URL segment — to a plain
+     * name that cannot escape the save dir (review finding 2026-11-24, HIGH):
+     * only the part after the last path separator survives, control and
+     * bidi-override characters go, and so do leading / trailing dots (which
+     * also turns "." and ".." into nothing). The caller falls back to a name
+     * from the URL when the result is empty.
+     */
+    /**
+     * A symbolic link where this engine is about to write goes first — the
+     * link itself, never what it points at. A hostile torrent can plant
+     * "<name>.part" inside the download folder; opened THROUGH the link, a
+     * download's bytes — and the HLS path's `setLength` — would land on any
+     * file of the app's private storage the link names (second security
+     * review, 2026-11-24). Such torrents are refused on add; this is the
+     * second lock on the same door.
+     */
+    private fun dropIfLink(file: File) {
+        if (!java.nio.file.Files.isSymbolicLink(file.toPath())) return
+        Log.w(TAG, "removed a symbolic link where a download writes: ${file.name}")
+        java.nio.file.Files.deleteIfExists(file.toPath())
+    }
+
+    fun safeFileName(raw: String): String {
+        val base = raw.substringAfterLast('/').substringAfterLast('\\')
+        return base
+            .replace(UNSAFE_NAME_CHARS, "_")
+            .trim()
+            .trim('.')
+            .take(200)
+            .trim()
+    }
+
     private fun nameFromUrl(url: String): String {
         val noQuery = url.substringBefore('?').substringBefore('#')
         val seg = noQuery.substringAfterLast('/').ifBlank { "download" }
         val decoded = runCatching { URLDecoder.decode(seg, "UTF-8") }.getOrDefault(seg)
-        return decoded.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(120).ifBlank { "download" }
+        return safeFileName(decoded).ifBlank { "download" }
     }
 
     private fun dedupe(name: String): String {
@@ -818,14 +1075,19 @@ class HttpDownloadRepository(
         }
     }
 
-    /** `filename="x.mp4"` and RFC 5987 `filename*=UTF-8''x.mp4` forms. */
+    /**
+     * `filename="x.mp4"` and RFC 5987 `filename*=UTF-8''x.mp4` forms. The
+     * value is server-chosen: it is passed through [safeFileName] (the RFC
+     * 5987 form is percent-decoded first, so an encoded `..%2F` is caught).
+     */
     private fun dispositionName(header: String?): String? {
         if (header.isNullOrBlank()) return null
         Regex("filename\\*=UTF-8''([^;]+)", RegexOption.IGNORE_CASE).find(header)?.groupValues?.get(1)?.let {
-            return runCatching { URLDecoder.decode(it.trim('\"'), "UTF-8") }.getOrNull()
+            val decoded = runCatching { URLDecoder.decode(it.trim('\"'), "UTF-8") }.getOrNull() ?: return null
+            return safeFileName(decoded).ifBlank { null }
         }
         Regex("filename=\"?([^\";]+)\"?", RegexOption.IGNORE_CASE).find(header)?.groupValues?.get(1)?.let {
-            return it.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_").ifBlank { null }
+            return safeFileName(it.trim()).ifBlank { null }
         }
         return null
     }
@@ -849,5 +1111,8 @@ class HttpDownloadRepository(
         private const val MAX_SEGMENT_BYTES = 64 * 1024 * 1024
         private const val MAX_PLAYLIST_BYTES = 5 * 1024 * 1024
         const val USER_AGENT = "Mozilla/5.0 (Linux; Android 14) DeepFlux/1.2"
+
+        /** Control characters, bidi overrides and zero-width marks — they can hide or disguise a name on screen. */
+        private val UNSAFE_NAME_CHARS = Regex("[\\p{Cntrl}\\u200B-\\u200F\\u202A-\\u202E\\u2066-\\u2069\\uFEFF]")
     }
 }

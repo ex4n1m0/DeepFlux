@@ -37,6 +37,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -59,6 +60,7 @@ import space.deepflux.android.engine.MagnetParser
 import space.deepflux.android.engine.TorrentItem
 import space.deepflux.android.engine.TorrentRepository
 import space.deepflux.android.engine.TorrentState
+import space.deepflux.android.engine.isActive
 import space.deepflux.android.ui.theme.Accent
 import space.deepflux.android.ui.theme.AccentData
 import space.deepflux.android.ui.theme.DimText
@@ -77,14 +79,30 @@ fun DownloadsScreen(
     httpRepo: HttpDownloadRepository,
     rss: space.deepflux.android.rss.RssRepository,
     isWide: Boolean = false,
+    /** Called whenever "is something waiting for Resume all?" may have changed (keeps the paused notice in step). */
+    onPauseStateChanged: () -> Unit = {},
 ) {
     var showAddDialog by remember { mutableStateOf(false) }
-    var selectedHash by remember { mutableStateOf<String?>(null) }
+    // rememberSaveable: the selected torrent survives a tab switch (the tab
+    // used to come back with the detail pane empty on tablets).
+    var selectedHash by rememberSaveable { mutableStateOf<String?>(null) }
+    // Destructive taps ask first (fix 2026-11-23): the remove button sits right
+    // next to Play on a touch target, and on an unfinished download one tap
+    // discarded the partial file with no undo.
+    var confirmRemoveHttp by remember { mutableStateOf<HttpDownload?>(null) }
+    var confirmRemoveTorrent by remember { mutableStateOf<TorrentItem?>(null) }
     // 0 = torrents, 1 = files, 2 = RSS (plan §13 #4).
     var section by rememberSaveable { mutableStateOf(0) }
     val selected = torrents.find { it.infoHash == selectedHash }
     // Collected (not .value-read) so the chip count follows feed adds/removes.
     val feedCount = rss.feeds.collectAsState().value.size
+    // "Pause all" / "Resume all" for BOTH lanes — the same pair the notification
+    // carries; it used to be reachable only from there.
+    val torrentsWaitForResume by repository.pausedByPauseAll.collectAsState()
+    val filesWaitForResume = httpDownloads.any { it.pauseAll }
+    val anythingToPause = torrents.any { it.isActive } ||
+        httpDownloads.any { it.state == HttpState.RUNNING || it.state == HttpState.QUEUED }
+    LaunchedEffect(torrentsWaitForResume, filesWaitForResume) { onPauseStateChanged() }
 
     Scaffold(
         floatingActionButton = {
@@ -117,6 +135,26 @@ fun DownloadsScreen(
                     selected = section == 2,
                     onClick = { section = 2 },
                 )
+                Spacer(Modifier.weight(1f))
+                // "Resume all" while something waits for it, else "Pause all"
+                // while anything runs.
+                if (torrentsWaitForResume || filesWaitForResume) {
+                    TextButton(
+                        onClick = {
+                            repository.resumeAll()
+                            httpRepo.resumeAll()
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) { Text(Strings.t.resumeAll, maxLines = 1) }
+                } else if (anythingToPause) {
+                    TextButton(
+                        onClick = {
+                            repository.pauseAll()
+                            httpRepo.pauseAll()
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp),
+                    ) { Text(Strings.t.pauseAll, maxLines = 1) }
+                }
             }
             Box(modifier = Modifier.weight(1f)) {
                 if (section == 2) {
@@ -136,15 +174,27 @@ fun DownloadsScreen(
                             }
                         }
                     } else {
-                        HttpDownloadList(httpDownloads, httpRepo, repository)
+                        HttpDownloadList(httpDownloads, httpRepo, repository) { confirmRemoveHttp = it }
                     }
                 } else if (isWide && selected != null) {
                     // Two-pane: list (weight 1) + detail (weight 1.2)
                     Row(modifier = Modifier.fillMaxSize()) {
                         Box(modifier = Modifier.weight(1f)) {
-                            TorrentList(torrents, repository, selectedHash, onSelect = { selectedHash = it })
+                            TorrentList(
+                                torrents, repository, selectedHash,
+                                onSelect = { selectedHash = it },
+                                onRemove = { confirmRemoveTorrent = it },
+                            )
                         }
-                        TorrentDetail(selected, repository, modifier = Modifier.weight(1.2f))
+                        TorrentDetail(
+                            selected, repository,
+                            modifier = Modifier.weight(1.2f),
+                            onPauseResume = {
+                                if (selected.state == TorrentState.PAUSED) repository.resume(selected.infoHash)
+                                else repository.pause(selected.infoHash)
+                            },
+                            onRemove = { confirmRemoveTorrent = selected },
+                        )
                     }
                 } else if (torrents.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -160,7 +210,7 @@ fun DownloadsScreen(
                         }
                     }
                 } else {
-                    TorrentList(torrents, repository, null, null)
+                    TorrentList(torrents, repository, null, null, onRemove = { confirmRemoveTorrent = it })
                 }
             }
         }
@@ -183,6 +233,47 @@ fun DownloadsScreen(
             onDismiss = { showAddDialog = false },
         )
     }
+
+    confirmRemoveHttp?.let { item ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmRemoveHttp = null },
+            title = { Text(Strings.t.removeDownloadTitle) },
+            text = {
+                Text(if (item.state == HttpState.DONE) Strings.t.removeDownloadKeepFile else Strings.t.removeDownloadPartial)
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    httpRepo.remove(item.id)
+                    confirmRemoveHttp = null
+                }) { Text(Strings.t.remove, color = ErrorRed) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmRemoveHttp = null }) { Text(Strings.t.cancel) }
+            },
+        )
+    }
+    confirmRemoveTorrent?.let { torrent ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmRemoveTorrent = null },
+            title = { Text(Strings.t.remove) },
+            text = {
+                Text(
+                    Strings.t.removeTorrentFmt.format(torrent.name.ifBlank { torrent.infoHash.take(12) }),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    repository.remove(torrent.infoHash)
+                    if (selectedHash == torrent.infoHash) selectedHash = null
+                    confirmRemoveTorrent = null
+                }) { Text(Strings.t.remove, color = ErrorRed) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmRemoveTorrent = null }) { Text(Strings.t.cancel) }
+            },
+        )
+    }
 }
 
 @Composable
@@ -199,20 +290,30 @@ private fun SectionChip(label: String, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun HttpDownloadList(items: List<HttpDownload>, repo: HttpDownloadRepository, torrentRepo: TorrentRepository) {
+private fun HttpDownloadList(
+    items: List<HttpDownload>,
+    repo: HttpDownloadRepository,
+    torrentRepo: TorrentRepository,
+    onRemove: (HttpDownload) -> Unit,
+) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         items(items, key = { it.id }) { item ->
-            HttpCard(item, repo, torrentRepo)
+            HttpCard(item, repo, torrentRepo, onRemove)
         }
     }
 }
 
 @Composable
-private fun HttpCard(item: HttpDownload, repo: HttpDownloadRepository, torrentRepo: TorrentRepository) {
+private fun HttpCard(
+    item: HttpDownload,
+    repo: HttpDownloadRepository,
+    torrentRepo: TorrentRepository,
+    onRemove: (HttpDownload) -> Unit,
+) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -315,7 +416,7 @@ private fun HttpCard(item: HttpDownload, repo: HttpDownloadRepository, torrentRe
                         PauseBars(tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
-                IconButton(onClick = { repo.remove(item.id) }) {
+                IconButton(onClick = { onRemove(item) }) {
                     Icon(Icons.Filled.Delete, contentDescription = Strings.t.remove, tint = ErrorRed)
                 }
             }
@@ -351,7 +452,11 @@ private fun httpStateColor(state: HttpState): Color = when (state) {
 }
 
 @Composable
-private fun TorrentCard(torrent: TorrentItem, repository: TorrentRepository) {
+private fun TorrentCard(
+    torrent: TorrentItem,
+    repository: TorrentRepository,
+    onRemove: (TorrentItem) -> Unit,
+) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     ) {
@@ -409,7 +514,7 @@ private fun TorrentCard(torrent: TorrentItem, repository: TorrentRepository) {
                         PauseBars(tint = MaterialTheme.colorScheme.onSurface)
                     }
                 }
-                IconButton(onClick = { repository.remove(torrent.infoHash) }) {
+                IconButton(onClick = { onRemove(torrent) }) {
                     Icon(Icons.Filled.Delete, contentDescription = Strings.t.remove, tint = ErrorRed)
                 }
             }
@@ -517,6 +622,7 @@ private fun TorrentList(
     repository: TorrentRepository,
     selectedHash: String?,
     onSelect: ((String) -> Unit)? = null,
+    onRemove: (TorrentItem) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -546,14 +652,25 @@ private fun TorrentList(
                     }
                 }
             } else {
-                TorrentCard(torrent, repository)
+                TorrentCard(torrent, repository, onRemove = onRemove)
             }
         }
     }
 }
 
+/**
+ * Tablet / TV detail pane (fix 2026-11-23): it used to show Play only — on a
+ * wide screen the list cards carry no buttons, so after the first tap on a
+ * torrent there was no way to pause, resume or remove it at all.
+ */
 @Composable
-private fun TorrentDetail(torrent: TorrentItem, repository: TorrentRepository, modifier: Modifier = Modifier) {
+private fun TorrentDetail(
+    torrent: TorrentItem,
+    repository: TorrentRepository,
+    modifier: Modifier = Modifier,
+    onPauseResume: () -> Unit,
+    onRemove: () -> Unit,
+) {
     Column(modifier = Modifier.fillMaxSize().then(modifier).padding(16.dp)) {
         Text(torrent.name, style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(12.dp))
@@ -568,8 +685,30 @@ private fun TorrentDetail(torrent: TorrentItem, repository: TorrentRepository, m
             style = MaterialTheme.typography.bodyMedium, color = DimText)
         Text(Strings.t.seedsPeersFmt.format(torrent.seeds, torrent.peers),
             style = MaterialTheme.typography.bodyMedium, color = DimText)
+        Spacer(Modifier.height(16.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (torrent.state == TorrentState.PAUSED) {
+                androidx.compose.material3.Button(onClick = onPauseResume) {
+                    Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(Strings.t.resume)
+                }
+            } else {
+                androidx.compose.material3.OutlinedButton(onClick = onPauseResume) {
+                    PauseBars(tint = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.width(6.dp))
+                    Text(Strings.t.pause)
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            androidx.compose.material3.OutlinedButton(onClick = onRemove) {
+                Icon(Icons.Filled.Delete, contentDescription = null, tint = ErrorRed)
+                Spacer(Modifier.width(6.dp))
+                Text(Strings.t.remove, color = ErrorRed)
+            }
+        }
+        Spacer(Modifier.height(16.dp))
         if (torrent.firstVideoPath.isNotBlank()) {
-            Spacer(Modifier.height(16.dp))
             val ctx = androidx.compose.ui.platform.LocalContext.current
             ExtendedFloatingActionButton(
                 onClick = { repository.playVideo(torrent, ctx) },
@@ -596,6 +735,8 @@ private fun RssSection(rss: space.deepflux.android.rss.RssRepository) {
     var showAdd by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<space.deepflux.android.rss.RssRepository.RssFeed?>(null) }
     var expandedId by remember { mutableStateOf<String?>(null) }
+    // A feed is the user's configuration; its ✕ sits next to Edit — ask first.
+    var confirmDeleteFeed by remember { mutableStateOf<space.deepflux.android.rss.RssRepository.RssFeed?>(null) }
 
     if (feeds.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -632,7 +773,7 @@ private fun RssSection(rss: space.deepflux.android.rss.RssRepository) {
                     },
                     onRefresh = { scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { rss.refresh(feed.id) } } },
                     onEdit = { editing = feed },
-                    onDelete = { rss.removeFeed(feed.id) },
+                    onDelete = { confirmDeleteFeed = feed },
                     onDownload = { guid -> scope.launch(kotlinx.coroutines.Dispatchers.IO) { rss.downloadItem(feed.id, guid) } },
                 )
             }
@@ -653,6 +794,23 @@ private fun RssSection(rss: space.deepflux.android.rss.RssRepository) {
                 showAdd = false
             },
             onDismiss = { showAdd = false },
+        )
+    }
+    if (confirmDeleteFeed != null) {
+        val feed = confirmDeleteFeed!!
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirmDeleteFeed = null },
+            title = { Text(Strings.t.deleteFeed) },
+            text = { Text(Strings.t.deleteFeedFmt.format(feed.title.ifBlank { feed.url })) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    rss.removeFeed(feed.id)
+                    confirmDeleteFeed = null
+                }) { Text(Strings.t.remove, color = ErrorRed) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirmDeleteFeed = null }) { Text(Strings.t.cancel) }
+            },
         )
     }
     if (editing != null) {

@@ -25,17 +25,18 @@ class MainActivity : ComponentActivity() {
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* denial is fine, FGS still runs */ }
 
-    // SAF folder picker result (v1.2)
+    // The folder finished downloads are copied to (v1.2 picker; the
+    // destination itself since 2026-11-24).
     private val folderPicker =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
-                // Persist the permission across reboots
-                contentResolver.takePersistableUriPermission(
+                // Keep the app's access across launches. The system can refuse
+                // (no keepable grant was handed out, or the app holds too
+                // many) — then the folder is no use as a destination.
+                repository.pickedFinishedDownloadsFolder(
                     uri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or
-                        android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+                    space.deepflux.android.dlmgr.FinishedExport.keepAccess(this, uri),
                 )
-                repository.setCustomSaveDir(uri.toString())
             }
         }
 
@@ -43,7 +44,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         maybeRequestNotificationPermission()
-        handleIntent(intent)
+        // A recreated activity (rotation, process death) is handed its
+        // ORIGINAL launch intent again. Handling it a second time re-raised
+        // the add prompt for a magnet the user had already answered.
+        if (savedInstanceState == null) handleIntent(intent)
         repository.pickFolder = { folderPicker.launch(null) }
         // Restore the persisted UI language BEFORE the first frame so a
         // Chinese-locale user never sees an English flash at boot.
@@ -61,12 +65,27 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // Foregrounded UI with active torrents → (re)assert the FGS legally.
-        if (repository.torrents.value.any { it.isActive }) repository.ensureService()
+        (application as DeepFluxApp).onAppVisibilityChanged?.invoke(true)
+        // Foregrounded UI with live transfers → (re)assert the FGS legally.
+        // Both lanes: torrents that are active, and HTTP downloads running
+        // or waiting for a slot (the activity starts before the repository's
+        // first snapshot exists; its own edge-trigger covers that case).
+        val app = application as DeepFluxApp
+        if (repository.torrents.value.any { it.isActive } ||
+            app.httpDownloads.items.value.any { it.state == space.deepflux.android.dlmgr.HttpState.RUNNING || it.state == space.deepflux.android.dlmgr.HttpState.QUEUED }
+        ) {
+            repository.ensureService()
+        }
+        // A "Resume all" notice from an earlier process carries an old token: re-arm it.
+        app.syncPausedNotice()
+        // Android's background time limit paused everything
+        // (TorrentService.onTimeout): the user is back — pick up where it stopped.
+        if (app.transfersPausedBySystemLimit) resumeAllTransfers()
     }
 
     override fun onStop() {
         super.onStop()
+        (application as DeepFluxApp).onAppVisibilityChanged?.invoke(false)
         // Persist the artwork cover cache (§14 P1): the resolver debounces
         // too, but a backgrounded process can be killed at any moment now.
         (application as DeepFluxApp).artwork.flushNow()
@@ -74,14 +93,35 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // What a later recreation must NOT handle again is this one, not the stale launch intent.
+        setIntent(intent)
         handleIntent(intent)
     }
 
     private fun handleIntent(intent: Intent?) {
-        val action = intent?.action ?: return
+        if (intent == null) return
+        val action = intent.action
         if (action == Intent.ACTION_VIEW || action == Intent.ACTION_SEND) {
             repository.addFromIntent(intent)
         }
+        // Notification routing (fix 2026-11-23): download notifications open
+        // the DOWNLOADS tab (they used to land on the boot tab), and the
+        // notification's "Resume all" also resumes what "Pause all" paused.
+        // The tab switch is harmless from anyone; the ACTION only counts
+        // with our secret (TorrentService.isResumeAllRequest) — this activity
+        // is exported, and any app could otherwise resume the user's paused
+        // downloads by intent.
+        val tab = intent.getStringExtra(space.deepflux.android.engine.TorrentRepository.EXTRA_OPEN_TAB)
+        if (!tab.isNullOrBlank()) repository.requestTab(tab)
+        if (space.deepflux.android.service.TorrentService.isResumeAllRequest(this, intent)) resumeAllTransfers()
+    }
+
+    private fun resumeAllTransfers() {
+        val app = application as DeepFluxApp
+        app.transfersPausedBySystemLimit = false
+        repository.resumeAll()
+        app.httpDownloads.resumeAll()
+        app.syncPausedNotice() // the standing "paused" notice has done its job
     }
 
     private fun maybeRequestNotificationPermission() {

@@ -228,4 +228,30 @@ object Adblock {
             parts = parts.substring(dot + 1)
         }
     }
+
+    /**
+     * Resource types that are never blocked (the desktop's
+     * `_NEVER_BLOCK_EXTENSIONS`): a blocked host serving a stylesheet or a
+     * font would break the page layout instead of removing an ad.
+     */
+    private val NEVER_BLOCK_EXTENSIONS = setOf(".css", ".woff", ".woff2", ".ttf", ".otf", ".eot")
+
+    /**
+     * The blocking decision for one request (fix 2026-11-23).
+     *
+     * The MAIN FRAME is never blocked: the list holds base domains that are
+     * real sites (matomo.org, sentry.io, plausible.io…), and intercepting a
+     * direct visit to one of them returned an empty body — a blank page with
+     * no error. Sub-resources on a listed host are blocked as before, except
+     * stylesheets and fonts.
+     *
+     * @param host the request host (already parsed by the caller)
+     * @param url the full request URL, for its extension
+     */
+    fun shouldBlock(isForMainFrame: Boolean, host: String, url: String): Boolean {
+        if (isForMainFrame) return false
+        val path = url.substringBefore('?').substringBefore('#').lowercase()
+        if (NEVER_BLOCK_EXTENSIONS.any { path.endsWith(it) }) return false
+        return isBlocked(host)
+    }
 }

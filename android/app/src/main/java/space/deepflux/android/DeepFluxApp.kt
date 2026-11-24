@@ -45,6 +45,39 @@ class DeepFluxApp : Application() {
     lateinit var updater: space.deepflux.android.data.AppUpdater
         private set
 
+    /**
+     * Android's background time limit paused every transfer
+     * (TorrentService.onTimeout). In memory only: the next time the user
+     * opens the app (MainActivity.onStart) everything is resumed and the flag
+     * cleared. The pause itself is saved with the transfers, so if the
+     * process dies first they stay paused and Downloads offers "Resume all".
+     */
+    var transfersPausedBySystemLimit = false
+        internal set
+
+    /**
+     * Set by the UI while a browser exists: true when the whole app came to
+     * the foreground, false when it left (MainActivity.onStart / onStop).
+     * The browser stops its pages' JavaScript timers meanwhile.
+     */
+    var onAppVisibilityChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * Keeps the standing "paused" notice in step with the transfers
+     * (TorrentService.syncPausedNotice): shown while transfers wait for
+     * "Resume all" and no service notification carries that button.
+     */
+    fun syncPausedNotice() {
+        space.deepflux.android.service.TorrentService.syncPausedNotice(
+            this,
+            wanted = space.deepflux.android.service.TorrentService.pausedNoticeWanted(
+                anyPausedByPauseAll = repository.anyPausedByPauseAll() || httpDownloads.anyPausedByPauseAll(),
+                serviceRunning = space.deepflux.android.service.TorrentService.running,
+            ),
+            bySystemLimit = transfersPausedBySystemLimit,
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
@@ -57,6 +90,8 @@ class DeepFluxApp : Application() {
             saveDir = repository.downloadsDir,
             gateOk = { repository.networkGateOpen() },
             notify = { repository.postNotice(it) },
+            // Finished files are copied into the folder chosen in Settings.
+            exportFolder = { repository.finishedDownloadFolder() },
         )
         // The HTTP/HLS lane rides the SAME foreground service as torrents —
         // without it the OS may kill the process mid-download when the app
@@ -64,12 +99,34 @@ class DeepFluxApp : Application() {
         httpDownloads.onActiveChanged = { active ->
             if (active) repository.ensureService()
         }
+        // Fix batch 2026-11-23 — the two lanes talk to each other through the
+        // torrent repository:
+        //  * its gate watcher tells the HTTP lane when Wi-Fi / charging is
+        //    back, so gate-paused downloads resume (they stayed Paused);
+        //  * finished/failed HTTP + HLS downloads raise a notification like
+        //    torrents do (they were snackbar-only, unseen while the app is closed).
+        repository.onGateOpened = { httpDownloads.onGateReopened() }
+        // The standing "paused" notice follows "is something waiting for
+        // Resume all?" — also when the last waiting torrent is removed by the
+        // agent, where no screen re-syncs it.
+        repository.onPauseAllChanged = { syncPausedNotice() }
+        httpDownloads.onFinished = { name ->
+            repository.postEventNotification(TorrentRepository.EventKind.FINISHED, name)
+        }
+        httpDownloads.onFailed = { name, reason ->
+            repository.postEventNotification(TorrentRepository.EventKind.FAILED, name, reason)
+        }
+        httpDownloads.onCopyFailed = { name ->
+            repository.postEventNotification(TorrentRepository.EventKind.COPY_FAILED, name)
+        }
         rss = space.deepflux.android.rss.RssRepository(this, repository, httpDownloads)
         artwork = space.deepflux.android.iptv.ArtworkResolver(this)
         updater = space.deepflux.android.data.AppUpdater(
             context = this,
             settings = repository.appSettings,
             notify = { repository.postNotice(it) },
+            // Same Wi-Fi / charging policy as every other download.
+            networkGateOpen = { repository.networkGateOpen() },
         )
         // Heavy artwork loads (iptv-org index parse, cover disk cache) start
         // now, off the main thread — non-blocking for app startup.

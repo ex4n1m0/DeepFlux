@@ -276,7 +276,9 @@ private fun VideoSheet(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                java.net.URLDecoder.decode(name, "UTF-8").take(60),
+                                // A title with a stray "%" is not percent-encoded:
+                                // the decoder throws on it (it crashed the sheet).
+                                runCatching { java.net.URLDecoder.decode(name, "UTF-8") }.getOrDefault(name).take(60),
                                 style = MaterialTheme.typography.bodyMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,

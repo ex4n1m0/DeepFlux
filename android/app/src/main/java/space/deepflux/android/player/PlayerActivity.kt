@@ -45,9 +45,94 @@ class PlayerActivity : ComponentActivity() {
     // Non-fatal decode gap for the current stream ("no sound: … (AC3)").
     private var trackWarning: String = ""
 
+    // ---- player basics (2026-11-24): rotation, aspect ratio, audio track.
+    private var playerView: PlayerView? = null
+    private var rotation = PlayerModes.Rotation.LANDSCAPE
+    /** Set once the rotation was decided for this stream — by its video track, or by the user's button. */
+    private var rotationChosen = false
+    private var aspect = PlayerModes.Aspect.FIT
+    private var audioButton: TextView? = null
+    private var audioDialog: android.app.AlertDialog? = null
+    /** True once the stream has played: later stalls are "buffering", not "connecting". */
+    private var everReady = false
+
+    /** The audio tracks as the picker lists them. */
+    private class AudioChoice(val group: Int, val track: Int, val label: String, val selected: Boolean)
+
+    private var audioChoices: List<AudioChoice> = emptyList()
+
     // The error that triggered the (single) format fallback, so the real
     // cause survives when the second guess fails too.
     private var firstError: PlaybackException? = null
+
+    /** A text button of the top bar, like the CC button. */
+    private fun topBarButton(label: String, description: String, onClick: () -> Unit) = TextView(this).apply {
+        text = label
+        setTextColor(0xFFDDDDDD.toInt())
+        textSize = 14f
+        setPadding(20, 16, 20, 16)
+        contentDescription = description
+        isClickable = true
+        isFocusable = true
+        setOnClickListener { onClick() }
+    }
+
+    private fun cycleRotation() {
+        rotationChosen = true
+        applyRotation(PlayerModes.nextRotation(rotation))
+    }
+
+    /** Landscape / portrait follow the sensor (either way up); Auto leaves it to the system's rotation setting. */
+    private fun applyRotation(r: PlayerModes.Rotation) {
+        rotation = r
+        requestedOrientation = when (r) {
+            PlayerModes.Rotation.LANDSCAPE -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            PlayerModes.Rotation.PORTRAIT -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            PlayerModes.Rotation.AUTO -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    private fun cycleAspect() {
+        aspect = PlayerModes.nextAspect(aspect)
+        applyAspect()
+    }
+
+    private fun applyAspect() {
+        playerView?.resizeMode = when (aspect) {
+            PlayerModes.Aspect.FIT -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+            PlayerModes.Aspect.FILL -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+            PlayerModes.Aspect.STRETCH -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+        }
+    }
+
+    private fun showAudioPicker() {
+        val p = player ?: return
+        if (audioChoices.size < 2) return
+        audioDialog?.dismiss()
+        audioDialog = android.app.AlertDialog.Builder(this)
+            .setTitle(Strings.t.playerAudioTrack)
+            .setSingleChoiceItems(
+                audioChoices.map { it.label }.toTypedArray(),
+                audioChoices.indexOfFirst { it.selected },
+            ) { _, which ->
+                val choice = audioChoices.getOrNull(which) ?: return@setSingleChoiceItems
+                val group = p.currentTracks.groups.getOrNull(choice.group) ?: return@setSingleChoiceItems
+                p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                    .setOverrideForType(
+                        androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, choice.track),
+                    )
+                    .build()
+                audioDialog?.dismiss()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_ROTATION, rotation.name)
+        outState.putString(STATE_ASPECT, aspect.name)
+    }
 
     // ---- resume positions (plan §13 #13) — keyed by stream title, stored
     // in player_positions.json (atomic writes, same sidecar style as the
@@ -387,6 +472,27 @@ class PlayerActivity : ComponentActivity() {
             return
         }
         active = this
+        // The user's rotation and aspect choices survive the activity (a rotation
+        // does not recreate it — see the manifest — but a process death does).
+        savedInstanceState?.getString(STATE_ROTATION)?.let { s ->
+            runCatching { PlayerModes.Rotation.valueOf(s) }.getOrNull()?.let { rotation = it; rotationChosen = true }
+        }
+        savedInstanceState?.getString(STATE_ASPECT)?.let { s ->
+            runCatching { PlayerModes.Aspect.valueOf(s) }.getOrNull()?.let { aspect = it }
+        }
+        // Edge to edge — under the system bars and the display cutout — with the
+        // bars hidden; a swipe shows them for a moment. The bar with ✕ keeps
+        // clear of the cutout (see its inset listener below).
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        androidx.core.view.WindowInsetsControllerCompat(window, window.decorView).apply {
+            hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        }
 
         val mimeType = inferMimeType(url, intent.getStringExtra(EXTRA_MIME))
         val userAgent = intent.getStringExtra(EXTRA_USER_AGENT)?.takeIf { it.isNotBlank() }
@@ -395,17 +501,22 @@ class PlayerActivity : ComponentActivity() {
         // §13 #8: auto-load a sidecar that already exists (a downloaded
         // subtitle persists next to the file / in the subtitles store).
         subtitleFile = findExistingSubtitle(title)
-        Log.i(TAG, "playing: $url (mime=$mimeType, ua=${if (userAgent == DEFAULT_USER_AGENT) "default" else "channel"}, title=$title)")
+        // Host only: stream URLs carry session tokens and passwords.
+        Log.i(TAG, "playing: ${runCatching { java.net.URL(url).host }.getOrDefault("?")} (mime=$mimeType, ua=${if (userAgent == DEFAULT_USER_AGENT) "default" else "channel"}, title=$title)")
 
         val container = FrameLayout(this)
         val view = PlayerView(this).apply {
             useController = true
+            // A stall mid-stream shows the spinner — not a frozen picture and silence.
+            setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             )
         }
         container.addView(view)
+        playerView = view
+        applyAspect()
 
         // Status overlay: Connecting… while loading, error + Retry on failure.
         val overlay = LinearLayout(this).apply {
@@ -491,6 +602,23 @@ class PlayerActivity : ComponentActivity() {
         }
         ccButton = ccBtn
         topBar.addView(ccBtn)
+        // Rotation, aspect ratio, audio track (2026-11-24). The first two cycle;
+        // the third appears only when the stream has more than one audio track.
+        topBar.addView(topBarButton("⟳", Strings.t.playerRotation) { cycleRotation() })
+        topBar.addView(topBarButton("⤢", Strings.t.playerAspect) { cycleAspect() })
+        val audioBtn = topBarButton(Strings.t.playerAudioTrack, Strings.t.playerAudioTrack) { showAudioPicker() }
+            .apply { visibility = android.view.View.GONE }
+        audioButton = audioBtn
+        topBar.addView(audioBtn)
+        // The bar sits under the cutout and the (hidden) status bar now.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(topBar) { v, insets ->
+            val safe = insets.getInsets(
+                androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout(),
+            )
+            v.setPadding(8, safe.top + 8, 16, 8)
+            insets
+        }
         container.addView(
             topBar,
             FrameLayout.LayoutParams(
@@ -516,6 +644,17 @@ class PlayerActivity : ComponentActivity() {
 
             player = ExoPlayer.Builder(this)
                 .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+                // Audio focus: the stream yields to a call or another player and
+                // takes over again after it — it used to play on top of both. And
+                // pulling the headphones out pauses instead of switching to the speaker.
+                .setAudioAttributes(
+                    androidx.media3.common.AudioAttributes.Builder()
+                        .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                        .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MOVIE)
+                        .build(),
+                    /* handleAudioFocus = */ true,
+                )
+                .setHandleAudioBecomingNoisy(true)
                 .build()
                 .also { p ->
                     view.player = p
@@ -532,6 +671,7 @@ class PlayerActivity : ComponentActivity() {
 
                         override fun onPlaybackStateChanged(playbackState: Int) {
                             if (playbackState == Player.STATE_READY) {
+                                everReady = true
                                 // Keep a decode warning visible: READY fires
                                 // even when a whole track type is unplayable.
                                 statusText?.text = trackWarning
@@ -545,6 +685,13 @@ class PlayerActivity : ComponentActivity() {
                             if (playbackState == Player.STATE_ENDED) {
                                 // Finished all the way through — forget the position.
                                 clearPosition()
+                            }
+                            // A stall after the stream had been playing. Before the first
+                            // frame "Connecting…" stays what it says.
+                            if (playbackState == Player.STATE_BUFFERING && everReady) {
+                                statusText?.text = Strings.t.playerBuffering
+                                detailText?.text = ""
+                                retryButton?.visibility = android.view.View.GONE
                             }
                         }
 
@@ -588,6 +735,30 @@ class PlayerActivity : ComponentActivity() {
                                 else -> ""
                             }
                             if (trackWarning.isNotBlank()) statusText?.text = trackWarning
+
+                            // The audio picker lists every audio track, named by what it is.
+                            audioChoices = tracks.groups.mapIndexedNotNull { gi, g ->
+                                if (g.type != androidx.media3.common.C.TRACK_TYPE_AUDIO) {
+                                    null
+                                } else {
+                                    (0 until g.length).map { ti ->
+                                        val f = g.getTrackFormat(ti)
+                                        AudioChoice(
+                                            gi, ti,
+                                            PlayerModes.audioLabel(ti + 1, f.language, f.sampleMimeType, f.channelCount),
+                                            g.isTrackSelected(ti),
+                                        )
+                                    }
+                                }
+                            }.flatten()
+                            audioButton?.visibility =
+                                if (audioChoices.size > 1) android.view.View.VISIBLE else android.view.View.GONE
+                            // A video opens in landscape — once per stream; after that the
+                            // rotation button is the user's. Audio-only stays as it is.
+                            if (videoTracks > 0 && !rotationChosen) {
+                                rotationChosen = true
+                                applyRotation(PlayerModes.Rotation.LANDSCAPE)
+                            }
                         }
 
                         override fun onPlayerError(error: PlaybackException) {
@@ -750,6 +921,9 @@ class PlayerActivity : ComponentActivity() {
         chromeHandler.removeCallbacksAndMessages(null)
         resumeBar?.let { (it.parent as? FrameLayout)?.removeView(it) }
         resumeBar = null
+        audioDialog?.dismiss()
+        audioDialog = null
+        playerView = null
         // Final position save — the 5s tick misses the tail of a session.
         player?.let { p -> runCatching { if (p.duration > 0) savePosition(p.currentPosition, p.duration) } }
         try {
@@ -779,6 +953,9 @@ class PlayerActivity : ComponentActivity() {
         private const val TAG = "PlayerActivity"
         /** Top bar auto-hides this long after playback starts (owner 2026-11-16). */
         private const val TOP_BAR_AUTOHIDE_MS = 10_000L
+
+        private const val STATE_ROTATION = "rotation"
+        private const val STATE_ASPECT = "aspect"
         const val DEFAULT_USER_AGENT = "DeepFlux/1.0 Android"
         const val EXTRA_URL = "url"
         const val EXTRA_TITLE = "title"

@@ -95,14 +95,40 @@ fun SettingsScreen(repository: TorrentRepository) {
                 // Save location
                 Text(Strings.t.saveLocation, style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.height(4.dp))
+                // The chosen folder is where finished downloads are copied to.
+                // The system or the user can take the app's access to it away —
+                // then say so; the copies go to Downloads until it is chosen again.
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val folderUri = prefs.customSaveDirUri
+                // Asking the system is a call to another process: once per
+                // folder, not once per recomposition of this screen.
+                val folderUsable = remember(folderUri) {
+                    folderUri.isBlank() ||
+                        space.deepflux.android.dlmgr.FinishedExport.canWriteTo(context, android.net.Uri.parse(folderUri))
+                }
+                val folderName = remember(folderUri) {
+                    if (folderUri.isBlank()) "" else
+                        space.deepflux.android.filecmd.CommanderRepository.pickedFolderName(android.net.Uri.parse(folderUri))
+                }
+                val hasDownloadsCollection = remember { android.os.Build.VERSION.SDK_INT >= 29 }
                 Text(
-                    if (prefs.customSaveDirUri.isNotBlank()) Strings.t.saveLocationCustom
-                    else Strings.t.saveLocationDefault,
+                    when {
+                        // Android 9 has no public Downloads collection: without a chosen folder there is nothing to copy to.
+                        folderUri.isBlank() && !hasDownloadsCollection -> Strings.t.saveLocationNoDownloads
+                        folderUri.isBlank() -> Strings.t.saveLocationDefault
+                        !folderUsable -> Strings.t.saveLocationLost
+                        else -> Strings.t.saveLocationCustomFmt.format(folderName)
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = DimText,
+                    color = if (folderUsable) DimText else space.deepflux.android.ui.theme.WarnYellow,
                 )
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { repository.pickFolder?.invoke() }) { Text(Strings.t.chooseFolder) }
+                    if (folderUri.isNotBlank()) {
+                        TextButton(onClick = { repository.clearCustomSaveDir() }) { Text(Strings.t.useDefaultFolder) }
+                    }
+                    TextButton(onClick = { repository.pickFolder?.invoke() }) {
+                        Text(if (folderUri.isBlank()) Strings.t.chooseFolder else Strings.t.changeFolder)
+                    }
                 }
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline, thickness = 0.5.dp)
                 Spacer(Modifier.height(4.dp))
@@ -189,21 +215,35 @@ fun SettingsScreen(repository: TorrentRepository) {
             val appCtx = androidx.compose.ui.platform.LocalContext.current.applicationContext
             val updater = (appCtx as space.deepflux.android.DeepFluxApp).updater
             CompactCard(null) {
-                SwitchRow(
-                    title = Strings.t.updateAutoCheck,
-                    subtitle = "",
-                    checked = prefs.updatesAutoCheck,
-                    last = true,
-                    onChange = { repository.setUpdatesAutoCheck(it) },
-                )
-                TextButton(onClick = {
-                    updater.checkNow { info ->
-                        // Non-null also sets `available` → AppRoot opens the
-                        // update dialog wherever the user is.
-                        if (info == null) repository.postNotice(Strings.t.upToDate)
+                if (updater.installedByPlayStore) {
+                    // Play delivers the updates for a Play install; the
+                    // website APK could never install over it.
+                    Text(Strings.t.updateViaPlay, style = MaterialTheme.typography.bodySmall, color = DimText)
+                } else {
+                    SwitchRow(
+                        title = Strings.t.updateAutoCheck,
+                        subtitle = "",
+                        checked = prefs.updatesAutoCheck,
+                        last = true,
+                        onChange = { repository.setUpdatesAutoCheck(it) },
+                    )
+                    TextButton(onClick = {
+                        // Says what actually happened: a FAILED check used to
+                        // be reported as "up to date".
+                        updater.checkNow { result ->
+                            when (result) {
+                                // AppRoot watches `available` and opens the dialog wherever the user is.
+                                is space.deepflux.android.data.CheckResult.Available -> Unit
+                                space.deepflux.android.data.CheckResult.UpToDate ->
+                                    repository.postNotice(Strings.t.upToDate)
+                                is space.deepflux.android.data.CheckResult.Failed ->
+                                    repository.postNotice(Strings.t.updateCheckFailedFmt.format(result.reason))
+                                space.deepflux.android.data.CheckResult.ManagedByStore -> Unit
+                            }
+                        }
+                    }) {
+                        Text(Strings.t.updateCheckNow, color = Accent)
                     }
-                }) {
-                    Text(Strings.t.updateCheckNow, color = Accent)
                 }
             }
 

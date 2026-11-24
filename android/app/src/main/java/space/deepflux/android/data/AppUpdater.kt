@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import space.deepflux.android.BuildConfig
+import space.deepflux.android.ui.Strings
 import java.io.File
 import java.security.MessageDigest
 
@@ -35,7 +36,25 @@ sealed class UpdateProgress {
     data class Downloading(val read: Long, val total: Long) : UpdateProgress()
     data object Verifying : UpdateProgress()
     data class Ready(val file: File) : UpdateProgress()
-    data class Error(val message: String) : UpdateProgress()
+    /**
+     * @param waitingForNetwork the download was not started at all because the
+     * Wi-Fi-only / charging-only gate is closed — not an error, "Update" retries.
+     */
+    data class Error(val message: String, val waitingForNetwork: Boolean = false) : UpdateProgress()
+}
+
+/** Outcome of a feed check. A check that FAILED must never read as "up to date" (it used to). */
+sealed class CheckResult {
+    data class Available(val info: UpdateInfo) : CheckResult()
+
+    /** The feed was read and this install is current (or the user skipped that version). */
+    data object UpToDate : CheckResult()
+
+    /** The feed could not be read or is malformed. */
+    data class Failed(val reason: String) : CheckResult()
+
+    /** This install came from Google Play, which delivers its own updates. */
+    data object ManagedByStore : CheckResult()
 }
 
 /**
@@ -57,8 +76,23 @@ class AppUpdater(
     private val context: Context,
     private val settings: AppSettings,
     private val notify: (String) -> Unit,
+    /** The app's Wi-Fi / charging gate — an update is a ~500 MB download on mobile data otherwise. */
+    private val networkGateOpen: () -> Boolean = { true },
+    /** Feed + APK base URL; only tests point this at a local server. */
+    private val baseUrl: String = BASE_URL,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * This install came from Google Play. Play then delivers the updates:
+     * the website APK is signed with a different key than Play's, so a
+     * sideloaded update could never install over it — it would download
+     * hundreds of MB and then fail. Both check paths do nothing here.
+     */
+    val installedByPlayStore: Boolean = isInstalledByPlayStore(context)
+
+    /** A failed check is retried no sooner than this — and never stamps the daily gate (it used to, silencing checks for 20 h after one failure). */
+    @Volatile private var lastFailureAt = 0L
 
     /** Non-null ⇒ the update dialog is shown. Cleared by Later/Skip. */
     private val _available = MutableStateFlow<UpdateInfo?>(null)
@@ -67,7 +101,22 @@ class AppUpdater(
     private val _progress = MutableStateFlow<UpdateProgress>(UpdateProgress.Idle)
     val progress: StateFlow<UpdateProgress> = _progress.asStateFlow()
 
-    @Volatile private var cancelRequested = false
+    /**
+     * Which download is THE one. Every start takes the next number; a
+     * download that is still winding down (blocked in a read when it was
+     * cancelled) notices it is no longer current and then owns nothing — not
+     * the payload file, not [progress]. There used to be one shared "cancel"
+     * flag: a restart reset it, and the old download carried on writing
+     * into the file the new one was writing, and reported its own outcome
+     * over the new one's.
+     */
+    private val currentDownload = java.util.concurrent.atomic.AtomicLong(0)
+
+    /** The download the user cancelled (0 = none). */
+    private val cancelledDownload = java.util.concurrent.atomic.AtomicLong(0)
+
+    private fun isLiveDownload(gen: Long): Boolean =
+        currentDownload.get() == gen && cancelledDownload.get() != gen
 
     private val http = okhttp3.OkHttpClient.Builder()
         .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
@@ -77,78 +126,128 @@ class AppUpdater(
 
     /** Startup check — silently does nothing when not due yet. */
     fun autoCheckIfDue() {
+        if (installedByPlayStore) return
         scope.launch {
             val prefsNow = settings.prefsSnapshot()
             if (!prefsNow.updatesAutoCheck) return@launch
             if (System.currentTimeMillis() - prefsNow.lastUpdateCheck < CHECK_INTERVAL_MS) return@launch
-            val info = runCatching { checkLocked(force = false) }.getOrNull()
-            if (info != null) {
-                _available.value = info
-                notify("Update available — v${info.version}")
+            if (System.currentTimeMillis() - lastFailureAt < FAILURE_BACKOFF_MS) return@launch
+            // An available update also opens the dialog: AppRoot watches `available`.
+            checkFeed(force = false)
+        }
+    }
+
+    /** Settings → "Check for updates": always runs, and says what actually happened. */
+    fun checkNow(onResult: (CheckResult) -> Unit) {
+        if (installedByPlayStore) {
+            onResult(CheckResult.ManagedByStore)
+            return
+        }
+        scope.launch { onResult(checkFeed(force = true)) }
+    }
+
+    /** One feed fetch + parse — the only place the network is touched for a check. */
+    private fun fetchFeed(): FeedFetch = try {
+        http.newCall(
+            okhttp3.Request.Builder()
+                .url("$baseUrl/latest-android.json")
+                .header("Cache-Control", "no-cache")
+                .build()
+        ).execute().use { resp ->
+            if (!resp.isSuccessful) FeedFetch.Failed("HTTP ${resp.code}")
+            else FeedFetch.Read(resp.body?.string()?.let(::parseFeed))
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "feed fetch failed: ${e.message}")
+        FeedFetch.Failed(e.message?.take(120) ?: e.javaClass.simpleName)
+    }
+
+    private sealed class FeedFetch {
+        /** [info] is null when the feed was read but is malformed. */
+        class Read(val info: UpdateInfo?) : FeedFetch()
+        class Failed(val reason: String) : FeedFetch()
+    }
+
+    private suspend fun checkFeed(force: Boolean): CheckResult {
+        val prefsNow = settings.prefsSnapshot()
+        return when (val fetch = withContext(Dispatchers.IO) { fetchFeed() }) {
+            is FeedFetch.Failed -> {
+                lastFailureAt = System.currentTimeMillis()
+                CheckResult.Failed(fetch.reason)
+            }
+            is FeedFetch.Read -> {
+                val info = fetch.info
+                if (info == null) {
+                    lastFailureAt = System.currentTimeMillis()
+                    return CheckResult.Failed("feed is invalid")
+                }
+                // Stamped only once the feed was really read. It used to be
+                // stamped BEFORE the probe, so one offline launch silenced
+                // the auto-check for the next 20 hours.
+                settings.setLastUpdateCheck(System.currentTimeMillis())
+                lastFailureAt = 0
+                when {
+                    !force && info.version == prefsNow.updateSkipVersion -> CheckResult.UpToDate
+                    isNewer(info) -> {
+                        // AppRoot watches `available` and opens the dialog.
+                        _available.value = info
+                        CheckResult.Available(info)
+                    }
+                    else -> CheckResult.UpToDate
+                }
             }
         }
     }
 
-    /** Settings → "Check for updates": always runs, honest about the result. */
-    fun checkNow(onResult: (UpdateInfo?) -> Unit) {
-        scope.launch {
-            val info = runCatching { checkLocked(force = true) }.getOrNull()
-            // A found update must ALSO open the dialog (AppRoot watches
-            // `available`) — not just answer this callback (found live
-            // 2026-11-16: the manual check was silent when an update existed).
-            if (info != null) _available.value = info
-            onResult(info)
-        }
-    }
-
-    private suspend fun checkLocked(force: Boolean): UpdateInfo? {
-        settings.setLastUpdateCheck(System.currentTimeMillis())
-        val prefsNow = settings.prefsSnapshot()
-        val info = withContext(Dispatchers.IO) {
-            runCatching {
-                http.newCall(
-                    okhttp3.Request.Builder()
-                        .url(FEED_URL)
-                        .header("Cache-Control", "no-cache")
-                        .build()
-                ).execute().use { resp ->
-                    if (!resp.isSuccessful) return@use null
-                    parseFeed(resp.body?.string() ?: return@use null)
-                }
-            }.onFailure { Log.w(TAG, "feed fetch failed: ${it.message}") }.getOrNull()
-        } ?: return null
-        if (!force && info.version == prefsNow.updateSkipVersion) return null
-        return if (isNewer(info)) info else null
-    }
-
     /** Download + verify; success lands in [progress] as [UpdateProgress.Ready]. */
     fun startDownload(info: UpdateInfo) {
-        cancelRequested = false
+        // The same Wi-Fi / charging policy as every other download. The
+        // dialog says so and keeps "Update" as the retry.
+        if (!networkGateOpen()) {
+            _progress.value = UpdateProgress.Error("", waitingForNetwork = true)
+            return
+        }
+        val gen = currentDownload.incrementAndGet()
         _progress.value = UpdateProgress.Downloading(0, info.size)
         scope.launch {
-            val result = runCatching { downloadLocked(info) }
+            val result = runCatching { downloadLocked(info, gen) }
+            // Superseded while it ran: a newer download owns the state now.
+            if (currentDownload.get() != gen) return@launch
             _progress.value = result.fold(
                 onSuccess = { UpdateProgress.Ready(it) },
                 onFailure = {
-                    if (cancelRequested) UpdateProgress.Idle
+                    if (cancelledDownload.get() == gen) UpdateProgress.Idle
                     else UpdateProgress.Error(it.message ?: "download failed")
                 },
             )
         }
     }
 
+    /** The request of the download in flight — cancel tears its socket down at once. */
+    @Volatile
+    private var currentCall: okhttp3.Call? = null
+
     fun cancelDownload() {
-        cancelRequested = true
+        cancelledDownload.set(currentDownload.get())
+        currentCall?.cancel()
     }
 
-    private suspend fun downloadLocked(info: UpdateInfo): File = withContext(Dispatchers.IO) {
+    private suspend fun downloadLocked(info: UpdateInfo, gen: Long): File = withContext(Dispatchers.IO) {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         dir.listFiles()?.forEach { it.delete() } // one update payload at a time
-        val part = File(dir, info.fileName + ".part")
+        // Named for THIS download. A cancelled one can still be winding down
+        // (waiting for a slow server's answer): sharing one ".part", its
+        // late arrival truncated the file the new download was writing, and
+        // the digest — computed from the stream, not the file — still passed.
+        val part = File(dir, info.fileName + ".$gen.part")
         try {
-            http.newCall(okhttp3.Request.Builder().url("$BASE_URL/${info.fileName}").build())
-                .execute().use { resp ->
-                    if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
+            val call = http.newCall(okhttp3.Request.Builder().url("$baseUrl/${info.fileName}").build())
+            currentCall = call
+            call.execute().use { resp ->
+                if (currentCall === call) currentCall = null
+                // Cancelled or restarted while the answer was being awaited: not a byte is written.
+                if (!isLiveDownload(gen)) throw InterruptedException()
+                if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
                     val body = resp.body ?: throw IllegalStateException("empty response")
                     val declared = resp.header("Content-Length")?.toLongOrNull()
                     if (declared != null && declared != info.size) {
@@ -161,7 +260,7 @@ class AppUpdater(
                             var read = 0L
                             var lastPosted = 0L
                             while (true) {
-                                if (cancelRequested) throw InterruptedException()
+                                if (!isLiveDownload(gen)) throw InterruptedException()
                                 val n = src.read(buf)
                                 if (n == -1) break
                                 out.write(buf, 0, n)
@@ -174,6 +273,8 @@ class AppUpdater(
                             }
                         }
                     }
+                    // Cancelled or restarted while the last bytes were arriving.
+                    if (!isLiveDownload(gen)) throw InterruptedException()
                     _progress.value = UpdateProgress.Verifying
                     if (part.length() != info.size) throw IllegalStateException("incomplete download")
                     val hex = digest.digest().joinToString("") { "%02x".format(it) }
@@ -185,8 +286,12 @@ class AppUpdater(
             if (!part.renameTo(final)) throw IllegalStateException("could not finalize file")
             final
         } catch (e: Exception) {
-            part.delete()
+            // Only the current download may remove the payload: for a
+            // superseded one the file on disk is the new download's.
+            if (currentDownload.get() == gen) part.delete()
             throw e
+        } finally {
+            currentCall = null
         }
     }
 
@@ -200,9 +305,9 @@ class AppUpdater(
         }
         runCatching { context.startActivity(intent) }
             .onFailure {
-                Log.w(TAG, "install intent failed: ${it.message}")
-                notify("Could not open the installer")
-            }
+            Log.w(TAG, "install intent failed: ${it.message}")
+            notify(Strings.t.noticeInstallerFailed)
+        }
     }
 
     /** versionCode wins when the feed carries it; dotted-name fallback otherwise. */
@@ -238,7 +343,24 @@ class AppUpdater(
         const val BASE_URL = "https://deepflux.space/deepflux"
         const val FEED_URL = "$BASE_URL/latest-android.json"
         private const val CHECK_INTERVAL_MS = 20L * 60 * 60 * 1000 // ~daily, fuzzed under midnight relaunches
+
+        /** After a failed check the STARTUP check waits this long before trying again (a manual check always runs). */
+        private const val FAILURE_BACKOFF_MS = 60 * 60 * 1000L
+
+        /** Google Play's package — an install it made is updated by Play, never by a sideload. */
+        const val PLAY_STORE_PACKAGE = "com.android.vending"
         private const val PROGRESS_EVERY_BYTES = 1L * 1024 * 1024
+
+        /** Who installed this app: Play Store installs are updated by Play itself. */
+        fun isInstalledByPlayStore(context: Context): Boolean = runCatching {
+            val installer = if (android.os.Build.VERSION.SDK_INT >= 30) {
+                context.packageManager.getInstallSourceInfo(context.packageName).installingPackageName
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getInstallerPackageName(context.packageName)
+            }
+            installer == PLAY_STORE_PACKAGE
+        }.getOrDefault(false)
 
         private val VERSION_RE = Regex("^\\d+\\.\\d+\\.\\d+$")
         private val FILE_RE = Regex("^DeepFlux-[0-9.]+-Android\\.apk$")

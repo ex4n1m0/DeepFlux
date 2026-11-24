@@ -4,6 +4,7 @@ import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.io.IOException
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -34,22 +35,56 @@ object RssClient {
         val items: List<RssItem>,
     )
 
-    fun fetch(url: String): RssFeedContent {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        val bytes = try {
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 10_000
-            conn.readTimeout = 20_000
-            conn.setRequestProperty("User-Agent", UA)
-            conn.setRequestProperty("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*")
-            val code = conn.responseCode
-            if (code != 200) throw IllegalStateException("HTTP $code")
-            readCapped(conn.inputStream, MAX_BODY_BYTES)
-        } finally {
-            conn.disconnect()
-        }
+    /**
+     * Fetches and parses a feed. With [publicOnly] — a feed the AGENT
+     * added — every address on the way must be public: the first one was
+     * checked when the feed was added, but the redirects behind it were
+     * followed unchecked, so a public address could 302 onto the user's
+     * own network on every 15-minute poll (second security review).
+     */
+    fun fetch(
+        url: String,
+        publicOnly: Boolean = false,
+        policy: (String) -> String? = space.deepflux.android.agent.PublicUrls::rejection,
+    ): RssFeedContent {
+        val bytes = download(url, publicOnly, policy)
         if (bytes.isEmpty()) throw IllegalStateException("feed body over ${MAX_BODY_BYTES / 1048576} MiB or empty")
         return parse(ByteArrayInputStream(bytes))
+    }
+
+    /**
+     * The feed's bytes. Redirects are followed BY HAND so that each hop
+     * can be checked — HttpURLConnection's own following offers no such hook.
+     */
+    private fun download(url: String, publicOnly: Boolean, policy: (String) -> String?): ByteArray {
+        var current = url
+        var hops = 0
+        while (true) {
+            if (publicOnly) {
+                policy(current)?.let { throw IOException(it) }
+            }
+            val conn = URL(current).openConnection() as HttpURLConnection
+            try {
+                conn.requestMethod = "GET"
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 20_000
+                conn.setRequestProperty("User-Agent", UA)
+                conn.setRequestProperty("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml, */*")
+                val code = conn.responseCode
+                if (code in 300..399) {
+                    val location = conn.getHeaderField("Location")
+                        ?: throw IllegalStateException("redirect without a location")
+                    if (++hops > MAX_REDIRECTS) throw IllegalStateException("too many redirects")
+                    current = URL(URL(current), location).toString()
+                    continue
+                }
+                if (code != 200) throw IllegalStateException("HTTP $code")
+                return readCapped(conn.inputStream, MAX_BODY_BYTES)
+            } finally {
+                conn.disconnect()
+            }
+        }
     }
 
     /** Over-cap bodies fail closed (return empty → caller reports an error). */
@@ -164,6 +199,7 @@ object RssClient {
     }
 
     private const val MAX_BODY_BYTES = 5 * 1024 * 1024 // desktop rule: 5 MiB RSS cap
+    private const val MAX_REDIRECTS = 5
     private const val MAX_ITEMS = 200
     private const val UA = space.deepflux.android.dlmgr.HttpDownloadRepository.USER_AGENT
     private val MAGNET_RE = Regex("magnet:\\?xt=urn:btih:[a-zA-Z0-9]+[^\\s\"<>]*")

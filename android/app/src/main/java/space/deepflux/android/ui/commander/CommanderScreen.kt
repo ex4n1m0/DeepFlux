@@ -44,6 +44,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,6 +72,17 @@ private object Fmt {
 
 private val PLAYABLE = space.deepflux.android.util.Playables.EXT // one source of truth (P4)
 
+/** Pane navigation as a plain list, for rememberSaveable (tab switches must not reset it). */
+internal val SafStackSaver = androidx.compose.runtime.saveable.listSaver<List<Pair<String, String>>, String>(
+    save = { stack -> stack.map { (uri, name) -> "$uri\u0001$name" } },
+    restore = { saved -> saved.map { it.substringBefore('\u0001') to it.substringAfter('\u0001') } },
+)
+
+internal val SelectionSaver = androidx.compose.runtime.saveable.listSaver<Set<String>, String>(
+    save = { it.toList() },
+    restore = { it.toSet() },
+)
+
 /**
  * Commander tab (plan §12 Phase B): the desktop's dual-pane orthodox file
  * manager adapted to touch and scoped storage. Wide screens (the owner's
@@ -80,37 +92,63 @@ private val PLAYABLE = space.deepflux.android.util.Playables.EXT // one source o
  */
 @Composable
 fun CommanderScreen(appRoot: java.io.File, torrentRepo: TorrentRepository, isWide: Boolean) {
+    // System Back goes UP in the pane the user touched last (fix 2026-11-23:
+    // it used to leave the app — wrong for a file manager).
+    var activePane by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("L") }
     if (isWide) {
         Row(modifier = Modifier.fillMaxSize()) {
             // One repository PER PANE: the listing flow is pane state — a
             // shared one would have each pane repaint the other's directory.
-            Box(modifier = Modifier.weight(1f)) { Pane(appRoot, torrentRepo, paneTag = "L") }
+            Box(modifier = Modifier.weight(1f)) {
+                Pane(appRoot, torrentRepo, paneTag = "L", isBackTarget = activePane == "L", onInteract = { activePane = "L" })
+            }
             Box(
                 modifier = Modifier
                     .width(1.dp)
                     .fillMaxSize()
                     .background(MaterialTheme.colorScheme.surfaceVariant)
             )
-            Box(modifier = Modifier.weight(1f)) { Pane(appRoot, torrentRepo, paneTag = "R") }
+            Box(modifier = Modifier.weight(1f)) {
+                Pane(appRoot, torrentRepo, paneTag = "R", isBackTarget = activePane == "R", onInteract = { activePane = "R" })
+            }
         }
     } else {
-        Pane(appRoot, torrentRepo, paneTag = "L")
+        Pane(appRoot, torrentRepo, paneTag = "L", isBackTarget = true, onInteract = {})
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag: String) {
+private fun Pane(
+    appRoot: java.io.File,
+    torrentRepo: TorrentRepository,
+    paneTag: String,
+    /** System Back acts on this pane (the one touched last). */
+    isBackTarget: Boolean,
+    /** The user interacted with this pane — it becomes the Back target. */
+    onInteract: () -> Unit,
+) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val repository = remember(paneTag) { CommanderRepository(ctx.applicationContext, appRoot) }
     val listing by repository.listing.collectAsState()
     val safRoots by repository.safRoots.roots.collectAsState()
-    var root by remember(paneTag) { mutableStateOf(CommanderRepository.Root.APP_STORAGE) }
-    var subDir by remember(paneTag) { mutableStateOf("") }
-    // SAF navigation (v1.3): the active tree root + a (uri, name) stack.
-    var activeSafRoot by remember(paneTag) { mutableStateOf<space.deepflux.android.filecmd.SafRootsStore.SafRoot?>(null) }
-    var safStack by remember(paneTag) { mutableStateOf(listOf<Pair<String, String>>()) }
-    val selected = remember(paneTag) { mutableStateOf(setOf<String>()) }
+    // Folder sizes + the storage total arrive from the repository's
+    // off-thread walker (they used to be computed during composition).
+    val dirSizes by repository.dirSizes.collectAsState()
+    val storageUsed by repository.storageUsed.collectAsState()
+    // Navigation state is rememberSaveable: the Commander tab is disposed on
+    // every app-tab switch, and both panes used to come back at the storage
+    // root. Saved as plain strings (see the savers below the pane).
+    var root by rememberSaveable(paneTag) { mutableStateOf(CommanderRepository.Root.APP_STORAGE) }
+    var subDir by rememberSaveable(paneTag) { mutableStateOf("") }
+    // SAF navigation (v1.3): the active tree root (its uri) + a (uri, name) stack.
+    var activeSafUri by rememberSaveable(paneTag) { mutableStateOf("") }
+    var safStack by rememberSaveable(paneTag, stateSaver = SafStackSaver) { mutableStateOf(listOf<Pair<String, String>>()) }
+    val selected = rememberSaveable(paneTag, stateSaver = SelectionSaver) { mutableStateOf(setOf<String>()) }
+
+    /** The chosen SAF root, looked up from its saved uri (null once its grant is gone). */
+    val activeSafRoot: space.deepflux.android.filecmd.SafRootsStore.SafRoot? =
+        safRoots.find { it.uriString == activeSafUri }
     var renameTarget by remember { mutableStateOf<CommanderRepository.Entry?>(null) }
     var detailsTarget by remember { mutableStateOf<CommanderRepository.Entry?>(null) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -129,10 +167,10 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
                         android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
                 )
             }
-            val name = uri.lastPathSegment?.substringAfterLast(':')?.take(40) ?: "folder"
+            val name = CommanderRepository.pickedFolderName(uri)
             repository.safRoots.add(uri.toString(), name)
             // Jump straight into the new folder.
-            activeSafRoot = repository.safRoots.roots.value.lastOrNull { it.uriString == uri.toString() }
+            activeSafUri = uri.toString()
             root = CommanderRepository.Root.SAF
             safStack = emptyList()
             selected.value = emptySet()
@@ -154,10 +192,26 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
         }
     }
 
-    LaunchedEffect(root, subDir, activeSafRoot, safStack, safRoots) { openCurrent() }
+    LaunchedEffect(root, subDir, activeSafUri, safStack, safRoots) { openCurrent() }
+    // The storage total is walked off the UI thread by the repository — just ask.
+    LaunchedEffect(root, listing.dir) {
+        if (root == CommanderRepository.Root.APP_STORAGE) repository.refreshStorageUsed()
+    }
 
     val entries = listing.entries
     val sel = selected.value
+
+    val canGoUp = (root == CommanderRepository.Root.APP_STORAGE && subDir.isNotBlank()) ||
+        (root == CommanderRepository.Root.SAF && safStack.isNotEmpty())
+    fun goUp() {
+        if (root == CommanderRepository.Root.APP_STORAGE) {
+            subDir = repository.parentOf(listing).orEmpty()
+        } else {
+            safStack = safStack.dropLast(1)
+        }
+    }
+    // System Back = up one folder (this pane is the Back target when touched last).
+    androidx.activity.compose.BackHandler(enabled = isBackTarget && canGoUp) { goUp() }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -169,37 +223,34 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
                 activeSafRoot = activeSafRoot,
                 safRoots = safRoots,
                 onPick = {
+                    onInteract()
                     root = it
                     subDir = ""
                     safStack = emptyList()
-                    activeSafRoot = null
+                    activeSafUri = ""
                     selected.value = emptySet()
                 },
                 onPickSaf = { r ->
+                    onInteract()
                     root = CommanderRepository.Root.SAF
-                    activeSafRoot = r
+                    activeSafUri = r.uriString
                     safStack = emptyList()
                     selected.value = emptySet()
                 },
                 onRemoveSaf = { r ->
                     repository.safRoots.remove(r.uriString)
-                    if (activeSafRoot?.uriString == r.uriString) {
-                        activeSafRoot = null
+                    if (activeSafUri == r.uriString) {
+                        activeSafUri = ""
                         root = CommanderRepository.Root.APP_STORAGE
                     }
                 },
                 onAddFolder = { runCatching { folderPicker.launch(null) } },
             )
             Spacer(Modifier.width(8.dp))
-            val canGoUp = (root == CommanderRepository.Root.APP_STORAGE && subDir.isNotBlank()) ||
-                (root == CommanderRepository.Root.SAF && safStack.isNotEmpty())
             if (canGoUp) {
                 IconButton(onClick = {
-                    if (root == CommanderRepository.Root.APP_STORAGE) {
-                        subDir = repository.parentOf(listing).orEmpty()
-                    } else {
-                        safStack = safStack.dropLast(1)
-                    }
+                    onInteract()
+                    goUp()
                 }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = Strings.t.backDesc)
                 }
@@ -207,7 +258,7 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
             Spacer(Modifier.weight(1f))
             Text(
                 if (root == CommanderRepository.Root.APP_STORAGE)
-                    Strings.t.storageUsedFmt.format(Fmt.bytes(repository.appStorageBytes()))
+                    storageUsed?.let { Strings.t.storageUsedFmt.format(Fmt.bytes(it)) } ?: ""
                 else "${entries.size} ${Strings.t.items}",
                 style = MaterialTheme.typography.labelSmall,
                 color = DimText,
@@ -251,6 +302,7 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
                                 .fillMaxWidth()
                                 .combinedClickable(
                                     onClick = {
+                                        onInteract()
                                         when {
                                             sel.isNotEmpty() ->
                                                 selected.value = if (isSel) sel - entry.path else sel + entry.path
@@ -261,6 +313,7 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
                                         }
                                     },
                                     onLongClick = {
+                                        onInteract()
                                         selected.value = if (isSel) sel - entry.path else sel + entry.path
                                     },
                                 ),
@@ -287,15 +340,33 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                     Text(
-                                        (if (entry.isDirectory) Strings.t.folder else Fmt.bytes(entry.size)) +
-                                            " · " + dateOf(entry.modified),
+                                        sizeText(entry, dirSizes) + " · " + dateOf(entry.modified),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = DimText,
                                     )
                                 }
                                 if (!entry.isDirectory && sel.isEmpty()) {
-                                    IconButton(onClick = { openEntry(entry, repository, torrentRepo, ctx) }) {
-                                        Icon(Icons.Filled.PlayArrow, contentDescription = Strings.t.play, tint = OkGreen)
+                                    // Media plays in-app; anything else opens in
+                                    // its own app. (Every row used to show a
+                                    // green play button, whatever the file was.)
+                                    if (PLAYABLE.containsMatchIn(entry.name)) {
+                                        IconButton(onClick = {
+                                            onInteract()
+                                            openEntry(entry, repository, torrentRepo, ctx)
+                                        }) {
+                                            Icon(Icons.Filled.PlayArrow, contentDescription = Strings.t.play, tint = OkGreen)
+                                        }
+                                    } else {
+                                        IconButton(onClick = {
+                                            onInteract()
+                                            openEntry(entry, repository, torrentRepo, ctx)
+                                        }) {
+                                            Icon(
+                                                space.deepflux.android.ui.AppIcons.OpenInNew,
+                                                contentDescription = Strings.t.openAction,
+                                                tint = Accent,
+                                            )
+                                        }
                                     }
                                     IconButton(onClick = {
                                         repository.shareIntent(entry)?.let { runCatching { ctx.startActivity(it) } }
@@ -347,8 +418,17 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
         RenameDialog(
             initial = renameTarget!!.name,
             onConfirm = { name ->
-                if (repository.rename(renameTarget!!, name)) {
-                    selected.value = emptySet()
+                val target = renameTarget!!
+                val clean = name.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                when {
+                    clean == target.name -> Unit // unchanged: nothing to do
+                    repository.rename(target, name) -> {
+                        selected.value = emptySet()
+                        torrentRepo.postNotice(Strings.t.noticeRenamedToFmt.format(clean))
+                    }
+                    // Used to fail silently: Android refuses renames of files
+                    // owned by other apps, and the row just stayed as it was.
+                    else -> torrentRepo.postNotice(Strings.t.noticeRenameFailed)
                 }
                 renameTarget = null
                 openCurrent()
@@ -367,7 +447,7 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
                     Spacer(Modifier.height(6.dp))
                     Text(
                         "${Strings.t.nameLabel}: ${e.name}\n" +
-                            "${Strings.t.sizeLabel}: ${Fmt.bytes(e.size)}\n" +
+                            "${Strings.t.sizeLabel}: ${sizeText(e, dirSizes)}\n" +
                             "${Strings.t.modifiedLabel}: ${dateOf(e.modified)}\n" +
                             "${Strings.t.typeLabel}: ${e.mime.ifBlank { "—" }}\n" +
                             when (e.source) {
@@ -389,10 +469,19 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
             text = { Text(Strings.t.confirmDeleteFmt.format(sel.size)) },
             confirmButton = {
                 TextButton(onClick = {
-                    sel.forEach { p -> entries.find { it.path == p }?.let { repository.delete(it) } }
+                    // Count what Android refused: public files owned by other
+                    // apps mostly cannot be deleted, and that used to pass in
+                    // silence — the row simply stayed.
+                    var failed = 0
+                    sel.forEach { p ->
+                        entries.find { it.path == p }?.let { if (!repository.delete(it)) failed++ }
+                    }
+                    val count = sel.size
                     selected.value = emptySet()
                     confirmDelete = false
                     openCurrent()
+                    if (failed > 0) torrentRepo.postNotice(Strings.t.noticeDeleteFailedFmt.format(failed))
+                    else torrentRepo.postNotice(Strings.t.noticeDeletedFmt.format(count))
                 }) { Text(Strings.t.remove, color = ErrorRed) }
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(Strings.t.cancel) } },
@@ -402,6 +491,17 @@ private fun Pane(appRoot: java.io.File, torrentRepo: TorrentRepository, paneTag:
 
 private fun childDir(parent: String, name: String): String =
     if (parent.isBlank()) name else "$parent/$name"
+
+/**
+ * "12.3 MB". A folder in the app's own storage shows "…" until the
+ * background walker has delivered its size. Other roots (public folders,
+ * SAF) are never walked — there "…" read as "still loading", forever.
+ */
+private fun sizeText(entry: CommanderRepository.Entry, dirSizes: Map<String, Long>): String = when {
+    !entry.isDirectory -> Fmt.bytes(entry.size)
+    entry.source != CommanderRepository.Source.APP -> "—"
+    else -> dirSizes[entry.path]?.let { Fmt.bytes(it) } ?: "…"
+}
 
 /** Play in-app (video/audio via the loopback stream); fall back to open-with. */
 private fun openEntry(
@@ -419,7 +519,11 @@ private fun openEntry(
         }
     } else false
     if (!launched) {
-        val intent = repository.openWithIntent(entry) ?: return
+        val intent = repository.openWithIntent(entry)
+        if (intent == null) {
+            torrentRepo.postNotice(Strings.t.noticeCannotOpenItem)
+            return
+        }
         runCatching { ctx.startActivity(intent) }
             .onFailure { torrentRepo.postNotice(Strings.t.folderInaccessible) }
     }

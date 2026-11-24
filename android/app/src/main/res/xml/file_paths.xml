@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider scope for the Commander's share/open-with: the app's own
-     storage (debug saveDir is filesDir/DeepFlux, release saveDir lives under
-     the external files dir) and nothing else. -->
+<!-- FileProvider scope. Downloads ALWAYS live in internal storage
+     (filesDir/DeepFlux, since 2026-11-16); that folder is all the Commander
+     needs to share or open. It used to expose the WHOLE private storage —
+     the settings with both API keys, the chat log, saved .torrent files
+     with tracker passkeys — review 2026-11-24. The external-files entry
+     covers installs older than 2026-11-16 (downloads only, never settings).
+     Nothing outside the app's own storage is exposed. -->
 <paths>
-    <files-path name="internal" path="." />
+    <files-path name="downloads" path="DeepFlux/" />
     <external-files-path name="external" path="." />
     <!-- In-app updater's verified APK handoff to the system installer. -->
     <cache-path name="updates" path="updates/" />

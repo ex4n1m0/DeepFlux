@@ -45,6 +45,13 @@ androidx-media3-exoplayer-hls = { group = "androidx.media3", name = "media3-exop
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }
 nanohttpd = { group = "org.nanohttpd", name = "nanohttpd", version.ref = "nanohttpd" }
 
+# Markdown in agent replies (2026-11-24): commonmark-java is the parser
+# (pure Java, BSD-2-Clause, ~215 KB core) — the Compose renderer is ours
+# (ui/chat/Markdown.kt). Tables + bare-URL autolinking are the two extensions.
+commonmark = { group = "org.commonmark", name = "commonmark", version = "0.24.0" }
+commonmark-tables = { group = "org.commonmark", name = "commonmark-ext-gfm-tables", version = "0.24.0" }
+commonmark-autolink = { group = "org.commonmark", name = "commonmark-ext-autolink", version = "0.24.0" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }

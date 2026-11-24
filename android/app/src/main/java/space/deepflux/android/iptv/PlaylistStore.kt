@@ -22,13 +22,21 @@ class PlaylistStore(context: Context) {
     data class Playlist(
         val id: String,
         val name: String,
-        /** "m3u" (playlist URL) or "xtream" (server + user + password). */
+        /** [KIND_M3U] (playlist URL), [KIND_XTREAM] (server + user + password) or [KIND_LOCAL] (a SAF folder tree). */
         val kind: String,
-        /** M3U: the playlist URL. Xtream: the server URL. */
+        /** M3U: the playlist URL. Xtream: the server URL. Local: the SAF tree `content://` uri. */
         val url: String,
         val username: String = "",
         val password: String = "",
         val epgUrl: String = "",
+        /**
+         * What the user says this source carries: [CONTENT_AUTO] (the
+         * heuristics decide per entry), [CONTENT_LIVE] (every entry is a
+         * channel) or [CONTENT_VOD] (every entry is a video). The override
+         * covers what no keyword rule can — a provider whose group names
+         * are in Chinese, say (owner 2026-11-22, desktop parity).
+         */
+        val contentType: String = CONTENT_AUTO,
         val addedAt: Long = System.currentTimeMillis(),
     )
 
@@ -119,20 +127,35 @@ class PlaylistStore(context: Context) {
         .put("username", p.username)
         .put("password", p.password)
         .put("epgUrl", p.epgUrl)
+        .put("ct", p.contentType)
         .put("at", p.addedAt)
 
     private fun fromJson(o: JSONObject) = Playlist(
         id = o.optString("id"),
         name = o.optString("name").ifBlank { o.optString("url").take(40) },
-        kind = if (o.optString("kind") == "xtream") "xtream" else "m3u",
+        // EVERY known kind must survive the round trip: "local" folder
+        // sources used to come back as "m3u" and their content:// url was
+        // then fetched as a playlist URL — the source broke on every restart.
+        kind = o.optString("kind").takeIf { it in KINDS } ?: KIND_M3U,
         url = o.optString("url"),
         username = o.optString("username"),
         password = o.optString("password"),
         epgUrl = o.optString("epgUrl"),
+        // A value this build does not know is no override at all.
+        contentType = o.optString("ct").takeIf { it in CONTENT_TYPES } ?: CONTENT_AUTO,
         addedAt = o.optLong("at"),
     )
 
     companion object {
+        const val KIND_M3U = "m3u"
+        const val KIND_XTREAM = "xtream"
+        const val KIND_LOCAL = "local"
+        private val KINDS = setOf(KIND_M3U, KIND_XTREAM, KIND_LOCAL)
+
+        const val CONTENT_AUTO = "auto"
+        const val CONTENT_LIVE = "live"
+        const val CONTENT_VOD = "vod"
+        private val CONTENT_TYPES = setOf(CONTENT_AUTO, CONTENT_LIVE, CONTENT_VOD)
         private const val TAG = "PlaylistStore"
     }
 }

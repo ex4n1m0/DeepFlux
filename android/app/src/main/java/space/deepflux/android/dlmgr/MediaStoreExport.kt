@@ -10,12 +10,14 @@ import java.io.File
 import java.io.FileInputStream
 
 /**
- * Exports completed torrent files to the public Downloads folder via
- * MediaStore — so users can see and share them from any file manager.
+ * Copies completed files to the public Downloads folder via MediaStore —
+ * so users can see and share them from any file manager.
  *
  * The Android equivalent of the desktop's "open containing folder":
  * on Android, the app-specific directory is invisible to most file
- * managers, so we copy finished files to MediaStore Downloads.
+ * managers, so finished files are copied out. This is the DEFAULT
+ * destination; a folder the user chose in Settings is served by
+ * [FinishedExport], which calls this when none is chosen.
  */
 object MediaStoreExport {
 
@@ -26,6 +28,7 @@ object MediaStoreExport {
      */
     fun exportToDownloads(context: Context, file: File, displayName: String? = null): Uri? {
         if (android.os.Build.VERSION.SDK_INT < 29) return null
+        var itemUri: Uri? = null
         return try {
             val name = displayName ?: file.name
             val values = ContentValues().apply {
@@ -36,7 +39,7 @@ object MediaStoreExport {
 
             val resolver = context.contentResolver
             val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            val itemUri = resolver.insert(collection, values) ?: return null
+            itemUri = resolver.insert(collection, values) ?: return null
 
             // Copy the file content
             resolver.openOutputStream(itemUri)?.use { out ->
@@ -54,11 +57,14 @@ object MediaStoreExport {
             itemUri
         } catch (e: Exception) {
             Log.w(TAG, "export failed for ${file.name}: ${e.message}")
+            // A row left "pending" is a file no other app sees, and the
+            // system forgets it only a week later.
+            itemUri?.let { uri -> runCatching { context.contentResolver.delete(uri, null, null) } }
             null
         }
     }
 
-    private fun guessMimeType(name: String): String = when {
+    internal fun guessMimeType(name: String): String = when {
         name.endsWith(".mp4", true) || name.endsWith(".m4v", true) -> "video/mp4"
         name.endsWith(".webm", true) -> "video/webm"
         name.endsWith(".mkv", true) -> "video/x-matroska"

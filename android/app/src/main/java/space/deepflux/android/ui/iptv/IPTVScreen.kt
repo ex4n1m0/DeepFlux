@@ -18,9 +18,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -45,8 +51,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import space.deepflux.android.iptv.Classify
 import space.deepflux.android.iptv.IPTVRepository
 import space.deepflux.android.iptv.M3UParser
+import space.deepflux.android.iptv.Sections
 import space.deepflux.android.player.PlayerActivity
 import space.deepflux.android.ui.Strings
 import space.deepflux.android.ui.theme.Accent
@@ -107,25 +115,60 @@ fun IPTVScreen(
     // the main thread once per loaded list.
     var category by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var categoryMenu by remember { mutableStateOf(false) }
-    val groups by androidx.compose.runtime.produceState<List<String>>(emptyList(), state.channels) {
+    // Sections (Live TV / Movies / Series) and channel search: the three
+    // filters combine; every scan runs off the main thread — a 75k-entry
+    // playlist must not be walked while composing, least of all per key.
+    var section by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var query by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    var searchOpen by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(state.playlist?.id) {
+        // Another source: its sections, groups and names are not the old one's.
+        section = ""
+        category = ""
+        query = ""
+    }
+    val sectionCounts by androidx.compose.runtime.produceState<Map<String, Int>>(emptyMap(), state.sections) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { Sections.counts(state.sections) }
+    }
+    val groups by androidx.compose.runtime.produceState<List<String>>(emptyList(), state.channels, state.sections, section) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
             state.channels.asSequence()
+                .filterIndexed { i, _ -> section.isBlank() || state.sections.getOrNull(i) == section }
                 .map { it.groupId }.filter { it.isNotBlank() }
                 .distinct().sorted().take(600).toList()
         }
     }
-    val shown = remember(state.channels, category) {
-        if (category.isBlank()) state.channels else state.channels.filter { it.groupId == category }
+    val shown by androidx.compose.runtime.produceState<List<M3UParser.Channel>>(
+        emptyList(),
+        state.channels, state.sections, category, section, query,
+    ) {
+        if (query.isNotBlank()) kotlinx.coroutines.delay(180) // let the word being typed finish
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            Sections.filter(state.channels, state.sections, section, category, query)
+        }
     }
+    val filtered = section.isNotBlank() || category.isNotBlank() || query.isNotBlank()
     var editTarget by remember { mutableStateOf<space.deepflux.android.iptv.PlaylistStore.Playlist?>(null) }
     var showManage by remember { mutableStateOf(false) }
     var pickerOpen by remember { mutableStateOf(false) }
 
     fun savePlaylist(p: space.deepflux.android.iptv.PlaylistStore.Playlist) {
         repository.save(p)
-        if (p.epgUrl.isNotBlank()) epgRepository.setEpgUrl(p.epgUrl)
+        epgRepository.ensure(p.epgUrl)
         showEditor = false
         editTarget = null
+    }
+
+    // EPG follows the ACTIVE playlist (fix 2026-11-23): the guide used to be
+    // wired only on save/pick, so a restart lost it until the playlist was
+    // re-selected. The playlist's saved EPG URL wins; otherwise its own
+    // `url-tvg` header, which the repository publishes once it has parsed
+    // the playlist (network or cache).
+    val activePlaylist = state.playlist
+    val guideFromHeader = state.urlTvg
+    LaunchedEffect(activePlaylist?.id, activePlaylist?.epgUrl, guideFromHeader) {
+        val p = activePlaylist ?: return@LaunchedEffect
+        epgRepository.ensure(p.epgUrl.ifBlank { guideFromHeader })
     }
 
     /** Play one entry: SAF document / app-storage file via the loopback
@@ -227,11 +270,72 @@ fun IPTVScreen(
                             onClick = {
                                 pickerOpen = false
                                 repository.select(p.id)
-                                if (p.epgUrl.isNotBlank()) epgRepository.setEpgUrl(p.epgUrl)
+                                epgRepository.ensure(p.epgUrl)
                             },
                         )
                     }
                 }
+        }
+
+        // ---- Sections + search (only once there is something to section) ----
+        if (state.channels.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    val several = sectionCounts.count { it.value > 0 } > 1
+                    if (several) {
+                        SectionChip(
+                            label = "${Strings.t.playlistAll} (${state.channels.size})",
+                            selected = section.isBlank(),
+                            onClick = { section = "" },
+                        )
+                    }
+                    for (s in Sections.ORDER) {
+                        val n = sectionCounts[s] ?: 0
+                        if (n > 0) {
+                            SectionChip(
+                                label = "${sectionLabel(s)} ($n)",
+                                selected = section == s,
+                                onClick = {
+                                    section = if (section == s) "" else s
+                                    category = "" // the groups of one section are not another's
+                                },
+                            )
+                        }
+                    }
+                }
+                IconButton(onClick = {
+                    searchOpen = !searchOpen
+                    if (!searchOpen) query = ""
+                }) {
+                    Icon(
+                        Icons.Filled.Search,
+                        contentDescription = Strings.t.searchChannels,
+                        tint = if (searchOpen || query.isNotBlank()) Accent else DimText,
+                    )
+                }
+            }
+            if (searchOpen) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text(Strings.t.searchChannels) },
+                    singleLine = true,
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Filled.Close, contentDescription = Strings.t.clearSearch)
+                            }
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+            }
         }
 
         // ---- First-run setup card (no playlists saved yet) ----
@@ -301,6 +405,14 @@ fun IPTVScreen(
                         modifier = Modifier.align(Alignment.Center),
                     )
                 }
+                shown.isEmpty() && filtered -> {
+                    Text(
+                        Strings.t.noMatchingChannels,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = DimText,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
+                }
                 else -> if (!multiview && state.channels.isNotEmpty()) {
                     if (grid) {
                         // Poster grid (1.3.5): artwork-first browsing.
@@ -316,7 +428,7 @@ fun IPTVScreen(
                             // Dup-safe key: real playlists list the same URL
                             // under multiple names/groups — a bare url key
                             // crashes Compose on duplicates.
-                            items(shown.size, key = { "${shown[it].url}|${shown[it].name}" }) { i ->
+                            items(shown.size, key = { i -> M3UParser.listKey(shown[i], i) }) { i ->
                                 ChannelCell(
                                     shown[i],
                                     starred = favUrls.contains(shown[i].url),
@@ -340,7 +452,7 @@ fun IPTVScreen(
                             ),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            items(shown, key = { "${it.url}|${it.name}" }) { channel ->
+                            itemsIndexed(shown, key = { i, c -> M3UParser.listKey(c, i) }) { _, channel ->
                                 ChannelRow(
                                     channel,
                                     epgState,
@@ -387,6 +499,25 @@ fun IPTVScreen(
             onDismiss = { showManage = false },
         )
     }
+}
+
+/** One of the browsing sections as the chip row spells it. */
+private fun sectionLabel(section: String): String = when (section) {
+    Classify.LIVE -> Strings.t.sectionLive
+    Classify.MOVIES -> Strings.t.sectionMovies
+    else -> Strings.t.sectionSeries
+}
+
+@Composable
+private fun SectionChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    androidx.compose.material3.FilterChip(
+        selected = selected,
+        onClick = onClick,
+        label = { Text(label, maxLines = 1) },
+        colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+            selectedContainerColor = Accent.copy(alpha = 0.25f),
+        ),
+    )
 }
 
 /**
@@ -615,17 +746,24 @@ private fun ChannelRow(
                         maxLines = 1,
                     )
                 }
-                // EPG "now playing" line (v0.9)
-                val now = channel.let { ch ->
-                    space.deepflux.android.iptv.EPGParser.nowAndNext(
-                        epgState, ch.name
-                    ).first
-                }
+                // EPG "now playing" line (v0.9) + what is next. The lookup
+                // takes the whole channel (tvg-id / tvg-name / name), not
+                // just the display name — guides rarely share it verbatim.
+                val (now, next) = space.deepflux.android.iptv.EPGParser.nowAndNext(epgState, channel)
                 if (now != null) {
                     Text(
                         "▶ " + now.title + " (" + formatTime(now.startTime) + "-" + formatTime(now.endTime) + ")",
                         style = MaterialTheme.typography.labelSmall,
                         color = Accent,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (next != null) {
+                    Text(
+                        Strings.t.epgNextFmt.format(next.title, formatTime(next.startTime)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = DimText,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -798,7 +936,7 @@ private fun MultiViewGrid(
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
                 ) {
-                    items(channels, key = { "${it.url}|${it.name}" }) { channel ->
+                    itemsIndexed(channels, key = { i, c -> M3UParser.listKey(c, i) }) { _, channel ->
                         Text(
                             channel.name,
                             style = MaterialTheme.typography.bodyMedium,

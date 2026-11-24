@@ -83,17 +83,32 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
     androidx.compose.runtime.DisposableEffect(Unit) {
         onDispose { browserController.destroy() }
     }
+    // The whole app leaving the foreground reaches the browser from
+    // MainActivity: its pages' JavaScript timers stop meanwhile (a hidden
+    // tab's onPause() does not do that).
+    androidx.compose.runtime.DisposableEffect(browserController) {
+        val app = androidCtx.applicationContext as space.deepflux.android.DeepFluxApp
+        app.onAppVisibilityChanged = { shown -> if (shown) browserController.onAppShown() else browserController.onAppHidden() }
+        onDispose { app.onAppVisibilityChanged = null }
+    }
     val chatSession = remember {
         space.deepflux.android.ui.chat.ChatSession(
             repository, iptvRepository, httpDownloads, rssRepository, androidCtx.applicationContext,
             openInBrowser = { url ->
-                // Agent's open_url: tool code runs on the chat thread — WebViews
-                // may only be created on a Looper (main) thread ("WebView cannot
-                // be initialized on a thread that has no Looper").
+                // Agent's open_url. Whether there is room for a tab is
+                // decided HERE, on the chat thread, and reported back to the
+                // tool: it used to answer "opened" while the browser had
+                // refused the tab and left the user on another page.
+                if (!browserController.canOpenTab()) return@ChatSession false
+                // WebViews may only be created on a Looper (main) thread ("WebView
+                // cannot be initialized on a thread that has no Looper").
                 android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    browserController.newTab(url)
+                    // byAgent: in this tab, nothing the page does on its own may
+                    // lead the browser to a non-public address.
+                    browserController.newTab(url, byAgent = true)
                     screen = Screen.BROWSER
                 }
+                true
             },
             scanActivePage = { browserController.scanPageSync() },
         )
@@ -111,6 +126,15 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
 
     LaunchedEffect(repository) {
         repository.notices.collect { snackbarHostState.showSnackbar(it) }
+    }
+
+    // Download notifications open the DOWNLOADS tab (fix 2026-11-23) — they
+    // used to land on the boot tab, which is the Agent.
+    val requestedTab by repository.requestedTab.collectAsStateWithLifecycle()
+    LaunchedEffect(requestedTab) {
+        val tab = requestedTab ?: return@LaunchedEffect
+        Screen.entries.firstOrNull { it.name == tab }?.let { screen = it }
+        repository.consumeRequestedTab()
     }
 
     // In-app updater (§13 #7): one app-scoped instance; the ~daily startup
@@ -209,7 +233,13 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
                 }
             }
             Box(modifier = Modifier.weight(1f).fillMaxSize()) {
-                when (screen) {
+                // Leaving a tab disposes its screen. The state holder keeps
+                // each tab's saved state — scroll positions, selected items,
+                // typed text, every rememberSaveable — so coming back resumes
+                // where the user was. Before this every tab switch reset.
+                val tabState = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+                tabState.SaveableStateProvider(screen.name) {
+                    when (screen) {
                     Screen.BROWSER -> space.deepflux.android.ui.browser.BrowserScreen(controller = browserController)
                     Screen.DOWNLOADS -> DownloadsScreen(
                         torrents = torrents,
@@ -218,8 +248,22 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
                         httpRepo = httpDownloads,
                         rss = rssRepository,
                         isWide = useRail,
+                        // Hand-resumes in the list can end "Pause all" too: the
+                        // standing "paused" notice must follow.
+                        onPauseStateChanged = {
+                            (androidCtx.applicationContext as space.deepflux.android.DeepFluxApp).syncPausedNotice()
+                        },
                     )
-                    Screen.CHAT -> space.deepflux.android.ui.chat.ChatScreen(session = chatSession)
+                    Screen.CHAT -> space.deepflux.android.ui.chat.ChatScreen(
+                        session = chatSession,
+                        // A page link tapped in a reply: the user's own navigation.
+                        openUrl = { url ->
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                browserController.newTab(url)
+                                screen = Screen.BROWSER
+                            }
+                        },
+                    )
                     Screen.LIVE_TV -> space.deepflux.android.ui.iptv.IPTVScreen(
                         repository = iptvRepository,
                         epgRepository = epgRepository,
@@ -233,6 +277,7 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
                     )
                     Screen.ROOM -> space.deepflux.android.ui.room.RoomScreen(room = ohRoom)
                     Screen.SETTINGS -> SettingsScreen(repository = repository)
+                    }
                 }
             }
         }
@@ -264,6 +309,58 @@ fun AppRoot(windowSizeClass: WindowSizeClass, repository: TorrentRepository) {
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = { pick(uiMode) }) {
                     Text(Strings.t.ok)
+                }
+            },
+        )
+    }
+
+    // Torrent-add confirmation (fix 2026-11-23): a page, a redirect or
+    // another app can no longer add torrents unasked — the request waits
+    // here for the user (TorrentRepository.requestAddMagnet). The agent's
+    // add_torrent tool and the user's own URL-bar / links-sheet taps do not
+    // pass through here.
+    val pendingAdd by repository.pendingAdd.collectAsStateWithLifecycle()
+    val add = pendingAdd
+    if (add != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { repository.cancelPendingAdd() },
+            title = { Text(Strings.t.addTorrentTitle) },
+            text = {
+                Column(verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp)) {
+                    // The name is web content: shown cleaned up (no line
+                    // breaks, no bidi overrides), see confirmationName.
+                    Text(
+                        space.deepflux.android.engine.TorrentRepository.confirmationName(add.name)
+                            .ifBlank { Strings.t.addTorrentNameUnknown },
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Text(
+                        Strings.t.addTorrentInfoHashFmt.format(add.infoHash),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = DimText,
+                    )
+                    // The dialog always says where the request came from. It
+                    // used to show a bare host — and nothing at all for
+                    // another app's share, which read like one of our own.
+                    Text(
+                        when {
+                            add.fromSubframe -> Strings.t.addTorrentFromFrame
+                            add.sourceHost.isNotBlank() -> Strings.t.addTorrentFromFmt.format(add.sourceHost)
+                            else -> Strings.t.addTorrentFromOtherApp
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = DimText,
+                    )
+                }
+            },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = { repository.confirmPendingAdd() }) {
+                    Text(Strings.t.add)
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { repository.cancelPendingAdd() }) {
+                    Text(Strings.t.cancel)
                 }
             },
         )
@@ -336,11 +433,18 @@ private fun UpdateDialog(
                     is space.deepflux.android.data.UpdateProgress.Ready ->
                         Text(Strings.t.updateReady, style = MaterialTheme.typography.labelMedium)
                     is space.deepflux.android.data.UpdateProgress.Error ->
-                        Text(
-                            Strings.t.updateFailedFmt.format(p.message),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = androidx.compose.ui.graphics.Color(0xFFE57373),
-                        )
+                        if (p.waitingForNetwork) {
+                            // Not a failure: the Wi-Fi / charging gate is
+                            // closed. "Retry" (still shown) starts it once the
+                            // gate opens.
+                            Text(Strings.t.updateWaitingNetwork, style = MaterialTheme.typography.labelMedium, color = DimText)
+                        } else {
+                            Text(
+                                Strings.t.updateFailedFmt.format(p.message),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = androidx.compose.ui.graphics.Color(0xFFE57373),
+                            )
+                        }
                     space.deepflux.android.data.UpdateProgress.Idle -> Unit
                 }
             }

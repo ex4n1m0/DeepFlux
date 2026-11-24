@@ -173,7 +173,8 @@ object WebTorrentSearch {
     /** `dn=` display name from a magnet, URL-decoded. */
     private fun displayName(magnet: String): String? =
         Regex("dn=([^&]+)").find(magnet)?.groupValues?.get(1)?.let {
-            java.net.URLDecoder.decode(it, "UTF-8")
+            // A stray "%" in a name is not an escape: the decoder throws on it.
+            runCatching { java.net.URLDecoder.decode(it, "UTF-8") }.getOrNull()
         }
 
     /** Ensure the magnet carries the anchor's title as dn= (nicer download rows). */

@@ -92,6 +92,11 @@ class AppSettings(private val context: Context) {
         context.settingsDataStore.edit { it[CUSTOM_SAVE_DIR] = uri }
     }
 
+    /** Finished downloads go to the public Downloads folder again. */
+    suspend fun clearCustomSaveDir() {
+        context.settingsDataStore.edit { it.remove(CUSTOM_SAVE_DIR) }
+    }
+
     suspend fun saveChatHistory(json: String) {
         context.settingsDataStore.edit { it[CHAT_HISTORY] = json }
     }

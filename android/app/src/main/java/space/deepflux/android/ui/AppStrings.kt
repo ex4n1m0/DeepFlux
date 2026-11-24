@@ -75,9 +75,14 @@ interface AppStrings {
     // Settings
     val apiKey: String
     val saveLocation: String
-    val saveLocationCustom: String
     val saveLocationDefault: String
+    /** %s = the chosen folder's name. */
+    val saveLocationCustomFmt: String
+    /** The chosen folder can no longer be opened. */
+    val saveLocationLost: String
     val chooseFolder: String
+    val changeFolder: String
+    val useDefaultFolder: String
     val downloadsSection: String
     val wifiOnly: String
     val wifiOnlyDesc: String
@@ -99,6 +104,17 @@ interface AppStrings {
     val playbackFailed: String
     val playerInitFailedPrefix: String
     val closePlayer: String
+    // Player controls: buffering state, rotation, aspect ratio, audio track
+    val playerBuffering: String
+    val playerRotation: String
+    val rotationLandscape: String
+    val rotationPortrait: String
+    val rotationAuto: String
+    val playerAspect: String
+    val aspectFit: String
+    val aspectFill: String
+    val aspectStretch: String
+    val playerAudioTrack: String
     val audioUnsupported: String
     val videoUnsupported: String
 
@@ -227,6 +243,19 @@ interface AppStrings {
     val playlistTypeXtream: String
     val playlistTypeLocal: String
     val playlistAll: String
+    // Browsing sections (Live TV / Movies / Series) + channel search
+    val sectionLive: String
+    val sectionMovies: String
+    val sectionSeries: String
+    val searchChannels: String
+    val clearSearch: String
+    val noMatchingChannels: String
+    // Per-source content override (source editor)
+    val contentTypeLabel: String
+    val contentTypeAuto: String
+    val contentTypeLive: String
+    val contentTypeVod: String
+    val contentTypeHint: String
     val favorites: String
     val uiModeTitle: String
     val uiModeTv: String
@@ -260,4 +289,94 @@ interface AppStrings {
     val publicMusic: String
     val publicPictures: String
     val folderInaccessible: String
+
+    // Fixes batch (2026-11-23): EPG next line, torrent-add confirmation,
+    // browser tab cap / crash reload, updater honesty, destructive-tap
+    // confirmations, chat copy.
+    val epgNextFmt: String
+    val addTorrentTitle: String
+    val addTorrentNameUnknown: String
+    val addTorrentInfoHashFmt: String
+    // Where the request came from — the dialog always says
+    val addTorrentFromFmt: String
+    val addTorrentFromOtherApp: String
+    val addTorrentFromFrame: String
+    val torrentFileLabel: String
+    val tabLimitReached: String
+    val pageCrashedReloaded: String
+    val pageKeepsCrashing: String
+    val updateCheckFailedFmt: String
+    val updateWaitingNetwork: String
+    val clearChatTitle: String
+    val clearChatMsg: String
+    // Downloads toolbar: one control for both lanes, as in the notification
+    val pauseAll: String
+    val resumeAll: String
+    val removeDownloadTitle: String
+    val removeDownloadPartial: String
+    val removeDownloadKeepFile: String
+    val removeTorrentFmt: String
+    val deleteFeedFmt: String
+    val copy: String
+    val copied: String
+
+    // Browser notices (2026-11-23): these were English-only snackbars.
+    val noticeNoExternalBrowser: String
+    val noticeUnsupportedDownloadFmt: String
+    val noticeDownloadingFmt: String
+    val noticeTorrentFetchFailedFmt: String
+    val noticeTorrentTooLarge: String
+    val noticeTorrentDownloadFailedFmt: String
+    val noticeNotTorrent: String
+    val noticeLoginRequired: String
+    val noticeStreamUnsupported: String
+    val noticeUnsupportedVideo: String
+
+    // Engine notices (2026-11-23): torrent + HTTP/HLS repository snackbars.
+    val noticeDownloadFinishedFmt: String
+    val noticeDownloadFailedFmt: String
+    val noticeAlreadyInList: String
+    val noticeInvalidMagnet: String
+    val noticeCouldNotAddMagnet: String
+    val noticeAddedFetching: String
+    val noticeCouldNotReadTorrent: String
+    val noticeTorrentAdded: String
+    val noticeEngineStartFailed: String
+    // A page firing add requests faster than the user can answer them
+    val noticePageAddStorm: String
+    // A torrent whose files include a symbolic link is not kept
+    val noticeTorrentHasSymlinks: String
+    /** Settings → "Save location": the system would not keep access to the picked folder. */
+    val noticeFolderNotKept: String
+    /** A finished download could not be copied out for the user. %s = the file's name. */
+    val noticeExportFailedFmt: String
+    /** Same, for a torrent. %d = how many files. */
+    val noticeExportFailedCountFmt: String
+    /** Android 9 only: no public Downloads collection exists, so the default destination does not. */
+    val saveLocationNoDownloads: String
+    // The browser: a page's download volley; an agent-opened tab kept off the local network
+    val noticePageDownloadStorm: String
+    val noticeAgentBlockedLan: String
+    val noticePaused: String
+    val noticeResumed: String
+    val noticeRemovedFmt: String
+    val noticeNoVideoYet: String
+    val noticeStreamServerFailed: String
+    val noticeCannotOpenItem: String
+    val noticeFileGoneFmt: String
+
+    // Commander notices (2026-11-23): failed deletes/renames used to pass in silence.
+    val noticeDeletedFmt: String
+    val noticeDeleteFailedFmt: String
+    val noticeRenameFailed: String
+    val noticeRenamedToFmt: String
+
+    // Updater (2026-11-23): honest results + Play-installed builds.
+    val noticeUpdateAvailableFmt: String
+    val noticeInstallerFailed: String
+    val updateViaPlay: String
+
+    // Chat loop (2026-11-23): localized tool notes + network-error fallback.
+    val toolNoteFmt: String
+    val chatNetworkError: String
 }

@@ -8,4 +8,18 @@
     <string name="notif_idle">No active downloads</string>
     <string name="notif_active">%1$d active · ↓ %2$s · %3$d%%</string>
     <string name="notif_files">%1$d files · ↓ %2$s · %3$d%%</string>
+
+    <!-- Notification buttons + download events (2026-11-23) -->
+    <string name="notif_pause_all">Pause all</string>
+    <string name="notif_resume_all">Resume all</string>
+    <string name="notif_finished_title">Download finished</string>
+    <string name="notif_failed_title">Download failed</string>
+    <string name="notif_copy_failed_title">Not copied to your folder</string>
+    <string name="notif_files_fmt">%1$d files</string>
+    <string name="notif_error_fmt">%1$s: %2$s</string>
+    <string name="notif_generic_torrent">Torrent</string>
+    <string name="notif_limit_title">Background time limit reached</string>
+    <string name="notif_limit_text">Android paused DeepFlux\'s downloads for now. Open DeepFlux to continue.</string>
+    <string name="notif_paused_title">Downloads paused</string>
+    <string name="notif_paused_text">Paused with Pause all. Nothing downloads until you resume.</string>
 </resources>

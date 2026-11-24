@@ -9,4 +9,18 @@
     <string name="notif_idle">没有活跃的下载</string>
     <string name="notif_active">%1$d 个活跃 · ↓ %2$s · %3$d%%</string>
     <string name="notif_files">%1$d 个文件 · ↓ %2$s · %3$d%%</string>
+
+    <!-- 通知按钮与下载事件（2026-11-23） -->
+    <string name="notif_pause_all">全部暂停</string>
+    <string name="notif_resume_all">全部继续</string>
+    <string name="notif_finished_title">下载完成</string>
+    <string name="notif_failed_title">下载失败</string>
+    <string name="notif_copy_failed_title">未复制到您的文件夹</string>
+    <string name="notif_files_fmt">%1$d 个文件</string>
+    <string name="notif_error_fmt">%1$s：%2$s</string>
+    <string name="notif_generic_torrent">种子</string>
+    <string name="notif_limit_title">已达到后台时限</string>
+    <string name="notif_limit_text">Android 暂停了 DeepFlux 的下载。打开 DeepFlux 以继续。</string>
+    <string name="notif_paused_title">下载已暂停</string>
+    <string name="notif_paused_text">已通过“全部暂停”暂停。继续之前不会下载。</string>
 </resources>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OS backup for Android 12+ (cloud backup and device-to-device transfer) —
+  an ALLOW-LIST, identical to @xml/backup_rules for both kinds of backup.
+  See that file for what is deliberately left out and why.
+
+  Cloud backup additionally requires an encrypted backup end-to-end
+  (disableIfNoEncryptionCapabilities): without a device lock there is none.
+-->
+<data-extraction-rules>
+    <cloud-backup disableIfNoEncryptionCapabilities="true">
+        <include domain="file" path="browser_bookmarks.json" />
+        <include domain="file" path="player_positions.json" />
+        <include domain="file" path="memory" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="file" path="browser_bookmarks.json" />
+        <include domain="file" path="player_positions.json" />
+        <include domain="file" path="memory" />
+    </device-transfer>
+</data-extraction-rules>

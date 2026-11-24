@@ -21,12 +21,28 @@ import java.net.URL
  * 1.4.12 (owner 2026-11-17): the agent moved to Venice AI's UNCENSORED
  * DeepSeek V4.1 Flash — same OpenAI wire format, function calling and
  * reasoning verified live against api.venice.ai.
+ *
+ * Open for tests: the chat session's loop is exercised against a scripted
+ * subclass ([cancel] and [complete] are the whole contract).
  */
-class ChatClient(
+open class ChatClient(
     private val baseUrl: String = "https://api.venice.ai/api/v1",
     private val apiKey: String,
     private val model: String = "deepseek-v4-1-flash-uncensored",
 ) {
+
+    /** The in-flight request's connection — [cancel] tears it down. */
+    @Volatile
+    private var active: HttpURLConnection? = null
+
+    /**
+     * Abort the in-flight request: the blocked read fails at once instead
+     * of streaming the rest of the reply. Without this, Stop only took
+     * effect after the whole round had arrived — and its tool calls ran.
+     */
+    open fun cancel() {
+        runCatching { active?.disconnect() }
+    }
 
     /** One turn of the conversation, JSON-serializable. */
     data class Message(
@@ -56,15 +72,17 @@ class ChatClient(
     }
 
     /**
-     * Blocking call — run on a background thread.
+     * Blocking call — run on a background thread. Throws when [cancel]
+     * tore the request down (the caller treats that as "stopped").
      */
-    fun complete(
+    open fun complete(
         history: List<Message>,
         tools: JSONArray? = null,
         onDelta: (String) -> Unit = {},
         onReasoning: (String) -> Unit = {},
     ): Result {
         val conn = URL("$baseUrl/chat/completions").openConnection() as HttpURLConnection
+        active = conn
         return try {
             conn.requestMethod = "POST"
             conn.doOutput = true
@@ -150,6 +168,7 @@ class ChatClient(
             Log.w(TAG, "chat failed: ${e.message}")
             throw e
         } finally {
+            active = null
             conn.disconnect()
         }
     }

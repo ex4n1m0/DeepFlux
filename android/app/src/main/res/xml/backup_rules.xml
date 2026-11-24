@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  OS backup for Android 11 and older (auto-backup) — an ALLOW-LIST.
+
+  Only the three harmless, user-valuable stores named below may leave the
+  device. Everything else stays put: the settings file (API keys and the
+  chat log), the Room identity (per-device by design — a copied identity is a
+  second device answering to the same name), playlist / feed / credential
+  sidecars, download cookies and the saved .torrent files.
+
+  A new store is NOT backed up until someone adds it here on purpose. Before
+  2026-11-23 there were no rules at all: every file in the app's storage was
+  uploaded, keys and identity included. Android 12+ uses
+  @xml/data_extraction_rules, which must carry the SAME list.
+-->
+<full-backup-content>
+    <include domain="file" path="browser_bookmarks.json" />
+    <include domain="file" path="player_positions.json" />
+    <include domain="file" path="memory" />
+</full-backup-content>

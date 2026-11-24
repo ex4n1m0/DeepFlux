@@ -8,7 +8,7 @@ import android.util.Log
  *
  * Format:
  * ```
- * #EXTM3U
+ * #EXTM3U url-tvg="https://guide.example/xmltv"
  * #EXTINF:-1 tvg-id="id" tvg-name="Name" tvg-logo="url",Display Name
  * http://stream.url.m3u8
  * ```
@@ -27,6 +27,14 @@ object M3UParser {
          * The desktop parser keeps EXTVLCOPT headers too — parity.
          */
         val httpUserAgent: String = "",
+        /**
+         * EPG linkage from the EXTINF attributes: `tvg-id` is the XMLTV
+         * `<channel id>` and `tvg-name` its display name — the reliable way
+         * to match a channel to its guide (display names alone often differ:
+         * "BBC One HD" vs "BBC One").
+         */
+        val tvgId: String = "",
+        val tvgName: String = "",
     )
 
     fun parse(content: String): List<Channel> =
@@ -38,18 +46,29 @@ object M3UParser {
      * inside readText) OOM-killed the app against the ~200MB heap limit
      * (owner crash 2026-11-15, tv123.me, 131,289 channels). This entry
      * keeps only the parsed Channel list in memory.
+     *
+     * [onGuideUrl] receives the header's `url-tvg="…"` (the playlist's own
+     * EPG address) when present — parsed in the same pass, so the guide
+     * needs no extra download.
      */
-    fun parseStream(reader: java.io.BufferedReader): List<Channel> {
+    fun parseStream(reader: java.io.BufferedReader, onGuideUrl: (String) -> Unit = {}): List<Channel> {
         val channels = mutableListOf<Channel>()
         var pendingName = ""
         var pendingLogo = ""
         var pendingGroup = ""
         var pendingUa = ""
+        var pendingTvgId = ""
+        var pendingTvgName = ""
+        var headerSeen = false
 
         while (true) {
             val line = reader.readLine() ?: break
             val trimmed = line.trim()
             when {
+                !headerSeen && trimmed.startsWith("#EXTM3U") -> {
+                    headerSeen = true
+                    extractAttr(trimmed, "url-tvg")?.takeIf { it.isNotBlank() }?.let(onGuideUrl)
+                }
                 trimmed.startsWith("#EXTINF:") -> {
                     // Extract display name (after the last comma)
                     val commaIdx = trimmed.lastIndexOf(',')
@@ -62,11 +81,13 @@ object M3UParser {
                     pendingLogo = extractAttr(trimmed, "tvg-logo") ?: ""
                     pendingGroup = extractAttr(trimmed, "group-title") ?: ""
                     pendingUa = extractAttr(trimmed, "http-user-agent") ?: ""
+                    pendingTvgId = extractAttr(trimmed, "tvg-id") ?: ""
+                    pendingTvgName = extractAttr(trimmed, "tvg-name") ?: ""
                 }
                 trimmed.startsWith("#EXTGRP:") -> {
                     pendingGroup = trimmed.removePrefix("#EXTGRP:").trim()
                 }
-                trimmed.uppercase().startsWith("#EXTVLCOPT:HTTP-USER-AGENT=") -> {
+                trimmed.startsWith("#EXTVLCOPT:HTTP-USER-AGENT=", ignoreCase = true) -> {
                     pendingUa = trimmed.substringAfter('=').trim()
                 }
                 trimmed.isNotEmpty() && !trimmed.startsWith("#") && pendingName.isNotBlank() -> {
@@ -78,6 +99,8 @@ object M3UParser {
                                 logoUrl = pendingLogo,
                                 groupId = pendingGroup,
                                 httpUserAgent = pendingUa,
+                                tvgId = pendingTvgId,
+                                tvgName = pendingTvgName,
                             )
                         )
                     }
@@ -85,6 +108,8 @@ object M3UParser {
                     pendingLogo = ""
                     pendingGroup = ""
                     pendingUa = ""
+                    pendingTvgId = ""
+                    pendingTvgName = ""
                 }
             }
         }
@@ -92,10 +117,26 @@ object M3UParser {
         return channels
     }
 
-    private fun extractAttr(line: String, attr: String): String? {
-        val regex = Regex("$attr=\"([^\"]*)\"")
-        return regex.find(line)?.groupValues?.get(1)
-    }
+    /**
+     * Lazy-list key for a channel. Playlists list one URL under several
+     * names — and one channel (same URL AND name) under several groups;
+     * Compose crashes on duplicate keys, so the group and the position are
+     * part of the key: unique for any real playlist, stable while the list
+     * itself does not change.
+     */
+    fun listKey(channel: Channel, index: Int): String =
+        "${channel.url}|${channel.name}|${channel.groupId}|$index"
+
+    /**
+     * Attribute readers, compiled once. `extractAttr` used to build a new
+     * Regex for every attribute of every line — five per `#EXTINF`, so
+     * about 750,000 compilations for a 150k-channel playlist.
+     */
+    private val ATTR_REGEXES = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
+    private fun extractAttr(line: String, attr: String): String? =
+        ATTR_REGEXES.getOrPut(attr) { Regex("${Regex.escape(attr)}=\"([^\"]*)\"") }
+            .find(line)?.groupValues?.get(1)
 
     private const val TAG = "M3UParser"
 

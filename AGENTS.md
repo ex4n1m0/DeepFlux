@@ -3651,3 +3651,309 @@ gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regre
   assertions inside ONE adb command (inter-command latency exceeds the
   10s window and produces false "still hidden" readings).
 
+## Android parity + review rounds (2026-11-23/24) — durable rules (1.4.13, COMMITTED, UNRELEASED)
+
+STATE (2026-11-24, evening): everything below is COMMITTED on branch
+`android-1.4.13` — one commit ahead of `svp-out-of-process` (NOT pushed,
+NOT released; to bring it there: `git checkout svp-out-of-process &&
+git merge --ff-only android-1.4.13`). Version 1.4.13 /
+versionCode 29. A signed RELEASE build of exactly this source is on the
+site as a TEST FILE ONLY — `website/deepflux/DeepFlux-1.4.13-Android.apk`
+(58325596 bytes, sha256 ae44530c10f1da51cac255b2251de83688bc7d2c3173316e0d598381d9cb3b42, same
+signing cert as 1.4.12, live bytes re-verified) — for the owner's first
+device test. The public download buttons (EN + ZH) and
+`latest-android.json` STILL point at 1.4.12: no user is offered the
+update. FINISHING THE RELEASE = replace the four page hrefs +
+version/size/sha lines, write the feed (29 / 1.4.13 / size / sha256 /
+released / notes), delete the 1.4.12 APK from the deploy dir, `vercel
+--prod --yes --scope timedivision` from `website/`. The usual pre-deploy
+emulator smoke could NOT run (no emulator on this machine). Baseline
+before this work was 35 tests; now `./gradlew :app:testDebugUnitTest` →
+330 tests, 0 failures, 5 `Assume` skips that only happen on a
+Windows host (symlink privilege x4, the real FileProvider round trip) —
+a Linux CI run must execute those five before a release. `assembleDebug`
+builds.
+
+Toolchain on THIS machine (user `igorc`): portable JDK 21 + SDK under
+`C:\Users\igorc\android-toolchain` (the `D:\android-toolchain` notes above
+belong to the other machine). Helper: `bash
+/c/Users/igorc/android-toolchain/scripts/adb-build.sh compile|test
+["pkg.Class"]|assemble`. No emulator here — every device-only behaviour
+below is UNVERIFIED on hardware (listed at the end).
+
+Seams the tests rely on (keep them; nothing else lets the logic run on the
+JVM): `TorrentEngineApi` (+ `hasSymlinkEntries`), `RecordingContext`,
+`TinyHttpServer`, `ChatSession(clientFor, publicUrlCheck, isSymlink,
+openInBrowser: (String) -> Boolean)`, `TorrentRepository(gateOverride,
+clock, engineStartRetryMs, readStagedTorrent, activeOverride)`,
+`FolderSizer(isLink, cancelled)` — `isLink` sits BEFORE `cancelled` on
+purpose: a function-typed parameter added AFTER a trailing-lambda parameter
+silently rebinds every `sizeOf(dir) { … }` call site —
+`CommanderRepository(appFileUri, isLink)`,
+`HttpDownloadRepository(urlPolicy)`, `RssRepository(feedUrlPolicy)`,
+`EPGRepository(clock)`, `FinishedExport.export(…, access, run,
+`fallbackToDownloads)` + `keepAccess(take)` + `stallMs`,
+`TorrentRepository.exportTorrentFile(…, run)` and the synchronous
+`exportFinishedFiles(downloadFolder, paths, copyOne)`,
+`HttpDownloadRepository(exportFolder, notify, onCopyFailed)`.
+
+Durable rules — do not regress:
+- FOREGROUND SERVICE follows ACTIVITY, never app launch: the gate's first
+  look at startup is not a transition; `refreshNow()` starts the service on
+  the false→true edge of "any torrent active" (restored torrents included),
+  the HTTP lane calls `checkActive()` at the end of `scheduleLocked()`
+  (callers persist BEFORE scheduling), `MainActivity.onStart` checks both
+  lanes. The HTTP lane is nudged (`onGateOpened`) on EVERY poll while the
+  gate is open — its workers sample the gate per chunk and can pause an
+  item during a blip the poller never sees; transition-only nudges stranded
+  such downloads (and stranded the EPG loader the same way).
+- `TorrentRepository.persist()` is serialised (`persistLock` — two writers
+  shared one tmp file and the older, shorter list could win) and waits for
+  the saved list; `start()` loads the list BEFORE starting the engine and
+  retries the engine start; an add that arrives meanwhile WAITS for it.
+- Torrent pause state (`p`, `pa`) is saved per entry and re-applied at start.
+- Add confirmation: `userInitiated` (tapped link = `request.hasGesture()`,
+  links sheet, another app's share) is never displaced or held back; a
+  page-fired request is (a) dropped while a user request is showing or on
+  its way (`openUserRequests`), (b) dropped for a FIXED 5 s after the user
+  declined that same torrent (per torrent, not restarted by the asks it
+  swallows), (c) capped at 3 dialogs per minute (`pageIsFlooding`, one
+  notice per window) — the dialog is modal, so a volley is a lock-out.
+  `offer()` is one step under `pendingAddLock`; `.torrent` requests carry
+  the sequence of their ARRIVAL, not of their finished read. One share
+  import at a time; the copy is capped; staged files are swept at startup.
+- SYMBOLIC LINKS: a torrent may carry link entries pointing anywhere in
+  private storage. The engine refuses such torrents (`.torrent` at add,
+  magnet when its metadata arrives → `removeSymlinkTorrent`), the Commander
+  does not list links and `deleteTree` never follows one (Kotlin's
+  `deleteRecursively()` walks THROUGH a linked folder), the public-Downloads
+  export skips links, the HTTP lane removes a link where it is about to
+  write (`.part`).
+- NETWORK BOUNDARY (agent-added URLs): `PublicUrls.rejection` on EVERY
+  redirect hop — plain HTTP downloads, HLS sub-requests, RSS feed address
+  AND item links (agent-added feeds are `publicOnly`, persisted), the
+  updater, `fetchPublic`. `open_url` checks its first URL and the tab it
+  opens is `agentTabs`-marked: non-public main-frame requests (redirect,
+  meta refresh, script) are refused until the user navigates by hand.
+  OWNER DECISION 2026-11-24 ("yes, yes" to both — do not change): (a)
+  `scan_page` MAY read a LAN page the USER opened (only agent-opened tabs
+  are blocked); (b) page-initiated plain-file downloads stay
+  UNCONFIRMED, rate-capped per tab (5/min) — no confirmation dialog.
+- PAGE BRIDGE (`BridgeMailbox`): in-page .torrent fetches wait per TOKEN; a
+  foreign token consumes nothing; `claimScan` makes a scan token good for
+  ONE report; tokens are read by string positions (`envelopeToken`) before
+  any JSON parsing, and a payload is parsed on the bridge thread, never on
+  main. Every tab has its OWN download listener (a shared one sent the
+  ACTIVE tab's URL as Referer for another tab's download).
+- AGENT TOOL RESULTS: every result is wrapped `<untrusted>…</untrusted>`
+  (one wrap for all — no list of "safe" tools) with the tag's own spellings
+  neutralised, capped at 24k chars; `list_files`/`open_file` stay inside
+  the download folder (canonical + separator; no link following). `open_url`
+  reports failure when the browser is at its tab limit.
+- EPG: the cache file is named per guide URL (3 kept), the guide is dropped
+  the moment the URL changes, a superseded fetch can neither install nor
+  cache (generation + `installLock`), each load has its own tmp, EVERY exit
+  of `run()` goes through `settle()`, `OutOfMemoryError` is a failure not a
+  death, and the parser keeps only programmes within 12 h past / 7 days
+  ahead of now (≤400k, texts ≤400 chars) — a guide served to tests must
+  therefore be built around the real clock (`guideAround(now)`).
+- NOTICES: "Resume all" is authorised by a per-INSTALL token kept in
+  `filesDir/notification_token` (not on the backup allow-list) — the
+  standing "paused" notice is a normal notification and OUTLIVES its
+  process, so a per-process token left its button dead after a kill.
+  `syncPausedNotice()` runs from the service, MainActivity.onStart and
+  `TorrentRepository.onPauseAllChanged`.
+- SERVICE LOCKS: `TransferLockPolicy` holds the wake/Wi-Fi locks only while
+  bytes move with the gate open (60 s stall window, elapsed-realtime
+  clock); the watchdog loop is exception-guarded; a page cycling magnets
+  gets the crash-loop guard (`CrashWindow`, 3 in 30 s).
+- CHAT: one `Turn` per turn (own stop flag, own history list, generation);
+  every bubble-list change goes through `updateMessages`/`streamPiece`
+  under `messagesLock` (a `clear()` between check and write used to
+  resurrect a "…" bubble); `Thread.start()` failure clears `_busy`; bubbles
+  have ids (`ChatBubble.id`) and UI state follows the id. Agent replies
+  render as markdown (`MarkdownText`); a magnet tapped in a reply is a
+  user-initiated confirmed add, a page link opens in the in-app browser.
+  The agent's `add_rss_feed` is `publicOnly = true`.
+- IPTV: `Sections` (Live TV / Movies / Series) are computed on the load
+  thread and published as a parallel list in `IPTVState.sections`;
+  `PlaylistStore.Playlist.contentType` ("auto"|"live"|"vod", field `ct`) is
+  the per-source override; local sources are VOD by nature. Section, group
+  and search filters run off the main thread (`produceState` + 180 ms
+  debounce) — never walk a 75k-entry list while composing.
+- PLAYER: audio focus + becoming-noisy handled; buffering spinner and text;
+  edge-to-edge under the cutout; rotation / aspect / audio-track buttons in
+  the top bar (`PlayerModes` holds the cycles and the labels).
+- SAVE LOCATION (Settings → "Save location", owner 2026-11-24: "make it
+  work" — the picked folder used to be stored and never read):
+  `dlmgr/FinishedExport.kt`. Downloads always run in app-private storage
+  (libtorrent cannot write through scoped storage); when one finishes a
+  COPY is made for the user — into the chosen folder (a SAF tree URI,
+  through `DocumentsContract`) or, when none is chosen, into the public
+  Downloads collection (`MediaStoreExport`). FOUR review passes (two
+  rounds x correctness + security, same day); durable rules — do not
+  regress:
+  * Plain HTTP downloads: every finished file. Torrents
+    (`exportFinishedFiles(downloadFolder, paths, copyOne)` →
+    `exportTorrentFile` per file): EVERY file into a chosen folder,
+    keeping the torrent's own sub-folders; with none chosen VIDEO files
+    only (`.mp4 .mkv .webm .avi .mov .iso` — the pre-existing rule, so a
+    torrent of thousands of small files does not flood Downloads).
+  * The torrent lane settles on its destination ONCE per torrent
+    (`effectiveFolder`: the chosen folder while the app may write to it,
+    else "") and calls `export(…, access = { true },
+    fallbackToDownloads = false)` — it is never re-routed behind its
+    back, and the permission is not asked of the system per file. The
+    plain lane passes the stored folder and lets `export` decide.
+  * An unusable chosen folder — permission revoked, provider gone, not an
+    address — COUNTS AS NONE for `export`: Downloads, never "copied
+    nowhere" (and for torrents the video-only rule comes back with it).
+    The Settings row says so (`saveLocationLost`, worded true on every
+    Android version); on Android 9 (no Downloads collection) the default
+    row says nothing is copied out (`saveLocationNoDownloads`) and
+    `Result.NoDestination` is not a failure.
+  * `canWriteTo` = a PERSISTED write grant on the tree URI.
+    `keepAccess` (= `takePersistableUriPermission` READ|WRITE, guarded)
+    runs when the user picks a folder; when the system refuses,
+    `pickedFinishedDownloadsFolder(uri, kept = false)` stores NOTHING,
+    the earlier choice stands and the user gets `noticeFolderNotKept`.
+    The old grants are deliberately NOT released on change/clear (the
+    Commander and the IPTV local folder may share that tree; the per-app
+    cap is 512 since Android 11).
+  * Inside the chosen folder: only real path segments ("."/".." dropped);
+    same name + same size → `AlreadyThere`; a same-name DIFFERENT file is
+    never overwritten; a FILE where a folder should go fails with "in the
+    way" (asked at the first look AND after the create request); a folder
+    another export just made is looked up again (`folderId`) and, when
+    the provider does not list it yet, remembered.
+  * ONLY a file the provider has just made is written to: after
+    `createDocument` the returned document is asked about ITSELF
+    (`readDocument`: a directory, ANY size above zero, or no answer means
+    "that is not a new file") and compared with the listing — a provider
+    that answers a create with a file that is already there hands over
+    the user's file, which is neither opened nor deleted. The job's
+    listing memory can be hours old; the provider's answer cannot.
+  * A failed copy DELETES its half-written document (only ever its own);
+    a failed Downloads copy deletes its "pending" row.
+  * The type a file is created with comes from its own extension through
+    `MimeTypeMap` first (`mimeFor`): a system folder provider renames
+    "notes.pdf" to "notes.pdf.bin" when asked for
+    "application/octet-stream".
+  * A job (`Run`) lists each folder ONCE (it was once per file —
+    quadratic for a flat multi-file torrent); child queries use the
+    BUNDLE form and columns are read BY NAME (traps below).
+  * Before any copy, a torrent file must be a real file INSIDE the
+    download folder (`exportTorrentFile`: symlink refused, canonical
+    containment) — the second lock behind the add-time refusal. The file
+    list is read on `engineDispatcher` (the libtorrent contract).
+  * A copy may never take the app down or hold the app up: both lanes
+    run on `FinishedExport.submit` (a pool of 2; a job may not throw);
+    `busy()` is true only while a job is queued or running AND has
+    written a byte inside `EXPORT_STALL_MS` (5 min) — a folder provider
+    that hangs stops counting, so the service's idle grace and the CPU
+    lock let go (the stuck threads stay pinned: accepted residual).
+  * The download service's idle grace WAITS while `busy()`, and
+    `TransferLockPolicy` holds the CPU for a progressing copy with the
+    gate open or closed (both locks are taken together — a few minutes
+    of Wi-Fi lock for a local copy is accepted), giving it back after the
+    same 60 s stall window. (The two service call sites and the wait loop
+    are verified by READING only — no JVM test builds the service.)
+  * A failed copy is TOLD twice: a snackbar notice
+    (`noticeExportFailedFmt` / `…CountFmt`, once per torrent — a copy
+    that blows up counts as failed) AND a durable system notification
+    `EventKind.COPY_FAILED` ("Not copied to your folder") through
+    `postEventNotification` — the torrent lane directly, the plain lane
+    via `HttpDownloadRepository.onCopyFailed` (wired in `DeepFluxApp`).
+    A snackbar alone is seen only while the app is open.
+  * `finishedDownloadFolder()` is the non-coroutine read for the HTTP
+    lane (the settings flow emits only once the stored values are in) and
+    is total (falls back to "" on any failure).
+  * Settings row: `remember(folderUri)` around the permission question
+    (a call to another process, not something to do per recomposition).
+  * Tests: `FinishedExportTest.kt` (42; a REAL
+    `DocumentsProvider` over a temp folder, registered with Robolectric)
+    + the copy cases in `ServicePolicyTest`. Teeth: 47 mutations
+    against the FINAL code (`teeth_saveloc_v4.json` beside `teeth.py`).
+  * Accepted residuals: a copy cut by PROCESS DEATH keeps its final name
+    (a later export then makes "name (2)") — temp-name + `renameDocument`
+    is the fix if it ever matters; two hung providers pin the pool until
+    restart; logcat carries download and folder names (control characters
+    stripped).
+
+Verification ritual that earned its keep: every fix was "teeth-checked" —
+temporarily disabled, its test re-run (must fail), restored. Driver:
+`python -X utf8 C:\Users\igorc\android-toolchain\scripts\teeth.py <spec>`
+(JSON specs `teeth_*.json` beside it; LF/CRLF-aware). ALWAYS take an
+external backup + `sha256sum` list first and verify with `sha256sum -c`
+after — a script that stored the wrong "original" once restored a mutated
+file. Test flakiness can be a real bug: chase it with `--rerun` loops
+before calling it the dice (the persist race and a racy `onDone` were found
+that way). A test must await state the unit under test RECORDS (saved file,
+flow value, callback), never a fake's internal list. `teeth.py`
+discards failure details: when a mutation also fails a test it should
+NOT affect, re-run that one mutation by hand and READ the failure (that
+is how a test waiting for a file to EXIST — not to be COMPLETE — was
+caught). A test can lose its teeth silently: adding a column to a
+listing made the test provider answer in the same order the app asks
+for, so "read by name" was no longer exercised — keep the provider's
+own order visibly different, and a branch is only covered by a test
+that REACHES it (a "file in the way" test was caught by the first
+check and never touched the second). Independent reviews are worth
+their cost on anything with a trust boundary: four passes found real
+defects the author and 40 green mutations had missed (a lost folder
+copied nowhere while the UI promised Downloads; the per-file listing
+was quadratic; a provider can hand back an existing user file).
+
+Traps: `File(parent, "a", "b")` has no 3-argument constructor;
+`Uri.lastPathSegment` is ALREADY decoded; `WebView.pauseTimers()` is an
+instance method with process-wide effect; `const val` only in a companion;
+":" and "|" cannot be in a file name on Windows; `ActivityController.create()`
+returns the controller (`.get()` is the activity).
+
+Kotlin builds ONE `$WhenMappings` table per class for EVERY enum the
+class switches on with `when`. `TorrentRepository` switches on a
+libtorrent4j enum, so one new `when (kind)` over a plain Kotlin enum in
+that class made its JVM tests die with a libtorrent4j `LinkageError`
+(native library) the first time that `when` ran. In a class that
+switches on a libtorrent enum, use if/else chains over enums.
+
+Robolectric + a real `DocumentsProvider` (save-location tests): attach
+it with `readPermission`/`writePermission` = `MANAGE_DOCUMENTS` (the
+framework refuses otherwise) and grant the caller through
+`ShadowInstrumentation.grantPermissions` (reflection).
+`ShadowContentResolver` INTERCEPTS the legacy `ContentResolver.query(uri,
+projection, selection, …)` and calls the provider's LEGACY overload —
+which the real `DocumentsProvider` rejects ("Pre-Android-O query format
+not supported") — so code under test must use the bundle form
+`query(uri, cols, Bundle.EMPTY, null)` (on a device the legacy form is a
+wrapper around it). `MatrixCursor.put` is not in the SDK stubs (build
+rows with `newRow().add(…)`). A failure injected through a PIPE is
+invisible to the client (the bytes vanish into the pipe buffer) — make
+the provider refuse to OPEN the document. Robolectric enforces no
+permission, so a gate that "fails closed" needs its own assertion.
+The settings DataStore is ONE file for the whole test run (stored
+settings leak between tests AND classes — start from a known state and
+restore the default), and so are `insertStatements`, posted
+notifications and the granted-permission list (assert on names unique
+to the test, or on counts before/after). An uncaught-exception handler
+swapped in by a test must be swapped back only after a pause: the pool's
+counter drops before the dying thread reaches the handler.
+
+Device-only, UNVERIFIED here: whether libtorrent4j would create a symlink
+entry on disk (the refusal does not depend on it), the wake lock after a 60 s
+stall (does an inbound peer wake the radio?), Android 12+ foreground-service
+start timing, `pauseTimers()` semantics across activity recreation, all
+WebView glue (per-tab listener, `hasGesture`, the agent-tab block, the
+bridge), the player's focus/immersion/track switch, Compose rendering of
+markdown + IPTV filter row. SAVE LOCATION on a real provider (unique
+names, characters a torrent file name may carry, multi-GB copies,
+`takePersistableUriPermission` refusals, the service waiting and the wake
+lock during a copy, a provider that hangs), the `MainActivity` picker
+glue (no JVM test builds the activity — its app object wires the native
+engine), the Settings row, the symlink refusal in `exportTorrentFile`
+(its test skips on this Windows host), `Result.NoDestination` on an
+Android 9 image, and two open libtorrent questions: does
+`TorrentFinishedAlert` re-fire for a torrent that is already complete
+at session start (the folder lane is protected by `AlreadyThere`, the
+Downloads lane is not), and is `alert.handle()` still valid when the
+export reads it after the callback returned (pre-existing pattern).

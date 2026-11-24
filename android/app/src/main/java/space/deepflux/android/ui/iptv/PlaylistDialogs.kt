@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -61,6 +62,7 @@ fun PlaylistEditorDialog(
     var user by remember { mutableStateOf(initial?.username ?: "") }
     var pass by remember { mutableStateOf(initial?.password ?: "") }
     var epg by remember { mutableStateOf(initial?.epgUrl ?: "") }
+    var contentType by remember { mutableStateOf(initial?.contentType ?: PlaylistStore.CONTENT_AUTO) }
 
     // Local-folder sources (1.3.5): the system folder picker grants the
     // tree; picking one saves the playlist immediately.
@@ -75,7 +77,7 @@ fun PlaylistEditorDialog(
                     android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION,
                 )
             }
-            val folderName = uri.lastPathSegment?.substringAfterLast(':')?.take(40) ?: "folder"
+            val folderName = space.deepflux.android.filecmd.CommanderRepository.pickedFolderName(uri)
             onSave(
                 (initial ?: PlaylistStore.Playlist(id = "", name = "", kind = "local", url = "")).copy(
                     name = name.trim().ifBlank { folderName },
@@ -153,8 +155,10 @@ fun PlaylistEditorDialog(
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (kind == "xtream") {
-                        Spacer(Modifier.height(6.dp))
+                        if (kind == "xtream") {
+                            Spacer(Modifier.height(6.dp))
+                            ContentChips(contentType) { contentType = it }
+                            Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
                             value = user,
                             onValueChange = { user = it },
@@ -172,6 +176,7 @@ fun PlaylistEditorDialog(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else {
+                        ContentChips(contentType) { contentType = it }
                         Spacer(Modifier.height(6.dp))
                         OutlinedTextField(
                             value = epg,
@@ -196,6 +201,7 @@ fun PlaylistEditorDialog(
                             username = if (kind == "xtream") user.trim() else "",
                             password = if (kind == "xtream") pass.trim() else "",
                             epgUrl = if (kind == "m3u") epg.trim() else "",
+                            contentType = contentType,
                         ),
                     )
                 },
@@ -203,6 +209,36 @@ fun PlaylistEditorDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(Strings.t.cancel) } },
     )
+}
+
+/**
+ * The per-source content override: what the user says this source carries.
+ * "Auto" leaves it to the entry rules; "Live TV" and "VOD" decide for the
+ * whole source — for providers whose group names no keyword rule knows.
+ */
+@Composable
+private fun ContentChips(contentType: String, onPick: (String) -> Unit) {
+    Spacer(Modifier.height(10.dp))
+    Text(Strings.t.contentTypeLabel, style = MaterialTheme.typography.labelLarge)
+    Spacer(Modifier.height(4.dp))
+    Row(
+        modifier = Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        for ((value, label) in listOf(
+            PlaylistStore.CONTENT_AUTO to Strings.t.contentTypeAuto,
+            PlaylistStore.CONTENT_LIVE to Strings.t.contentTypeLive,
+            PlaylistStore.CONTENT_VOD to Strings.t.contentTypeVod,
+        )) {
+            FilterChip(
+                selected = contentType == value,
+                onClick = { onPick(value) },
+                label = { Text(label) },
+                colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Accent.copy(alpha = 0.25f)),
+            )
+        }
+    }
+    Text(Strings.t.contentTypeHint, style = MaterialTheme.typography.labelSmall, color = DimText)
 }
 
 @Composable
@@ -253,8 +289,11 @@ fun ManagePlaylistsDialog(
                                     maxLines = 1,
                                 )
                                 Text(
-                                    if (p.kind == "xtream") Strings.t.playlistTypeXtream
-                                    else Strings.t.playlistTypeM3u,
+                                    when (p.kind) {
+                                        PlaylistStore.KIND_XTREAM -> Strings.t.playlistTypeXtream
+                                        PlaylistStore.KIND_LOCAL -> Strings.t.playlistTypeLocal
+                                        else -> Strings.t.playlistTypeM3u
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = DimText,
                                 )

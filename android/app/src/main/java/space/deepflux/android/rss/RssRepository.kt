@@ -10,10 +10,7 @@ import org.json.JSONObject
 import space.deepflux.android.dlmgr.HttpDownloadRepository
 import space.deepflux.android.engine.MagnetParser
 import space.deepflux.android.engine.TorrentRepository
-import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.InputStream
-import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
@@ -40,6 +37,8 @@ class RssRepository(
     private val context: Context,
     private val torrents: TorrentRepository,
     private val http: HttpDownloadRepository,
+    /** Public-address policy for feeds the agent added (tests inject a fake resolver). */
+    private val feedUrlPolicy: (String) -> String? = space.deepflux.android.agent.PublicUrls::rejection,
 ) {
 
     data class RssFeed(
@@ -52,6 +51,13 @@ class RssRepository(
         val addedAt: Long = 0,
         val lastFetchAt: Long = 0,
         val lastError: String = "",
+        /**
+         * Added on the agent's say-so. The feed's address is then held to
+         * the public internet on every poll — every redirect hop included
+         * — exactly like a download the agent added. A feed the USER typed
+         * is their own choice and may come from anywhere.
+         */
+        val publicOnly: Boolean = false,
     )
 
     private val file = File(context.filesDir, "rss_feeds.json")
@@ -94,6 +100,7 @@ class RssRepository(
                         addedAt = o.optLong("at", 0),
                         lastFetchAt = o.optLong("fetched", 0),
                         lastError = o.optString("err", ""),
+                        publicOnly = o.optBoolean("po", false),
                     )
                     seen[id] = o.optJSONArray("seen")?.let { ss ->
                         val linked = LinkedHashSet<String>()
@@ -107,14 +114,19 @@ class RssRepository(
     }
 
     /** Fetch once to validate + title the feed, baseline everything as seen. */
-    fun addFeed(rawUrl: String, keywords: List<String> = emptyList(), autoDownload: Boolean = false): Result<RssFeed> {
+    fun addFeed(
+        rawUrl: String,
+        keywords: List<String> = emptyList(),
+        autoDownload: Boolean = false,
+        publicOnly: Boolean = false,
+    ): Result<RssFeed> {
         val url = rawUrl.trim()
         if (!url.startsWith("http://", true) && !url.startsWith("https://", true)) {
             return Result.failure(IllegalArgumentException("not an http(s) URL"))
         }
         if (_feeds.value.any { it.url == url }) return Result.failure(IllegalArgumentException("feed already added"))
         return runCatching {
-            val content = RssClient.fetch(url)
+            val content = RssClient.fetch(url, publicOnly, feedUrlPolicy)
             synchronized(lock) {
             val feed = RssFeed(
                 id = idFor(url),
@@ -124,6 +136,7 @@ class RssRepository(
                 keywords = keywords.map { it.trim().lowercase() }.filter { it.isNotBlank() },
                 addedAt = System.currentTimeMillis(),
                 lastFetchAt = System.currentTimeMillis(),
+                publicOnly = publicOnly,
             )
             _feeds.value = _feeds.value + feed
             _itemsByFeed.value = _itemsByFeed.value + (feed.id to content.items)
@@ -161,7 +174,7 @@ class RssRepository(
         val feed = _feeds.value.find { it.id == id } ?: return Result.failure(IllegalArgumentException("no such feed"))
         _refreshing.value = _refreshing.value + id
         return try {
-            val content = RssClient.fetch(feed.url)
+            val content = RssClient.fetch(feed.url, feed.publicOnly, feedUrlPolicy)
             synchronized(lock) {
                 _itemsByFeed.value = _itemsByFeed.value + (id to content.items)
                 _feeds.value = _feeds.value.map {
@@ -212,85 +225,89 @@ class RssRepository(
         val known = seen[feed.id] ?: LinkedHashSet()
         items.filter { it.guid !in known && matches(it.title, feed.keywords) }
             .forEach { item ->
-                if (handToEngine(item)) {
-                    synchronized(lock) {
-                        seen.getOrPut(feed.id) { LinkedHashSet() }.add(item.guid)
-                        trimSeenLocked(feed.id)
-                        persistLocked()
+                // Marked seen only once an engine has really taken it. On the
+                // first byte of the file alone, a .torrent whose import then
+                // failed was never tried again (second review).
+                handToEngine(item) { ok ->
+                    if (ok) {
+                        markSeen(feed.id, item.guid)
+                        Log.i(TAG, "rss auto-download: ${item.title.take(60)}")
+                        torrents.postNotice("RSS: added ${item.title.take(60)}")
                     }
-                    Log.i(TAG, "rss auto-download: ${item.title.take(60)}")
-                    torrents.postNotice("RSS: added ${item.title.take(60)}")
                 }
             }
     }
 
-    /** Manual download (UI row / agent tool). Marks seen on success too. */
-    fun downloadItem(feedId: String, guid: String): Boolean {
-        val item = _itemsByFeed.value[feedId]?.find { it.guid == guid } ?: return false
-        val ok = handToEngine(item)
-        if (ok) {
-            synchronized(lock) {
-                seen.getOrPut(feedId) { LinkedHashSet() }.add(guid)
-                trimSeenLocked(feedId)
-                persistLocked()
-            }
-        }
-        return ok
+    private fun markSeen(feedId: String, guid: String) = synchronized(lock) {
+        seen.getOrPut(feedId) { LinkedHashSet() }.add(guid)
+        trimSeenLocked(feedId)
+        persistLocked()
     }
 
-    /** Route one item to the right engine; true = accepted (mark seen). */
-    private fun handToEngine(item: RssClient.RssItem): Boolean {
+    /**
+     * Manual download (UI row / agent tool). True = handed to an engine;
+     * [done] then says whether it really got in — at once for a plain file,
+     * and for a torrent once the engine has it. Marked seen only then.
+     */
+    fun downloadItem(feedId: String, guid: String, done: (Boolean) -> Unit = {}): Boolean {
+        val item = _itemsByFeed.value[feedId]?.find { it.guid == guid } ?: return false
+        return handToEngine(item) { ok ->
+            if (ok) markSeen(feedId, guid)
+            done(ok)
+        }
+    }
+
+    /**
+     * Route one item to the right engine. True = accepted (the outcome
+     * follows through [done]); false = refused on the spot, which must NOT
+     * mark the item seen.
+     */
+    private fun handToEngine(item: RssClient.RssItem, done: (Boolean) -> Unit): Boolean {
         val target = item.magnet ?: item.link
         return when {
             target.startsWith("magnet:", true) -> {
                 // Pre-validate with the same parser addMagnet uses — an
                 // immediate rejection must NOT mark the item seen.
-                if (MagnetParser.infoHashHex(target) == null) false
-                else {
-                    torrents.addMagnet(target)
+                if (MagnetParser.infoHashHex(target) == null) {
+                    false
+                } else {
+                    torrents.addMagnet(target, onDone = done)
                     true
                 }
             }
-            target.substringBefore('?').endsWith(".torrent", true) -> fetchTorrent(target)
-            target.startsWith("http://", true) || target.startsWith("https://", true) ->
-                http.add(target) != null
+            target.substringBefore('?').endsWith(".torrent", true) -> {
+                val staged = stageTorrent(target) ?: return false
+                torrents.addTorrentFile(staged, onDone = done) // consumes/deletes the file
+                true
+            }
+            target.startsWith("http://", true) || target.startsWith("https://", true) -> {
+                // The link is the FEED's, not the user's — and auto-download
+                // follows it without anyone watching. Every address it leads
+                // to must be public, like a download the agent added.
+                val ok = http.add(target, publicOnly = true) != null
+                done(ok)
+                ok
+            }
             else -> false
         }
     }
 
-    /** Mirror of the browser's torrent fetch: capped, bencode-sanity-checked. */
-    private fun fetchTorrent(url: String): Boolean = runCatching {
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.connectTimeout = 15_000
-        conn.readTimeout = 30_000
-        conn.setRequestProperty("User-Agent", HttpDownloadRepository.USER_AGENT)
-        try {
-            if (conn.responseCode != 200) return@runCatching false
-            val bytes = readCapped(conn.inputStream, MAX_TORRENT_BYTES + 1)
-            if (bytes.isEmpty() || bytes.size > MAX_TORRENT_BYTES) return@runCatching false
-            if (bytes[0] != 'd'.code.toByte()) return@runCatching false
-            val tmp = File(context.cacheDir, "rss-${System.currentTimeMillis()}.torrent")
-            tmp.writeBytes(bytes)
-            torrents.addTorrentFile(tmp) // consumes/deletes the file
-            true
-        } finally {
-            conn.disconnect()
-        }
-    }.getOrDefault(false)
-
-    private fun readCapped(input: InputStream, cap: Int): ByteArray {
-        val out = ByteArrayOutputStream()
-        val buf = ByteArray(16 * 1024)
-        input.use { src ->
-            while (true) {
-                val n = src.read(buf)
-                if (n == -1) break
-                if (out.size() + n > cap) return ByteArray(0)
-                out.write(buf, 0, n)
-            }
-        }
-        return out.toByteArray()
-    }
+    /**
+     * The browser's torrent fetch, with the download engine's own guarded
+     * fetch: capped, bencode-sanity-checked, and public-internet only on
+     * every redirect hop (a .torrent link used to be fetched with plain
+     * HttpURLConnection, redirects followed unchecked). Staged under a name
+     * of its own: "rss-<ms>" let two items fetched in the same millisecond
+     * share one file.
+     */
+    private fun stageTorrent(url: String): File? = runCatching {
+        val bytes = http.fetchPublic(url, MAX_TORRENT_BYTES + 1) ?: return@runCatching null
+        if (bytes.isEmpty() || bytes.size > MAX_TORRENT_BYTES) return@runCatching null
+        if (bytes[0] != 'd'.code.toByte()) return@runCatching null
+        val tmp = File(context.cacheDir, "rss-${java.util.UUID.randomUUID()}.torrent")
+        tmp.writeBytes(bytes)
+        tmp
+    }.getOrNull()
 
     private fun matches(title: String, keywords: List<String>): Boolean {
         val t = title.lowercase()
@@ -316,6 +333,7 @@ class RssRepository(
                         .put("keywords", JSONArray(f.keywords))
                         .put("at", f.addedAt).put("fetched", f.lastFetchAt).put("err", f.lastError)
                         .put("seen", JSONArray(seen[f.id].orEmpty().toList()))
+                        .put("po", f.publicOnly)
                 )
             }
             val tmp = File(file.parentFile, file.name + ".tmp")

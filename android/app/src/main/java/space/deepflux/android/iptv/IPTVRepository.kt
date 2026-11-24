@@ -35,6 +35,17 @@ class IPTVRepository(
         val channels: List<M3UParser.Channel> = emptyList(),
         val loading: Boolean = false,
         val error: String = "",
+        /**
+         * The playlist header's own guide address (`#EXTM3U url-tvg="…"`) —
+         * feeds the EPG when the saved playlist carries no explicit EPG URL.
+         */
+        val urlTvg: String = "",
+        /**
+         * The section of each channel — Live TV / Movies / Series — as a
+         * parallel list (`sections[i]` is `channels[i]`'s). Classified once
+         * per load with [Sections]; empty exactly while [channels] is.
+         */
+        val sections: List<String> = emptyList(),
     )
 
     private val _state = MutableStateFlow(IPTVState())
@@ -147,23 +158,29 @@ class IPTVRepository(
         val client = XtreamClient(p.url, p.username, p.password)
         val auth = client.authenticate()
         if (auth.auth != 1) throw IllegalStateException("Xtream login failed: ${auth.status}")
-        return client.toM3UChannels(client.getLiveChannels())
+        val channels = client.getLiveChannels()
+        // Category names are a second, best-effort call: without them every
+        // channel sits in one "live" group (the old behaviour) — still usable.
+        val categories = runCatching { client.getCategories("live") }.getOrDefault(emptyMap())
+        lastUrlTvg = ""
+        return client.toM3UChannels(channels, categories)
     }
 
     private fun load(p: PlaylistStore.Playlist) {
         _state.value = _state.value.copy(playlist = p, loading = true, error = "")
         try {
+            lastUrlTvg = ""
             val channels = when {
                 p.kind == "xtream" -> loadXtream(p)
                 p.kind == "local" -> loadLocal(p)
                 else -> fetchM3uStreamed(p)
             }
             if (p.kind == "xtream") writeXtreamCache(p, channels)
-            _state.value = _state.value.copy(playlist = p, channels = channels, loading = false)
+            publish(p, channels)
         } catch (e: OutOfMemoryError) {
             // A pathological playlist must never kill the app (owner crash
             // 2026-11-15: 131k channels OOM'd a whole-string read).
-            Log.e(TAG, "playlist OOM: ${p.url.take(60)}")
+            Log.e(TAG, "playlist OOM: ${runCatching { java.net.URL(p.url).host }.getOrDefault("?")}")
             _state.value = _state.value.copy(
                 playlist = p,
                 loading = false,
@@ -178,6 +195,37 @@ class IPTVRepository(
                 error = e.message?.take(150) ?: "network error",
             )
         }
+    }
+
+    /** `url-tvg` found by the last M3U parse (network or cache) — published with [IPTVState.urlTvg]. */
+    @Volatile
+    private var lastUrlTvg: String = ""
+
+    /**
+     * A loaded (or cached) channel list goes to the UI together with its
+     * sections. Classification runs here, on the loading thread — never
+     * while composing.
+     */
+    private fun publish(p: PlaylistStore.Playlist, channels: List<M3UParser.Channel>) {
+        _state.value = _state.value.copy(
+            playlist = p,
+            channels = channels,
+            sections = Sections.sectionsOf(channels, forcedType(p)),
+            loading = false,
+            error = "",
+            urlTvg = lastUrlTvg,
+        )
+    }
+
+    /**
+     * The per-source content override behind the classification. A folder
+     * of files is never a live channel, so local sources are VOD by nature;
+     * the user's choice stands for everything else.
+     */
+    private fun forcedType(p: PlaylistStore.Playlist): String = when {
+        p.id == FAVORITES_ID -> PlaylistStore.CONTENT_AUTO
+        p.kind == PlaylistStore.KIND_LOCAL -> PlaylistStore.CONTENT_VOD
+        else -> p.contentType
     }
 
     /**
@@ -214,7 +262,9 @@ class IPTVRepository(
             cache.delete()
             tmp.renameTo(cache)
         }
-        return cache.bufferedReader(Charsets.UTF_8).use { M3UParser.parseStream(it) }
+        return cache.bufferedReader(Charsets.UTF_8).use { reader ->
+            M3UParser.parseStream(reader) { guide -> lastUrlTvg = guide }
+        }
     }
 
     private val http = okhttp3.OkHttpClient.Builder()
@@ -224,6 +274,7 @@ class IPTVRepository(
 
     /** Local folder sources: the downloads dir (File walk) or a SAF tree. */
     private fun loadLocal(p: PlaylistStore.Playlist): List<M3UParser.Channel> {
+        lastUrlTvg = ""
         if (p.id == FAVORITES_ID) return favorites.items.value.map { it.toChannel() }
         if (p.id == LocalSources.DOWNLOADS_ID || p.url.isBlank()) {
             return LocalSources.scanDownloads(downloadsDir)
@@ -242,7 +293,8 @@ class IPTVRepository(
                 arr.put(
                     JSONObject()
                         .put("n", c.name).put("u", c.url).put("l", c.logoUrl)
-                        .put("g", c.groupId).put("ua", c.httpUserAgent),
+                        .put("g", c.groupId).put("ua", c.httpUserAgent)
+                        .put("i", c.tvgId).put("tn", c.tvgName),
                 )
             }
             cacheFile(p.id, "json").writeText(arr.toString())
@@ -252,10 +304,13 @@ class IPTVRepository(
     private suspend fun restoreCache(p: PlaylistStore.Playlist) {
         withContext(Dispatchers.IO) {
             runCatching {
+                lastUrlTvg = ""
                 val channels = when {
                     p.kind == "m3u" ->
                         cacheFile(p.id, "m3u").takeIf { it.exists() }
-                            ?.bufferedReader(Charsets.UTF_8)?.use { M3UParser.parseStream(it) }
+                            ?.bufferedReader(Charsets.UTF_8)?.use { reader ->
+                                M3UParser.parseStream(reader) { guide -> lastUrlTvg = guide }
+                            }
                     else -> cacheFile(p.id, "json").takeIf { it.exists() }?.readText()?.let { txt ->
                         val arr = JSONArray(txt)
                         (0 until arr.length()).map { i ->
@@ -266,12 +321,14 @@ class IPTVRepository(
                                 logoUrl = o.optString("l"),
                                 groupId = o.optString("g"),
                                 httpUserAgent = o.optString("ua"),
+                                tvgId = o.optString("i"),
+                                tvgName = o.optString("tn"),
                             )
                         }
                     }
                 }.orEmpty()
                 if (channels.isNotEmpty()) {
-                    _state.value = _state.value.copy(channels = channels)
+                    publish(p, channels)
                     Log.i(TAG, "restored ${channels.size} channels from cache")
                 }
             }

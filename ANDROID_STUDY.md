@@ -1074,3 +1074,83 @@ section numbering; 1.4.1 was never shipped). Verified live: feed 200 with
 version 1.4.2 + matching sha/size, APK 200 Content-Length 86340451, the
 DEPLOYED bytes' sha256 equals the build's, old 1.4.0 APK 404, EN+ZH pages
 carry the new href+sha (4 refs each), inline scripts node --check clean.
+
+---
+
+## §15 — Windows-parity work + two review rounds (2026-11-23/24, UNRELEASED)
+
+Source-verified parity review of v1.4.12 against the Windows app, then
+implementation of everything recommended, in the suggested order, plus two
+independent review rounds over the result. All of it is in the working
+tree, not committed, version not bumped, not deployed. No emulator on this
+machine: unit-tested and compiled (`assembleDebug` builds; 285 tests, 0
+failures, 4 host-dependent skips) but NOT run on a device.
+
+Durable rules live in AGENTS.md → "Android parity + review rounds
+(2026-11-23/24)". What was delivered, by area:
+
+- Fix-first (review §1): Xtream live-stream API, playlist kinds, EPG
+  channel matching + XMLTV offsets + boot restore, ad-block sub-resources,
+  tab cap, renderer-crash recovery, bridge tokens, Stop that really stops,
+  Clear that clears the context, untrusted tool results, agent URL policy,
+  HTTP download policy/naming, service routing (Downloads tab, Pause/Resume
+  all), updater honesty, backup allow-lists, confirmations for destructive
+  taps and page-initiated adds, Commander sizes/search/back, PublicUrls.
+- Review round 1 (R1–R8): file-name traversal, chat turn isolation, EPG
+  cache per guide, service start/locks/notices, RSS link policy, torrent
+  repository hardening (sequencing, cancel suppression, capped import,
+  save race, engine start retry), browser bridge/crash/scan guards,
+  FileProvider scope, smaller items.
+- Review round 2 (R10): service start follows activity (restored torrents
+  and the HTTP lane), EPG loader can no longer strand + parser bounded,
+  "Resume all" notice survives the process, updater supersession, add-flow
+  (user requests never displaced, page cap), HTTP pause-all/name repair,
+  per-tab downloads + agent-tab LAN block + single-claim bridge, RSS feed
+  address policy + seen-on-success, symbolic-link defence end to end, chat
+  residuals.
+- Features: IPTV sections + per-source content override + search; player
+  basics (focus, buffering, immersive, rotation/aspect/audio track);
+  markdown chat with tappable links.
+
+Drafted with tests but NOT wired: `LlmPresets` (provider/model/effort),
+`SessionStore` (tasks sidebar). Not started: Commander copy/move + new
+folder, segmented HTTP + rate limits, RSS background polling (WorkManager),
+browser tab persistence, Site Grabber / agent video lane, Xtream VOD +
+series, metadata lanes, Help/User Guide, icon/bottom-bar polish.
+
+Owner decisions 2026-11-24 ("yes, yes, make it work"): page-initiated
+plain-file downloads stay unconfirmed (rate-capped only); `scan_page` may
+read a LAN page the user opened themselves; the "Save location" row is
+now REAL (below).
+
+**1.4.13 TEST BUILD ON SITE 2026-11-24** (owner: "deploy to the website so
+that I can test it"): `assembleRelease` with the upload keystore,
+versionCode 29 / 1.4.13, 58,324,672 bytes, sha256 383ae248…a8c47, signer
+cert identical to the deployed 1.4.12 (installs over it), R8 reported no
+missing classes, same single-dex layout as 1.4.12. Live as
+`/deepflux/DeepFlux-1.4.13-Android.apk` (200, live sha256 equals the
+build's; `/api/download?f=` 302s to it). DELIBERATELY NOT a release: page
+buttons and `latest-android.json` stay on 1.4.12 until the owner confirms
+on a device — the pre-deploy emulator smoke could not run here.
+
+**SAVE LOCATION MADE REAL (2026-11-24, same evening)** —
+`dlmgr/FinishedExport.kt`: finished downloads are copied into the folder
+picked in Settings (a SAF tree URI; a torrent's own sub-folders kept,
+never overwrites, no half files, a persisted-write-permission gate, `..`
+never leaves the folder) or, with none chosen, to the public Downloads
+collection as before (video files only for torrents). FOUR independent
+review passes (two rounds, correctness + security each) shaped the final
+rules: a folder the app can no longer open counts as none (Downloads,
+never "copied nowhere"); only a file the provider has just made is
+written to; a failed copy is told in the app AND by a system
+notification; both lanes run on one guarded pool; each folder is listed
+once per job; the download service and the CPU stay until the copy is
+done — and let go of a copy that hangs; the file type comes from the
+file's own extension. 42 JVM tests through a real
+`DocumentsProvider` under Robolectric (1 skips on this Windows host),
+47 mutations teeth-checked against the final code. The test
+file on the site was REBUILT from this source (58325596 bytes,
+sha256 ae44530c10f1da51cac255b2251de83688bc7d2c3173316e0d598381d9cb3b42), superseding the first build. Committed on branch
+`android-1.4.13`, one commit ahead of `svp-out-of-process` (not pushed).
+Rules: AGENTS.md "Android parity +
+review rounds" → SAVE LOCATION.

@@ -1,5 +1,6 @@
 package space.deepflux.android.engine
 
+import java.net.URLDecoder
 import java.util.Locale
 
 /** Extracts the v1 info-hash from a magnet URI (40-char hex or 32-char base32). */
@@ -11,6 +12,17 @@ object MagnetParser {
 
     /** Pulls the magnet URI out of arbitrary shared text ("here, grab this magnet:?... thanks"). */
     fun extractMagnet(text: String): String? = MAGNET_RE.find(text)?.value
+
+    /**
+     * The torrent's display name from the magnet's `dn=` parameter
+     * (percent-decoded, "+" = space), or "" when the link carries none.
+     */
+    fun displayName(magnet: String): String {
+        val m = DN_RE.find(magnet) ?: return ""
+        return runCatching { URLDecoder.decode(m.groupValues[1], "UTF-8") }.getOrDefault("").trim()
+    }
+
+    private val DN_RE = Regex("[?&]dn=([^&]*)", RegexOption.IGNORE_CASE)
 
     fun infoHashHex(magnet: String): String? {
         val raw = XT_RE.find(magnet)?.groupValues?.get(1) ?: return null

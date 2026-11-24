@@ -42,8 +42,8 @@ android {
         applicationId = "space.deepflux.android"
         minSdk = 28
         targetSdk = 36
-        versionCode = 28
-        versionName = "1.4.12"
+        versionCode = 29
+        versionName = "1.4.13"
 
         ndk {
             // libtorrent4j ships one .so per ABI. x86 (32-bit) dropped —
@@ -200,6 +200,12 @@ dependencies {
     // Channel logos + movie/series covers in the Live TV list (1.3.5):
     // async image loading for the playlist rows.
     implementation("io.coil-kt:coil-compose:2.6.0")
+
+    // Markdown in agent replies (2026-11-24): replies are markdown (the
+    // desktop renders it); they used to show raw "**", "#" and table pipes.
+    implementation(libs.commonmark)
+    implementation(libs.commonmark.tables)
+    implementation(libs.commonmark.autolink)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 
