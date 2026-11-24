@@ -1154,3 +1154,12 @@ sha256 ae44530c10f1da51cac255b2251de83688bc7d2c3173316e0d598381d9cb3b42), supers
 `android-1.4.13`, one commit ahead of `svp-out-of-process` (not pushed).
 Rules: AGENTS.md "Android parity +
 review rounds" → SAVE LOCATION.
+
+**RELEASED (2026-11-24)** — the owner said "release": both pages
+(EN + ZH) and `latest-android.json` now point at the 1.4.13 APK
+(58,325,596 bytes, sha256 ae44530c…b3b42, versionCode 29), the 1.4.12
+APK is gone from the deploy dir, 19 live checks passed (feed field for
+field, pages, APK downloaded back, counter route, Windows feed
+untouched). The owner had been told the two gaps before saying so: the
+build never ran on a device or emulator, and 5 unit tests only run on
+Linux — no CI job runs the Android unit tests at all.

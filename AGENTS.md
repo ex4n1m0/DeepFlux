@@ -3651,28 +3651,28 @@ gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regre
   assertions inside ONE adb command (inter-command latency exceeds the
   10s window and produces false "still hidden" readings).
 
-## Android parity + review rounds (2026-11-23/24) — durable rules (1.4.13, COMMITTED, UNRELEASED)
+## Android parity + review rounds (2026-11-23/24) — durable rules (1.4.13, RELEASED 2026-11-24)
 
-STATE (2026-11-24, evening): everything below is COMMITTED on branch
-`android-1.4.13` — one commit ahead of `svp-out-of-process` (NOT pushed,
-NOT released; to bring it there: `git checkout svp-out-of-process &&
-git merge --ff-only android-1.4.13`). Version 1.4.13 /
-versionCode 29. A signed RELEASE build of exactly this source is on the
-site as a TEST FILE ONLY — `website/deepflux/DeepFlux-1.4.13-Android.apk`
-(58325596 bytes, sha256 ae44530c10f1da51cac255b2251de83688bc7d2c3173316e0d598381d9cb3b42, same
-signing cert as 1.4.12, live bytes re-verified) — for the owner's first
-device test. The public download buttons (EN + ZH) and
-`latest-android.json` STILL point at 1.4.12: no user is offered the
-update. FINISHING THE RELEASE = replace the four page hrefs +
-version/size/sha lines, write the feed (29 / 1.4.13 / size / sha256 /
-released / notes), delete the 1.4.12 APK from the deploy dir, `vercel
---prod --yes --scope timedivision` from `website/`. The usual pre-deploy
-emulator smoke could NOT run (no emulator on this machine). Baseline
-before this work was 35 tests; now `./gradlew :app:testDebugUnitTest` →
-330 tests, 0 failures, 5 `Assume` skips that only happen on a
-Windows host (symlink privilege x4, the real FileProvider round trip) —
-a Linux CI run must execute those five before a release. `assembleDebug`
-builds.
+STATE (2026-11-24, evening): RELEASED. Android 1.4.13 / versionCode 29
+is LIVE (owner: "release", told about the two gaps below): both pages (EN
++ ZH) and `latest-android.json` point at
+`website/deepflux/DeepFlux-1.4.13-Android.apk` (58325596 bytes, sha256
+ae44530c10f1da51cac255b2251de83688bc7d2c3173316e0d598381d9cb3b42, same
+signing cert as 1.4.12, so it installs over it), the 1.4.12 APK is gone
+from the deploy dir (404), and 19 live checks passed (feed field for
+field, both pages, APK downloaded back, counter route, Windows feed
+untouched). The code is COMMITTED on branch `android-1.4.13` — two
+commits ahead of `svp-out-of-process`, NOT pushed (to bring it there:
+`git checkout svp-out-of-process && git merge --ff-only android-1.4.13`).
+TWO GAPS THIS RELEASE WENT OUT WITH — close them first thing: (1) it was
+never run on a device or an emulator (there is none on the build
+machine) — the device-only list is at the end of this section; (2) 5
+unit tests skip on a Windows host (symlink privilege x4, the real
+FileProvider round trip) and NO CI job runs the Android unit tests at
+all (`android-build.yml` only builds). Baseline before this work was 35
+tests; `./gradlew :app:testDebugUnitTest` → 330 tests, 0 failures, 5
+skips on Windows. `assembleDebug` builds. A rollback copy of the 1.4.12
+APK was left in `%LOCALAPPDATA%\Temp\df_release_backup\` (deletable).
 
 Toolchain on THIS machine (user `igorc`): portable JDK 21 + SDK under
 `C:\Users\igorc\android-toolchain` (the `D:\android-toolchain` notes above
