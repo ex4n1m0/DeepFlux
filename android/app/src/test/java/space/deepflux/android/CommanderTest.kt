@@ -87,14 +87,26 @@ class CommanderTest {
 
     @Test
     fun folderSizerDoesNotFollowSymbolicLinks() {
+        // Under the root: real/x.bin (300), elsewhere/y.bin (9000), link -> real,
+        // outside -> a folder that is NOT under the root (7000), loop -> the root itself.
+        // No link followed: 300 + 9000. Following `link` would count x.bin twice (9600),
+        // following `outside` would add 7000, following `loop` would never end.
+        // Until 2026-11-26 this expected 300 — a value that layout cannot produce — and
+        // nobody knew: the test skips itself on a Windows host, and no CI ran it. The
+        // first Linux CI run failed it (9300, which is the right answer).
         file("real/x.bin", 300)
         file("elsewhere/y.bin", 9000)
-        val link = File(appRoot, "link")
-        val created = runCatching { Files.createSymbolicLink(link.toPath(), File(appRoot, "real").toPath()) }
+        val outside = File(context.cacheDir, "not-under-the-root").apply { mkdirs() }
+        File(outside, "z.bin").writeBytes(ByteArray(7000) { 7 })
+        val created = runCatching {
+            Files.createSymbolicLink(File(appRoot, "link").toPath(), File(appRoot, "real").toPath())
+            Files.createSymbolicLink(File(appRoot, "outside").toPath(), outside.toPath())
+            Files.createSymbolicLink(File(appRoot, "loop").toPath(), appRoot.toPath())
+        }
         // A Windows dev shell has no privilege to create symlinks: that is a
         // SKIP, reported as one — it used to return silently and count as a pass.
         org.junit.Assume.assumeTrue("this machine cannot create symbolic links: ${created.exceptionOrNull()}", created.isSuccess)
-        assertEquals("the file behind the link is counted once; the link to it is not followed", 300L, FolderSizer.sizeOf(appRoot))
+        assertEquals("the file behind the link is counted once; no link is followed", 9300L, FolderSizer.sizeOf(appRoot))
     }
 
     /** The same walk with the link test substituted: runs where the test above is skipped. */

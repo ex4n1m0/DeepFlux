@@ -69,7 +69,7 @@ jobs:
         shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest --stacktrace --info --no-daemon 2>&1 | tee unit-tests.log
+          ./gradlew :app:testDebugUnitTest --stacktrace --no-daemon 2>&1 | tee unit-tests.log
 
       - name: Gradle's own account of a failure (on the run's summary page)
         if: failure()
