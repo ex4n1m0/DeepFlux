@@ -63,16 +63,34 @@ jobs:
           EMBED_SHARED_VENICE_API_KEY: ${{ secrets.EMBED_SHARED_VENICE_API_KEY }}
         run: python ../packaging/gen_android_key.py --from-env
 
+      # `shell: bash` is GitHub's "-eo pipefail" form; without a shell key a step runs as plain
+      # `bash -e`, where a failing command before `tee` is NOT a failed step (learned on the first run).
       - name: Unit tests
+        shell: bash
         run: |
           chmod +x gradlew
-          ./gradlew :app:testDebugUnitTest --stacktrace --no-daemon
+          ./gradlew :app:testDebugUnitTest --stacktrace --info --no-daemon 2>&1 | tee unit-tests.log
+
+      - name: Gradle's own account of a failure (on the run's summary page)
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo '### Gradle failure'
+            echo '```'
+            grep -n -E "What went wrong|ould not (resolve|find|download|GET)|Failed to|Caused by|> Task .* FAILED|tests completed|HTTP/[0-9.]+ [45][0-9][0-9]|PKIX|timed out|Could not GET|Could not HEAD" unit-tests.log | cut -c1-300 | head -80
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Totals, and every test that did not run
         if: always()
-        # The script's exit code decides the step (pipefail is on); its output also goes to the run's summary page.
+        shell: bash
+        # The script's exit code decides the step; its output also goes to the run's summary page.
         run: |
-          { echo '### Android unit tests'; echo '```'; python ../packaging/android_test_totals.py app/build/test-results/testDebugUnitTest; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+          python ../packaging/android_test_totals.py app/build/test-results/testDebugUnitTest | tee unit-test-totals.txt
+          status=${PIPESTATUS[0]}
+          { echo '### Android unit tests'; echo '```'; cat unit-test-totals.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Unit test report
         if: always()
