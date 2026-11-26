@@ -3,15 +3,20 @@ name: Android build
 # Builds the Android APKs (debug + unsigned release) on GitHub's free
 # Ubuntu runner — CI IS the Android build machine for anyone without a
 # local Android toolchain (same pattern as macos-build/linux-build).
-# Toolchain: JDK 21 + AGP 8.13 + Gradle 8.14.3 + platform 36 (see
-# android/README.md). The shared Venice AI key (the built-in uncensored-
-# DeepSeek agent, owner decision 2026-11-17) is embedded from the
-# EMBED_SHARED_VENICE_API_KEY secret via packaging/gen_android_key.py —
-# obfuscated pair only, git stays keyless (owner decision 2026-11-12).
-# Release APKs are UNSIGNED for now: signing keystore + deepflux.space
-# distribution lane is the next release ritual (ANDROID_STUDY.md §8).
+# Toolchain: JDK 21 + the versions in android/gradle/libs.versions.toml
+# (Gradle wrapper 9.6.0 + AGP 9.5.1) + platform 36. The shared Venice AI key
+# (the built-in uncensored-DeepSeek agent, owner decision 2026-11-17) is
+# embedded from the EMBED_SHARED_VENICE_API_KEY secret via
+# packaging/gen_android_key.py — obfuscated pair only, git stays keyless
+# (owner decision 2026-11-12). Release APKs are UNSIGNED here: the published
+# builds are signed on the release machine (ANDROID_STUDY.md §8).
 #
-# Trigger: manual dispatch only — release-gated by hand, like the Linux build.
+# Triggers:
+#   push touching the app or this file -> the unit tests, on Linux. Five of
+#     them can only run there (symbolic links, the FileProvider POSIX round
+#     trip — they skip themselves on a Windows host).
+#   manual dispatch -> the APK build, release-gated by hand like the Linux build.
+
 on:
   workflow_dispatch:
     inputs:
@@ -19,12 +24,67 @@ on:
         description: 'Also upload the APKs to the draft android-staging release (fast download lane — artifact-API downloads crawl from some networks)'
         type: boolean
         default: false
+  push:
+    paths:
+      - "android/**"
+      - ".github/workflows/android-build.yml"
+      - "packaging/gen_android_key.py"
+      - "packaging/android_test_totals.py"
 
 permissions:
   contents: write  # draft android-staging release upload lane
 
 jobs:
+  unit-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Ensure SDK pieces (runner ships most of it; pin ours)
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses >/dev/null || true
+          "$SDKM" --install "platforms;android-36" "build-tools;36.0.0" >/dev/null
+
+      # Not needed to compile, but the tests that need an agent key skip themselves in a keyless
+      # build — with the key they run, as they do on the release machine.
+      - name: Embed shared Venice key (from secret, obfuscated; keyless when absent)
+        env:
+          EMBED_SHARED_VENICE_API_KEY: ${{ secrets.EMBED_SHARED_VENICE_API_KEY }}
+        run: python ../packaging/gen_android_key.py --from-env
+
+      - name: Unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Totals, and every test that did not run
+        if: always()
+        # The script's exit code decides the step (pipefail is on); its output also goes to the run's summary page.
+        run: |
+          { echo '### Android unit tests'; echo '```'; python ../packaging/android_test_totals.py app/build/test-results/testDebugUnitTest; echo '```'; } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Unit test report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: DeepFlux-Android-unit-tests
+          path: android/app/build/test-results/testDebugUnitTest/
+          retention-days: 14
+          if-no-files-found: error
+
   build:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     defaults:
