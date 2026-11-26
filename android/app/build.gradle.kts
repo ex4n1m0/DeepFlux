@@ -144,6 +144,11 @@ android {
             // ("Compose Preview failed: Android resources are excluded from
             // unit tests", Gradle 9.6 / AGP — hit 2026-11-16).
             isIncludeAndroidResources = true
+            // The test worker's heap. Gradle's default is 512 MB: enough on a
+            // fast machine, GC-bound on a shared CI runner, where the tests'
+            // 15 s waits then expire — one different test per run (CI runs
+            // 3 and 4, 2026-11-26).
+            all { it.maxHeapSize = "2g" }
         }
     }
 
