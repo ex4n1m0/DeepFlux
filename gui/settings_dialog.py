@@ -44,6 +44,13 @@ from config import BROWSER_SEARCH_ENGINES, DeeptorrentConfig, DownloadCategory, 
 from gui.window_sizing import roomy
 from gui.i18n import tr
 from gui.fonts import scale_qss
+from gui.ytdlp_update_runner import (
+    YtdlpUpdateRunner,
+    ask_to_install,
+    ask_to_revert,
+    show_failed,
+    show_installed,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +369,43 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_youtube_update_check = QCheckBox(tr('Warn when the YouTube downloader (yt-dlp) is outdated'))
         dm_layout.addRow("", self.dm_youtube_update_check)
 
+        # In-app yt-dlp update (infra/ytdlp_overlay.py): ask by default
+        # (the Agent-tab notice carries an "Update now" link), automatic is
+        # the user's opt-in. The status line is a dynamic label, hence
+        # word-wrapped like every hint here (gui/responsive.py rule).
+        self.dm_ytdlp_auto = QCheckBox(tr('Update the YouTube downloader automatically'))
+        dm_layout.addRow("", self.dm_ytdlp_auto)
+
+        self.dm_ytdlp_status = QLabel()
+        self.dm_ytdlp_status.setObjectName("hint")
+        # Plain text: the line can quote an error string.
+        self.dm_ytdlp_status.setTextFormat(Qt.PlainText)
+        self.dm_ytdlp_status.setWordWrap(True)
+        dm_layout.addRow("", self.dm_ytdlp_status)
+
+        ytdlp_buttons = QWidget()
+        ytdlp_layout = QHBoxLayout(ytdlp_buttons)
+        ytdlp_layout.setContentsMargins(0, 0, 0, 0)
+        self.dm_ytdlp_check = QPushButton(tr('Check Now'))
+        self.dm_ytdlp_check.clicked.connect(self._ytdlp_check)
+        self.dm_ytdlp_update = QPushButton(tr('Update now'))
+        self.dm_ytdlp_update.clicked.connect(self._ytdlp_update_now)
+        self.dm_ytdlp_revert = QPushButton(tr('Use bundled version'))
+        self.dm_ytdlp_revert.clicked.connect(self._ytdlp_revert)
+        for button in (self.dm_ytdlp_check, self.dm_ytdlp_update, self.dm_ytdlp_revert):
+            ytdlp_layout.addWidget(button)
+        ytdlp_layout.addStretch(1)
+        dm_layout.addRow("", ytdlp_buttons)
+
+        self._ytdlp_info = None            # newer pinned release found by Check Now
+        self._ytdlp_pending = ""           # "check" / "install" while the runner is busy
+        # Deliberately unparented: a worker thread holds the runner until it
+        # finishes, and its signal connections keep this dialog alive meanwhile.
+        self._ytdlp_runner = YtdlpUpdateRunner()
+        self._ytdlp_runner.found.connect(self._on_ytdlp_found)
+        self._ytdlp_runner.failed.connect(self._on_ytdlp_failed)
+        self._ytdlp_runner.installed.connect(self._on_ytdlp_installed)
+
         self.dm_update_check = QCheckBox(
             tr('Check for DeepFlux updates automatically (Windows installs)'))
         dm_layout.addRow("", self.dm_update_check)
@@ -433,6 +477,8 @@ class DownloadsSettingsDialog(QDialog):
         self.dm_youtube_subtitles.setChecked(self.config.download.youtube_subtitles)
         self.dm_youtube_playlists.setChecked(self.config.download.youtube_playlists)
         self.dm_youtube_update_check.setChecked(self.config.download.youtube_update_check)
+        self.dm_ytdlp_auto.setChecked(self.config.download.ytdlp_auto_update)
+        self._ytdlp_refresh()
         self.dm_update_check.setChecked(self.config.updater.check_enabled)
         self.dm_usage_ping.setChecked(self.config.stats.ping_enabled)
         self.dm_categories.setPlainText("\n".join(
@@ -449,6 +495,86 @@ class DownloadsSettingsDialog(QDialog):
         path = QFileDialog.getExistingDirectory(self, "Select Default Download Folder")
         if path:
             self.dm_default_folder.setText(path)
+
+    # -- in-app yt-dlp update (infra/ytdlp_overlay.py) ----------------------
+
+    def _ytdlp_refresh(self, note: str = "") -> None:
+        """Status line and button state of the in-app yt-dlp updater."""
+        from infra import ytdlp_overlay
+        state = ytdlp_overlay.status()
+        if not state["supported"]:
+            text = tr("The YouTube downloader can update itself in the installed "
+                      "Windows and Linux builds.")
+        elif state["active"]:
+            text = tr("YouTube downloader: yt-dlp {version} (updated by DeepFlux; "
+                      "bundled: {bundled}).").format(version=state["active"],
+                                                     bundled=state["bundled"] or "?")
+        elif state["bundled"]:
+            text = tr("YouTube downloader: yt-dlp {version} (bundled with DeepFlux).").format(
+                version=state["bundled"])
+        else:
+            text = tr("YouTube downloader: version unknown.")
+        skipped = state["skipped"]
+        if skipped and skipped["stage"] == "user":
+            text += "\n" + tr("Version {version} is not used — you chose the bundled "
+                              "downloader.").format(version=skipped["version"])
+        elif skipped:
+            text += "\n" + tr("Version {version} was tried earlier and is not used: "
+                              "{error}").format(version=skipped["version"],
+                                                error=skipped["error"])
+        if note:
+            text += "\n" + note
+        self.dm_ytdlp_status.setText(text)
+        self.dm_ytdlp_check.setVisible(state["supported"])
+        self.dm_ytdlp_update.setVisible(state["supported"])
+        self.dm_ytdlp_revert.setVisible(bool(state["active"]))
+        self.dm_ytdlp_update.setEnabled(self._ytdlp_info is not None)
+
+    def _ytdlp_set_busy(self, busy: bool) -> None:
+        self.dm_ytdlp_check.setEnabled(not busy)
+        self.dm_ytdlp_update.setEnabled(not busy and self._ytdlp_info is not None)
+
+    def _ytdlp_check(self) -> None:
+        self._ytdlp_info = None
+        if self._ytdlp_runner.check():
+            self._ytdlp_pending = "check"
+            self._ytdlp_set_busy(True)
+
+    def _ytdlp_update_now(self) -> None:
+        info = self._ytdlp_info
+        if info is None or not ask_to_install(self, info):
+            return
+        if self._ytdlp_runner.install(info):
+            self._ytdlp_pending = "install"
+            self._ytdlp_set_busy(True)
+
+    def _ytdlp_revert(self) -> None:
+        if not ask_to_revert(self):
+            return
+        from infra import ytdlp_overlay
+        ytdlp_overlay.revert()
+        self._ytdlp_info = None
+        self._ytdlp_refresh(tr("The bundled downloader is used from the next start."))
+
+    def _on_ytdlp_found(self, info) -> None:
+        self._ytdlp_set_busy(False)
+        self._ytdlp_info = info
+        if info is None:
+            self._ytdlp_refresh(tr("The YouTube downloader is up to date."))
+        else:
+            self._ytdlp_refresh(tr("yt-dlp {version} is available.").format(version=info.version))
+
+    def _on_ytdlp_failed(self, message: str) -> None:
+        self._ytdlp_set_busy(False)
+        self._ytdlp_refresh(tr("The update failed: {error}").format(error=message))
+        if self._ytdlp_pending == "install":
+            show_failed(self, message)
+
+    def _on_ytdlp_installed(self, version: str) -> None:
+        self._ytdlp_set_busy(False)
+        self._ytdlp_info = None
+        self._ytdlp_refresh(tr("yt-dlp {version} is installed — restart DeepFlux to use it.").format(
+            version=version))
 
     def _save_and_accept(self) -> None:
         if self._page in ("all", "manager"):
@@ -490,6 +616,7 @@ class DownloadsSettingsDialog(QDialog):
             self.config.download.youtube_subtitles = self.dm_youtube_subtitles.isChecked()
             self.config.download.youtube_playlists = self.dm_youtube_playlists.isChecked()
             self.config.download.youtube_update_check = self.dm_youtube_update_check.isChecked()
+            self.config.download.ytdlp_auto_update = self.dm_ytdlp_auto.isChecked()
             self.config.download.categories = categories
             # Applies on the next launch — the heartbeat thread reads the
             # flag once at startup (stopping mid-session would flicker the

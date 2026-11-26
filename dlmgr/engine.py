@@ -740,15 +740,25 @@ class DownloadEngine:
         signed googlevideo.com URLs are generated at runtime by YouTube's JS
         player. yt-dlp handles the signature cipher, adaptive format merging,
         and other complexities. Progress is reported via yt-dlp's progress hook."""
+        # yt-dlp is imported through the overlay helper everywhere: in a
+        # frozen build a downloaded release may replace the bundled copy
+        # (infra/ytdlp_overlay.py — the only sanctioned import path).
         try:
-            from yt_dlp import YoutubeDL  # noqa: F401 — availability probe
+            from infra.ytdlp_overlay import import_yt_dlp
+            import_yt_dlp()  # availability probe
         except ImportError:
+            import sys as _sys
+            # A frozen build has no pip: the fix there is DeepFlux itself (or
+            # its in-app YouTube-downloader update), never a pip command.
+            hint = ("Update DeepFlux, or its YouTube downloader under "
+                    "Settings → Download Manager."
+                    if getattr(_sys, "frozen", False) else "Run: pip install yt-dlp")
             job = DownloadJob(
                 url=url,
                 filename=filename or "youtube_video",
                 save_path=save_path or "",
                 status=JobStatus.ERROR,
-                error_message="yt-dlp is not installed. Run: pip install yt-dlp",
+                error_message=f"yt-dlp is not available. {hint}",
                 job_type="youtube",
                 source_url=source_url,
             )
@@ -786,7 +796,8 @@ class DownloadEngine:
         Pause works by raising _YTAbort from the progress hook; yt-dlp keeps
         its .part files, so a resume simply re-runs the worker and continues
         where it left off."""
-        from yt_dlp import YoutubeDL
+        from infra.ytdlp_overlay import import_yt_dlp
+        YoutubeDL = import_yt_dlp().YoutubeDL
 
         with self._lock:
             if job.id not in self._jobs or job.status != JobStatus.QUEUED:

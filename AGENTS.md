@@ -299,6 +299,10 @@
   is the top element), delete the old setup exe,
   then `vercel --prod --yes` from `website/`. Only files in the dir are
   deployed — removing the old exe from the dir removes it from production.
+  `latest-ytdlp.json` (the in-app yt-dlp updater's feed, written by
+  `packaging/pin_ytdlp.py`) lives in the same dir and rides the same
+  deploy; re-pin it whenever a newer yt-dlp should reach users before the
+  next DeepFlux build.
   Landing-page IMAGES are REAL app captures (since 2026-09-25, owner call:
   the old CSS mockups didn't match the software): `shot-download-en/zh.webp`
   + `shot-agent-en/zh.webp` in website/deepflux/, framed by the decorative
@@ -1452,14 +1456,130 @@
 - YouTube downloads run yt-dlp (`add_youtube_job` in dlmgr/engine.py).
   YouTube breaks older yt-dlp releases with mid-download HTTP 403s from the
   googlevideo CDN (verified 2026-09: 2026.07.04 died at 8% of a real video,
-  2026.8.19 downloaded it clean) — requirements.txt keeps a recent floor,
-  so bump it on release rebuilds. `dlmgr/ytdlp_update.py` probes PyPI at
-  startup (daily-gated, `download.youtube_update_check`, off-switch on the
-  Download Manager settings page) and warns via a dim Agent-tab event (GUI)
-  or a console notice (CLI); the frozen build bundles yt-dlp inside
-  `_internal`, so it can only tell the user to update DeepFlux — never try
-  a runtime pip swap there. YouTube job errors carrying 403/Forbidden get
-  the same hint appended to `job.error_message`.
+  2026.8.19 downloaded it clean) — requirements.txt AND pyproject.toml keep
+  a recent floor (2026.11.23 since 9.8), so bump BOTH on release rebuilds.
+  YouTube job errors carrying 403/Forbidden get the same hint appended to
+  `job.error_message`.
+- IN-APP yt-dlp UPDATE (9.8, 2026-11-25, `infra/ytdlp_overlay.py`): the
+  frozen Windows/Linux builds replace the bundled yt-dlp BETWEEN DeepFlux
+  releases, so a YouTube break no longer waits for a ~500 MB app update.
+  Durable rules — do not regress:
+  * MECHANISM: all 1,044 yt_dlp modules are compiled into DeepFlux.exe's
+    embedded PYZ archive (nothing on disk to swap; `_internal/yt_dlp/*.py`
+    are inert data), BUT PyInstaller ≥6.10's frozen importer is a
+    `sys.path_hooks` finder, not a meta_path one — so a newer `yt_dlp` tree
+    under `~/.deeptorrent/ytdlp/versions/<ver>-<sha8>/` wins when it is
+    resolved FIRST. The app installs ONE scoped `sys.meta_path` finder that
+    answers only `yt_dlp`/`yt_dlp.*` (adds nothing to sys.path, ASCII
+    identifiers only — no other name can be shadowed, no traversal is
+    expressible). Proven 2026-11-25 in a throwaway frozen build with the
+    same PyInstaller 6.22.3 whose loader code disassembles IDENTICALLY to
+    the shipped 9.7 exe: every module came from the override, a real
+    YouTube download was byte-identical to the bundled copy's, and import
+    costs 0.20 s pre-compiled vs 0.38 s raw (the frozen app sets
+    `sys.dont_write_bytecode`, so install() pre-compiles with `dfile=`
+    pointing at the FINAL path).
+  * `import_yt_dlp()` is the ONLY sanctioned import path (engine.py ×2 +
+    ytdlp_update.installed_version) — pinned by an AST scan test. It
+    decides ONCE per process and uses an override only when STRICTLY newer
+    than the bundled copy, which is read from `_internal/yt_dlp/version.py`
+    WITHOUT importing (so an app update shipping an equal/newer yt-dlp
+    retires the override by itself). The daily probe calls it on its own
+    worker thread — keep yt-dlp's first import off the GUI thread
+    (test_gui_render's `_build_main` documents the native-AV history).
+  * SAFETY NET (pinned): a broken override can never take yt-dlp down —
+    the first import failure removes the finder, purges every `yt_dlp*`
+    module it loaded, records `skipped.json` (stage "load"), unlinks the
+    pointer and imports the bundle. A damaged pointer/manifest/version file
+    is ignored outright. If the release dir vanishes under a live finder it
+    steps aside (returns None) instead of failing every later import.
+    BEFORE any of its code runs, the whole release tree is re-hashed against
+    the `tree_sha256` recorded at install (~150 ms for 1,046 files / 10 MB,
+    measured; `__pycache__` excluded): yt-dlp imports most extractors
+    LAZILY, so a release damaged after activation would otherwise surface
+    much later as a failed download with no fallback (review 2026-11-26;
+    verified in a frozen build by tampering one deep module — the next
+    start refused the release, recorded "integrity check failed" and
+    collected it). A mismatch fails CLOSED.
+  * Nothing is switched on before a CHILD-process start-up check
+    (`DeepFlux --ytdlp-selfcheck <dir>`, handled in main.py BEFORE
+    `_configure_logging`; result via `<dir>.selfcheck.json` since the
+    windowed build has no stdout; 90 s timeout). The child loads the
+    candidate through the same finder, asserts no module resolved outside
+    it, builds `YoutubeDL` with the engine's option names, counts
+    extractors, and imports the youtube/generic/curl-cffi/http/ffmpeg paths
+    DeepFlux actually uses.
+  * TRUST: owner-pinned feed `website/deepflux/latest-ytdlp.json` (HTTPS,
+    deepflux.space — the same trust root as latest.json); size AND sha256
+    must match before a byte is unpacked, and the wheel is then read
+    defensively anyway (member/size caps, unsafe-path + symlink refusal,
+    per-file digests against the wheel's RECORD — whose OWN row carries no
+    digest, a real-wheel detail that broke the first implementation).
+    PyPI's content URL is `/packages/<2hex>/<2hex>/<60-hex>/<file>` — that
+    hash segment is 60 chars, NOT 64 (measured 2026-11-25).
+  * FAILURE CLASSES: `TransientUpdateError` (offline/incomplete — nothing
+    recorded) · `_LocalTransientError` (check couldn't run, rename blocked,
+    size/sha mismatch — a TLS-intercepting proxy produces those on every
+    attempt, so they are COUNTED in `transient.json` and only give up after
+    3) · `OverlayError` (release defect — `skipped.json` at once, auto mode
+    never retries that exact version+sha). `install(force=True)` is the
+    user's own click and may always retry a recorded release; success
+    clears both markers. `_mark_skipped` unlinks the pointer ONLY when it
+    points at the release being recorded — a failed install of Y must never
+    switch off a healthy X (security review 2026-11-26, M1).
+  * DELETION TIMING: `install()` and `revert()` NEVER delete release dirs —
+    a running DeepFlux keeps importing extractors lazily from the release
+    it started with. Retired dirs are collected only by the next start's
+    one-time decision, only for names matching `<ver>-<sha8>`, and the sweep
+    is SKIPPED while another DeepFlux window is open
+    (`infra.updater.other_instances_running`, probed only when there is
+    something to collect). Accepted residual: two windows can each download
+    the same release once (idempotent — `_publish` reuses an identical
+    dir); there is no cross-process lock.
+  * FEED ROLLBACK does NOT retract an installed release: the override is
+    retired only by a bundled copy that is equal/newer, by its own integrity
+    or load failure, or by the user's Revert. To pull a bad release, pin a
+    NEWER one (yt-dlp ships often); `packaging/pin_ytdlp.py` refuses a pin
+    whose start-up check fails, which is the main guard against publishing
+    one.
+  * UX: ASK by default. The Agent-tab event carries an exact-match
+    `deepflux-action:ytdlp-update` link (wrapped in `<u>` — chat anchors
+    are styled as plain text) handled FIRST in `_on_chat_link_clicked`; a
+    confirmation dialog precedes every download. Opt-in automatic mode =
+    `download.ytdlp_auto_update`, parsed STRICTLY (only JSON `true`) and
+    DENY-listed for the agent settings tool — a prompt injection must never
+    switch on code installation (same doctrine as the app updater, which is
+    not an agent tool either). Settings → Download Manager: auto checkbox,
+    plain-text status line, Check Now / Update now / Use bundled version
+    (revert records stage "user" so auto mode won't re-download it).
+    Restart-to-apply uses `_restart_app(skip_config_save=False)`, which
+    closes FIRST and launches a new process only if the close was accepted
+    (a declined active-transfers prompt must not leave two windows).
+  * Scope: NOT an agent tool; macOS and source checkouts are out
+    (`supported()` = frozen win32|linux; dev runs use the venv's copy and
+    pip). Tests: tests/test_ytdlp_overlay.py (122) + 10 GUI tests in
+    test_gui_render.py; 21 mutations were teeth-checked (each protection
+    removed → its own test fails → restored byte-identical). NOTE for the
+    gate: tests/test_gui_render.py's process HANGS at teardown on this
+    machine — pre-existing, not these tests (the 31 without them pass in
+    ~14 s and then need reaping). Read pytest's summary line; don't wait
+    for the process to exit.
+  * RELEASE RITUAL: `python packaging/pin_ytdlp.py [version]` resolves the
+    release on PyPI, downloads + digest-checks it, refuses unknown
+    dependencies (KNOWN_DEPENDENCIES), runs the SAME start-up check, then
+    writes the feed. Publishing is the normal website deploy — the feed
+    rides it. Until the feed is live (or when it can't be read) the app
+    falls back to the old behaviour: PyPI probe + "update DeepFlux".
+  * KNOWN GAP (deliberate; owner decision pending): the bundle ships
+    yt_dlp ALONE — no `yt-dlp-ejs` (yt-dlp's README: "Required for full
+    YouTube support"), no JS runtime (deno), no mutagen/brotli/websockets.
+    Measured 2026-11-25 on this machine: extraction and real downloads
+    still worked, with "YouTube extraction without a JS runtime has been
+    deprecated, and some formats may be missing" and one "n challenge
+    solving failed". Closing it needs an "engine pack" (yt-dlp-ejs 0.05 MB
+    + deno ~42 MB native; yt-dlp looks for the runtime next to the frozen
+    exe on Windows) — a separate change, and the pin script's dependency
+    guard is what stops it being needed by accident.
 - Jackett service + source sync live in `infra/jackett.py`: at startup (GUI
   background thread + CLI) and then hourly, `maybe_auto_sync` pings Jackett
   (`t=caps`), starts it when down (`indexer.auto_start`, default on —

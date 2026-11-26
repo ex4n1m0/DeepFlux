@@ -779,3 +779,259 @@ def test_task_bar_opens_on_enter_key(tmp_path):
     bar.selected.connect(opened.append)
     QTest.keyClick(bar._list, Qt.Key.Key_Return)
     assert opened == [sid]
+
+
+# ---------------------------------------------------------------------------
+# In-app yt-dlp update (2026-11-25): the Agent-tab notice link, its click
+# path, and the Download Manager settings row. Build-and-forget like the
+# tests above — no MainWindow close teardown here (see AGENTS.md).
+# ---------------------------------------------------------------------------
+
+def _ytdlp_info(version="2099.1.1"):
+    from infra import ytdlp_overlay as ov
+    return ov.YtdlpUpdateInfo(
+        version=version, file=f"yt_dlp-{version}-py3-none-any.whl", size=3_000_000,
+        sha256="ab" * 32,
+        url=f"https://files.pythonhosted.org/packages/aa/bb/{'c' * 64}/"
+            f"yt_dlp-{version}-py3-none-any.whl")
+
+
+def _fake_installed_release(version="2099.1.1", sha="ab" * 32):
+    """Lay out an installed release the way infra/ytdlp_overlay.install does."""
+    from infra import ytdlp_overlay as ov
+    root = ov.overlay_dir()
+    release = root / "versions" / f"{version}-{sha[:8]}"
+    (release / "yt_dlp").mkdir(parents=True, exist_ok=True)
+    (release / "yt_dlp" / "__init__.py").write_text(
+        f"__version__ = {version!r}\n", encoding="utf-8")
+    (release / "yt_dlp" / "version.py").write_text(
+        f"__version__ = {version!r}\n", encoding="utf-8")
+    ov.write_json_atomic(release / "manifest.json", {"version": version, "sha256": sha})
+    ov.write_json_atomic(root / ov.POINTER_NAME,
+                         {"version": version, "sha256": sha, "dir": release.name})
+    return release
+
+
+def test_ytdlp_notice_carries_an_escaped_one_click_link(tmp_path, monkeypatch):
+    mw = _build_main(tmp_path)
+    inserted = []
+    real_insert = mw._insert_html
+    monkeypatch.setattr(mw, "_insert_html",
+                        lambda html: inserted.append(html) or real_insert(html))
+    mw._on_ytdlp_update_event({"installed": "2026.10.26", "latest": "2026.11.23",
+                               "outdated": True, "frozen": True, "can_update": True,
+                               "size": 3186416, "notice": True})
+    notice = next(h for h in inserted if "deepflux-action" in h)
+    assert 'href="deepflux-action:ytdlp-update"' in notice
+    assert "<u>" in notice                       # chat anchors are styled as plain text
+    assert "2026.11.23" in notice
+    # the rendered document carries the link as well (Qt re-serialises <u>
+    # into a span, so the underline itself is only pinned on the source HTML)
+    doc = mw.chat_history.toHtml()
+    assert "deepflux-action:ytdlp-update" in doc and "2026.11.23" in doc
+    # A hostile version string must never become markup in the chat document.
+    mw._ytdlp_notice_shown = False
+    inserted.clear()
+    mw._on_ytdlp_update_event({"installed": "1.0", "latest": "<script>x</script>",
+                               "can_update": True, "notice": True})
+    hostile = "".join(inserted)
+    assert "<script>" not in hostile and "&lt;script&gt;" in hostile
+    assert "<script>" not in mw.chat_history.toHtml()
+
+
+def test_ytdlp_notice_is_once_per_session_and_honours_the_notice_flag(tmp_path):
+    mw = _build_main(tmp_path)
+    event = {"installed": "1.0", "latest": "2.0", "can_update": True, "notice": True}
+    mw._on_ytdlp_update_event(event)
+    first = mw.chat_history.toHtml()
+    mw._on_ytdlp_update_event(event)
+    assert mw.chat_history.toHtml() == first            # one notice per session
+    mw2 = _build_main(tmp_path)
+    mw2._on_ytdlp_update_event({**event, "notice": False})
+    assert "deepflux-action" not in mw2.chat_history.toHtml()
+    # automatic-mode outcomes are reported even with the warning switched off
+    mw2._on_ytdlp_update_event({"installed": "1.0", "latest": "2.0", "updated": "2.0",
+                                "notice": False})
+    assert "updated to yt-dlp 2.0" in mw2.chat_history.toPlainText()
+
+
+def test_ytdlp_link_click_checks_and_leaves_other_links_alone(tmp_path, monkeypatch):
+    from PySide6.QtCore import QUrl
+    mw = _build_main(tmp_path)
+    calls = []
+    monkeypatch.setattr(mw._ytdlp_runner, "check", lambda: calls.append("check") or True)
+    monkeypatch.setattr(mw, "_browser_open_internal", lambda url: calls.append(("open", url)))
+    mw._on_chat_link_clicked(QUrl("deepflux-action:ytdlp-update"))
+    assert calls == ["check"]
+    mw._on_chat_link_clicked(QUrl("https://example.com/x"))
+    assert calls[-1] == ("open", "https://example.com/x")
+    # exact match only: a lookalike is not an action link
+    mw._on_chat_link_clicked(QUrl("deepflux-action:ytdlp-update-evil"))
+    assert calls[-1] == ("open", "deepflux-action:ytdlp-update-evil")
+
+
+def test_ytdlp_found_asks_before_installing(tmp_path, monkeypatch):
+    import gui.main_window as mw_module
+    mw = _build_main(tmp_path)
+    info = _ytdlp_info()
+    installed = []
+    monkeypatch.setattr(mw._ytdlp_runner, "install", lambda i: installed.append(i) or True)
+    monkeypatch.setattr(mw_module, "ask_to_install", lambda parent, i: False)
+    mw._on_ytdlp_found(info)
+    assert installed == []                       # declined: nothing is downloaded
+    monkeypatch.setattr(mw_module, "ask_to_install", lambda parent, i: True)
+    mw._on_ytdlp_found(info)
+    assert installed == [info]
+    assert mw._ytdlp_wait_cursor is True
+    mw._ytdlp_clear_wait_cursor()
+    assert mw._ytdlp_wait_cursor is False
+
+
+def test_ytdlp_found_without_a_release_only_informs(tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    mw = _build_main(tmp_path)
+    shown = []
+    monkeypatch.setattr(QMessageBox, "information",
+                        staticmethod(lambda *a, **k: shown.append(a[1:]) or 0))
+    mw._on_ytdlp_found(None)
+    assert len(shown) == 1
+
+
+def test_ytdlp_installed_offers_a_restart_that_keeps_the_config(tmp_path, monkeypatch):
+    import gui.main_window as mw_module
+    mw = _build_main(tmp_path)
+    monkeypatch.setattr(mw_module, "show_installed", lambda parent, version: True)
+    restarted = []
+    monkeypatch.setattr(mw, "_restart_app",
+                        lambda skip_config_save=True: restarted.append(skip_config_save))
+    mw._on_ytdlp_update_installed("2099.1.1")
+    assert restarted == [False]
+
+
+def test_restart_app_never_launches_when_the_close_is_declined(tmp_path, monkeypatch):
+    """A declined active-transfers prompt must not leave two DeepFlux windows."""
+    from PySide6.QtCore import QProcess
+    mw = _build_main(tmp_path)
+    launched = []
+    monkeypatch.setattr(QProcess, "startDetached",
+                        staticmethod(lambda *a, **k: launched.append(a) or True))
+    monkeypatch.setattr(mw, "close", lambda: False)
+    mw._restart_app()
+    assert launched == []
+    monkeypatch.setattr(mw, "close", lambda: True)
+    mw._restart_app(skip_config_save=False)
+    assert len(launched) == 1
+    assert mw._skip_config_save is False
+
+
+def test_settings_ytdlp_controls_round_trip(tmp_path):
+    from config import DeeptorrentConfig
+    from gui.settings_dialog import DownloadsSettingsDialog
+    _qapp()
+    config = DeeptorrentConfig()
+    config.download.ytdlp_auto_update = True
+    dialog = DownloadsSettingsDialog(config, page="manager")
+    assert dialog.dm_ytdlp_auto.isChecked() is True
+    # a source checkout cannot self-update: explanatory text, no buttons
+    assert dialog.dm_ytdlp_check.isHidden() and dialog.dm_ytdlp_revert.isHidden()
+    assert "installed Windows and Linux builds" in dialog.dm_ytdlp_status.text()
+    dialog.dm_ytdlp_auto.setChecked(False)
+    dialog._save_and_accept()
+    assert config.download.ytdlp_auto_update is False
+
+
+def test_settings_ytdlp_status_and_revert(tmp_path, monkeypatch):
+    from config import DeeptorrentConfig
+    from gui.settings_dialog import DownloadsSettingsDialog
+    import gui.settings_dialog as sd_module
+    from infra import ytdlp_overlay as ov
+    _qapp()
+    monkeypatch.setattr(ov, "supported", lambda: True)
+    monkeypatch.setattr(ov, "bundled_version", lambda: "2000.1.1")
+    _fake_installed_release()
+    dialog = DownloadsSettingsDialog(DeeptorrentConfig(), page="manager")
+    assert "2099.1.1" in dialog.dm_ytdlp_status.text()
+    assert "updated by DeepFlux" in dialog.dm_ytdlp_status.text()
+    assert dialog.dm_ytdlp_revert.isHidden() is False
+    monkeypatch.setattr(sd_module, "ask_to_revert", lambda parent: True)
+    dialog._ytdlp_revert()
+    assert not (ov.overlay_dir() / ov.POINTER_NAME).exists()
+    assert ov.skipped()["stage"] == "user"
+    assert "bundled downloader is used from the next start" in dialog.dm_ytdlp_status.text()
+
+
+def test_settings_ytdlp_check_enables_update_only_when_a_release_is_found(tmp_path, monkeypatch):
+    from config import DeeptorrentConfig
+    from gui.settings_dialog import DownloadsSettingsDialog
+    _qapp()
+    dialog = DownloadsSettingsDialog(DeeptorrentConfig(), page="manager")
+    assert dialog.dm_ytdlp_update.isEnabled() is False
+    dialog._on_ytdlp_found(_ytdlp_info())
+    assert dialog.dm_ytdlp_update.isEnabled() is True
+    assert "2099.1.1" in dialog.dm_ytdlp_status.text()
+    dialog._on_ytdlp_found(None)
+    assert dialog.dm_ytdlp_update.isEnabled() is False
+    assert "up to date" in dialog.dm_ytdlp_status.text()
+
+
+def test_settings_ytdlp_reports_failure_and_success(tmp_path, monkeypatch):
+    """The dialog's worker outcomes: a failed CHECK only updates the status
+    line, a failed INSTALL also raises the dialog; both re-enable the buttons."""
+    from config import DeeptorrentConfig
+    from gui.settings_dialog import DownloadsSettingsDialog
+    import gui.settings_dialog as sd_module
+    _qapp()
+    dialog = DownloadsSettingsDialog(DeeptorrentConfig(), page="manager")
+    dialog._ytdlp_pending = "check"
+    dialog.dm_ytdlp_check.setEnabled(False)
+    dialog._on_ytdlp_failed("feed unreachable")
+    assert "The update failed: feed unreachable" in dialog.dm_ytdlp_status.text()
+    assert dialog.dm_ytdlp_check.isEnabled() is True
+    shown = []
+    monkeypatch.setattr(sd_module, "show_failed", lambda parent, message: shown.append(message))
+    dialog._ytdlp_pending = "install"
+    dialog._on_ytdlp_failed("integrity check failed")
+    assert shown == ["integrity check failed"]
+    dialog._on_ytdlp_installed("2099.1.1")
+    assert "2099.1.1 is installed" in dialog.dm_ytdlp_status.text()
+    assert "restart DeepFlux" in dialog.dm_ytdlp_status.text()
+    assert dialog.dm_ytdlp_update.isEnabled() is False
+
+
+def test_runner_install_forces_a_recorded_release(tmp_path, monkeypatch):
+    """The user's own click must be able to retry a release the automatic
+    path refuses (install() rejects a recorded release unless force=True)."""
+    import time
+    from gui.ytdlp_update_runner import YtdlpUpdateRunner
+    from infra import ytdlp_overlay as ov
+    app = _qapp()
+    calls = []
+    monkeypatch.setattr(ov, "install",
+                        lambda info, **kw: calls.append(kw) or {"version": info.version})
+    runner = YtdlpUpdateRunner()
+    done = []
+    runner.installed.connect(done.append)
+    assert runner.install(_ytdlp_info()) is True
+    for _ in range(300):
+        if calls:
+            break
+        time.sleep(0.01)
+    assert calls and calls[0].get("force") is True
+    app.processEvents()
+    assert done == ["2099.1.1"]
+    assert runner.busy is False
+
+
+def test_main_window_update_failure_clears_the_wait_cursor(tmp_path, monkeypatch):
+    import gui.main_window as mw_module
+    from PySide6.QtWidgets import QApplication
+    mw = _build_main(tmp_path)
+    shown = []
+    monkeypatch.setattr(mw_module, "show_failed", lambda parent, message: shown.append(message))
+    cleared = []
+    monkeypatch.setattr(QApplication, "restoreOverrideCursor",
+                        staticmethod(lambda: cleared.append(True)))
+    mw._ytdlp_wait_cursor = True
+    mw._on_ytdlp_update_failed("sha256 mismatch")
+    assert shown == ["sha256 mismatch"]
+    assert mw._ytdlp_wait_cursor is False and cleared == [True]

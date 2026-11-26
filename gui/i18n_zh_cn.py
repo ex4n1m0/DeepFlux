@@ -954,4 +954,46 @@ ZH_CN: dict[str, str] = {
         '无法打开该任务（文件不可读）。',
     'Start a fresh task — the current conversation stays saved in the tasks sidebar':
         '开始新任务 —— 当前对话仍保存在任务侧栏中',
+    # In-app yt-dlp update (infra/ytdlp_overlay.py + gui/ytdlp_update_runner.py,
+    # Settings → Download Manager, the Agent-tab notice).
+    'Update the YouTube downloader': '更新 YouTube 下载器',
+    'DeepFlux can update yt-dlp to {version} by itself — a {size} download that is checked against a version DeepFlux has approved.\n\nIt replaces the bundled downloader the next time DeepFlux starts. You can go back to the bundled one at any time in Settings.\n\nUpdate now?':
+        'DeepFlux 可以自行把 yt-dlp 更新到 {version}——下载 {size}，并与 DeepFlux 认可的版本校验比对。\n\n下次启动 DeepFlux 时，它会替换内置的下载器。你随时可以在设置中改回内置版本。\n\n立即更新？',
+    'Use the bundled YouTube downloader': '使用内置的 YouTube 下载器',
+    'Go back to the yt-dlp that came with DeepFlux? This takes effect the next time DeepFlux starts.':
+        '改回 DeepFlux 自带的 yt-dlp？下次启动 DeepFlux 时生效。',
+    'YouTube downloader updated': 'YouTube 下载器已更新',
+    'yt-dlp {version} is installed. Restart DeepFlux to start using it.':
+        'yt-dlp {version} 已安装。重启 DeepFlux 后开始使用。',
+    'YouTube downloader update failed': 'YouTube 下载器更新失败',
+    'The YouTube downloader could not be updated:\n{error}\n\nThe bundled downloader stays in use.':
+        '无法更新 YouTube 下载器：\n{error}\n\n将继续使用内置的下载器。',
+    'Update the YouTube downloader automatically': '自动更新 YouTube 下载器',
+    'Use bundled version': '使用内置版本',
+    'The YouTube downloader can update itself in the installed Windows and Linux builds.':
+        'YouTube 下载器只能在已安装的 Windows 和 Linux 版本中自我更新。',
+    'YouTube downloader: yt-dlp {version} (updated by DeepFlux; bundled: {bundled}).':
+        'YouTube 下载器：yt-dlp {version}（已由 DeepFlux 更新；内置版本：{bundled}）。',
+    'YouTube downloader: yt-dlp {version} (bundled with DeepFlux).':
+        'YouTube 下载器：yt-dlp {version}（DeepFlux 内置）。',
+    'YouTube downloader: version unknown.': 'YouTube 下载器：版本未知。',
+    'Version {version} is not used — you chose the bundled downloader.':
+        '未采用 {version}——你选择了内置下载器。',
+    'Version {version} was tried earlier and is not used: {error}':
+        '此前尝试过 {version}，但未被采用：{error}',
+    'The bundled downloader is used from the next start.': '下次启动时将使用内置下载器。',
+    'The YouTube downloader is up to date.': 'YouTube 下载器已是最新。',
+    'yt-dlp {version} is available.': 'yt-dlp {version} 可用。',
+    'The update failed: {error}': '更新失败：{error}',
+    'yt-dlp {version} is installed — restart DeepFlux to use it.':
+        'yt-dlp {version} 已安装——重启 DeepFlux 后使用。',
+    'YouTube downloader': 'YouTube 下载器',
+    'The YouTube downloader is up to date — nothing newer has been released for DeepFlux yet.':
+        'YouTube 下载器已是最新——DeepFlux 尚未发布更新的版本。',
+    '📼 YouTube downloader update available: yt-dlp {installed} → {version}.':
+        '📼 YouTube 下载器有可用更新：yt-dlp {installed} → {version}。',
+    '📼 YouTube downloader updated to yt-dlp {version} — restart DeepFlux to use it.':
+        '📼 YouTube 下载器已更新到 yt-dlp {version}——重启 DeepFlux 后使用。',
+    '📼 The YouTube downloader could not be updated to yt-dlp {version}: {error}':
+        '📼 无法将 YouTube 下载器更新到 yt-dlp {version}：{error}',
 }

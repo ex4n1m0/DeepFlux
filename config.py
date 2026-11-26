@@ -27,7 +27,7 @@ _config_write_lock = threading.Lock()
 # telemetry ping and future callers share one source; the user-facing literals
 # (window title, User Guide, installer.iss) are bumped by hand on release —
 # see the version-bump checklist in AGENTS.md.
-APP_VERSION = "9.7"
+APP_VERSION = "9.8"
 
 
 # Since 3.5.2 a SET of shared keys ships in the setup file so the app works
@@ -489,6 +489,9 @@ class DownloadConfig:
     youtube_playlists: bool = False
     youtube_update_check: bool = True           # warn when yt-dlp is outdated (dlmgr/ytdlp_update.py)
     ytdlp_last_check: float = 0.0               # epoch of last freshness probe; 0 = never
+    # Install pinned yt-dlp releases without asking (infra/ytdlp_overlay.py).
+    # Off by default; the AGENT can never switch it on (agent/tools.py).
+    ytdlp_auto_update: bool = False
     categories: List[DownloadCategory] = field(default_factory=list)
 
 
@@ -1154,6 +1157,10 @@ class DeeptorrentConfig:
                 youtube_playlists=bool(data.get("download", {}).get("youtube_playlists", False)),
                 youtube_update_check=bool(data.get("download", {}).get("youtube_update_check", True)),
                 ytdlp_last_check=float(data.get("download", {}).get("ytdlp_last_check", 0.0) or 0.0),
+                # Strict on purpose: this switch turns on code installation
+                # without a click, so only a real JSON ``true`` counts — a
+                # hand-edited or imported "false"/"no"/0 must never read as on.
+                ytdlp_auto_update=data.get("download", {}).get("ytdlp_auto_update", False) is True,
                 categories=_filtered(DownloadCategory, data.get("download", {}).get("categories", [])),
             ),
             torrents=TorrentsConfig(**{k: v for k, v in data.get("torrents", {}).items()

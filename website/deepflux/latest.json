@@ -1,8 +1,1 @@
-{
-  "version": "9.7",
-  "file": "DeepFlux9.7Setup.exe",
-  "size": 522069278,
-  "sha256": "b928e657ad12785aa76bc9851272921c4ff5149a851132e3e954ddfa13aa87a8",
-  "released": "2026-11-23",
-  "notes": "DeepFlux 9.7 - the Agent tab gets a Tasks sidebar: every conversation is saved automatically as a local task you can reopen (full transcript + AI context), rename, or delete. The mini player's logo video now plays once and hands over to the static banner. Default UI is now small font + blue text, with bigger clearer task list text. Agent settings reloads keep the open task's context. Includes all 9.0-9.6 features."
-}
+{"version": "9.8", "file": "DeepFlux9.8Setup.exe", "size": 522118283, "sha256": "db0354f2f183fc32c4baa3c932cf2300737d9970fc3af65df5d414ebc0ca3079", "released": "2026-11-26", "notes": "DeepFlux 9.8 - the YouTube downloader can now update itself in-app: when a YouTube change breaks downloads, DeepFlux offers an approved newer yt-dlp with one click (from the notice or Settings -> Download Manager), or installs it automatically if you switch that on. Every release is digest-verified and passes a start-up safety check before use, and you can always revert to the bundled version. Includes all 9.0-9.7 features."}

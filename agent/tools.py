@@ -185,6 +185,9 @@ _SETTINGS_DENY_PATHS = {
     ("llm", "context_budget_tokens"),
     ("sources", "last_jackett_fetch"),              # internal sync bookkeeping
     ("download", "ytdlp_last_check"),               # internal freshness bookkeeping
+    # Switches on CODE installation without a click (infra/ytdlp_overlay.py)
+    # — the same reason the app updater is not an agent tool.
+    ("download", "ytdlp_auto_update"),
     ("download", "control_api_port"),               # running server binding
     ("updater", "last_check"),                      # internal probe bookkeeping
     ("updater", "skip_version"),                    # set via the update dialog

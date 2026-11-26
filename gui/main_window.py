@@ -73,6 +73,12 @@ from engine.state import TorrentStateManager
 from gui.rss_dialog import RSSDialog
 from gui.rss_viewer import RSSViewer
 from gui.i18n import tr
+from gui.ytdlp_update_runner import (
+    YtdlpUpdateRunner,
+    ask_to_install,
+    show_failed,
+    show_installed,
+)
 from gui.update_dialog import (
     RESULT_SKIP,
     RESULT_UPDATE_NOW,
@@ -242,6 +248,11 @@ logger = logging.getLogger(__name__)
 _DWMWA_WINDOW_CORNER_PREFERENCE = 33
 _DWMWCP_DEFAULT = 0
 _DWMWCP_DONOTROUND = 1
+
+# In-app action link inside the Agent-tab yt-dlp notice. It is never a URL
+# anything navigates to: _on_chat_link_clicked matches it EXACTLY and only
+# opens the update confirmation — nothing is installed without that click.
+_YTDLP_UPDATE_LINK = "deepflux-action:ytdlp-update"
 
 
 class _AgentSignals(QObject):
@@ -1380,6 +1391,11 @@ class MainWindow(QMainWindow):
         self._jackett_timer.timeout.connect(self._start_jackett_sync)
         self._jackett_timer.start()
         self._ytdlp_notice_shown = False  # outdated notice: once per session
+        self._ytdlp_wait_cursor = False
+        self._ytdlp_runner = YtdlpUpdateRunner(self)
+        self._ytdlp_runner.found.connect(self._on_ytdlp_found)
+        self._ytdlp_runner.failed.connect(self._on_ytdlp_update_failed)
+        self._ytdlp_runner.installed.connect(self._on_ytdlp_update_installed)
         threading.Thread(target=self._ytdlp_update_worker, daemon=True,
                          name="ytdlp-update").start()
 
@@ -5106,14 +5122,91 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _ytdlp_update_worker(self) -> None:
+        # check + (automatic mode) install: the config flag is the owner's
+        # opt-in, ask mode is the default (infra/ytdlp_overlay.py).
         from dlmgr import ytdlp_update
         try:
-            result = ytdlp_update.maybe_check_update(self.config, self.config_path)
+            result = ytdlp_update.check_and_maybe_update(self.config, self.config_path)
         except Exception as exc:
             logger.debug("yt-dlp update check failed: %s", exc, exc_info=True)
             return
         if result:
             self._agent_signals.event.emit({"type": "ytdlp_update", **result})
+
+    def _on_ytdlp_update_event(self, event: dict) -> None:
+        """Outcome of the daily yt-dlp probe (worker → GUI thread). The
+        version and error strings are network- or file-sourced: escape them
+        before the chat document, like the sibling branches."""
+
+        def _esc(value) -> str:
+            return html.escape(str(value if value not in (None, "") else "?"), quote=True)
+
+        latest = _esc(event.get("latest"))
+        if event.get("updated"):
+            self._append_event(tr("📼 YouTube downloader updated to yt-dlp {version} — "
+                                  "restart DeepFlux to use it.").format(version=latest))
+            return
+        if event.get("update_error"):
+            self._append_event(tr("📼 The YouTube downloader could not be updated to yt-dlp "
+                                  "{version}: {error}").format(version=latest,
+                                                               error=_esc(event.get("update_error"))))
+            return
+        if self._ytdlp_notice_shown or event.get("notice") is False:
+            return
+        self._ytdlp_notice_shown = True
+        if event.get("can_update"):
+            # <u>: chat anchors are styled as plain text, so the link needs
+            # its own underline to read as one.
+            self._append_event(
+                tr("📼 YouTube downloader update available: yt-dlp {installed} → {version}.")
+                .format(installed=_esc(event.get("installed")), version=latest)
+                + " "
+                + f'<a href="{_YTDLP_UPDATE_LINK}"><u>{tr("Update now")}</u></a>')
+            return
+        if event.get("frozen"):
+            hint = ("YouTube downloads may fail part-way. "
+                    "Update DeepFlux to pick up a newer bundled downloader.")
+        else:
+            hint = ("YouTube downloads may fail part-way. "
+                    "Run: python -m pip install --upgrade yt-dlp")
+        self._append_event(
+            f"📼 YouTube downloader (yt-dlp {_esc(event.get('installed'))}) is outdated — "
+            f"{latest} is available. {hint}")
+
+    def _ytdlp_update_from_notice(self) -> None:
+        """"Update now" in the Agent-tab notice: look the pinned release up
+        off the GUI thread, then ask before anything is downloaded."""
+        self._ytdlp_runner.check()
+
+    def _on_ytdlp_found(self, info) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QCursor
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        if info is None:
+            QMessageBox.information(
+                self, tr('YouTube downloader'),
+                tr("The YouTube downloader is up to date — nothing newer has been "
+                   "released for DeepFlux yet."))
+            return
+        if ask_to_install(self, info) and self._ytdlp_runner.install(info):
+            self._ytdlp_wait_cursor = True
+            QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+
+    def _on_ytdlp_update_failed(self, message: str) -> None:
+        self._ytdlp_clear_wait_cursor()
+        show_failed(self, message)
+
+    def _on_ytdlp_update_installed(self, version: str) -> None:
+        """A yt-dlp release is installed; offer the restart that activates it."""
+        self._ytdlp_clear_wait_cursor()
+        if show_installed(self, version):
+            self._restart_app(skip_config_save=False)
+
+    def _ytdlp_clear_wait_cursor(self) -> None:
+        if getattr(self, "_ytdlp_wait_cursor", False):
+            self._ytdlp_wait_cursor = False
+            from PySide6.QtWidgets import QApplication
+            QApplication.restoreOverrideCursor()
 
     def _gpu_preference_worker(self) -> None:
         """Apply the per-exe GPU preference (Settings → Browser; default
@@ -5634,20 +5727,7 @@ class MainWindow(QMainWindow):
                 message = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 self._append_event("🧩 " + message)
             elif etype == "ytdlp_update":
-                if self._ytdlp_notice_shown:
-                    return
-                self._ytdlp_notice_shown = True
-                installed = event.get("installed", "?")
-                latest = event.get("latest", "?")
-                if event.get("frozen"):
-                    hint = ("YouTube downloads may fail part-way. "
-                            "Update DeepFlux to pick up a newer bundled downloader.")
-                else:
-                    hint = ("YouTube downloads may fail part-way. "
-                            "Run: python -m pip install --upgrade yt-dlp")
-                self._append_event(
-                    f"📼 YouTube downloader (yt-dlp {installed}) is outdated — "
-                    f"{latest} is available. {hint}")
+                self._on_ytdlp_update_event(event)
             elif etype == "local_model":
                 # Escape like the sibling branches: message text must never
                 # reach the chat document as raw markup.
@@ -5750,8 +5830,12 @@ class MainWindow(QMainWindow):
 
     def _on_chat_link_clicked(self, url) -> None:
         """Handle clicks on links in the chat — magnet links are added directly,
-        other URLs open in the internal browser."""
+        .torrent links added, the in-app yt-dlp update link opens its
+        confirmation, other URLs open in the internal browser."""
         url_str = url.toString() if hasattr(url, "toString") else str(url)
+        if url_str == _YTDLP_UPDATE_LINK:
+            self._ytdlp_update_from_notice()
+            return
         if url_str.startswith("magnet:"):
             try:
                 result = self.tools.call("add_magnet", {
@@ -7577,18 +7661,25 @@ class MainWindow(QMainWindow):
         else:
             self._append_agent("**Settings imported** — restart DeepFlux to apply them.")
 
-    def _restart_app(self) -> None:
-        """Restart into newly imported settings.
+    def _restart_app(self, skip_config_save: bool = True) -> None:
+        """Restart the app.
 
+        ``skip_config_save`` (the default) is the settings-import contract:
         closeEvent must NOT re-save the old in-memory config over the
-        imported file, hence the skip flag."""
-        self._skip_config_save = True
+        imported file. A restart that only activates something new — an
+        installed yt-dlp release — passes False, so the session's settings
+        are saved as usual."""
+        self._skip_config_save = skip_config_save
+        # Close FIRST and launch only when the close went through: closeEvent
+        # may be declined (active transfers) and the app keeps running —
+        # launching before the close would leave two DeepFlux windows.
+        if not self.close():
+            return
         if getattr(sys, "frozen", False):
             QProcess.startDetached(sys.executable, sys.argv[1:])
         else:
             QProcess.startDetached(
                 sys.executable, [os.path.abspath(sys.argv[0]), *sys.argv[1:]])
-        self.close()
 
     def _open_indexer_settings(self) -> None:
         """Open Indexer settings (Jackett)."""

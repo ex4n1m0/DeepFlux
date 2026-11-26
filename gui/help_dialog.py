@@ -612,8 +612,10 @@ internet by default:</p>
   tied to you), the app version and your OS name — nothing else: no username,
   no machine name, no file names, no browsing or download activity. Turn it
   off in Downloads → Download Manager Settings.</li>
-  <li><b>Update checks</b> — a daily check for an outdated YouTube downloader
-  (warn-only). Same settings page.</li>
+  <li><b>Update checks</b> — a daily check for an outdated YouTube downloader.
+  In the installed Windows and Linux builds the app can update it itself with
+  a release DeepFlux has approved: it asks you first, or installs it
+  automatically when you switch that on. Same settings page.</li>
   <li><b>The Room</b> — while joined, the room keeps a connection to the
   OnlyHumans hub (onlyhumans.deepflux.space): signed presence records and
   sealed mail envelopes. The hub sees <i>that</i> an app is online and which

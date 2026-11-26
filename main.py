@@ -149,11 +149,28 @@ class Repl:
     def _ytdlp_update_check(self) -> None:
         from dlmgr import ytdlp_update
         try:
-            result = ytdlp_update.maybe_check_update(self.config, self.config_path)
+            result = ytdlp_update.check_and_maybe_update(self.config, self.config_path)
         except Exception:
             logger.debug("yt-dlp update check failed", exc_info=True)
             return
-        if result:
+        if not result:
+            return
+        if result.get("notice") is False and not (result.get("updated") or result.get("update_error")):
+            return  # warning switched off, automatic updates on: nothing to say
+        if result.get("updated"):
+            print(f"\n[yt-dlp] YouTube downloader updated to {result['updated']} — "
+                  f"used from the next start.")
+        elif result.get("update_error"):
+            print(f"\n[yt-dlp] The automatic YouTube downloader update failed: "
+                  f"{result['update_error']}")
+        elif result.get("can_update"):
+            # The one-click update lives in the app's GUI (Agent tab link /
+            # Settings → Download Manager); the REPL only reports.
+            print(f"\n[yt-dlp] YouTube downloader {result['installed']} is outdated — "
+                  f"{result['latest']} is available. Update it in the app "
+                  f"(Settings → Download Manager), or switch on automatic "
+                  f"yt-dlp updates there.")
+        else:
             print(f"\n[yt-dlp] YouTube downloader {result['installed']} is outdated "
                   f"(latest {result['latest']}) — YouTube downloads may fail part-way. "
                   f"Run: python -m pip install --upgrade yt-dlp")
@@ -556,6 +573,12 @@ def main() -> None:
              "default local AI (no cloud key needed).",
     )
     parser.add_argument(
+        "--ytdlp-selfcheck",
+        metavar="DIR",
+        help="Internal: run the start-up check of a downloaded yt-dlp release in a "
+             "short-lived child process and exit (see infra/ytdlp_overlay.py).",
+    )
+    parser.add_argument(
         "targets",
         nargs="*",
         help="Files or URIs to open (.torrent, magnet:, media files, html) — used by file associations.",
@@ -568,6 +591,14 @@ def main() -> None:
     if not args.native_messaging and chrome_origin:
         args.native_messaging = True
         args.targets = []
+
+    # --- yt-dlp update: start-up check of a downloaded release -----------
+    # A bare child process of the frozen app (infra/ytdlp_overlay.py). It
+    # comes before the log setup on purpose: the windowed child has no
+    # stdout, writes its result to a file and must touch nothing else.
+    if args.ytdlp_selfcheck:
+        from infra.ytdlp_overlay import selfcheck_main
+        sys.exit(selfcheck_main([args.ytdlp_selfcheck]))
 
     try:
         sys.stdout.reconfigure(encoding="utf-8")

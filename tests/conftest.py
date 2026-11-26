@@ -71,6 +71,15 @@ def isolate_agent_sessions(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def isolate_ytdlp_overlay(monkeypatch, tmp_path):
+    """Never read/write the real ~/.deeptorrent/ytdlp — the downloaded
+    yt-dlp releases of the in-app updater (infra/ytdlp_overlay.py). Without
+    the redirect a Settings-dialog test's status line would read the user's
+    real pointer file, and an unpatched revert() could act on real folders."""
+    monkeypatch.setenv("DF_YTDLP_OVERLAY_DIR", str(tmp_path / "ytdlp"))
+
+
+@pytest.fixture(autouse=True)
 def isolate_local_model(monkeypatch, tmp_path):
     """Never touch the real ~/.deeptorrent/models (whisper weights + real
     GGUFs, multi-GB) or ~/.deeptorrent/llama (extracted runtimes), and drop
