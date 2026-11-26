@@ -3773,12 +3773,64 @@ gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regre
 
 ## Android parity + review rounds (2026-11-23/24) — durable rules (1.4.13, RELEASED 2026-11-24)
 
-STATE (2026-11-25): Android 1.4.14 / versionCode 30 is on the site as an
-UNLINKED TEST BUILD (owner: "keep polishing what you find that needs
+STATE (2026-11-26): RELEASED. Android 1.4.14 / versionCode 30 is LIVE —
+the test build byte for byte (58359944 bytes, sha256
+41251d18ac73a0b6bd3d8d817a8d8d00d91cb300e15b14d99d2f0df2aae29588):
+both pages (EN + ZH) and `latest-android.json` point at it, the 1.4.13
+APK is gone from the deploy dir, 23 live checks passed (feed equal to
+the local file and valid under `AppUpdater.parseFeed` / `isNewer`, both
+pages, APK downloaded back — hash and size, 1.4.13 at 404, the counter
+route, the Windows 9.8 / Linux 7.8 / yt-dlp feeds untouched). Released
+on the owner's word ("do what is missing to do for the android version",
+then "Release 1.4.14" ticked with the gate stated). It has STILL never
+run on a physical phone. Branch `android-1.4.13` and
+`svp-out-of-process` are both pushed and equal (every commit of that
+day went to both). Rollback: the 1.4.13 APK is in
+`%LOCALAPPDATA%\Temp\df_release_backup\`. Before the release, on the
+emulator, against this exact build (sha compared on the device):
+ * A torrent restored UNFINISHED and then finishing — the DOWNLOADING-
+   state rule had only ever run through unit-test fakes. Twice (51.8 %
+   and 24 % of a 21.5 MB hybrid torrent; app stopped; seeder back
+   BEFORE the app starts): announced once, copied once, mark saved, same
+   pid start to finish. `onFinished` posts only for a hash in
+   `unfinishedSeen`, and nothing but `watchDownloading` adds a restored
+   one — so the real engine DOES report `TorrentState.DOWNLOADING`.
+   Quiet restart with nobody seeding: the row is back "Seeding · 100 %"
+   with Play, no re-post, no second copy. Only libtorrent's literal
+   DOWNLOADING counts; a torrent waiting for peers (`stalled_download`)
+   reads UNKNOWN until data flows — consistent with the narrow gap.
+ * Android 9 (API 28 = minSdk; AOSP x86_64 image, AVD `api28`): the app
+   installs, starts and runs there with no crash (first run, the
+   browser's WebView, the downloads list, settings, the system folder
+   picker and its persisted permission). No folder chosen: a finished
+   download is "Download finished" — NOT a copy failure — and stays
+   inside the app (`Result.NoDestination`, as designed; the Settings
+   card tells those users so). Folder chosen through the real API 28
+   picker: "copied … into the chosen folder".
+ * The in-app update 1.4.13 -> 1.4.14: the published 1.4.13 offers
+   "Update available — v1.4.14" by itself at start, downloads and
+   verifies the 58 MB from the site in under 8 s, then the OLD consent
+   order (system dialog -> SETTINGS -> "Allow from this source" -> back
+   -> tap "Update now" again) -> the system installer -> "App
+   installed." -> OPEN runs 1.4.14 (installed sha = published sha) with
+   settings kept. The only exit record: `reason 16 PACKAGE UPDATED`.
+ * CI: `android-build.yml` now runs the unit tests on GitHub, on Linux,
+   at every push that touches the app (the APK build stays manual
+   dispatch — and had NEVER run before 2026-11-26). Green: 423 tests,
+   0 failures, 22 skipped — the five that could not run on Windows run
+   there and pass; the 22 need an agent key and skip because the
+   repository secret `EMBED_SHARED_VENICE_API_KEY` DOES NOT EXIST (the
+   workflow has named it since 2026-11-17; the owner has to create it).
+   What the first runs said is in TOOLING LESSONS (t)–(z) below.
+
+STATE (2026-11-25): Android 1.4.14 / versionCode 30 went on the site as
+an UNLINKED TEST BUILD (released 2026-11-26 — the STATE above). Owner,
+then, to the test build: "keep polishing what you find that needs
 polish … deploy to the website, I will test on a real phone"):
 `website/deepflux/DeepFlux-1.4.14-Android.apk` (58359944 bytes, sha256
 41251d18ac73a0b6bd3d8d817a8d8d00d91cb300e15b14d99d2f0df2aae29588, same signing cert, installs over 1.4.13). Page buttons and
-`latest-android.json` STAY ON 1.4.13 until the owner's word. To release:
+`latest-android.json` stayed on 1.4.13 until the owner's word (given
+2026-11-26). The release ritual:
 swap the 4 page hrefs + the version/size/sha lines (EN + ZH), write the
 feed from the file in the deploy dir, delete the 1.4.13 APK there,
 `vercel --prod --yes --scope timedivision`, verify live. Unit suite
@@ -3801,7 +3853,8 @@ outlive their entry — each fixed with its test; the rest written down
 emulator showed one SIGSEGV that no check had caught — a torrent's finish
 read the finished alert's handle after the callback (fixed: see NO ALERT
 OUTLIVES ITS CALLBACK).
-("1.4.14" rules below). Code on branch `android-1.4.13` — NOT pushed.
+("1.4.14" rules below). Code on branch `android-1.4.13` — pushed
+2026-11-26, together with `svp-out-of-process` fast-forwarded to it.
 
 STATE (2026-11-24, evening): RELEASED. Android 1.4.13 / versionCode 29
 is LIVE (owner: "release", told about the two gaps below): both pages (EN
@@ -3811,9 +3864,9 @@ ae44530c10f1da51cac255b2251de83688bc7d2c3173316e0d598381d9cb3b42, same
 signing cert as 1.4.12, so it installs over it), the 1.4.12 APK is gone
 from the deploy dir (404), and 19 live checks passed (feed field for
 field, both pages, APK downloaded back, counter route, Windows feed
-untouched). The code is COMMITTED on branch `android-1.4.13` — two
-commits ahead of `svp-out-of-process`, NOT pushed (to bring it there:
-`git checkout svp-out-of-process && git merge --ff-only android-1.4.13`).
+untouched). The code is COMMITTED on branch `android-1.4.13` (two
+commits ahead of `svp-out-of-process` at the time; both pushed and equal
+since 2026-11-26).
 THIS RELEASE WENT OUT WITH TWO GAPS: (1) it had not been run on a device
 or an emulator when it shipped — CLOSED the same evening on the emulator
 that now exists on this machine (Android 15 x86_64; see "Verified on the
@@ -3821,9 +3874,10 @@ emulator" at the end of this section: the published APK, zero crashes,
 four small findings for 1.4.14); (2) STILL OPEN: 5 unit tests skip on a
 Windows host (symlink privilege x4, the real FileProvider round trip)
 and NO CI job runs the Android unit tests at all (`android-build.yml`
-only builds). Baseline before this work was 35
-tests; `./gradlew :app:testDebugUnitTest` → 330 tests, 0 failures, 5
-skips on Windows. `assembleDebug` builds. A rollback copy of the 1.4.12
+only builds) — CLOSED 2026-11-26: they run on GitHub, on Linux, at
+every push, and those five run there (STATE 2026-11-26). Baseline
+before this work was 35 tests; `./gradlew :app:testDebugUnitTest` →
+330 tests, 0 failures, 5 skips on Windows. `assembleDebug` builds. A rollback copy of the 1.4.12
 APK was left in `%LOCALAPPDATA%\Temp\df_release_backup\` (deletable).
 
 Toolchain on THIS machine (user `igorc`): portable JDK 21 + SDK under
@@ -4482,6 +4536,76 @@ take from an alert what is needed IN the callback; never keep the alert.
   BEFORE it starts the app. (s) Nothing can be handed to the app as a
   `.torrent` from adb on this rig (file:// and content:// addresses
   arrive, no confirmation shows) — that path is unit-tested only.
+- TOOLING LESSONS (2026-11-26, the 1.4.14 release day — each one paid for):
+  (t) THE EMULATOR'S USER-MODE NETWORK MIS-ADDRESSES A LOOPBACK
+  SEEDER'S PACKETS. With the seeder on the PC's 127.0.0.1 (reached as
+  10.0.2.2), at some point in a flow its packets reach the guest with
+  the RAW host address 127.0.0.1 instead of the 10.0.2.2 alias. The app
+  rightly ignores them, the seeder retransmits unacknowledged and times
+  out: transfers went in bursts with a minute or more between, and the
+  first connection after each seeder restart died at the extension
+  handshake. Nothing in the app. See it with the device's own tcpdump —
+  on ALL interfaces (`tcpdump -i any -n -tttt 'udp port <port>'`; app
+  traffic rides wlan0, so eth0 alone shows nothing). Two wrong theories
+  were tested and discarded first (a stale port; my own uiautomator
+  load), and an hour went before the capture: CAPTURE FIRST.
+  (u) libtorrent ignores every rate limit for a peer it sees as local
+  network (`ignore_limits_on_local_network`, default true — the emulator
+  is 127.0.0.1 to the seeder). The site-screenshot notes say so; set it
+  False on a throttled test seeder.
+  (v) ON THE ANDROID 9 GUEST A FAST LOCAL HTTP SERVER LOSES THE TAIL OF A
+  TCP STREAM ("unexpected end of stream"; a different count per attempt;
+  the server unaware) — the emulator acknowledges to the sender before
+  the guest has taken the data. The same file, server and app completes
+  when the server is paced (1.5 MB/s). PACE TEST SERVERS. And a failure
+  seen on ONE API level only is not yet an app bug: run the same thing
+  on the other emulator before reading code.
+  (w) ANDROID 9 (API 28) DIFFERS AS A TEST TARGET: `uiautomator dump`
+  answers "could not get idle state" while a screen animates (drive it
+  by screenshot and coordinates — and delete the local ui.xml first, a
+  stale one reads as "nothing happened"); its layout sits ~190 px HIGHER
+  than the API 35 device's, so coordinates do not carry over;
+  `dumpsys activity exit-info` exists only from Android 11 — there read
+  `logcat -b crash` and `dumpsys dropbox`; adb stops accepting `-e`
+  once a second emulator runs (name the serial: emulator-5554 =
+  medium_phone, emulator-5556 = `api28`, started with `-port 5556`).
+  The AOSP x86_64 image for API 28 installs with sdkmanager; the AVD
+  boots in ~30 s beside the other one (16 GB free of 32).
+  (x) A .TORRENT "FROM ANOTHER APP" CAN BE DELIVERED AFTER ALL (the note
+  "adb could not deliver one" was true only for root). Push it to
+  /sdcard/Download; `am broadcast -a android.intent.action
+  .MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Download/X.torrent` gives
+  it a MediaStore row (content://media/external/file — look the id up
+  with `content query`); then AS THE SHELL USER, NOT ROOT (`adb unroot`
+  first: as root the system refuses the grant — "cannot issue a Uri
+  permission grant … use startActivityAsCaller()" — and the app rightly
+  says "Could not read the .torrent file"): `am start -a
+  android.intent.action.VIEW -d content://media/external/file/<id> -t
+  application/x-bittorrent --grant-read-uri-permission`. `adb root`
+  again afterwards to read the app's files.
+  (y) GITHUB ACTIONS: a step WITHOUT `shell: bash` runs as plain `bash
+  -e` — a failing command piped into `tee` is then NOT a failed step
+  (declare `shell: bash`, or take the exit from PIPESTATUS). Maven
+  Central rate-limits the shared runners: HTTP 429, "could not resolve
+  plugin artifact", seconds after the daemon starts — android/
+  gradle.properties carries the retry settings, whose names were read
+  out of the Gradle 9.6.0 binary (`org.gradle.internal.repository
+  .max.tentatives` — there is NO "max.retries" — and `…
+  .initial.backoff`). Robolectric on Gradle's default 512 MB test heap
+  passes on a fast machine and times out on a runner, one different
+  test per run: the worker gets 2 GB. The `gh` CLI is not installed
+  here; the Actions API works with the machine's stored git credential
+  (`git credential fill`, held in a shell variable, never printed) —
+  run lists are public, logs are not; anonymous calls: 60 an hour.
+  Pushing two refs with one commit starts the push-triggered workflow
+  twice (once per ref).
+  (z) A TEST THAT SKIPS ITSELF ON YOUR MACHINE HAS NEVER RUN. Five did;
+  the first Linux run found one whose expectation its own layout could
+  not produce (CommanderTest.folderSizerDoesNotFollowSymbolicLinks
+  expected 300 where following no link gives 9300) — and I reported it
+  as an app bug before doing the arithmetic. When a never-run test
+  fails, compute the right answer from the layout FIRST.
+
 - KNOWN GAPS IN 1.4.14 (from the reviews of 2026-11-25 — written down,
   not changed): (1) A torrent that completes within ONE POLL of its
   check at a start is not announced (no poll saw it DOWNLOADING; the
@@ -4501,22 +4625,40 @@ take from an alert what is needed IN the callback; never keep the alert.
   paused — deliberate: a paused torrent connects to nothing, and on
   resume the magnet's own addresses are what it needs. (9) The
   bracketed-IPv6 form `[fe80::1%3A51413]` (an encoded colon inside the
-  brackets) is dropped.
+  brackets) is dropped. (10) FOUND 2026-11-26, in the released build: a
+  V2-ONLY torrent cannot be added by MAGNET — `MagnetParser
+  .infoHashHex` accepts a 40-hex or 32-char base32 btih, and a v2-only
+  magnet carries the full 64-hex v2 hash, so every caller treats it as
+  no magnet (the confirmation never appears; a notice says so). Hybrid
+  torrents are linked by their v1 hash, so they are unaffected; by
+  .torrent file a v2-only torrent works. Supporting it touches IDENTITY
+  (the engine named that torrent by a 20-byte value of its own, not its
+  v2 hash): 1.4.15 work with tests, not a quick patch. Cosmetic, same
+  day: the confirmation shows a torrent's name ("V2Only"), the list
+  shows its single file ("v2.bin").
 
 Still unverified anywhere: the wake lock after a 60 s stall (does an
 inbound peer wake the radio?), a physical device's battery policy for
-the foreground service (the emulator is always plugged in), the
-player's audio-track switch (needs a multi-track file), Compose
+the foreground service (the emulator is always plugged in), the AUDIBLE
+side of the player's audio-track switch (its selection path ran on the
+emulator, which has no audio device), Compose
 rendering of agent markdown (not exercised — it would spend the owner's
-AI key), `Result.NoDestination` on an Android 9 image, a hung folder
-provider, multi-GB copies; and from 1.4.14: the install-consent dialog's
-return path on a device (no newer public build exists to install from —
-its pieces are unit-tested), the "…" wording for an unknown-size
-download (unit-tested only), a torrent restored UNFINISHED and then
-finishing (the DOWNLOADING-state rule — only "added here" ran on the
-emulator), and a v2-only torrent (its kept file would lack piece
-layers). Accepted trade-off (narrow): a torrent restored UNFINISHED
-whose whole downloading phase falls between two 1 s polls is not
+AI key), a hung folder provider, multi-GB copies; and from 1.4.14: the
+install-consent dialog's CONSENT-FIRST return path as 1.4.14 does it (it
+needs a build newer than 1.4.14 — its pieces are unit-tested; the
+1.4.13 -> 1.4.14 update through the OLD order ran on the emulator,
+2026-11-26), and the "…" wording for an unknown-size
+download (unit-tested only). RUN ON THE EMULATOR 2026-11-26, no longer
+in this list: a torrent restored UNFINISHED and then finishing; `Result
+.NoDestination` on an Android 9 image (no folder chosen = finished, not
+copied, not a failure; a folder chosen through the real picker gets the
+copy); a v2-only torrent added by a .torrent FILE (its kept file is the
+original, piece layers included; after a restart with nobody seeding the
+torrent is back with its size — by MAGNET such a torrent is refused,
+KNOWN GAP 10); and a .torrent handed over "from another app" (TOOLING
+LESSON (x): as the shell user, with a granted content URI).
+Accepted trade-off (narrow): a torrent restored UNFINISHED whose whole
+downloading phase falls between two 1 s polls is not
 announced (its copy still runs — only the announcement depends on being
 watched); for an entry saved by 1.4.13, which counts as copied until a
 poll sees it download, that case is not copied either. Settled since:
