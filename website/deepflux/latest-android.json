@@ -1,9 +1,9 @@
 {
-  "version": "1.4.13",
-  "versionCode": 29,
-  "file": "DeepFlux-1.4.13-Android.apk",
-  "size": 58325596,
-  "sha256": "ae44530c10f1da51cac255b2251de83688bc7d2c3173316e0d598381d9cb3b42",
-  "released": "2026-11-24",
-  "notes": "New in 1.4.13: choose where finished downloads go - Settings > Save location now copies them into any folder you pick. The Live TV tab has Live TV, Movies and Series sections (you can mark a source as live or video yourself) and a search box. The player gets rotation, aspect-ratio and audio-track buttons and handles headphones and interruptions properly. Agent replies show as formatted text with tappable links. Plus many fixes for background downloads, notifications, RSS feeds and the update check."
+  "version": "1.4.14",
+  "versionCode": 30,
+  "file": "DeepFlux-1.4.14-Android.apk",
+  "size": 58359944,
+  "sha256": "41251d18ac73a0b6bd3d8d817a8d8d00d91cb300e15b14d99d2f0df2aae29588",
+  "released": "2026-11-26",
+  "notes": "Fixes in 1.4.14: a magnet download that has finished stays playable after a restart, even when nobody is seeding it anymore. The app no longer shows 'Download finished' or makes numbered extra copies in Downloads every time it starts. Torrents added from a .torrent file are listed by their real name instead of a code, and when a torrent cannot be added the message says why. Finished files the app cannot play get an Open button. Notifications use the right plural and size wording, and a setting that could not be saved is reported instead of closing the app."
 }
