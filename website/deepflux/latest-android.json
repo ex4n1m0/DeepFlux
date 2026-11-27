@@ -5,5 +5,5 @@
   "size": 222848002,
   "sha256": "a35b0157099813fc15e2b83e6f3140b397cf6802a6904a995bdb98e2190eeda2",
   "released": "2026-11-27",
-  "notes": "New in 1.4.15: films with Dolby audio (AC-3 / E-AC-3), DTS or MP2 now have sound on every phone - the player decodes them itself where the phone cannot. Films in 10-bit H.265 that stopped with 'Playback failed' on phones without the hardware for it now open in a compatibility player (VLC) on their own; the normal player is still used whenever it can play the film. Settings > About lists the open-source licences. The app is larger because it now carries these decoders."
+  "notes": "New in 1.4.15: films whose sound is Dolby (AC-3 / E-AC-3), DTS or MP2 are no longer silent - the player now decodes them itself where the phone cannot. Films in 10-bit H.265 that stopped with 'Playback failed' on phones without the hardware for them now open in a compatibility player (VLC) instead; the normal player is still used whenever it can play the film. Settings > About lists the open-source licences. The app is larger because it now carries these decoders."
 }
