@@ -1,0 +1,121 @@
+name: Android FFmpeg audio extension
+
+# Builds ExoPlayer's FFmpeg AUDIO decoder module (androidx/media, tag = the Media3 version
+# the app uses) as one AAR for the DeepFlux Android app, with the decoders phones most
+# often lack switched on: Dolby (AC-3, E-AC-3), DTS, TrueHD and MP1/MP2/MP3 next to AAC,
+# FLAC, ALAC, Opus and Vorbis.
+#
+# Google does not publish this module — it has to be built, with the Android NDK, on Linux
+# or macOS (the module's README). It is used in the app ONLY as a fallback, for audio the
+# phone's own decoders cannot handle. FFmpeg is built with --disable-everything plus these
+# decoders and no GPL parts, so it is LGPL-2.1 — the same footing as the FFmpeg the Windows
+# app ships.
+#
+# The finished AAR is an artifact: put it at android/app/libs/decoder-ffmpeg-<version>.aar
+# (git-tracked) and record its sha256 in the commit. The app's local and CI builds use the
+# committed AAR; nobody needs an NDK to build the app.
+#
+# Trigger: a change to this file, or manual dispatch.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/android-ffmpeg-audio.yml"
+
+permissions:
+  contents: read
+
+env:
+  MEDIA3_TAG: "1.11.1"
+  NDK_VERSION: "26.1.10909125"   # NDK r26b — the version the module's README says it was tested with
+  FFMPEG_MODULE: libraries/decoder_ffmpeg/src/main
+  # Names as FFmpeg's configure knows them. `mp3` is FFmpeg's decoder for MPEG audio layers 1-3.
+  ENABLED_DECODERS: vorbis opus flac alac aac mp3 ac3 eac3 dca truehd
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: SDK pieces (NDK for FFmpeg and the JNI wrapper, CMake, platform 36)
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses >/dev/null || true
+          "$SDKM" --install "ndk;${NDK_VERSION}" "cmake;3.22.1" "platforms;android-36" "build-tools;36.0.0" > /dev/null
+          test -x "$ANDROID_HOME/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+
+      - name: Media3 sources at the tag the app uses
+        run: |
+          git clone --depth 1 --branch "$MEDIA3_TAG" https://github.com/androidx/media.git media3
+          test -x "media3/${FFMPEG_MODULE}/jni/build_ffmpeg.sh"
+
+      - name: FFmpeg release/6.0, where the module's CMake expects it
+        run: |
+          git clone --depth 1 --branch release/6.0 https://github.com/FFmpeg/FFmpeg.git "media3/${FFMPEG_MODULE}/jni/ffmpeg"
+          git -C "media3/${FFMPEG_MODULE}/jni/ffmpeg" log -1 --format='FFmpeg %h %cd'
+
+      - name: Build FFmpeg for the four ABIs with the chosen decoders
+        # `shell: bash` is the "-eo pipefail" form: without it a failing script piped into
+        # `tail` would leave this step green (learned on the unit-test job, 2026-11-26).
+        shell: bash
+        run: |
+          cd "media3/${FFMPEG_MODULE}/jni"
+          # shellcheck disable=SC2086
+          ./build_ffmpeg.sh "$(cd .. && pwd)" "$ANDROID_HOME/ndk/${NDK_VERSION}" "linux-x86_64" 21 $ENABLED_DECODERS 2>&1 | tail -n 40
+          for abi in armeabi-v7a arm64-v8a x86 x86_64; do
+            ls -la "ffmpeg/android-libs/$abi/"
+            test -s "ffmpeg/android-libs/$abi/libavcodec.a"
+          done
+          echo "--- decoders compiled into the arm64 libavcodec (diagnostic):"
+          NM="$ANDROID_HOME/ndk/${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+          "$NM" --defined-only "ffmpeg/android-libs/arm64-v8a/libavcodec.a" 2>/dev/null | grep -E "ff_(ac3|eac3|dca|truehd|mlp|mp3|aac)_decoder" | head -12 || true
+
+      - name: Build the module (JNI wrapper + Java) into one AAR
+        shell: bash
+        run: |
+          cd media3
+          # The module does not name an NDK, so the Android Gradle Plugin would use its own
+          # default for the JNI wrapper while FFmpeg was built with r26b. Pin the same one.
+          sed -i "s/^android {$/android {\n  ndkVersion = \"${NDK_VERSION}\"/" libraries/decoder_ffmpeg/build.gradle.kts
+          grep -n "ndkVersion" libraries/decoder_ffmpeg/build.gradle.kts
+          chmod +x gradlew
+          ./gradlew :lib-decoder-ffmpeg:assembleRelease --no-daemon --stacktrace 2>&1 | tail -n 60
+          AAR="$(find libraries/decoder_ffmpeg -name '*.aar' -path '*release*' | head -n 1)"
+          test -n "$AAR"
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "$AAR" "$RUNNER_TEMP/out/decoder-ffmpeg-${MEDIA3_TAG}.aar"
+          echo "--- AAR contents:"
+          unzip -l "$RUNNER_TEMP/out/decoder-ffmpeg-${MEDIA3_TAG}.aar" | grep -E "\.so|classes\.jar|proguard|AndroidManifest" || true
+          echo "--- classes in the AAR:"
+          unzip -p "$RUNNER_TEMP/out/decoder-ffmpeg-${MEDIA3_TAG}.aar" classes.jar > "$RUNNER_TEMP/classes.jar"
+          unzip -l "$RUNNER_TEMP/classes.jar" | grep -E "\.class" | awk '{print $4}' || true
+
+      - name: What was built (ABIs, sizes, decoders, sha256)
+        shell: bash
+        run: |
+          AAR="$RUNNER_TEMP/out/decoder-ffmpeg-${MEDIA3_TAG}.aar"
+          {
+            echo "### decoder-ffmpeg AAR"
+            echo '```'
+            ls -la "$AAR"
+            sha256sum "$AAR"
+            unzip -l "$AAR" | grep -E "jni/.*\.so" || true
+            echo
+            echo "FFmpeg decoders enabled: $ENABLED_DECODERS"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the AAR
+        uses: actions/upload-artifact@v5
+        with:
+          name: DeepFlux-ffmpeg-audio-aar
+          path: ${{ runner.temp }}/out/decoder-ffmpeg-${{ env.MEDIA3_TAG }}.aar
+          retention-days: 90
+          if-no-files-found: error
