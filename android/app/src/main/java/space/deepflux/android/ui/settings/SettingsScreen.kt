@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -277,6 +278,32 @@ fun SettingsScreen(repository: TorrentRepository) {
                     style = MaterialTheme.typography.labelMedium,
                     color = DimText,
                 )
+                // 1.4.15: the app ships LGPL libraries (FFmpeg's audio decoders, VLC's
+                // engine). Their licence and where their source is — verbatim from an
+                // asset, so the licence text is never retyped.
+                val context = androidx.compose.ui.platform.LocalContext.current
+                var showLicences by remember { mutableStateOf(false) }
+                if (showLicences) {
+                    val licences = remember {
+                        runCatching { context.assets.open("licenses.txt").bufferedReader().use { it.readText() } }
+                            .getOrDefault("")
+                    }
+                    androidx.compose.material3.AlertDialog(
+                        onDismissRequest = { showLicences = false },
+                        title = { Text(Strings.t.openSourceLicences) },
+                        text = {
+                            Text(
+                                licences,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                            )
+                        },
+                        confirmButton = { TextButton(onClick = { showLicences = false }) { Text(Strings.t.ok) } },
+                    )
+                }
+                TextButton(onClick = { showLicences = true }) {
+                    Text(Strings.t.openSourceLicences, color = DimText, style = MaterialTheme.typography.labelMedium)
+                }
             }
         }
     }

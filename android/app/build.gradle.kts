@@ -42,8 +42,8 @@ android {
         applicationId = "space.deepflux.android"
         minSdk = 28
         targetSdk = 36
-        versionCode = 30
-        versionName = "1.4.14"
+        versionCode = 31
+        versionName = "1.4.15"
 
         ndk {
             // libtorrent4j ships one .so per ABI. x86 (32-bit) dropped —
@@ -191,6 +191,21 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.exoplayer.hls) // HLS module — REQUIRED for IPTV streams
     implementation(libs.androidx.media3.ui)
+    // 1.4.15: ExoPlayer's FFmpeg AUDIO renderer, for audio the phone's own decoders lack —
+    // Dolby (AC-3 / E-AC-3), DTS, TrueHD, MPEG audio (37 % of the films in the owner's TV
+    // catalogue carry Dolby; on a phone without a decoder they played with no sound).
+    // Used ONLY as a fallback (EXTENSION_RENDERER_MODE_ON in PlayerActivity). Google does
+    // not publish this module: .github/workflows/android-ffmpeg-audio.yml builds it from
+    // androidx/media at the version below, with those decoders; FFmpeg is built without GPL
+    // parts (LGPL-2.1), as the FFmpeg the desktop app ships. 3.3 MB for four ABIs.
+    // Rebuild = run the workflow, replace the file, record its sha256 in the commit.
+    implementation(files("libs/decoder-ffmpeg-1.11.1.aar"))
+    // Compatibility player (1.4.15): VLC's engine, for films whose VIDEO this phone cannot
+    // decode (10-bit H.265 without the hardware for it). ExoPlayer has no software video
+    // decoder (its FFmpeg video renderer is "not yet functional", androidx/media 1.11.1), so
+    // those films used to stop with "Playback failed". LGPL-2.1, like the FFmpeg the desktop
+    // app ships; the native libraries are loaded, never modified.
+    implementation("org.videolan.android:libvlc-all:3.7.8")
     implementation(libs.nanohttpd)
     // Room (§13 #17): Ed25519 + Argon2id + ChaCha20-Poly1305 + HKDF.
     // XChaCha20-Poly1305 is composed in RoomCrypto (HChaCha + IETF AEAD).

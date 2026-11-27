@@ -118,6 +118,12 @@ object EnStrings : AppStrings {
     override val playerAudioTrack = "Audio track"
     override val audioUnsupported = "No sound: this device cannot decode the audio"
     override val videoUnsupported = "No picture: this device cannot decode the video"
+    override val openingCompatPlayer = "This device cannot decode this stream. Opening the compatibility player…"
+    override val compatPlayer = "Compatibility player"
+    override val compatPlayerFailed = "The compatibility player could not play this stream either."
+    override val compatPlayerUnavailable = "The compatibility player could not start on this device."
+    override val playerTracksOff = "Off"
+    override val openSourceLicences = "Open-source licences"
 
     // Browser
     override val browser = "Browser"

@@ -1,5 +1,6 @@
 package space.deepflux.android.player
 
+import android.content.Intent
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
@@ -14,6 +15,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -64,6 +66,9 @@ class PlayerActivity : ComponentActivity() {
     // The error that triggered the (single) format fallback, so the real
     // cause survives when the second guess fails too.
     private var firstError: PlaybackException? = null
+
+    /** 1.4.15: this screen already gave its stream to the compatibility player — once, never back. */
+    private var handedToCompat = false
 
     /** A text button of the top bar, like the CC button. */
     private fun topBarButton(label: String, description: String, onClick: () -> Unit) = TextView(this).apply {
@@ -642,7 +647,12 @@ class PlayerActivity : ComponentActivity() {
 
             val dataSourceFactory = DefaultDataSource.Factory(this, httpFactory)
 
-            player = ExoPlayer.Builder(this)
+            // 1.4.15: the phone's own decoders FIRST, and the FFmpeg audio renderer only for
+            // audio they cannot decode (Dolby AC-3 / E-AC-3, DTS, MP2 — what IPTV films
+            // carry). ON, not PREFER: a working hardware decoder is never displaced.
+            val renderersFactory = DefaultRenderersFactory(this)
+                .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+            player = ExoPlayer.Builder(this, renderersFactory)
                 .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
                 // Audio focus: the stream yields to a call or another player and
                 // takes over again after it — it used to play on top of both. And
@@ -729,6 +739,14 @@ class PlayerActivity : ComponentActivity() {
                                     }
                                 }
                             }
+                            // 1.4.15: a whole kind of track this device cannot decode — the
+                            // compatibility player (VLC) can, in software. Known as soon as
+                            // the tracks are, so handed over before a decoder fails.
+                            // (After the audio half: the FFmpeg renderer is already counted
+                            // in "supported", so what is left here it cannot decode either.)
+                            if (CompatPolicy.cannotDecode(CompatPolicy.Coverage(videoTracks, videoOk, audioTracks, audioOk)) &&
+                                handToCompatPlayer(if (videoTracks > 0 && videoOk == 0) "no decodable video track" else "no decodable audio track")
+                            ) return
                             trackWarning = when {
                                 videoTracks > 0 && videoOk == 0 -> "${Strings.t.videoUnsupported} ($badVideo)"
                                 audioTracks > 0 && audioOk == 0 -> "${Strings.t.audioUnsupported} ($badAudio)"
@@ -762,6 +780,11 @@ class PlayerActivity : ComponentActivity() {
                         }
 
                         override fun onPlayerError(error: PlaybackException) {
+                            // 1.4.15: a decoder that is listed for the format and still
+                            // refuses or dies on it — what the track check above cannot
+                            // see. VLC's engine may play it. A network or server error is
+                            // not that (VLC would fail the same way), so it goes on below.
+                            if (CompatPolicy.isDecodeError(error.errorCode) && handToCompatPlayer(error.errorCodeName)) return
                             // One-shot format fallback before surfacing the error:
                             // IPTV providers label anything "video/mp4" — a stream
                             // can be raw MPEG-TS behind an extension-less URL
@@ -896,6 +919,64 @@ class PlayerActivity : ComponentActivity() {
         return "${error.errorCodeName}${deepest?.let { " — $it" } ?: ""}$suffix".take(220)
     }
 
+    /**
+     * 1.4.15: give the stream to the compatibility player ([CompatPlayerActivity], VLC)
+     * because this device cannot decode it. Once per screen — never back. Returns false
+     * (and does nothing) when it was already done or VLC is not in this build, so the
+     * caller goes on to show what it would have shown.
+     */
+    private fun handToCompatPlayer(reason: String): Boolean {
+        if (handedToCompat || !CompatPlayerActivity.available()) return false
+        val url = intent.getStringExtra(EXTRA_URL) ?: return false
+        val userAgent = intent.getStringExtra(EXTRA_USER_AGENT)?.takeIf { it.isNotBlank() } ?: DEFAULT_USER_AGENT
+        handedToCompat = true
+        Log.i(TAG, "this device cannot decode the stream ($reason) — opening the compatibility player")
+        statusText?.text = Strings.t.openingCompatPlayer
+        detailText?.text = ""
+        retryButton?.visibility = android.view.View.GONE
+        val positionMs = player?.currentPosition ?: 0L
+        // The built-in player must not keep decoding underneath the other one, and its
+        // timers must not fire into a screen that is no longer playing.
+        saveHandler.removeCallbacksAndMessages(null)
+        chromeHandler.removeCallbacksAndMessages(null)
+        audioDialog?.dismiss()
+        audioDialog = null
+        playerView?.player = null
+        try {
+            player?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "release failed: ${e.message}")
+        }
+        player = null
+        @Suppress("DEPRECATION")
+        startActivityForResult(
+            CompatPlayerActivity.intent(this, url, intent.getStringExtra(EXTRA_TITLE) ?: "DeepFlux", userAgent, positionMs),
+            REQUEST_COMPAT,
+        )
+        return true
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == REQUEST_COMPAT) {
+            if (resultCode == RESULT_CANCELED) {
+                // The compatibility player could not play it either: said here, with the
+                // way out (the ✕ bar) in view. Nothing to retry — this device cannot decode it.
+                Log.w(TAG, "compatibility player could not play it: ${data?.getStringExtra(CompatPlayerActivity.EXTRA_FAILURE)}")
+                statusText?.text = Strings.t.playbackFailed
+                detailText?.text = data?.getStringExtra(CompatPlayerActivity.EXTRA_FAILURE) ?: ""
+                retryButton?.visibility = android.view.View.GONE
+                topBar?.visibility = android.view.View.VISIBLE
+            } else {
+                // Watched to the end, or backed out of it: on from where the film was started.
+                finish()
+            }
+            return
+        }
+        @Suppress("DEPRECATION")
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
     override fun onStart() {
         super.onStart()
         player?.play()
@@ -965,12 +1046,20 @@ class PlayerActivity : ComponentActivity() {
         /** Local file path when the stream is a file we own (subtitle hash search). */
         const val EXTRA_FILE_PATH = "file_path"
 
+        /** Request code of the hand-over to the compatibility player (1.4.15). */
+        private const val REQUEST_COMPAT = 7415
+
         // Currently-open player instance, if any — lets the agent's
         // stop_iptv_playback tool close the video without touching the UI.
         // Cleared in onDestroy; never dereferenced beyond finish().
         @JvmStatic
         private var active: PlayerActivity? = null
         val isActive: Boolean get() = active != null
-        fun finishActive(): Boolean = active?.let { it.finish(); true } ?: false
+        /** Closes what is playing: the compatibility player on top first, then this screen (the agent's stop tool). */
+        fun finishActive(): Boolean {
+            val compat = CompatPlayerActivity.finishActive()
+            val here = active?.let { it.finish(); true } ?: false
+            return compat || here
+        }
     }
 }

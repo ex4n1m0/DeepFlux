@@ -113,6 +113,12 @@ object ZhStrings : AppStrings {
     override val playerAudioTrack = "音轨"
     override val audioUnsupported = "无声音：此设备无法解码该音频格式"
     override val videoUnsupported = "无画面：此设备无法解码该视频格式"
+    override val openingCompatPlayer = "此设备无法解码该视频流，正在打开兼容播放器…"
+    override val compatPlayer = "兼容播放器"
+    override val compatPlayerFailed = "兼容播放器也无法播放该视频流。"
+    override val compatPlayerUnavailable = "兼容播放器无法在此设备上启动。"
+    override val playerTracksOff = "关闭"
+    override val openSourceLicences = "开源许可协议"
 
     // Browser
     override val browser = "浏览器"

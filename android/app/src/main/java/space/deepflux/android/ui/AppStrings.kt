@@ -118,6 +118,20 @@ interface AppStrings {
     val audioUnsupported: String
     val videoUnsupported: String
 
+    // Compatibility player (1.4.15): VLC's engine, used only when this device cannot decode the stream.
+    /** Shown by the built-in player while it hands the stream over. */
+    val openingCompatPlayer: String
+    /** What the second player is called on screen. */
+    val compatPlayer: String
+    /** VLC could not play the stream either. */
+    val compatPlayerFailed: String
+    /** VLC itself could not start on this device. */
+    val compatPlayerUnavailable: String
+    /** A track picker's "none of these" entry. */
+    val playerTracksOff: String
+    /** Settings → About: the licences of the libraries the app ships (FFmpeg, VLC). */
+    val openSourceLicences: String
+
     // Browser (Phase A2)
     val browser: String
     val urlHint: String

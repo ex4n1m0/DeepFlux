@@ -79,5 +79,12 @@
             android:name=".player.PlayerActivity"
             android:exported="false"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
+
+        <!-- 1.4.15: the compatibility player (VLC's engine) for streams this device cannot
+             decode with the one above. Opened only by PlayerActivity, for a result. -->
+        <activity
+            android:name=".player.CompatPlayerActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden" />
     </application>
 </manifest>
