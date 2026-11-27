@@ -3773,6 +3773,18 @@ gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regre
 
 ## Android parity + review rounds (2026-11-23/24) — durable rules (1.4.13, RELEASED 2026-11-24)
 
+STATE (2026-11-27): 1.4.15 / versionCode 31 is on the site as an UNLINKED
+TEST BUILD for the owner's phone (owner: "A and B and deploy i will test on
+real phone", after the real-phone report "some TV VOD failed"):
+`website/deepflux/DeepFlux-1.4.15-Android.apk` — 222848002 bytes (212 MiB),
+sha256
+a35b0157099813fc15e2b83e6f3140b397cf6802a6904a995bdb98e2190eeda2, same signing
+cert as 1.4.14 (installs over it — done on the emulator). Pages and
+`latest-android.json` STAY ON 1.4.14 until the owner has tested on the phone
+and says "release". What it adds, how it was verified, and the open size
+decision: "Android codecs (1.4.15)" at the END of this file. Commits `5192025`
+(the build workflow) and `9f151af` (the players) on both branches.
+
 STATE (2026-11-26): RELEASED. Android 1.4.14 / versionCode 30 is LIVE —
 the test build byte for byte (58359944 bytes, sha256
 41251d18ac73a0b6bd3d8d817a8d8d00d91cb300e15b14d99d2f0df2aae29588):
@@ -4664,3 +4676,142 @@ watched); for an entry saved by 1.4.13, which counts as copied until a
 poll sees it download, that case is not copied either. Settled since:
 TorrentFinishedAlert DOES re-fire for an already-complete torrent at
 each start (see 1.4.14 above).
+
+## Android codecs (1.4.15, 2026-11-27) — Dolby sound, and a second player for what a phone cannot decode
+
+WHY (measured, not guessed — the owner's real-phone report on 1.4.14: "some
+TV VOD failed"): of 30 films sampled from the tv123 catalogue, 47 % are 10-bit
+H.265 (`hvc1.2.4.L120.90` / `L150.90`, 1080p and 3840x1596) and 37 % carry
+Dolby audio (E-AC-3 ×9, AC-3 ×2); the player had no decoder of its own
+(ExoPlayer 1.11.1 only). On the emulator — which has H.265 decoders for 8-bit
+only, and none for AC-3 / E-AC-3 / DTS / MP2 — every 10-bit H.265 film stopped
+with "Playback failed — MediaCodecVideoRenderer error" (both decoders
+`NoSupport [codec.profileLevel…]`, then `config failed => CORRUPTED`), and
+H.264 + AC-3 / E-AC-3 / MP2 films played with "No sound: this device cannot
+decode the audio (…)". "Trending" (30 sampled) is all H.264 + AAC, which is
+why some films played. The adult VOD list is H.264 + AAC throughout; more than
+half of its sampled links were simply DEAD (404 / connection error) — not
+codecs. The provider answers BURSTS with HTTP 429 (a 12-thread check got 298 of
+326 rejected): probe it ONE request at a time; posters live on other hosts
+(logo.m3uassets.com, img.pia-games.com), so browsing does not compete with
+playback.
+
+A — THE FFmpeg AUDIO FALLBACK (in the built-in player). ExoPlayer's own module
+(`androidx/media`, tag = the app's Media3 version; `libraries/decoder_ffmpeg`;
+the repository is `androidx/media` — `androidx/media3` 404s, as do the old
+developer.android.com and AOSP paths). Its `FfmpegLibrary.java` maps AC-3 →
+`ac3`, E-AC-3 → `eac3`, DTS → `dca`, TrueHD, MPEG audio → `mp3`, AAC, Opus,
+Vorbis, FLAC, ALAC (a web-search summary claimed no Dolby — false). Google
+publishes NOTHING of it on Maven (checked the group index): it is BUILT, by
+`.github/workflows/android-ffmpeg-audio.yml`, into the git-tracked
+`android/app/libs/decoder-ffmpeg-1.11.1.aar` (3,305,925 bytes, sha256
+`61ce9303d6823f3e2664fcb916063da2d978541f93232a39108c34e49d4fe6c7` — pinned by
+`PlayerWiringTest`). FFmpeg release/6.0, `--disable-everything` + these
+decoders, no GPL part → LGPL-2.1 (as the desktop's FFmpeg). Durable rules:
+ * `DefaultRenderersFactory(...).setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)`
+   — ON, never PREFER: the phone's own decoders first, FFmpeg only for audio
+   they cannot decode. (The int constructor of the factory is not public in
+   1.11.1; use the setter.)
+ * The JNI wrapper is built with the SAME NDK as FFmpeg (r26b — the one the
+   module's README says it was tested with), by pinning `ndkVersion` in the
+   module's build file; otherwise the Android Gradle Plugin builds the wrapper
+   with its own default.
+ * Rebuild / bump = run the workflow (it also runs on a change to its own
+   file), download the artifact (the Actions API needs the stored git
+   credential), replace the AAR, change the sha256 in `PlayerWiringTest` and
+   in the commit. Any altered AAR makes Gradle fail at its artifact transform
+   BEFORE a test runs — which is why that pin has no teeth check.
+ * ExoPlayer finds the renderer BY NAME and calls its JNI by name: the keep
+   rules are in `proguard-rules.pro` (AGP does not apply the consumer rules of
+   a local AAR file — the module's own are repeated there).
+
+B — THE COMPATIBILITY PLAYER (VLC). ExoPlayer has NO software video decoder
+(`ExperimentalFfmpegVideoRenderer` in 1.11.1 says in its first line that it is
+"not yet functional"), so `org.videolan.android:libvlc-all:3.7.8` (LGPL-2.1,
+requests NO permissions, minSdk 17) is the engine for what the phone cannot
+decode. `player/CompatPlayerActivity.kt` = the screen (play/pause, seek,
+clock, audio-track and subtitle pickers; the built-in player's look: built in
+code, landscape, hidden system bars, orange status line, a top bar that
+auto-hides). `player/CompatPolicy.kt` = the rule, pure functions. Durable:
+ * The built-in player is ALWAYS tried first. It hands over (a) as soon as the
+   tracks show a whole kind undecodable (`cannotDecode`: no decodable video,
+   or no decodable audio — counted AFTER the FFmpeg renderer, which ExoPlayer
+   already includes in `isTrackSupported`), (b) when a decoder fails at
+   runtime (`isDecodeError`: 12 decoding error codes — names read from the
+   1.11.1 binary, several differ from older versions — never network, server,
+   parsing or DRM errors: VLC would fail the same way). Once per screen,
+   never back. If VLC fails too, the built-in screen shows the failure.
+ * `PlayerActivity.finishActive()` (the agent's `stop_iptv_playback`) closes
+   the compatibility player FIRST — it sits on top, and closing only the
+   screen beneath left the film running.
+ * VLC 3.7.8 API facts (read from the classes with javap — the old examples
+   are wrong): events carry getters (`event.timeChanged`, `.lengthChanged`,
+   `.buffering`, `.seekable`, `.voutCount`); there is `pause()` and `play()`
+   but no `setPause`; `attachViews(VLCVideoLayout, DisplayManager,
+   enableSubtitles, useTextureView)` on the MediaPlayer; track lists have
+   "Disable" (id −1) as their FIRST entry (so "two or more audio tracks" =
+   list size ≥ 3; "a subtitle track" = size ≥ 2); NO time events while paused
+   — show the requested position on a seek and it does resume there
+   (verified: paused at 00:07 → asked 15:31 → 15:36 after 4 s). Lifecycle =
+   VLC's sample: attach in onStart, stop + detach in onStop, restart from
+   where it stopped (also when it was paused).
+ * Keep rules for `org.videolan.libvlc.**` (the AAR ships none); the screen is
+   `exported="false"`; the manifest is parsed namespace-aware in the test.
+
+HOW IT WAS VERIFIED (all on the emulator, Android 15, in the ACTUAL app — and
+again with the signed, minified RELEASE build installed over the released
+1.4.14): local MPEG-TS test films made with the bundled ffmpeg (H.264 + AC-3
+5.1 / E-AC-3 / MP2) served by `_gate98/android/emu_http.py` → built-in player,
+no warning, audio `supported=true selected=true` (1.4.14: "No sound …"); the
+provider's REAL films one at a time (`replay_vod.py`): 6 of 6 ten-bit H.265 →
+handed over, "video output running", a picture looked at (one 3840x1596),
+clock advancing, pause holding, seek resuming where asked; 4 of 4 H.264 →
+built-in player; no exit record. Tests: `PlayerWiringTest` (15), 20 mutations
+with 19 each failing their own test, unit suite 438 / 0 / 5 Windows-host skips
+on a re-run (the first run hit the documented FinishedExportTest Windows
+flake: five 30 s timeouts on one wait, all at once), and on GitHub's Linux
+runner 438 / 0 / 22 skipped (the 22 agent-key tests — the repository secret
+`EMBED_SHARED_VENICE_API_KEY` still does not exist). Deployed 2026-11-27 as
+the unlinked test build; 13 live checks (build downloaded back, hash and
+size equal; pages and feed byte-identical to before).
+
+SIZE — THE OWNER'S DECISION BEFORE ANY RELEASE OF 1.4.15. This app stores
+native code UNCOMPRESSED in the APK (`extractNativeLibs="false"`, the plugin's
+default at minSdk ≥ 23 — 1.4.14 already did: 43.9 MiB of it), so DEFLATING
+`.so` FILES ESTIMATES NOTHING for this app (it was done twice: "40–45 MB",
+then "67 MB"). The release APK is 212 MiB against 55.5 MiB for 1.4.14; per ABI
+VLC costs arm64 +53 MiB, armeabi-v7a +38 MiB, x86_64 +62 MiB. Options, none
+taken: compress native libraries (a ~135 MiB download, but about 200 MiB
+extracted to disk at install — a build-wide change); leave x86_64 out of the
+release build (≈ 135 MiB; Chromebooks and emulators lose the fallback, and
+emulator checks need an x86_64 build); one APK per ABI (a modern phone would
+download about 80 MiB — needs the updater feed and the pages to know the ABI).
+
+LICENCES: `android/app/src/main/assets/licenses.txt` — attribution and source
+addresses for FFmpeg and VLC, then the LGPL 2.1 text verbatim — shown from
+Settings → About → "Open-source licences" (`openSourceLicences`). Shipping an
+LGPL library means shipping its licence: pinned by a test.
+
+NOT IN THE COMPATIBILITY PLAYER (on purpose, for now): downloaded sidecar
+subtitles, resume across sessions, rotation / aspect buttons, multi-view (its
+four tiles are ExoPlayer only — a tile that cannot decode stays black).
+
+STILL UNVERIFIED: audible output of either fix (the emulator has no audio
+device — the owner's phone is the first time it is heard); 1.4.15 has never
+run on a phone; software decoding of 1080p 10-bit H.265 on a weak phone
+(speed and battery); the 1.4.15 updater step 1.4.14 → 1.4.15 on a device.
+
+TOOLING LESSON (2026-11-27, mine, costly): the first teeth driver opened each
+file for writing BEFORE computing the mutation — opening for writing empties
+a file — so a mutation whose search text was missing raised after the
+truncation and left `CompatPolicy.kt` at ZERO BYTES (untracked: no copy in
+git), every later mutation on that file "found nothing", and the driver's
+last line still said every file had been restored. Recreated from the
+session's own text. Rules: compute the mutated bytes first; restore from the
+FIRST bytes and verify; and check the tree afterwards against a snapshot
+taken BEFORE the run (`find src libs -type f … | xargs sha256sum`, then
+`sha256sum -c`) — never a driver's own summary. A mutation must keep the build
+valid (a broken manifest or zip fails Gradle before any test runs and proves
+nothing). A test that pins a CALL must pin the whole guard: the first wiring
+test looked for `CompatPolicy.cannotDecode(` and stayed green when a mutation
+switched the hand-over off with `if (false && …)`.
