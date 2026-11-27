@@ -3780,7 +3780,8 @@ signing cert as 1.4.14): both pages (EN + ZH) and `latest-android.json`
 point at it, the 1.4.14 APK is gone from the deploy dir, 25 live checks
 passed. The owner's word was "release" (after "A and B and deploy i will
 test on real phone"; no phone result was reported — read none into it).
-The APK stays 212 MiB: no size option was chosen. The 1.4.14 → 1.4.15 step
+The APK is 212 MiB and stays so (owner, 2026-11-27, on the size:
+"size is not a problem"). The 1.4.14 → 1.4.15 step
 through the app's own updater ran end to end on the emulator, including
 1.4.14's consent-first install path, which had never run anywhere. Commits
 `a8d96e6` (release) and `c6e7541` (correction: the pages said 212.3 MB,
@@ -4782,15 +4783,16 @@ runner 438 / 0 / 22 skipped (the 22 agent-key tests — the repository secret
 the unlinked test build; 13 live checks (build downloaded back, hash and
 size equal; pages and feed byte-identical to before).
 
-SIZE — RELEASED AS BUILT, 212 MiB; SHRINKING IT IS STILL AN OPEN OWNER
-DECISION (for the next version). This app stores native code UNCOMPRESSED in
-the APK (`extractNativeLibs="false"`, the plugin's default at minSdk ≥ 23 —
+SIZE — 212 MiB, ACCEPTED BY THE OWNER (2026-11-27, right after the
+release: "size is not a problem"). Nothing to solve, nothing to ask again.
+This app stores native code UNCOMPRESSED in the APK
+(`extractNativeLibs="false"`, the plugin's default at minSdk ≥ 23 —
 1.4.14 already did: 43.9 MiB of it), so DEFLATING `.so` FILES ESTIMATES
 NOTHING for this app (it was done twice: "40–45 MB", then "67 MB"). The
 release APK is 212 MiB against 55.5 MiB for 1.4.14; per ABI VLC costs arm64
-+53 MiB, armeabi-v7a +38 MiB, x86_64 +62 MiB. Options, none taken before the
-owner said "release" (so the build shipped exactly as tested; the feed's
-notes say the app is larger and why): compress native libraries (a ~135 MiB
++53 MiB, armeabi-v7a +38 MiB, x86_64 +62 MiB. Ways to shrink it, kept on
+record only in case that view ever changes — do NOT offer them: compress
+native libraries (a ~135 MiB
 download, but about 200 MiB extracted to disk at install — a build-wide
 change); leave x86_64 out of the release build (≈ 135 MiB; Chromebooks and
 emulators lose the fallback, and emulator checks need an x86_64 build); one
