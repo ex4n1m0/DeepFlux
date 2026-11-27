@@ -1,9 +1,9 @@
 {
-  "version": "1.4.14",
-  "versionCode": 30,
-  "file": "DeepFlux-1.4.14-Android.apk",
-  "size": 58359944,
-  "sha256": "41251d18ac73a0b6bd3d8d817a8d8d00d91cb300e15b14d99d2f0df2aae29588",
-  "released": "2026-11-26",
-  "notes": "Fixes in 1.4.14: a magnet download that has finished stays playable after a restart, even when nobody is seeding it anymore. The app no longer shows 'Download finished' or makes numbered extra copies in Downloads every time it starts. Torrents added from a .torrent file are listed by their real name instead of a code, and when a torrent cannot be added the message says why. Finished files the app cannot play get an Open button. Notifications use the right plural and size wording, and a setting that could not be saved is reported instead of closing the app."
+  "version": "1.4.15",
+  "versionCode": 31,
+  "file": "DeepFlux-1.4.15-Android.apk",
+  "size": 222848002,
+  "sha256": "a35b0157099813fc15e2b83e6f3140b397cf6802a6904a995bdb98e2190eeda2",
+  "released": "2026-11-27",
+  "notes": "New in 1.4.15: films with Dolby audio (AC-3 / E-AC-3), DTS or MP2 now have sound on every phone - the player decodes them itself where the phone cannot. Films in 10-bit H.265 that stopped with 'Playback failed' on phones without the hardware for it now open in a compatibility player (VLC) on their own; the normal player is still used whenever it can play the film. Settings > About lists the open-source licences. The app is larger because it now carries these decoders."
 }
