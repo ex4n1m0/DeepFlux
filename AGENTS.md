@@ -3773,17 +3773,23 @@ gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regre
 
 ## Android parity + review rounds (2026-11-23/24) — durable rules (1.4.13, RELEASED 2026-11-24)
 
-STATE (2026-11-27): 1.4.15 / versionCode 31 is on the site as an UNLINKED
-TEST BUILD for the owner's phone (owner: "A and B and deploy i will test on
-real phone", after the real-phone report "some TV VOD failed"):
-`website/deepflux/DeepFlux-1.4.15-Android.apk` — 222848002 bytes (212 MiB),
-sha256
-a35b0157099813fc15e2b83e6f3140b397cf6802a6904a995bdb98e2190eeda2, same signing
-cert as 1.4.14 (installs over it — done on the emulator). Pages and
-`latest-android.json` STAY ON 1.4.14 until the owner has tested on the phone
-and says "release". What it adds, how it was verified, and the open size
-decision: "Android codecs (1.4.15)" at the END of this file. Commits `5192025`
-(the build workflow) and `9f151af` (the players) on both branches.
+STATE (2026-11-27, evening): RELEASED. Android 1.4.15 / versionCode 31 is
+LIVE — the test build byte for byte (222848002 bytes, sha256
+a35b0157099813fc15e2b83e6f3140b397cf6802a6904a995bdb98e2190eeda2, same
+signing cert as 1.4.14): both pages (EN + ZH) and `latest-android.json`
+point at it, the 1.4.14 APK is gone from the deploy dir, 25 live checks
+passed. The owner's word was "release" (after "A and B and deploy i will
+test on real phone"; no phone result was reported — read none into it).
+The APK stays 212 MiB: no size option was chosen. The 1.4.14 → 1.4.15 step
+through the app's own updater ran end to end on the emulator, including
+1.4.14's consent-first install path, which had never run anywhere. Commits
+`a8d96e6` (release) and `c6e7541` (correction: the pages said 212.3 MB,
+right is 212.5) on both branches; before them `5192025` (the build
+workflow) and `9f151af` (the players). What it adds and how it was
+verified: "Android codecs (1.4.15)" at the END of this file.
+
+(Earlier that day: 1.4.15 was on the site as an UNLINKED test build for
+the owner's phone, pages and feed on 1.4.14.)
 
 STATE (2026-11-26): RELEASED. Android 1.4.14 / versionCode 30 is LIVE —
 the test build byte for byte (58359944 bytes, sha256
@@ -4645,9 +4651,10 @@ take from an alert what is needed IN the callback; never keep the alert.
   torrents are linked by their v1 hash, so they are unaffected; by
   .torrent file a v2-only torrent works. Supporting it touches IDENTITY
   (the engine named that torrent by a 20-byte value of its own, not its
-  v2 hash): 1.4.15 work with tests, not a quick patch. Cosmetic, same
-  day: the confirmation shows a torrent's name ("V2Only"), the list
-  shows its single file ("v2.bin").
+  v2 hash): next-version work (1.4.16) with tests, not a quick patch —
+  it is NOT in the released 1.4.15 (that version spent its round on the
+  codecs). Cosmetic, same day: the confirmation shows a torrent's name
+  ("V2Only"), the list shows its single file ("v2.bin").
 
 Still unverified anywhere: the wake lock after a 60 s stall (does an
 inbound peer wake the radio?), a physical device's battery policy for
@@ -4775,17 +4782,56 @@ runner 438 / 0 / 22 skipped (the 22 agent-key tests — the repository secret
 the unlinked test build; 13 live checks (build downloaded back, hash and
 size equal; pages and feed byte-identical to before).
 
-SIZE — THE OWNER'S DECISION BEFORE ANY RELEASE OF 1.4.15. This app stores
-native code UNCOMPRESSED in the APK (`extractNativeLibs="false"`, the plugin's
-default at minSdk ≥ 23 — 1.4.14 already did: 43.9 MiB of it), so DEFLATING
-`.so` FILES ESTIMATES NOTHING for this app (it was done twice: "40–45 MB",
-then "67 MB"). The release APK is 212 MiB against 55.5 MiB for 1.4.14; per ABI
-VLC costs arm64 +53 MiB, armeabi-v7a +38 MiB, x86_64 +62 MiB. Options, none
-taken: compress native libraries (a ~135 MiB download, but about 200 MiB
-extracted to disk at install — a build-wide change); leave x86_64 out of the
-release build (≈ 135 MiB; Chromebooks and emulators lose the fallback, and
-emulator checks need an x86_64 build); one APK per ABI (a modern phone would
-download about 80 MiB — needs the updater feed and the pages to know the ABI).
+SIZE — RELEASED AS BUILT, 212 MiB; SHRINKING IT IS STILL AN OPEN OWNER
+DECISION (for the next version). This app stores native code UNCOMPRESSED in
+the APK (`extractNativeLibs="false"`, the plugin's default at minSdk ≥ 23 —
+1.4.14 already did: 43.9 MiB of it), so DEFLATING `.so` FILES ESTIMATES
+NOTHING for this app (it was done twice: "40–45 MB", then "67 MB"). The
+release APK is 212 MiB against 55.5 MiB for 1.4.14; per ABI VLC costs arm64
++53 MiB, armeabi-v7a +38 MiB, x86_64 +62 MiB. Options, none taken before the
+owner said "release" (so the build shipped exactly as tested; the feed's
+notes say the app is larger and why): compress native libraries (a ~135 MiB
+download, but about 200 MiB extracted to disk at install — a build-wide
+change); leave x86_64 out of the release build (≈ 135 MiB; Chromebooks and
+emulators lose the fallback, and emulator checks need an x86_64 build); one
+APK per ABI (a modern phone would download about 80 MiB — needs the updater
+feed and the pages to know the ABI).
+
+RELEASE (2026-11-27, evening — commits `a8d96e6`, then the correction
+`c6e7541`; both branches equal at `c6e7541` before the notes commit): the
+normal ritual (rollback copy of 1.4.14 → pages' 4 hrefs + version/size/sha
+lines EN + ZH → feed from the file in the deploy dir → 1.4.14 APK deleted →
+`vercel --prod --yes --scope timedivision` → live checks), scripted in
+`_gate98/android/release_android_1415.py` / `verify_release_1415.py`
+(25 checks, scratch). The feed: version 1.4.15, versionCode 31, released
+2026-11-27, and notes written for the update dialog — plain words for the two
+fixes, the licences entry, "the app is larger". A correction went out
+minutes after the first deploy: both pages said 212.3 MB (I had divided
+wrong; 222848002 / 1048576 = 212.52, the app's own dialog in the installed
+1.4.14 showed 212.5), and the notes first claimed sound "on every phone",
+which nobody verified — reworded. Rollback: the 1.4.14 APK is in
+`%LOCALAPPDATA%\Temp\df_release_backup\` (sha256 `41251d18…e29588`,
+58359944 bytes) — copy it back, revert `c6e7541` + `a8d96e6`, delete the
+1.4.15 APK from the dir, redeploy; phones already on 1.4.15 stay on it.
+
+THE UPDATE STEP, RUN FOR REAL (emulator, Android 15; the installed
+RELEASED 1.4.14, `adb install -r -d` over the test build so the app's data
+stayed): Settings → "Check for updates" → the app's own parser read the live
+feed and offered "Update available — v1.4.15" with the notes and "212.5 MB ·
+2026-11-27" → Update now → 222 MB downloaded in ~22 s and verified against
+the feed → 1.4.14's CONSENT-FIRST path, exercised for the first time
+anywhere (the 1.4.13 → 1.4.14 run had the old app offering): the
+explanation dialog → Continue → the system's "Install unknown apps" screen →
+"Allow from this source" → back → the app started the installer BY ITSELF
+(one installer screen, same pid) → UPDATE → "App installed." → OPEN at
+v1.4.15; the installed `base.apk` hashed to the released build's sha256,
+settings kept, ONE exit record (`reason 16 PACKAGE UPDATED`), crash buffer
+empty. Afterwards "Check for updates" says "DeepFlux is up to date", and a
+REAL 10-bit H.265 + E-AC-3 film handed over and showed a moving picture in
+the app that had arrived through the updater. Not run: the branch where the
+consent is already granted (needs a version newer than the installed one —
+the next release's first update will do it), and this path on a physical
+phone.
 
 LICENCES: `android/app/src/main/assets/licenses.txt` — attribution and source
 addresses for FFmpeg and VLC, then the LGPL 2.1 text verbatim — shown from
@@ -4797,9 +4843,10 @@ subtitles, resume across sessions, rotation / aspect buttons, multi-view (its
 four tiles are ExoPlayer only — a tile that cannot decode stays black).
 
 STILL UNVERIFIED: audible output of either fix (the emulator has no audio
-device — the owner's phone is the first time it is heard); 1.4.15 has never
-run on a phone; software decoding of 1080p 10-bit H.265 on a weak phone
-(speed and battery); the 1.4.15 updater step 1.4.14 → 1.4.15 on a device.
+device); 1.4.15 on a phone — the owner said they would test it there and
+then said "release", but no result was reported; software decoding of 1080p
+10-bit H.265 on a weak phone (speed and battery); the update step on a
+physical phone (it ran on the emulator: see RELEASE above).
 
 TOOLING LESSON (2026-11-27, mine, costly): the first teeth driver opened each
 file for writing BEFORE computing the mutation — opening for writing empties
@@ -4815,3 +4862,33 @@ valid (a broken manifest or zip fails Gradle before any test runs and proves
 nothing). A test that pins a CALL must pin the whole guard: the first wiring
 test looked for `CompatPolicy.cannotDecode(` and stayed green when a mutation
 switched the hand-over off with `if (false && …)`.
+
+TOOLING LESSONS OF THE RELEASE ROUND (2026-11-27, all mine — cheap now,
+expensive next time):
+ * COMPUTE THE SIZE LINE, NEVER TYPE IT. Both pages and the live-check
+   script carried "212.3 MB" as a constant and agreed with each other —
+   25 checks passed a wrong page. What caught it was the one reader that
+   computes: the app's own update dialog (`AppRoot.kt`: size / 1024 / 1024).
+   Scripts and checks now derive the line from the feed's size.
+ * A TYPED-IN EXPECTATION IN A CHECK IS NOT A CHECK of that value. Where a
+   number has a formula, the check must apply the formula.
+ * COMMIT MESSAGES: a blank line after the subject. `a8d96e6` has none
+   between its first two paragraphs, so `git log` shows both as the subject
+   (left as is — fixing it means rewriting pushed history on the main
+   branch). And that message says the owner released "after testing it on
+   the phone" — the owner announced a phone test, then said "release";
+   whether the test happened is not known.
+ * `replay_vod.py` force-stops the app before and after each replay. The log
+   then says "Force removing ActivityRecord … app died, no saved state" and
+   `exit-info` gains `reason 10 / sub 21 FORCE STOP` records. That is the
+   helper's signature, not a crash — but read it as one until the helper's
+   source has been checked (it cost a minute of doubt).
+ * The same helper reads the compatibility player's clock with a uiautomator
+   dump; while video runs, that came back EMPTY twice ("clock:  -> "), so its
+   verdict lacked the "clock advances" proof. For a picture: start playback
+   by hand (`am start … --es url "'<url>'" --es title probe` — single quotes
+   for the device shell, the URL never printed) and take two `screencap`s a
+   few seconds apart; different frames = playing.
+ * Looking up "Check for updates" case-insensitively matched "Auto-check for
+   updates" first (the toggle row). Tap by the node whose text is EQUAL, or
+   read the coordinates from a fresh dump.
