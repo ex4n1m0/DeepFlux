@@ -20,8 +20,17 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class TinyHttpServer : Closeable {
 
-    class Request(val method: String, val path: String, val headers: Map<String, String>) {
+    class Request(
+        val method: String,
+        val path: String,
+        val headers: Map<String, String>,
+        /** The body of a POST (empty for a request without one) — what the client actually sent. */
+        val body: ByteArray = ByteArray(0),
+    ) {
         val range: String? get() = headers["range"]
+
+        /** The body as UTF-8 text (a JSON request body). */
+        val bodyText: String get() = String(body, Charsets.UTF_8)
     }
 
     class Response(
@@ -82,11 +91,26 @@ class TinyHttpServer : Closeable {
                     if (colon > 0) headers[line.substring(0, colon).trim().lowercase()] = line.substring(colon + 1).trim()
                 }
                 counter.incrementAndGet()
+                // The body of a POST, read through the SAME reader as the headers (it has
+                // already buffered whatever came after them). Bounded: test bodies are small.
+                val length = headers["content-length"]?.toIntOrNull() ?: 0
+                val body = if (length <= 0 || length > 4 * 1024 * 1024) {
+                    ByteArray(0)
+                } else {
+                    val chars = CharArray(length)
+                    var off = 0
+                    while (off < length) {
+                        val n = reader.read(chars, off, length - off)
+                        if (n < 0) break
+                        off += n
+                    }
+                    String(chars, 0, off).toByteArray(Charsets.ISO_8859_1)
+                }
                 // "GET /path?query HTTP/1.1"
                 val parts = requestLine.split(' ')
                 val method = parts.getOrNull(0) ?: return
                 val path = parts.getOrNull(1)?.substringBefore('?') ?: return
-                val request = Request(method, path, headers)
+                val request = Request(method, path, headers, body)
                 requests.add(request)
                 val response = handlers[path]?.invoke(request)?.let { slicedByRange(it, request.range) }
                     ?: Response(status = 404)

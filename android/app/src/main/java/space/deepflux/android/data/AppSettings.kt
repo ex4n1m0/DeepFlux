@@ -35,6 +35,19 @@ data class AppPrefs(
     val updateSkipVersion: String = "",
     /** Bookkeeping for the ~daily auto-check gate — not user-facing. */
     val lastUpdateCheck: Long = 0L,
+    /**
+     * The AI the chat talks to (1.4.16): one of `LlmPresets.ALL`'s ids — venice | deepseek |
+     * openrouter | custom. Venice out of the box: the built-in key is a Venice key.
+     */
+    val llmProvider: String = "venice",
+    /** Base URL of a "custom" provider only (ignored for the others). */
+    val llmBaseUrl: String = "",
+    /** "" = the provider's default model. */
+    val llmModel: String = "",
+    /** How hard the model thinks before it answers: none | low | medium | high | max. */
+    val llmEffort: String = "low",
+    /** Custom endpoints only: whether the user says theirs understands `reasoning_effort`. */
+    val llmCustomSendsEffort: Boolean = false,
 )
 
 /**
@@ -60,6 +73,11 @@ class AppSettings(private val context: Context) {
                 updatesAutoCheck = p[UPDATES_AUTO] ?: true,
                 updateSkipVersion = p[UPDATE_SKIP] ?: "",
                 lastUpdateCheck = p[UPDATE_LAST_CHECK] ?: 0L,
+                llmProvider = p[LLM_PROVIDER] ?: "venice",
+                llmBaseUrl = p[LLM_BASE_URL] ?: "",
+                llmModel = p[LLM_MODEL] ?: "",
+                llmEffort = p[LLM_EFFORT] ?: "low",
+                llmCustomSendsEffort = p[LLM_CUSTOM_SENDS_EFFORT] ?: false,
             )
         }
 
@@ -137,6 +155,36 @@ class AppSettings(private val context: Context) {
         context.settingsDataStore.edit { it[UPDATE_LAST_CHECK] = value }
     }
 
+    /** Which AI the chat talks to — an id of `LlmPresets.ALL`; anything else is read back as the default. */
+    suspend fun setLlmProvider(value: String) {
+        context.settingsDataStore.edit { it[LLM_PROVIDER] = value }
+    }
+
+    suspend fun setLlmEffort(value: String) {
+        context.settingsDataStore.edit { it[LLM_EFFORT] = value }
+    }
+
+    suspend fun setLlmCustomSendsEffort(value: Boolean) {
+        context.settingsDataStore.edit { it[LLM_CUSTOM_SENDS_EFFORT] = value }
+    }
+
+    /** Model and base URL in ONE edit: they are saved by one button, and must never land half. */
+    suspend fun setLlmModelAndBaseUrl(model: String, baseUrl: String) {
+        context.settingsDataStore.edit {
+            it[LLM_MODEL] = model.trim()
+            it[LLM_BASE_URL] = baseUrl.trim()
+        }
+    }
+
+    /** Separate writes — the settings import hands the two over one at a time. */
+    suspend fun setLlmModel(value: String) {
+        context.settingsDataStore.edit { it[LLM_MODEL] = value.trim() }
+    }
+
+    suspend fun setLlmBaseUrl(value: String) {
+        context.settingsDataStore.edit { it[LLM_BASE_URL] = value.trim() }
+    }
+
     /** One-shot read for background workers (the updater's gate). */
     suspend fun prefsSnapshot(): AppPrefs = prefs.first()
 
@@ -163,5 +211,10 @@ class AppSettings(private val context: Context) {
         val UPDATES_AUTO = booleanPreferencesKey("updates_auto_check")
         val UPDATE_SKIP = stringPreferencesKey("update_skip_version")
         val UPDATE_LAST_CHECK = longPreferencesKey("update_last_check")
+        val LLM_PROVIDER = stringPreferencesKey("llm_provider")
+        val LLM_BASE_URL = stringPreferencesKey("llm_base_url")
+        val LLM_MODEL = stringPreferencesKey("llm_model")
+        val LLM_EFFORT = stringPreferencesKey("llm_effort")
+        val LLM_CUSTOM_SENDS_EFFORT = booleanPreferencesKey("llm_custom_sends_effort")
     }
 }

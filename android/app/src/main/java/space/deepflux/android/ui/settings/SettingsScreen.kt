@@ -32,17 +32,14 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import space.deepflux.android.BuildConfig
-import space.deepflux.android.data.EmbeddedKey
 import space.deepflux.android.engine.TorrentRepository
 import space.deepflux.android.ui.Strings
 import space.deepflux.android.ui.theme.Accent
 import space.deepflux.android.ui.theme.DimText
-import space.deepflux.android.ui.theme.OkGreen
 
 @Composable
 fun SettingsScreen(repository: TorrentRepository) {
     val prefs by repository.prefs.collectAsStateWithLifecycle()
-    var customKey by remember(prefs.customApiKey) { mutableStateOf(prefs.customApiKey) }
     var homepage by remember(prefs.homepage) { mutableStateOf(prefs.homepage) }
 
     // Grouped + compact (v1.3): section headers between cards, rows without
@@ -159,33 +156,10 @@ fun SettingsScreen(repository: TorrentRepository) {
 
             // ================= AI & services =================
             SectionLabel(Strings.t.servicesSection)
+            // 1.4.16: which AI, which model, how hard it thinks, and the key — a card of
+            // its own now (it used to be one key field, and the chat always talked to Venice).
+            AiAgentCard(repository, prefs)
             CompactCard(null) {
-                // AI key
-                val embedded = remember { EmbeddedKey.hasEmbedded() }
-                Text(Strings.t.aiAgentKey, style = MaterialTheme.typography.titleSmall)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    if (embedded) Strings.t.builtInKey
-                    else Strings.t.noBuiltInKey,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (embedded) OkGreen else DimText,
-                )
-                Spacer(Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = customKey,
-                    onValueChange = { customKey = it },
-                    label = { Text(Strings.t.customKey) },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = { repository.setCustomApiKey(customKey) }) {
-                        Text(Strings.t.saveKey)
-                    }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline, thickness = 0.5.dp)
-                Spacer(Modifier.height(8.dp))
                 // Subtitles (plan §13 #8): optional OpenSubtitles consumer key
                 var osKey by remember(prefs.opensubtitlesApiKey) { mutableStateOf(prefs.opensubtitlesApiKey) }
                 Text(Strings.t.subtitlesSection, style = MaterialTheme.typography.titleSmall)
@@ -321,7 +295,7 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun CompactCard(title: String?, content: @Composable () -> Unit) {
+internal fun CompactCard(title: String?, content: @Composable () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         modifier = Modifier.fillMaxWidth(),
@@ -337,7 +311,7 @@ private fun CompactCard(title: String?, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun SwitchRow(
+internal fun SwitchRow(
     title: String,
     subtitle: String,
     checked: Boolean,
@@ -437,6 +411,12 @@ private fun BackupCard(repository: space.deepflux.android.engine.TorrentReposito
                                     "wifi_only" -> repository.setWifiOnly(value.toBooleanStrict())
                                     "charging_only" -> repository.setChargingOnly(value.toBooleanStrict())
                                     "sequential_default" -> repository.setSequentialDefault(value.toBooleanStrict())
+                                    // 1.4.16: the AI provider settings (older exports carry none of them).
+                                    "llm_provider" -> repository.setLlmProvider(value)
+                                    "llm_base_url" -> repository.setLlmBaseUrl(value)
+                                    "llm_model" -> repository.setLlmModel(value)
+                                    "llm_effort" -> repository.setLlmEffort(value)
+                                    "llm_custom_sends_effort" -> repository.setLlmCustomSendsEffort(value.toBooleanStrict())
                                     else -> {} // jackett_* from old exports: feature removed
                                 }
                             }

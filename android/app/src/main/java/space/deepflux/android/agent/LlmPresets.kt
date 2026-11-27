@@ -107,4 +107,19 @@ object LlmPresets {
 
     /** True when the built-in shared key can serve this provider (it is a Venice key). */
     fun builtInKeyWorksFor(providerId: String?): Boolean = byId(providerId).id == VENICE.id
+
+    /**
+     * The key one request goes out with, or null when there is none to send.
+     *
+     * The user's own key always wins. The BUILT-IN shared key is a Venice key: it is used
+     * for Venice and is never handed to another provider or to an address the user typed —
+     * [builtInKey] is not even called for any other provider (1.4.16; a "custom" endpoint
+     * sent off with the built-in key would carry the owner's key to a stranger's server).
+     */
+    fun apiKeyFor(providerId: String?, userKey: String, builtInKey: () -> String): String? {
+        val own = userKey.trim()
+        if (own.isNotEmpty()) return own
+        if (!builtInKeyWorksFor(providerId)) return null
+        return builtInKey().trim().ifEmpty { null }
+    }
 }

@@ -23,4 +23,21 @@ object Strings {
 
     // Convenience accessor: `Strings.t.downloads`
     val t: AppStrings get() = if (isChinese) ZhStrings else EnStrings
+
+    /** An AI provider's name in the active language — the ids are `LlmPresets.ALL`'s. */
+    fun llmProviderLabel(id: String): String = when (id) {
+        "venice" -> t.llmProviderVenice
+        "deepseek" -> t.llmProviderDeepseek
+        "openrouter" -> t.llmProviderOpenrouter
+        else -> t.llmProviderCustom
+    }
+
+    /** A thinking level's name in the active language — the ids are `LlmPresets.EFFORTS`'. */
+    fun llmEffortLabel(id: String): String = when (id) {
+        "none" -> t.llmEffortNone
+        "low" -> t.llmEffortLow
+        "medium" -> t.llmEffortMedium
+        "high" -> t.llmEffortHigh
+        else -> t.llmEffortMax
+    }
 }

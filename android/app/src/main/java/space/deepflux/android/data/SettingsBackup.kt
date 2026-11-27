@@ -36,6 +36,9 @@ object SettingsBackup {
     private const val MIN_ITERATIONS = 100_000
     private const val MAX_ITERATIONS = 2_000_000
 
+    /** The desktop providers this app can also talk to (its "local" one needs a GPU it does not bundle). */
+    private val ANDROID_PROVIDERS = setOf("venice", "deepseek", "openrouter", "custom")
+
     // ---------------------------------------------------------------- crypto
 
     /** split secret: first half = HMAC signing, second half = AES (Fernet spec). */
@@ -147,7 +150,14 @@ object SettingsBackup {
                     .put("sequential_default", prefs.sequentialDefault)
                     .put("custom_api_key", prefs.customApiKey)
                     .put("opensubtitles_api_key", prefs.opensubtitlesApiKey)
-                    .put("language", prefs.language),
+                    .put("language", prefs.language)
+                    // 1.4.16: which AI the chat talks to. The user's own key travels in
+                    // custom_api_key above; a key BUILT INTO this build is never exported.
+                    .put("llm_provider", prefs.llmProvider)
+                    .put("llm_base_url", prefs.llmBaseUrl)
+                    .put("llm_model", prefs.llmModel)
+                    .put("llm_effort", prefs.llmEffort)
+                    .put("llm_custom_sends_effort", prefs.llmCustomSendsEffort),
             )
             .put("files", files)
         return payload.toString().toByteArray(Charsets.UTF_8)
@@ -180,6 +190,13 @@ object SettingsBackup {
             setPref("wifi_only", p.optBoolean("wifi_only", true).toString())
             setPref("charging_only", p.optBoolean("charging_only", false).toString())
             setPref("sequential_default", p.optBoolean("sequential_default", true).toString())
+            // The AI provider settings exist since 1.4.16: an export made before it has
+            // none, and must leave the ones on this device alone.
+            if (p.has("llm_provider")) setPref("llm_provider", str("llm_provider"))
+            if (p.has("llm_base_url")) setPref("llm_base_url", str("llm_base_url"))
+            if (p.has("llm_model")) setPref("llm_model", str("llm_model"))
+            if (p.has("llm_effort")) setPref("llm_effort", str("llm_effort"))
+            if (p.has("llm_custom_sends_effort")) setPref("llm_custom_sends_effort", p.optBoolean("llm_custom_sends_effort", false).toString())
             val files = data.optJSONObject("files") ?: JSONObject()
             var count = 0
             files.keys().forEach { name ->
@@ -193,10 +210,23 @@ object SettingsBackup {
         } else {
             // Desktop config: map the portable sections.
             val llm = data.optJSONObject("llm")
-            if (llm != null && llm.optString("api_key", "").isNotEmpty()) {
-                setPref("custom_api_key", llm.optString("api_key"))
+            if (llm != null) {
+                // The desktop's provider and key belong together — a key made for one
+                // service is no good at another, so they are imported as a pair or not at all.
+                // "local" (the desktop's built-in model) has no counterpart here.
+                val provider = llm.optString("provider", "")
+                if (provider in ANDROID_PROVIDERS) {
+                    setPref("llm_provider", provider)
+                    setPref("llm_base_url", llm.optString("base_url", ""))
+                    setPref("llm_model", llm.optString("model", ""))
+                    setPref("llm_effort", llm.optString("reasoning_effort", "").ifBlank { "low" })
+                    setPref("llm_custom_sends_effort", llm.optBoolean("custom_reasoning_effort", false).toString())
+                    if (llm.optString("api_key", "").isNotEmpty()) {
+                        setPref("custom_api_key", llm.optString("api_key"))
+                    }
+                }
             }
-            sb.append("imported desktop settings (AI key)")
+            sb.append("imported desktop settings (AI provider and key)")
         }
         return sb.toString()
     }

@@ -22,6 +22,10 @@ import java.net.URL
  * DeepSeek V4.1 Flash — same OpenAI wire format, function calling and
  * reasoning verified live against api.venice.ai.
  *
+ * 1.4.16: WHERE a request goes is the user's choice (Settings → AI &
+ * services): the constructor's defaults are the out-of-box Venice endpoint,
+ * and [LlmPresets.resolve] supplies provider, model and thinking level.
+ *
  * Open for tests: the chat session's loop is exercised against a scripted
  * subclass ([cancel] and [complete] are the whole contract).
  */
@@ -29,6 +33,11 @@ open class ChatClient(
     private val baseUrl: String = "https://api.venice.ai/api/v1",
     private val apiKey: String,
     private val model: String = "deepseek-v4-1-flash-uncensored",
+    /**
+     * The `reasoning_effort` the request carries (1.4.16), or null when the endpoint takes
+     * none — exactly what [LlmPresets.resolve] worked out for the user's provider.
+     */
+    private val reasoningEffort: String? = null,
 ) {
 
     /** The in-flight request's connection — [cancel] tears it down. */
@@ -99,6 +108,8 @@ open class ChatClient(
                 .put("messages", messages)
                 .put("stream", true)
                 .apply { if (tools != null && tools.length() > 0) put("tools", tools) }
+                // Sent only where the preset says the endpoint understands it (desktop rule).
+                .apply { if (reasoningEffort != null) put("reasoning_effort", reasoningEffort) }
                 .toString()
             conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
 
@@ -127,7 +138,11 @@ open class ChatClient(
                         full.append(it)
                         onDelta(it)
                     }
-                    delta.optString("reasoning_content").takeIf { it.isNotEmpty() }?.let {
+                    // DeepSeek's and Venice's streams call the thinking `reasoning_content`;
+                    // OpenRouter's call it `reasoning` (the desktop reads both). Only a STRING
+                    // counts: anything else in that slot is not thinking to show.
+                    val thought = delta.optString("reasoning_content").ifEmpty { delta.opt("reasoning") as? String ?: "" }
+                    thought.takeIf { it.isNotEmpty() }?.let {
                         reason.append(it)
                         onReasoning(it)
                     }

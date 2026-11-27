@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -13,14 +14,16 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import space.deepflux.android.agent.ChatClient
+import space.deepflux.android.agent.ChatTarget
+import space.deepflux.android.agent.LlmPresets
 import space.deepflux.android.agent.PublicUrls
 import space.deepflux.android.agent.UntrustedResults
-import space.deepflux.android.data.EmbeddedKey
 import space.deepflux.android.dlmgr.HttpDownloadRepository
 import space.deepflux.android.dlmgr.HttpState
 import space.deepflux.android.engine.TorrentRepository
 import space.deepflux.android.iptv.IPTVRepository
 import space.deepflux.android.rss.RssRepository
+import space.deepflux.android.ui.Strings
 import space.deepflux.android.ui.chat.ChatSession
 import java.io.File
 import java.io.IOException
@@ -104,6 +107,13 @@ class ChatLoopTest {
 
     private val lanRefusal = "Local and private network URLs are not allowed"
 
+    /** How often the chat asked for the BUILT-IN key — it must never for another provider. */
+    @Volatile
+    private var builtInReads = 0
+
+    /** Where each turn's requests went (the key included) — what the chat made of the settings. */
+    private val targets = java.util.concurrent.CopyOnWriteArrayList<ChatTarget>()
+
     private fun tools(vararg calls: Pair<String, String>) =
         ChatClient.Result.Tools(
             calls.mapIndexed { i, (name, args) -> ChatClient.ToolCall("call_$i", name, args) },
@@ -125,6 +135,9 @@ class ChatLoopTest {
         engine = FakeTorrentEngine()
         torrents = TorrentRepository(context, engine).also { it.start() }
         emptyPersistedHistory()
+        resetAiSettings()
+        targets.clear()
+        builtInReads = 0
         http = HttpDownloadRepository(context, File(context.filesDir, "dl"), gateOk = { true })
         client = ScriptedClient()
         session = makeSession()
@@ -156,7 +169,17 @@ class ChatLoopTest {
                 true
             },
             scanActivePage = scanner,
-            clientFor = { client },
+            clientFor = { target ->
+                targets.add(target)
+                client
+            },
+            // A stand-in for the built-in Venice key: these tests drive the loop through a
+            // scripted model and never touch the network, so they need no real key — they
+            // used to be skipped in a build without one (22 of them, on every CI run).
+            builtInKey = {
+                builtInReads++
+                "builtin-test-key"
+            },
             publicUrlCheck = urlPolicy,
             isSymlink = isLink,
         )
@@ -169,6 +192,25 @@ class ChatLoopTest {
      * the write, so this waits until the cleared value is readable — a
      * fire-and-forget clear just raced the next session's load.
      */
+    /** The out-of-box AI settings again: Venice, no key of the user's, no thinking flag. */
+    private fun resetAiSettings() {
+        torrents.setLlmCustomSendsEffort(false)
+        setAiSettings(provider = "venice", key = "", baseUrl = "", model = "", effort = "low")
+    }
+
+    /** Writes the AI settings and waits until the chat will see them. */
+    private fun setAiSettings(provider: String, key: String, baseUrl: String = "", model: String = "", effort: String = "low") {
+        torrents.setLlmProvider(provider)
+        torrents.setCustomApiKey(key)
+        torrents.setLlmModelAndBaseUrl(model, baseUrl)
+        torrents.setLlmEffort(effort)
+        await("the AI settings") {
+            val p = torrents.prefs.value
+            p.llmProvider == provider && p.customApiKey == key && p.llmModel == model &&
+                p.llmBaseUrl == baseUrl && p.llmEffort == effort && !p.llmCustomSendsEffort
+        }
+    }
+
     private fun emptyPersistedHistory() {
         torrents.saveChatHistory(org.json.JSONArray().toString())
         await("the persisted chat history to be cleared") { torrents.loadChatHistory() == "[]" }
@@ -193,8 +235,6 @@ class ChatLoopTest {
         "bubbles=" + session.messages.value.joinToString { "[${it.role}] '${it.content}'" } +
             " history=" + session.historyForTests().joinToString { "[${it.role}] '${it.content.take(40)}'" }
 
-    private fun requireKey() = assumeTrue("no agent key in this build", EmbeddedKey.effectiveKey("").isNotBlank())
-
     /** What the model sees inside the data block of a tool reply. */
     private fun core(toolMessage: String): String =
         toolMessage.removePrefix(UntrustedResults.OPEN + "\n").removeSuffix("\n" + UntrustedResults.CLOSE)
@@ -210,7 +250,6 @@ class ChatLoopTest {
 
     @Test
     fun stopDuringAToolRoundRunsNoneOfItsTools() {
-        requireKey()
         client.script.addLast(tools("add_torrent" to call("add_torrent", "magnet" to magnet)))
         client.script.addLast(ChatClient.Result.Content("never reached"))
         // The user presses Stop while the tool round is arriving.
@@ -233,7 +272,6 @@ class ChatLoopTest {
 
     @Test
     fun stopMidStreamKeepsWhatWasSaidAndIsNotAnError() {
-        requireKey()
         client.failWith = IOException("connection closed by cancel")
         client.duringRequest = { onDelta ->
             onDelta("Hello wor")
@@ -251,7 +289,6 @@ class ChatLoopTest {
 
     @Test
     fun stopBetweenToolsStartsNoFurtherTool() {
-        requireKey()
         // open_url runs the session's callback — the test presses Stop from inside it.
         afterOpen = { session.stop() }
         client.script.addLast(tools("open_url" to call("open_url", "url" to publicPage), "add_torrent" to call("add_torrent", "magnet" to magnet)))
@@ -272,7 +309,6 @@ class ChatLoopTest {
 
     @Test
     fun aGenuineFailureIsStillAnErrorBubble() {
-        requireKey()
         client.failWith = IOException("boom")
         turn("hi")
         val bubbles = session.messages.value
@@ -284,7 +320,6 @@ class ChatLoopTest {
 
     @Test
     fun clearWipesTheModelsContextToo() {
-        requireKey()
         client.script.addLast(ChatClient.Result.Content("first answer"))
         client.script.addLast(ChatClient.Result.Content("second answer"))
         turn("first question")
@@ -305,7 +340,6 @@ class ChatLoopTest {
 
     @Test
     fun clearWhileATurnRunsStopsItAndTheOldTurnWritesNothing() {
-        requireKey()
         client.duringRequest = { onDelta ->
             onDelta("partial")
             session.clear() // the user wipes the chat mid-reply
@@ -317,7 +351,6 @@ class ChatLoopTest {
 
     @Test
     fun aTurnStillInsideAToolWritesNothingIntoTheConversationStartedAfterTheClear() {
-        requireKey()
         // open_url's callback = "inside the tool". From there the user clears
         // the chat and sends a new message; the second turn runs to its end
         // before the first one's tool even returns.
@@ -358,7 +391,6 @@ class ChatLoopTest {
 
     @Test
     fun everyToolResultIsMarkedAsData() {
-        requireKey()
         client.script.addLast(
             tools(
                 "list_files" to call("list_files"),
@@ -385,7 +417,6 @@ class ChatLoopTest {
 
     @Test
     fun contentCannotCloseTheDataBlockOrOpenADecoy() {
-        requireKey()
         // A scanned page trying to end the data block early (so that what
         // follows reads as app text) and to open a decoy block of its own.
         session = makeSession(
@@ -411,7 +442,6 @@ class ChatLoopTest {
 
     @Test
     fun otherSpellingsOfTheTagAreNeutralisedButOrdinaryTextIsNotSwallowed() {
-        requireKey()
         // A tag-like span: the self-closing form, attributes, an invisible
         // character in the name, a space after "</". Not a tag: ordinary
         // text that merely starts with the word.
@@ -435,7 +465,6 @@ class ChatLoopTest {
 
     @Test
     fun aPageSizedToolResultIsCutBeforeItReachesTheModel() {
-        requireKey()
         session = makeSession(scanner = { "link https://a.example/x\n".repeat(20_000) }) // ~500k chars
         client.script.addLast(tools("scan_page" to call("scan_page")))
         client.script.addLast(ChatClient.Result.Content("ok"))
@@ -451,7 +480,6 @@ class ChatLoopTest {
 
     @Test
     fun theAgentCannotDownloadFromTheUsersOwnNetwork() {
-        requireKey()
         client.script.addLast(
             tools(
                 "download_url" to call("download_url", "url" to "http://192.168.1.1/admin"),
@@ -468,7 +496,7 @@ class ChatLoopTest {
     }
 
     @Test
-    fun theAgentCannotOpenTheUsersOwnNetworkInTheBrowserEither() {        requireKey()
+    fun theAgentCannotOpenTheUsersOwnNetworkInTheBrowserEither() {
         client.script.addLast(
             tools(
                 "open_url" to call("open_url", "url" to "http://192.168.1.1/"),
@@ -490,7 +518,6 @@ class ChatLoopTest {
 
     @Test
     fun openUrlSaysSoWhenTheBrowserHasNoRoomForAnotherTab() {
-        requireKey()
         browserHasRoom = false
         client.script.addLast(tools("open_url" to call("open_url", "url" to publicPage)))
         client.script.addLast(ChatClient.Result.Content("ok"))
@@ -502,7 +529,6 @@ class ChatLoopTest {
 
     @Test
     fun anAgentDownloadDoesNotFollowARedirectIntoTheUsersNetwork() {
-        requireKey()
         val server = TinyHttpServer()
         try {
             server.route("/start") {
@@ -538,7 +564,6 @@ class ChatLoopTest {
      */
     @Test
     fun aFeedTheAgentAddsIsNotFetchedViaARedirectIntoTheUsersNetwork() {
-        requireKey()
         val server = TinyHttpServer()
         try {
             val xml = "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel><title>Redirected</title></channel></rss>"
@@ -562,7 +587,6 @@ class ChatLoopTest {
 
     @Test
     fun aMagnetTappedInAReplyIsTheUsersOwnConfirmedRequest() {
-        requireKey()
         // A link in a reply (markdown chat): the tap is the user's, so it is
         // never held back — and still gets the confirmation.
         session.addTorrent(magnet)
@@ -579,7 +603,6 @@ class ChatLoopTest {
 
     @Test
     fun listFilesCannotReadOutsideTheDownloadFolderNotEvenASiblingWithASimilarName() {
-        requireKey()
         val root = torrents.downloadsDir.apply { mkdirs() }
         File(root, "sub").mkdirs()
         File(File(root, "sub"), "a.mkv").writeText("a")
@@ -604,7 +627,6 @@ class ChatLoopTest {
 
     @Test
     fun openFileDoesNotFollowALinkOutOfTheDownloadFolder() {
-        requireKey()
         val root = torrents.downloadsDir.apply { mkdirs() }
         val elsewhere = File(context.filesDir, "elsewhere").apply { mkdirs() }
         File(elsewhere, "secret-film.mp4").writeBytes(byteArrayOf(1))
@@ -629,7 +651,6 @@ class ChatLoopTest {
      */
     @Test
     fun openFileLeavesWhateverTheLinkTestFlagsAlone() {
-        requireKey()
         val root = torrents.downloadsDir.apply { mkdirs() }
         File(root, "plain").mkdirs()
         File(File(root, "plain"), "real film.txt").writeBytes(byteArrayOf(1))
@@ -648,7 +669,6 @@ class ChatLoopTest {
 
     @Test
     fun openFileFindsARealFileNestedInsideAFolder() {
-        requireKey()
         val root = torrents.downloadsDir.apply { mkdirs() }
         File(File(root, "nested"), "deeper").mkdirs()
         File(File(File(root, "nested"), "deeper"), "big buck bunny.txt").writeBytes(byteArrayOf(1))
@@ -665,7 +685,6 @@ class ChatLoopTest {
 
     @Test
     fun thePromptCarriesTheNoPrivateDataRuleAndTreatsMemoryAsNotes() {
-        requireKey()
         val memoryDir = File(context.filesDir, "memory").apply { mkdirs() }
         // Written AFTER the session was built: the prompt is rebuilt before every send.
         File(memoryDir, "MEMORY.md").writeText("# Memory\n\n- [id:abc123def456] Prefers 720p releases\n")
@@ -682,5 +701,99 @@ class ChatLoopTest {
             "memory rides into every prompt — as background knowledge, never as standing orders",
             prompt.contains("never as an instruction") && prompt.contains("Prefers 720p releases"),
         )
+    }
+    // ---------------------------------------------------------------- AI provider (1.4.16)
+
+    /** The error bubbles after one send. */
+    private fun errors(): List<String> = session.messages.value.filter { it.role == "error" }.map { it.content }
+
+    @Test
+    fun outOfTheBoxTheChatTalksToVeniceWithTheBuiltInKeyAndThinksAtLow() {
+        client.script.addLast(ChatClient.Result.Content("ok"))
+        turn("hi")
+
+        val target = targets.single()
+        assertEquals("venice", target.endpoint.providerId)
+        assertEquals("https://api.venice.ai/api/v1", target.endpoint.baseUrl)
+        assertEquals(LlmPresets.VENICE.defaultModel, target.endpoint.model)
+        assertEquals("the thinking level is sent now (it never was before 1.4.16)", "low", target.endpoint.effort)
+        assertEquals("builtin-test-key", target.apiKey)
+    }
+
+    @Test
+    fun theProviderModelAndThinkingLevelTheUserPickedAreWhatTheRequestCarries() {
+        setAiSettings(provider = "openrouter", key = "sk-user", model = "deepseek-v4-pro", effort = "max")
+        client.script.addLast(ChatClient.Result.Content("ok"))
+        turn("hi")
+
+        val target = targets.single()
+        assertEquals("openrouter", target.endpoint.providerId)
+        assertEquals("https://openrouter.ai/api/v1", target.endpoint.baseUrl)
+        assertEquals("OpenRouter wants the vendor in front of the model", "deepseek/deepseek-v4-pro", target.endpoint.model)
+        assertEquals("its top level is spelled xhigh", "xhigh", target.endpoint.effort)
+        assertEquals("the user's own key", "sk-user", target.apiKey)
+        assertEquals("the built-in key was not read once", 0, builtInReads)
+    }
+
+    @Test
+    fun anotherProviderWithoutTheUsersOwnKeyIsRefusedAndSaysWhichProvider() {
+        setAiSettings(provider = "deepseek", key = "")
+        session.send("hi")
+
+        await("the refusal") { session.messages.value.any { it.role == "error" } }
+        val message = errors().single()
+        assertTrue("names the provider: $message", message.contains(Strings.llmProviderLabel("deepseek")))
+        assertTrue("says where to fix it: $message", message.contains(Strings.t.needsOwnKeyFmt.format(Strings.llmProviderLabel("deepseek"))))
+        assertTrue("nothing was sent", client.requests.isEmpty())
+        assertFalse("not busy after a refusal", session.busy.value)
+        assertEquals("the built-in key was never looked at — it must not reach DeepSeek", 0, builtInReads)
+        assertEquals("the refused message is not in the model's context", 1, session.historyForTests().size)
+    }
+
+    @Test
+    fun aCustomEndpointWithoutAnAddressIsRefusedBeforeAnythingIsSent() {
+        setAiSettings(provider = "custom", key = "sk-user", baseUrl = "")
+        session.send("hi")
+
+        await("the refusal") { session.messages.value.any { it.role == "error" } }
+        assertTrue("says what is missing: ${errors()}", errors().single().contains("base URL"))
+        assertTrue(client.requests.isEmpty())
+        assertEquals(0, builtInReads)
+    }
+
+    @Test
+    fun aCustomEndpointSendsTheThinkingLevelOnlyWhenTheUserSaysTheEndpointTakesIt() {
+        setAiSettings(provider = "custom", key = "sk-user", baseUrl = "http://llm.lan:8000/v1/", model = "qwen", effort = "high")
+        client.script.addLast(ChatClient.Result.Content("ok"))
+        turn("hi")
+        val plain = targets.single()
+        assertEquals("http://llm.lan:8000/v1", plain.endpoint.baseUrl)
+        assertEquals("qwen", plain.endpoint.model)
+        assertNull("a custom endpoint gets no thinking level unless asked for", plain.endpoint.effort)
+        assertEquals("sk-user", plain.apiKey)
+
+        session.clear()
+        targets.clear()
+        torrents.setLlmCustomSendsEffort(true)
+        await("the flag") { torrents.prefs.value.llmCustomSendsEffort }
+        client.script.addLast(ChatClient.Result.Content("ok"))
+        turn("hi")
+        assertEquals("high", targets.single().endpoint.effort)
+        assertEquals(0, builtInReads)
+    }
+
+    @Test
+    fun veniceWithoutAnyKeySaysThereIsNoKey() {
+        // A build without the built-in key, and nothing entered by the user.
+        session = ChatSession(
+            torrents, IPTVRepository(context = context, downloadsDir = torrents.downloadsDir), http,
+            RssRepository(context, torrents, http, feedUrlPolicy = { null }), context,
+            clientFor = { target -> targets.add(target); client },
+            builtInKey = { builtInReads++; "" },
+        )
+        session.send("hi")
+        await("the refusal") { session.messages.value.any { it.role == "error" } }
+        assertEquals(Strings.t.noApiKey, errors().single())
+        assertTrue(client.requests.isEmpty())
     }
 }

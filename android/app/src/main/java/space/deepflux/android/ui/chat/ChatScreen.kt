@@ -47,6 +47,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import space.deepflux.android.agent.ChatClient
+import space.deepflux.android.agent.ChatPlan
+import space.deepflux.android.agent.ChatTarget
+import space.deepflux.android.agent.planSend
 import space.deepflux.android.agent.PublicUrls
 import space.deepflux.android.agent.UntrustedResults
 import space.deepflux.android.data.EmbeddedKey
@@ -119,8 +122,15 @@ class ChatSession(
     private val openInBrowser: (String) -> Boolean = { true },
     /** Site-grabber v1 (§13 #9): scans the ACTIVE browser tab's page links. */
     private val scanActivePage: (() -> String?)? = null,
-    /** The model client for an API key — tests pass a scripted subclass, never the network. */
-    private val clientFor: (apiKey: String) -> ChatClient = { ChatClient(apiKey = it) },
+    /** The model client for one request's target — tests pass a scripted subclass, never the network. */
+    private val clientFor: (ChatTarget) -> ChatClient = {
+        ChatClient(it.endpoint.baseUrl, it.apiKey, it.endpoint.model, it.endpoint.effort)
+    },
+    /**
+     * The built-in shared key — read for VENICE only ([space.deepflux.android.agent.LlmPresets.apiKeyFor]);
+     * tests count the calls, which proves another provider never makes it be read.
+     */
+    private val builtInKey: () -> String = { EmbeddedKey.veniceKey() },
     /** URL policy for agent-supplied download / feed URLs (tests inject a fake resolver). */
     private val publicUrlCheck: (url: String) -> String? = { PublicUrls.rejection(it) },
     /**
@@ -842,10 +852,23 @@ class ChatSession(
 
     fun send(text: String) {
         if (text.isBlank() || _busy.value) return
-        val key = EmbeddedKey.effectiveKey(repository.prefs.value.customApiKey)
-        if (key.isBlank()) {
-            updateMessages { it + ChatBubble("error", Strings.t.noApiKey) }
-            return
+        // Where this goes, as which model, thinking how hard, with which key: the user's
+        // settings (1.4.16 — it used to be Venice, the default model and no thinking level,
+        // whoever the user had picked). A request that cannot go out says WHY.
+        val target = when (val plan = planSend(repository.prefs.value, builtInKey)) {
+            is ChatPlan.Go -> plan.target
+            ChatPlan.NoKey -> {
+                updateMessages { it + ChatBubble("error", Strings.t.noApiKey) }
+                return
+            }
+            is ChatPlan.NeedsOwnKey -> {
+                updateMessages { it + ChatBubble("error", Strings.t.needsOwnKeyFmt.format(Strings.llmProviderLabel(plan.provider))) }
+                return
+            }
+            is ChatPlan.BadSettings -> {
+                updateMessages { it + ChatBubble("error", Strings.t.chatSettingsProblemFmt.format(plan.message)) }
+                return
+            }
         }
         // Fresh memory in the system prompt every turn (saved-this-chat entries count).
         history[0] = ChatClient.Message("system", systemPrompt())
@@ -853,7 +876,7 @@ class ChatSession(
         history.add(ChatClient.Message("user", text))
         updateMessages { it + ChatBubble("user", text) }
 
-        val client = clientFor(key)
+        val client = clientFor(target)
         activeClient.set(client)
         // THIS turn's own state. Nothing global is reset for it: the worker
         // used to share one `stopped` flag and the session's `history`

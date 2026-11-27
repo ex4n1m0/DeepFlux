@@ -90,7 +90,7 @@ interface AppStrings {
     val chargingOnlyDesc: String
     val sequentialDefault: String
     val sequentialDesc: String
-    val aiAgentKey: String
+    val aiAgentTitle: String
     val builtInKey: String
     val noBuiltInKey: String
     val customKey: String
@@ -407,4 +407,38 @@ interface AppStrings {
     // Chat loop (2026-11-23): localized tool notes + network-error fallback.
     val toolNoteFmt: String
     val chatNetworkError: String
+
+    // AI provider / model / thinking level (1.4.16): the chat talks to whichever the user picks.
+    /** Chat refusal: [provider] has no key of the user's own and the built-in one is Venice's. */
+    val needsOwnKeyFmt: String
+    /** Chat refusal: the AI settings do not describe a usable endpoint. */
+    val chatSettingsProblemFmt: String
+    val llmProviderVenice: String
+    val llmProviderDeepseek: String
+    val llmProviderOpenrouter: String
+    val llmProviderCustom: String
+    val llmModelLabel: String
+    /** [model]: the provider's default, shown under an empty model field. */
+    val llmModelDefaultFmt: String
+    /** Under the model field of a custom endpoint, which has no default to name. */
+    val llmModelCustomHint: String
+    val llmBaseUrlLabel: String
+    /** Under the base URL field: where the address ends (the client adds /chat/completions). */
+    val llmBaseUrlHint: String
+    val llmThinking: String
+    val llmThinkingDesc: String
+    val llmEffortNone: String
+    val llmEffortLow: String
+    val llmEffortMedium: String
+    val llmEffortHigh: String
+    val llmEffortMax: String
+    val llmCustomSendsEffort: String
+    val llmCustomSendsEffortDesc: String
+    val llmNeedsOwnKey: String
+    /** The key field's label for a provider that needs the user's own key. */
+    val llmKeyForFmt: String
+    val llmKeyHintVenice: String
+    val llmKeyHintDeepseek: String
+    val llmKeyHintOpenrouter: String
+    val llmKeyHintCustom: String
 }

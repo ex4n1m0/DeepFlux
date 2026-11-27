@@ -1180,6 +1180,21 @@ class TorrentRepository(
 
     fun setCustomApiKey(value: String) = saveSetting { settings.setCustomApiKey(value) }
 
+    // Which AI the chat talks to (1.4.16). Anything stored that is not a provider's id
+    // reads back as the default one (LlmPresets.byId), so nothing here has to validate.
+    fun setLlmProvider(value: String) = saveSetting { settings.setLlmProvider(value) }
+
+    fun setLlmModel(value: String) = saveSetting { settings.setLlmModel(value) }
+
+    fun setLlmBaseUrl(value: String) = saveSetting { settings.setLlmBaseUrl(value) }
+
+    fun setLlmModelAndBaseUrl(model: String, baseUrl: String) =
+        saveSetting { settings.setLlmModelAndBaseUrl(model, baseUrl) }
+
+    fun setLlmEffort(value: String) = saveSetting { settings.setLlmEffort(value) }
+
+    fun setLlmCustomSendsEffort(value: Boolean) = saveSetting { settings.setLlmCustomSendsEffort(value) }
+
     fun setOpensubtitlesApiKey(value: String) = saveSetting { settings.setOpensubtitlesApiKey(value) }
 
     fun setHomepage(value: String) = saveSetting { settings.setHomepage(value) }
