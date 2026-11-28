@@ -1227,7 +1227,7 @@ pages and `latest-android.json` stay on 1.4.13 until the owner's word.
 Rules: `AGENTS.md`, end of the "Android parity + review rounds"
 section.
 
-## §16 — 1.4.16 (2026-11-27/28, TEST BUILD, UNLINKED): the AI is the user's choice; v2-only magnets; saved tasks
+## §16 — 1.4.16 (built 2026-11-27/28, RELEASED 2026-11-28): the AI is the user's choice; v2-only magnets; saved tasks
 
 Three pieces, in the roadmap's order, after the codecs (1.4.15).
 (1) The AI provider, model and thinking level are SETTINGS — Venice,
@@ -1259,7 +1259,9 @@ and run the real engine before the release build.
 551 unit tests (5 skip on a Windows host); 28 + 19 + 23 mutations each
 fail their own test. versionCode 32, 222929922 bytes, sha256
 02082ec464c892cfb7dac771ee06086f2d7decac032edaee3e5bb507e9633250,
-signer as before. On the site as a test build, DELIBERATELY UNLINKED:
-pages and `latest-android.json` stay on 1.4.15 until the owner's word.
-Nothing of 1.4.16 has run on a phone. Rules and the precise naming rule:
-`AGENTS.md`, "Android 1.4.16" at the end.
+signer as before. RELEASED 2026-11-28 on the owner's word "release": the
+test build byte for byte, both pages and `latest-android.json` pointing at
+it, 25 live checks, and the 1.4.15 → 1.4.16 update run end to end on the
+emulator through the app's own updater. Nothing of 1.4.16 has run on a
+phone. Rules and the precise naming rule: `AGENTS.md`, "Android 1.4.16" at
+the end.

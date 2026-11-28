@@ -3773,21 +3773,32 @@ gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regre
 
 ## Android parity + review rounds (2026-11-23/24) — durable rules (1.4.13, RELEASED 2026-11-24)
 
-STATE (2026-11-28): TEST BUILD, not released. Android 1.4.16 / versionCode 32
-is on the site as an UNLINKED test build for the owner's phone (222929922
-bytes = 212.6 MiB, sha256
+STATE (2026-11-28, afternoon): RELEASED. Android 1.4.16 / versionCode 32 is
+LIVE — the test build byte for byte (222929922 bytes = 212.6 MiB, sha256
 02082ec464c892cfb7dac771ee06086f2d7decac032edaee3e5bb507e9633250, same
-signing cert as 1.4.14/1.4.15): both pages and `latest-android.json` STAY on
-1.4.15 until the owner's word "release" (the ritual is the 1.4.15 one just
-below: 4 hrefs, the size line COMPUTED — 212.6 MB — the sha, the feed with
-versionCode 32, then delete the 1.4.15 APK). Three pieces: the AI provider /
-model / thinking level as settings (the built-in key is Venice's alone, two
-walls), v2-only magnets + torrent identity (KNOWN GAP 10 closed) — including
-the "twins in the session" fix that only the REAL engine could show — and
-saved tasks (the desktop's agent sessions). Suite 551 / 0. NEXT version
-1.4.17 / versionCode 33. Verified on the emulator only: nothing of 1.4.16 has
-run on a phone. What it adds and how it was verified: "Android 1.4.16" at the
-END of this file.
+signing cert as 1.4.14/1.4.15): both pages (EN + ZH) and `latest-android.json`
+point at it, the 1.4.15 APK is gone from the deploy dir, 25 live checks
+passed. The owner's word was "release" (after the test build was reported; no
+phone result was reported — read none into it). The 1.4.15 → 1.4.16 step
+through the app's own updater ran end to end on the emulator, including the
+branch where the install permission is ALREADY granted — never run anywhere
+before (the app starts the system installer BY ITSELF; 1.4.14 → 1.4.15 had
+run the consent-first one). Release commit `b460aa6`; before it `47fda6e`
+(notes) and `b8babee` / `0db60b2` (CI test fixes). Rollback: the 1.4.15 APK
+is in `%LOCALAPPDATA%\Temp\df_release_backup\` (sha256 `a35b0157…eeda2`,
+222848002 bytes) — copy it back, revert `b460aa6`, redeploy; phones already
+on 1.4.16 stay on it. Three pieces: the AI provider / model / thinking level
+as settings (the built-in key is Venice's alone, two walls), v2-only magnets +
+torrent identity (KNOWN GAP 10 closed) — including the "twins in the session"
+fix that only the REAL engine could show — and saved tasks (the desktop's
+agent sessions). Suite 551 / 0 here and on CI (Linux, 0 skipped — the first
+green CI run of this version came after two red rounds, four test flaws that
+only the Linux runner shows). NEXT version 1.4.17 / versionCode 33. Verified
+on the emulator only: nothing of 1.4.16 has run on a phone. What it adds and
+how it was verified: "Android 1.4.16" at the END of this file.
+
+(Earlier that day: 1.4.16 was on the site as an UNLINKED test build for the
+owner's phone, pages and feed on 1.4.15.)
 
 STATE (2026-11-27, evening): RELEASED. Android 1.4.15 / versionCode 31 is
 LIVE — the test build byte for byte (222848002 bytes, sha256
@@ -4672,7 +4683,7 @@ take from an alert what is needed IN the callback; never keep the alert.
   it is NOT in the released 1.4.15 (that version spent its round on the
   codecs). Cosmetic, same day: the confirmation shows a torrent's name
   ("V2Only"), the list shows its single file ("v2.bin").
-  BOTH CLOSED IN 1.4.16 (test build 2026-11-28 — still not in the released
+  BOTH CLOSED IN 1.4.16 (RELEASED 2026-11-28 — still not in the released
   1.4.15): gap 10 outright; gap 4 together with a defect that closing gap 10
   made REACHABLE (two magnets of one hybrid torrent wedged both entries
   forever — the library refuses their metadata and stops both; the app now
@@ -5193,6 +5204,16 @@ dummy key):
    the second Add; one kept file, one saved entry, no failure notice, Seeding again after a
    restart, the tasks panel blank, the only exit record my own force-stop, nothing in the
    crash buffer.
+ * THE RELEASE, AFTERWARDS (2026-11-28, on the owner's word "release"): the released 1.4.15
+   installed on the emulator → at start its own updater offered "Update available — v1.4.16"
+   with the notes and "212.6 MB · 2026-11-28" (the app's own size formula agreeing with the
+   page line) → Update now: 222 MB in ~35 s, verified against the feed → with the install
+   permission ALREADY granted there, the app started the system installer by itself ("Do you
+   want to update this app?" — the branch no release had run before) → UPDATE → "App
+   installed." → the app at v1.4.16, `base.apk` = the released sha256 → "Check for updates":
+   "DeepFlux is up to date". One exit record (`reason 16 PACKAGE UPDATED`), crash buffer
+   empty. Not shown by that run: settings kept (the app's data was empty at the start) and
+   anything on a phone.
 
 NOT IN 1.4.16 (the roadmap, in order): Commander copy/move + new folder; segmented HTTP +
 rate limits; RSS background polling (WorkManager); browser tab persistence; later: Site
@@ -5257,8 +5278,10 @@ TOOLING LESSONS OF THIS VERSION (all mine):
  * "The turn is running" has two parts a moment apart (the session is busy; the reply's
    bubble is up): await both, or the test is a coin toss.
  * DRIVING THE EMULATOR: uiautomator lookups are case-insensitive SUBSTRINGS — "ALLOW"
-   matched the notification prompt's TITLE before its button; tap by coordinates read from
-   a fresh dump, or by a text only one node has. ENTER in the chat input only inserts a
+   matched the notification prompt's TITLE before its button, and "UPDATE" the installer's
+   sentence "Do you want to update this app?" before its button; tap by coordinates read
+   from a fresh dump, or by a text only one node has (match the field EXACTLY — the
+   scratch helper `exact.py` does). ENTER in the chat input only inserts a
    newline: tap the Send icon. `pm clear` resets permissions too: the notification prompt
    and the first-run dialog come back at the next start — look at the WHOLE screen when a
    lookup comes back empty.
