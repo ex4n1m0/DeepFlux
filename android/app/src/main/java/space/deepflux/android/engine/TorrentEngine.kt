@@ -87,16 +87,26 @@ class TorrentEngine : TorrentEngineApi {
     override fun libtorrentVersion(): String =
         runCatching { org.libtorrent4j.LibTorrent.version() }.getOrDefault("unknown")
 
-    /** Adds a magnet (fetches metadata via DHT). Returns the magnet's `btih` hash, or null for an invalid magnet. */
+    /**
+     * Adds a magnet (fetches metadata via DHT). Returns the torrent's name in this app, or null
+     * for an invalid magnet.
+     *
+     * The name is 40 hex — of a v2-only magnet's 64-hex `btih` its first 20 bytes — which is
+     * the name the engine reports the torrent by: the library's own lookup after parsing a
+     * magnet is by that same 20-byte "best" name (read from the 2.1.0 binding's bytecode), so
+     * `find` below sees the torrent an earlier add left, whichever form the magnet took.
+     */
     override fun addMagnet(magnet: String, saveDir: File): String? {
         val hash = MagnetParser.infoHashHex(magnet) ?: return null
         // 3-arg overload verified against the 2.1.0-39 sources: flags is
         // or_'d onto libtorrent's defaults — an empty flags object = defaults.
         // (Passing null would NPE inside the swig call.)
+        // The magnet is handed over in the spelling libtorrent parses (MagnetParser.forEngine):
+        // as the user wrote a v2-only one, the engine answered "invalid info-hash" (emulator).
         runCatching {
             if (session.find(Sha1Hash.parseHex(hash)) == null) {
                 saveDir.mkdirs()
-                session.download(magnet, saveDir, org.libtorrent4j.swig.torrent_flags_t())
+                session.download(MagnetParser.forEngine(magnet), saveDir, org.libtorrent4j.swig.torrent_flags_t())
             }
         }.onFailure { Log.w(TAG, "addMagnet: ${it.message}"); return null }
         return hash
@@ -116,8 +126,18 @@ class TorrentEngine : TorrentEngineApi {
                 session.download(info, saveDir)
             }
         }.onFailure { Log.w(TAG, "addTorrentFile: ${it.message}"); return TorrentFileAdd.Failed(it.message) }
-        return TorrentFileAdd.Added(hash, runCatching { info.name() }.getOrNull().orEmpty(), v1Hash(info))
+        return TorrentFileAdd.Added(hash, runCatching { info.name() }.getOrNull().orEmpty(), v1Hash(info), v2Hash(info))
     }
+
+    /**
+     * The torrent's WHOLE v2 info-hash (64 hex), or null without one. The engine's own name for
+     * the torrent ([TorrentFileAdd.Added.infoHash]) is only its first 20 bytes — never enough
+     * to ask for the torrent again.
+     */
+    private fun v2Hash(info: TorrentInfo): String? = runCatching {
+        val hashes = info.swig().info_hashes()
+        if (hashes.has_v2()) hashes.getV2().to_hex().lowercase() else null
+    }.getOrNull()?.takeIf { it.length == 64 }
 
     /**
      * True when any file of the torrent is a symbolic link. A torrent entry
@@ -263,6 +283,12 @@ class TorrentEngine : TorrentEngineApi {
             session.remove(handle)
         }.onFailure { Log.w(TAG, "remove: ${it.message}") }
     }
+
+    /** Read from the session, by the torrent's own key — as [snapshot] reads a status. */
+    override fun hasDuplicateError(infoHashHex: String): Boolean = runCatching {
+        val status = session.find(Sha1Hash.parseHex(infoHashHex))?.status() ?: return false
+        status.errorCode().value == TorrentEngineApi.DUPLICATE_TORRENT_ERROR
+    }.getOrDefault(false)
 
     /** Whole-session pause — used by the Wi-Fi/charging gates. */
     override fun pauseSession() {

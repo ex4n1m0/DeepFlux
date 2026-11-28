@@ -4,16 +4,35 @@ import java.security.MessageDigest
 
 /**
  * Reads just enough of a .torrent (bencode) to describe it BEFORE it is
- * added: the info-dict's `name` and the v1 info-hash (SHA-1 over the bencoded
- * info dictionary). Used by the torrent-add confirmation so the user sees
- * what a page / another app is handing over.
+ * added: the info-dict's `name` and the torrent's info-hashes. Used by the
+ * torrent-add confirmation so the user sees what a page / another app is
+ * handing over, and (1.4.16) to name the torrent the way the engine will.
  *
  * Fail-closed: anything malformed yields null — never a half-read name. The
  * engine validates the file fully when it is actually added.
  */
 object TorrentMeta {
 
-    class TorrentInfo(val name: String, val infoHash: String)
+    /**
+     * What a .torrent says of itself. Each hash is what the protocol says it is:
+     *  * [v1Hash] — the SHA-1 of the info dictionary, of a v1 or a HYBRID torrent (BEP 3);
+     *  * [v2Hash] — its SHA-256 computed WITHOUT the `piece layers` entry, of a v2-only or a
+     *    hybrid torrent (BEP 52), all 64 hex;
+     *  * [engineHash] — the 20-byte name every libtorrent client knows the torrent by: its v1
+     *    hash, or the FIRST 20 bytes of its v2 one.
+     * Checked against libtorrent 2.1 itself (the reference torrents in the tests).
+     */
+    class TorrentInfo(val name: String, val v1Hash: String?, val v2Hash: String?) {
+
+        val engineHash: String get() = v2Hash?.take(40) ?: v1Hash!!
+
+        /**
+         * The v1 info-hash — and, for a v2-only torrent, which has none, the name the engine
+         * knows it by. (Until 1.4.15 this was the SHA-1 of the info dictionary whatever the
+         * torrent was: for a v2-only torrent, a value that names no torrent.)
+         */
+        val infoHash: String get() = v1Hash ?: engineHash
+    }
 
     /** Largest .torrent this reads (the browser lane caps fetches at the same size). */
     private const val MAX_BYTES = 32 * 1024 * 1024
@@ -27,6 +46,10 @@ object TorrentMeta {
             if (!r.consume('d')) return null
             var name: String? = null
             var info: Pair<Int, Int>? = null
+            // Of the info dictionary's entries (1.4.16): whether it is of the v2 kind at all,
+            // and whether it has a `pieces` string.
+            var isV2 = false
+            var hasPieces = false
             while (!r.end()) {
                 if (r.consume('e')) break
                 val key = r.string() ?: return null
@@ -39,8 +62,14 @@ object TorrentMeta {
                         val k = r.string() ?: return null
                         if (k == "name") {
                             name = r.string() ?: return null
-                        } else if (r.skip(1) != true) {
-                            return null
+                        } else {
+                            if (r.skip(1) != true) {
+                                return null
+                            }
+                            when (k) {
+                                "meta version" -> isV2 = true
+                                "pieces" -> hasPieces = true
+                            }
                         }
                     }
                     info = infoStart to r.pos
@@ -53,13 +82,26 @@ object TorrentMeta {
             }
             val infoName = name ?: return null
             val (from, to) = info ?: return null
-            val sha1 = MessageDigest.getInstance("SHA-1")
-            // The info-hash is SHA-1 over the bencoded info dictionary itself.
-            sha1.update(bytes, from, to - from)
-            val digest = sha1.digest()
-            TorrentInfo(infoName, digest.joinToString("") { "%02x".format(it) })
+            val infoBytes = bytes.copyOfRange(from, to)
+            // A v2-only torrent has no v1 info-hash (BEP 52: no `pieces`). One of the old
+            // kind is hashed as it is, pieces or no pieces — as this reader always did.
+            val v1 = if (!isV2 || hasPieces) hex(MessageDigest.getInstance("SHA-1").digest(infoBytes)) else null
+            val v2 = if (isV2) {
+                // BEP 52: the SHA-256 of the bencoded info dictionary, as it is. The
+                // `piece layers` that make a v2 torrent large are NO part of `info` — they sit
+                // in the metainfo's top dictionary, after it — which is why no info-hash covers
+                // them. (I first wrote an exclusion of them from inside `info`, where they never
+                // are: dead code, found by a mutation that removed it and changed nothing —
+                // TorrentIdentityV2Test.)
+                hex(MessageDigest.getInstance("SHA-256").digest(infoBytes))
+            } else {
+                null
+            }
+            TorrentInfo(infoName, v1, v2)
         }.getOrNull()
     }
+
+    private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it) }
 
     /** Minimal bencode cursor: null from any primitive = malformed input. */
     private class Reader(private val b: ByteArray) {

@@ -133,12 +133,17 @@ class TorrentIdentityTest {
             .filter { it.extras.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString() == context.getString(R.string.notif_finished_title) }
             .mapNotNull { it.extras.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString() }
 
-    /** A source file of the app, found from the test's working folder. */
+    /**
+     * A source file of the app, found from the test's working folder — with its line ends made
+     * one. A pin that spans lines must not depend on how the checkout wrote them: a fresh
+     * Windows checkout is CRLF and a working copy edited in place may be LF, so this pin passed
+     * for the one and failed for the other (2026-11-28, a worktree build of a commit).
+     */
     private fun appSource(relative: String): String? {
         val anchor = "src/main/java/space/deepflux/android/engine/TorrentRepository.kt"
         var dir: File? = File(System.getProperty("user.dir") ?: ".").absoluteFile
         while (dir != null && !File(dir, anchor).isFile) dir = dir.parentFile
-        return dir?.let { File(it, relative).takeIf { f -> f.isFile }?.readText() }
+        return dir?.let { File(it, relative).takeIf { f -> f.isFile }?.readText()?.replace("\r\n", "\n") }
     }
 
     private fun repositorySource(): String? =
@@ -1035,7 +1040,12 @@ class TorrentIdentityTest {
         val engineSource = appSource("src/main/java/space/deepflux/android/engine/TorrentEngine.kt") ?: missing("no engine source")
         assertTrue("the kept file is written through the builder", "tmp.writeBytes(KeptTorrent.bytes(" in engineSource)
         assertTrue("and read back before it counts", "TorrentInfo(tmp)" in engineSource)
-        assertTrue("the engine tells both hashes of a torrent it adds", "orEmpty(), v1Hash(info))" in engineSource)
+        assertTrue("the engine tells every hash of a torrent it adds (1.4.16: its whole v2 one too)", "orEmpty(), v1Hash(info), v2Hash(info))" in engineSource)
+        assertTrue("and the whole v2 hash is read where there is one", "if (hashes.has_v2()) hashes.getV2().to_hex().lowercase() else null" in engineSource)
+        assertTrue(
+            "the engine hands libtorrent the magnet in the one spelling it parses (emulator, 2026-11-28: as written, it refused a v2-only one)",
+            "session.download(MagnetParser.forEngine(magnet), saveDir, org.libtorrent4j.swig.torrent_flags_t())" in engineSource,
+        )
         assertTrue("the v1 hash is read as the v2 prefix is", "if (hashes.has_v1()) hashes.getV1().to_hex().lowercase() else null" in engineSource)
     }
 }

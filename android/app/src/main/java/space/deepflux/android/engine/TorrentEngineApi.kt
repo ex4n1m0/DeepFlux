@@ -12,10 +12,15 @@ sealed class TorrentFileAdd {
      * the hash stands in then). [infoHash] is the hash the ENGINE names the
      * torrent by: of the two a hybrid torrent has, its v2 one — else its v1
      * one. [v1Hash] is its v1 info-hash, which a magnet may carry under `btih:`
-     * just the same; null without one. The torrent is the entry's when the
-     * entry's hash is EITHER of the two.
+     * just the same; null without one. [v2Hash] (1.4.16) is its WHOLE v2
+     * info-hash, 64 hex; null without one. The torrent is the entry's when the
+     * entry's hash is EITHER of the two 20-byte ones.
+     *
+     * [infoHash] is 20 bytes, so for a torrent with a v2 hash it is the FIRST
+     * half of that hash — never enough to ask for the torrent again: a magnet
+     * is built from [v1Hash] or [v2Hash] (MagnetParser.magnetFor), not from it.
      */
-    class Added(val infoHash: String, val name: String, val v1Hash: String? = null) : TorrentFileAdd()
+    class Added(val infoHash: String, val name: String, val v1Hash: String? = null, val v2Hash: String? = null) : TorrentFileAdd()
 
     /** Not a .torrent the engine can read. */
     object NotATorrent : TorrentFileAdd()
@@ -47,8 +52,10 @@ interface TorrentEngineApi {
     fun stop()
 
     /**
-     * Adds a magnet (fetches metadata via DHT). Returns the magnet's `btih` hash —
-     * 40 hex, whichever of a torrent's hashes it carries — or null for an invalid magnet.
+     * Adds a magnet (fetches metadata via DHT). Returns the torrent's name in THIS app — 40
+     * hex: the magnet's `btih`, or of a v2 one (64 hex) its first 20 bytes, which is the name
+     * the engine reports the torrent by (MagnetParser.infoHashHex) — or null for an invalid
+     * magnet. The magnet itself is handed to the engine whole.
      */
     fun addMagnet(magnet: String, saveDir: File): String?
 
@@ -114,6 +121,26 @@ interface TorrentEngineApi {
     fun pauseTorrent(infoHashHex: String)
     fun resumeTorrent(infoHashHex: String)
     fun removeTorrent(infoHashHex: String)
+
+    /**
+     * True while the engine holds the torrent and the LIBRARY stopped it because it found
+     * another torrent of the same content in the session: its error 19, "torrent already
+     * exists in session" ([DUPLICATE_TORRENT_ERROR]).
+     *
+     * That is what two MAGNETS of one hybrid torrent come to — by its v1 and by its v2
+     * hash — when both were added before either had its metadata. Nothing can know they are
+     * one until a peer offers the metadata to one of them; then the library refuses it,
+     * stops BOTH with this error, and leaves it to the client to keep one (measured on
+     * libtorrent 2.1.1, 2026-11-28; the emulator showed the same). It does not say which
+     * two: every torrent carrying this error is that group — see
+     * [TorrentRepository.resolveTwins].
+     */
+    fun hasDuplicateError(infoHashHex: String): Boolean
+
+    /** The library's `errors::duplicate_torrent` — "torrent already exists in session". */
+    companion object {
+        const val DUPLICATE_TORRENT_ERROR = 19
+    }
 
     /** Whole-session pause — used by the Wi-Fi/charging gates. */
     fun pauseSession()

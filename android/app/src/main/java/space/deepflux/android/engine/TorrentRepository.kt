@@ -27,6 +27,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -369,6 +371,8 @@ class TorrentRepository(
 
     fun start() {
         engine.listener = alertListener
+        twinsWaiting.clear() // a start puts every entry back into the engine (TorrentRepository.resolveTwins)
+        twinsSurvivor = null
         scope.launch {
             // The saved list FIRST. It used to wait for the engine to start,
             // so a slow start held up every add, pause and resume (each waits
@@ -385,6 +389,9 @@ class TorrentRepository(
                 loadedLatch.countDown()
             }
             if (startEngine()) {
+                // entry key → the magnet that really names it; filled from the kept files
+                // on the engine thread, applied and saved after that.
+                val magnetsToFix = HashMap<String, String>()
                 withContext(engineDispatcher) {
                     // What a keep writes and then moves into place: one left behind by a
                     // start that was cut short is no torrent. Only one that has been lying
@@ -417,6 +424,15 @@ class TorrentRepository(
                             // is another torrent's would add what nobody asked for — invisible
                             // in the list, its files copied out when it completes.
                             if (kept.infoHash == e.infoHash || kept.v1Hash == e.infoHash) {
+                                // The magnet saved with the entry must NAME this torrent.
+                                // Until 1.4.15 a torrent added from a .torrent file was saved
+                                // with one built from its 20-byte name alone: no torrent's
+                                // magnet, for a v2-only or hybrid one. It is put right here,
+                                // while the kept file is in hand to tell the torrent's hashes.
+                                val right = MagnetParser.magnetFor(kept.v1Hash, kept.v2Hash)
+                                if (right != null && !MagnetParser.namesTorrent(e.magnetUri, kept.v1Hash, kept.v2Hash)) {
+                                    magnetsToFix[e.infoHash] = right
+                                }
                                 // The torrent's own name beats a placeholder: adds from a
                                 // .torrent file used to be stored under their info-hash.
                                 renameEntry(e.infoHash, kept.name)
@@ -459,11 +475,21 @@ class TorrentRepository(
                             runCatching { engine.addMagnet(e.magnetUri, saveDir) }
                         }
                     }
+                    // A list an earlier version left with one torrent under two keys (a hybrid
+                    // torrent added by file AND by its v1 magnet) is one row from this start on.
+                    entries.toList().forEach { e -> mergeDuplicatesOf(e.infoHash) }
                     // A restart used to resume everything — including what the
                     // user had paused by hand, and what "Pause all" had left for
                     // "Resume all" to restore. The pause is saved with the entry.
                     entries.filter { pausedHashes.contains(it.infoHash) }
                         .forEach { e -> runCatching { engine.pauseTorrent(e.infoHash) } }
+                }
+                if (magnetsToFix.isNotEmpty()) {
+                    for (i in entries.indices) {
+                        magnetsToFix[entries[i].infoHash]?.let { right -> entries[i] = entries[i].copy(magnetUri = right) }
+                    }
+                    Log.i(TAG, "${magnetsToFix.size} torrent(s): the saved magnet named no torrent — put right from the kept file")
+                    persist()
                 }
             }
             refreshNow()
@@ -575,6 +601,9 @@ class TorrentRepository(
 
     // ------------------------------------------------------------------ public API
 
+    /** What came of adding a magnet, told apart for the notice ([TorrentRepository.addMagnet]). */
+    private enum class MagnetAdd { ADDED, LISTED, FAILED }
+
     fun addMagnet(text: String, sequentialOverride: Boolean? = null, onDone: (Boolean) -> Unit = {}) {
         awaitLoaded() // no mutation may persist before the saved list loads
         val magnet = MagnetParser.extractMagnet(text.trim()) ?: text.trim()
@@ -599,23 +628,37 @@ class TorrentRepository(
             // addMagnet calls (e.g. the VIEW intent redelivered on activity
             // recreation) used to both pass the dedupe check and add the same
             // hash twice — a duplicate LazyColumn key that crashed the app.
-            val added = withContext(engineDispatcher) {
+            val outcome = withContext(engineDispatcher) {
                 if (entries.any { it.infoHash == hash }) {
-                    null
+                    MagnetAdd.LISTED
                 } else {
                     val h = runCatching { engine.addMagnet(magnet, saveDir) }.getOrNull()
-                    if (h != null) {
+                        ?: return@withContext MagnetAdd.FAILED
+                    // One torrent, one row — by whichever of its hashes it comes (1.4.16). The
+                    // engine names every torrent it holds by ONE 20-byte name; when the name of
+                    // the torrent just added is the name of a torrent an entry already stands
+                    // for, this is that entry's torrent, not a second row: a hybrid torrent
+                    // added from a .torrent file or by its v1 magnet (keyed by the v1 hash) and
+                    // asked for again by the other form — or the other way round. (Until the
+                    // metadata arrives the engine cannot know two magnets are one torrent; those
+                    // meet in [mergeDuplicatesOf]. The session is left alone: what the engine
+                    // holds is not this app's to tell.)
+                    val mine = runCatching { engine.engineHashOf(h) }.getOrNull()
+                    val listed = mine != null && entries.any { e ->
+                        e.infoHash == h || runCatching { engine.engineHashOf(e.infoHash) }.getOrNull() == mine
+                    }
+                    if (listed) {
+                        MagnetAdd.LISTED
+                    } else {
                         entries.add(Entry(h, magnet, listedName(MagnetParser.displayName(magnet)), sequential, System.currentTimeMillis()))
                         unfinishedSeen.add(h) // its finish is news
-                        h
-                    } else {
-                        null
+                        MagnetAdd.ADDED
                     }
                 }
             }
-            if (added == null) {
+            if (outcome != MagnetAdd.ADDED) {
                 // Inside the dispatcher the list is final: a hash that is there is there.
-                if (entries.any { it.infoHash == hash }) _notices.tryEmit(Strings.t.noticeAlreadyInList)
+                if (outcome == MagnetAdd.LISTED) _notices.tryEmit(Strings.t.noticeAlreadyInList)
                 else _notices.tryEmit(Strings.t.noticeCouldNotAddMagnet)
                 onDone(false)
             } else {
@@ -646,6 +689,12 @@ class TorrentRepository(
         val userInitiated: Boolean = false,
         /** Place in the arrival order — [offer]'s bookkeeping; not for display. */
         val seq: Long = 0,
+        /**
+         * A .torrent's OTHER hash (1.4.16): of a hybrid torrent its v1 info-hash, while
+         * [infoHash] is the engine's name for it. Declining the file must also quiet the SAME
+         * torrent when the page re-offers it as a magnet — and a magnet carries the v1 hash.
+         */
+        val altHash: String? = null,
     )
 
     private val _pendingAdd = MutableStateFlow<PendingAdd?>(null)
@@ -789,21 +838,29 @@ class TorrentRepository(
                 _notices.tryEmit(Strings.t.noticeNotTorrent)
                 return@launch
             }
-            if (entries.any { it.infoHash == info.infoHash }) {
+            // It may be in the list under the engine's name for it, or — a hybrid torrent
+            // added from a magnet — under its v1 hash.
+            if (entries.any { it.infoHash == info.engineHash || (info.v1Hash != null && it.infoHash == info.v1Hash) }) {
                 done()
                 _notices.tryEmit(Strings.t.noticeAlreadyInList)
                 return@launch
             }
-            if (!userInitiated && (declinedJustNow(info.infoHash) || pageIsFlooding())) {
+            // Declined a moment ago in EITHER form: the file is keyed by the engine's name
+            // for the torrent, a hybrid torrent's magnet by its v1 hash (and vice versa:
+            // cancelPendingAdd records both).
+            if (!userInitiated && (declinedJustNow(info.engineHash) || (info.v1Hash != null && declinedJustNow(info.v1Hash)) || pageIsFlooding())) {
                 done()
                 return@launch
             }
             offer(
                 seq,
                 PendingAdd(
-                    magnet = "magnet:?xt=urn:btih:${info.infoHash}",
+                    // The magnet that names THIS torrent (v1 when it has one, else its whole
+                    // v2 hash) — the dialog's bookkeeping keys it by the engine's name.
+                    magnet = MagnetParser.magnetFor(info.v1Hash, info.v2Hash) ?: "magnet:?xt=urn:btih:${info.infoHash}",
                     name = info.name,
-                    infoHash = info.infoHash,
+                    infoHash = info.engineHash,
+                    altHash = info.v1Hash?.takeIf { it != info.engineHash },
                     sequential = prefs.value.sequentialDefault,
                     file = file,
                     sourceHost = sourceHost,
@@ -857,8 +914,13 @@ class TorrentRepository(
         p.file?.delete()
         if (!p.userInitiated) {
             // Declining a page's request starts the quiet time during which
-            // the page's own re-asks for THIS torrent are dropped.
-            synchronized(pendingAddLock) { declinedAt[p.infoHash] = clock() }
+            // the page's own re-asks for THIS torrent are dropped — by either
+            // of its hashes: a hybrid torrent's file is keyed by the engine's
+            // name for it, its magnet by the v1 hash.
+            synchronized(pendingAddLock) {
+                declinedAt[p.infoHash] = clock()
+                p.altHash?.let { declinedAt[it] = clock() }
+            }
         }
     }
 
@@ -974,13 +1036,18 @@ class TorrentRepository(
                 else _notices.tryEmit(outcome.refusalNotice())
                 return false
             }
-            // Persist a hash-magnet so restarts can re-add the torrent (an
+            // Persist a magnet so restarts can re-add the torrent (an
             // empty magnetUri silently never came back — zombie rows stuck
             // at 0 peers); start() prefers the saved .torrent file above.
+            // The magnet NAMES the torrent (1.4.16): by its v1 hash when it
+            // has one, else by its whole v2 one. It used to be built from the
+            // 20-byte name alone — a magnet to no torrent for a v2-only or
+            // hybrid one, which only ever mattered once the kept file was gone.
             entries.add(
                 Entry(
                     hash,
-                    "magnet:?xt=urn:btih:$hash",
+                    (outcome as? TorrentFileAdd.Added)?.let { MagnetParser.magnetFor(it.v1Hash, it.v2Hash) }
+                        ?: "magnet:?xt=urn:btih:$hash",
                     listedName((outcome as? TorrentFileAdd.Added)?.name).ifBlank { hash },
                     sequential,
                     System.currentTimeMillis(),
@@ -1108,12 +1175,17 @@ class TorrentRepository(
         awaitLoaded() // no mutation may persist before the saved list loads
         val entry = entries.firstOrNull { it.infoHash == infoHash } ?: return
         scope.launch {
+            val wasTheSurvivor = twinsSurvivor == infoHash
+            twinsWaiting.remove(infoHash)
             withContext(engineDispatcher) {
                 runCatching { engine.removeTorrent(infoHash) }
                 // The keep's retry bookkeeping is this thread's alone.
                 keepTries.remove(infoHash)
                 keepNextAt.remove(infoHash)
             }
+            // Twins that waited for THIS torrent have nothing to wait for now: back into the engine
+            // (twins of each other among them are resolved again, TorrentRepository.resolveTwins).
+            if (wasTheSurvivor) readmitTwins()
             // By what identifies it, never by the copy taken above: that copy's
             // name may have been replaced meanwhile (a magnet's real name
             // arrived), and a copy that no longer equals its entry used to stay
@@ -1409,14 +1481,22 @@ class TorrentRepository(
                     scope.launch { finishedFromEngine(hex) }
                 }
                 is TorrentErrorAlert -> {
-                    val name = alertTorrentName(alert)
-                    val msg = runCatching { alert.error()?.message }.getOrNull().orEmpty()
-                    postEventNotification(
-                        EventKind.FAILED,
-                        name.ifBlank { context.getString(R.string.notif_generic_torrent) },
-                        msg,
-                    )
-                    scope.launch { refreshNow() }
+                    val code = runCatching { alert.error()?.value }.getOrNull()
+                    if (code == TorrentEngineApi.DUPLICATE_TORRENT_ERROR) {
+                        // Two of one torrent in the session: resolved, not reported as a
+                        // failure — see [resolveTwins]. The library reports a wedged pair in
+                        // two alerts a moment apart; each asks for the whole group.
+                        scope.launch { delay(TWINS_SETTLE_MS); resolveTwins() }
+                    } else {
+                        val name = alertTorrentName(alert)
+                        val msg = runCatching { alert.error()?.message }.getOrNull().orEmpty()
+                        postEventNotification(
+                            EventKind.FAILED,
+                            name.ifBlank { context.getString(R.string.notif_generic_torrent) },
+                            msg,
+                        )
+                        scope.launch { refreshNow() }
+                    }
                 }
                 is MetadataReceivedAlert -> {
                     val hex = runCatching { alert.handle()?.infoHash()?.toHex()?.lowercase() }.getOrNull()
@@ -1479,6 +1559,187 @@ class TorrentRepository(
         // The alert and a retry can meet here; one of the two is enough.
         if (!keeping.add(infoHash)) return
         keepMetadata(infoHash)
+        // A twin that waited for exactly this may be the torrent's now — before the merge.
+        readmitTwins()
+        // With the metadata in, the engine can tell whether another entry is this
+        // very torrent (two magnets of one hybrid torrent, added before either had it).
+        mergeDuplicatesOf(infoHash)
+    }
+
+    /**
+     * Entries whose session torrent is deliberately NOT in the engine — see [resolveTwins].
+     * They stay listed on disk and come back with the next start; while they wait they are in
+     * no status snapshot, so no row shows them. Never persisted: a start puts every entry
+     * back into the engine, and whatever wedged them is resolved again the same way.
+     */
+    private val twinsWaiting = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** One resolution at a time: the library reports a wedged pair in two alerts, a moment apart. */
+    private val twinsMutex = Mutex()
+
+    /** One merge at a time — see [mergeDuplicatesOf]. */
+    private val mergeMutex = Mutex()
+
+    /** How long the alert that reports the error waits before it asks for the whole group. */
+    private val TWINS_SETTLE_MS = 2_000L
+
+    /**
+     * TWO OF ONE TORRENT IN THE SESSION — the library's verdict, acted on (1.4.16).
+     *
+     * A hybrid torrent has two hashes and a magnet carries one. Added by its v1 magnet AND
+     * by its v2 one before either had its metadata, it is two entries and two session
+     * torrents: nothing can know they are one. The library finds out the moment a peer
+     * offers the metadata to either — and then it REFUSES that metadata, stops BOTH with
+     * "torrent already exists in session" ([TorrentEngineApi.DUPLICATE_TORRENT_ERROR]) and
+     * leaves the choice to the client (measured on libtorrent 2.1.1, 2026-11-28; on the
+     * emulator both entries sat at "Fetching info" for good). An unrelated metadata-less
+     * torrent is not touched. So a merge that waited for the metadata to arrive could never
+     * run: neither of the two ever gets it while both are in the session.
+     *
+     * The group is therefore read from the ENGINE — every entry whose torrent carries that
+     * error — and NOTHING is merged yet: without the metadata the group does not say which
+     * of its members are the same torrent (two such pairs at once would read as one group
+     * of four). The entry added FIRST keeps its torrent and is resumed — alone, it gets its
+     * metadata (the error clears on resume; measured). Every other member's torrent leaves
+     * the session and its entry waits in [twinsWaiting] until some torrent's metadata
+     * arrives: [readmitTwins] asks the engine for each again, and the engine itself tells
+     * twins from strangers (a magnet of a torrent the session holds is answered with THAT
+     * torrent — no second one; [mergeDuplicatesOf] then merges the entries; a stranger's is
+     * simply added and goes on to its own metadata).
+     *
+     * The library does not say which torrent it found. This is asked from the alert that
+     * reports the error, after [TWINS_SETTLE_MS].
+     */
+    internal suspend fun resolveTwins() = twinsMutex.withLock {
+        val group = withContext(engineDispatcher) {
+            entries.filter { runCatching { engine.hasDuplicateError(it.infoHash) }.getOrDefault(false) }
+        }
+        // (A report whose torrent is gone or was resumed already: nothing to do.)
+        val keep = group.minByOrNull { it.addedAt } ?: return@withLock
+        val others = group.filter { it.infoHash != keep.infoHash }
+        twinsSurvivor = keep.infoHash
+        withContext(engineDispatcher) {
+            for (d in others) {
+                twinsWaiting.add(d.infoHash)
+                runCatching { engine.removeTorrent(d.infoHash) }
+            }
+            // Stopped by the library, not by the user: one the user paused stays paused —
+            // and its twins wait until the user resumes it.
+            if (!pausedHashes.contains(keep.infoHash)) runCatching { engine.resumeTorrent(keep.infoHash) }
+            // The survivor goes on with what the others knew too: its own magnet may carry
+            // no address that answers (the first magnet without one, the second with it).
+            runCatching {
+                val peers = others.flatMap { MagnetParser.peerHints(it.magnetUri) }.distinct()
+                if (peers.isNotEmpty()) engine.addPeers(keep.infoHash, peers)
+            }
+        }
+        Log.i(TAG, "${others.size} torrent(s) were another one's twin in the session — ${keep.infoHash.take(8)}… goes on alone; the other(s) wait for its metadata")
+        refreshNow()
+    }
+
+    /**
+     * Some torrent's metadata arrived: every waiting twin is asked of the engine again
+     * ([resolveTwins]). A twin of the torrent that arrived gets no second session torrent —
+     * the engine holds it by either hash now — and the merge that runs right after this
+     * makes the two entries one. A stranger's torrent is added and goes its own way; should
+     * it wedge with a twin of its own, that is resolved again by [resolveTwins].
+     */
+    private suspend fun readmitTwins() {
+        val waiting = twinsWaiting.toList()
+        if (waiting.isEmpty()) return
+        twinsSurvivor = null
+        withContext(engineDispatcher) {
+            for (key in waiting) {
+                if (!twinsWaiting.remove(key)) continue
+                val entry = entries.firstOrNull { it.infoHash == key } ?: continue
+                runCatching { engine.addMagnet(entry.magnetUri, saveDir) }
+                // Paused by hand while it waited (by the agent — no row showed it): it comes back paused.
+                if (pausedHashes.contains(key)) runCatching { engine.pauseTorrent(key) }
+            }
+        }
+    }
+
+    /** The entry whose torrent went on alone while [twinsWaiting] wait — readmitted at once if it is removed. */
+    @Volatile
+    private var twinsSurvivor: String? = null
+
+    /**
+     * ONE ROW PER TORRENT once the engine can tell (1.4.16). A hybrid torrent added twice —
+     * by its v1 magnet and by its v2 one — is two entries. Until one of them HAS its
+     * metadata the engine cannot tell they are one — and both together in the session could
+     * never get it ([resolveTwins]). With the metadata in, the engine names both alike.
+     * The entry added FIRST stays; the other goes, with ITS session torrent.
+     *
+     * It must not depend on what the engine did with the pair (measured on libtorrent 2.1.1:
+     * a second magnet added after the first has its metadata is answered with the one
+     * torrent; added before, it is a second one): the dropped key is removed, and the kept
+     * entry is added again from the kept file — a no-op while its torrent is still there, and
+     * its come-back if removing the other took it (the engine had the two as one).
+     *
+     * ONE AT A TIME ([mergeMutex]): the merge at the end of a start and the one a metadata
+     * alert calls were free to run together on the same pair — the second then found the
+     * first's work half done (a kept file written, not yet moved) and left it where it was.
+     * A test of the tie in the added times caught it (2026-11-28). A caller that waited
+     * reads everything again: with the pair merged, it has nothing left to do.
+     * Engine thread only.
+     */
+    private suspend fun mergeDuplicatesOf(infoHash: String) = mergeMutex.withLock {
+        val name = withContext(engineDispatcher) { runCatching { engine.engineHashOf(infoHash) }.getOrNull() }
+            ?: return@withLock
+        val keep = entries.firstOrNull { it.infoHash == infoHash } ?: return@withLock
+        val duplicates = withContext(engineDispatcher) {
+            entries.filter { e ->
+                e.infoHash != infoHash && runCatching { engine.engineHashOf(e.infoHash) }.getOrNull() == name
+            }
+        }
+        if (duplicates.isEmpty()) return@withLock
+        // The added time decides; ties fall to the LIST's order — not to which of them the
+        // engine's alert named (that one is `keep`, and two adds can share a millisecond).
+        val place = entries.mapIndexed { i, e -> e.infoHash to i }.toMap()
+        val all = (listOf(keep) + duplicates).sortedWith(compareBy({ it.addedAt }, { place[it.infoHash] ?: 0 }))
+        val kept = all.first()
+        val dropped = all.drop(1)
+        withContext(engineDispatcher) {
+            for (d in dropped) {
+                // The metadata the other one kept belongs to the surviving entry now — or is
+                // the same torrent's twice over when that entry has its own already (the
+                // metadata arrives under the engine's name, which may be the other's key:
+                // such a file used to stay behind with no entry, for good — emulator).
+                val itsKept = torrentFileOf(d.infoHash)
+                val keptFileNow = torrentFileOf(kept.infoHash)
+                if (itsKept.isFile) {
+                    if (!keptFileNow.isFile && itsKept.renameTo(keptFileNow)) suspectKept.remove(kept.infoHash)
+                    else if (keptFileNow.isFile) runCatching { itsKept.delete() }
+                }
+                if (pausedHashes.contains(d.infoHash)) pausedHashes.add(kept.infoHash)
+                if (pauseAllHashes.contains(d.infoHash)) pauseAllHashes.add(kept.infoHash)
+                if (copiedHashes.contains(d.infoHash)) copiedHashes.add(kept.infoHash)
+                if (unfinishedSeen.contains(d.infoHash)) unfinishedSeen.add(kept.infoHash)
+                for (set in listOf(pausedHashes, pauseAllHashes, copiedHashes, unfinishedSeen, appliedSequential, copyingHashes)) set.remove(d.infoHash)
+                twinsWaiting.remove(d.infoHash)
+                suspectKept.remove(d.infoHash)
+                entries.remove(d)
+                runCatching { engine.removeTorrent(d.infoHash) }
+            }
+            val keptFile = torrentFileOf(kept.infoHash)
+            when {
+                keptFile.isFile -> runCatching { engine.addTorrentFile(keptFile.absolutePath, saveDir) }
+                else -> runCatching { engine.addMagnet(kept.magnetUri, saveDir) }
+            }
+            // A magnet's own peer addresses (`x.pe=`) are not in a .torrent. A torrent brought
+            // back here had lost every one of them until the next start — a trackerless magnet
+            // had no peer at all (emulator, 2026-11-28). Handed over as a start does, together
+            // with every address the other entries knew.
+            runCatching {
+                val peers = (listOf(kept.magnetUri) + dropped.map { it.magnetUri })
+                    .flatMap { MagnetParser.peerHints(it) }
+                    .distinct()
+                if (peers.isNotEmpty()) engine.addPeers(kept.infoHash, peers)
+            }
+        }
+        Log.i(TAG, "${dropped.size} entry/entries were the torrent of another one — merged into ${kept.infoHash.take(8)}…")
+        persist()
+        refreshNow()
     }
 
     /** The keep itself. Callers hold the torrent in [keeping] for its duration and release it. */

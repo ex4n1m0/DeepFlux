@@ -131,12 +131,35 @@ class FakeTorrentEngine : TorrentEngineApi {
         // As the real engine names it: by the v2 hash of a hybrid torrent, else by its v1
         // hash. (This fake used to answer by the v1 hash alone, and so could not show what
         // the emulator did — TorrentIdentityTest, "a hybrid torrent from a v1 magnet".)
+        // 1.4.16: a file that really is v2 (the reference torrents) is named and given its
+        // two hashes exactly as the engine would — by TorrentMeta, which is checked against
+        // libtorrent itself. `v2Prefixes` is for the made-up hybrids of the older tests.
         val v2 = v2Prefixes[info.infoHash]
-        return TorrentFileAdd.Added(v2 ?: info.infoHash, info.name, info.infoHash)
+        return TorrentFileAdd.Added(v2 ?: info.engineHash, info.name, info.v1Hash, info.v2Hash).also { held[it.infoHash] = it }
     }
+
+    /**
+     * Every torrent the fake holds from a file, by the engine's name for it — as the session
+     * holds them: findable by either of a hybrid torrent's hashes, and reported by one name.
+     */
+    val held = java.util.concurrent.ConcurrentHashMap<String, TorrentFileAdd.Added>()
+
+    /**
+     * What the fake learned of a MAGNET's torrent once its metadata arrived — a test says so
+     * (`learned[<the magnet's key>] = Added(…)`); then the fake names that torrent as the
+     * engine would, by its best name, knowing both of a hybrid torrent's hashes.
+     */
+    val learned = java.util.concurrent.ConcurrentHashMap<String, TorrentFileAdd.Added>()
+
+    /** Asked by ANY of a held or learned torrent's hashes, the fake answers with the engine's name for it — as `torrent_handle.info_hash()` does. */
+    override fun engineHashOf(infoHashHex: String): String? =
+        v2Prefixes[infoHashHex]
+            ?: held[infoHashHex]?.infoHash
+            ?: learned[infoHashHex]?.infoHash
+            ?: held.values.firstOrNull { it.infoHash == infoHashHex || it.v1Hash == infoHashHex }?.infoHash
+            ?: infoHashHex
     override fun hasSymlinkEntries(infoHashHex: String): Boolean =
         infoHashHex in symlinkHashes || symlinkHashes.any { v2Prefixes[it] == infoHashHex } // found by either hash, as the real engine finds a torrent
-    override fun engineHashOf(infoHashHex: String): String? = v2Prefixes[infoHashHex] ?: infoHashHex
     override fun filePathsOf(infoHashHex: String): List<String>? = null
     override fun torrentName(infoHashHex: String): String? {
         holdName?.let {
@@ -164,8 +187,25 @@ class FakeTorrentEngine : TorrentEngineApi {
     override fun firstVideoFile(infoHashHex: String, saveDir: File): String? = null
     override fun applySequential(infoHashHex: String) = false
     override fun pauseTorrent(infoHashHex: String) { paused.add(infoHashHex) }
-    override fun resumeTorrent(infoHashHex: String) { resumed.add(infoHashHex) }
-    override fun removeTorrent(infoHashHex: String) { removed.add(infoHashHex) }
+    override fun resumeTorrent(infoHashHex: String) {
+        resumed.add(infoHashHex)
+        // As the library does: a torrent resumed is no longer stopped with its duplicate error.
+        duplicateErrored.remove(infoHashHex)
+    }
+    /**
+     * Hashes the fake reports as "the LIBRARY stopped this one: another torrent of the same
+     * content is in the session" — a test says so, for BOTH of a wedged pair, as the library
+     * reports both (TorrentV2IdentityTest, the twins).
+     */
+    val duplicateErrored: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    override fun hasDuplicateError(infoHashHex: String): Boolean = infoHashHex in duplicateErrored
+    override fun removeTorrent(infoHashHex: String) {
+        removed.add(infoHashHex)
+        duplicateErrored.remove(infoHashHex)
+        // As the session forgets the torrent: nothing names it afterwards but its own key.
+        learned.remove(infoHashHex)
+        held.entries.removeAll { it.value.infoHash == infoHashHex || it.key == infoHashHex }
+    }
     override fun pauseSession() { sessionPauses++ }
     override fun resumeSession() { sessionResumes++ }
     override fun snapshot(infoHashes: List<String>): List<Pair<String, TorrentStatus?>> {
