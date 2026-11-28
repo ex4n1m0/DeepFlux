@@ -1,9 +1,9 @@
 {
-  "version": "1.4.15",
-  "versionCode": 31,
-  "file": "DeepFlux-1.4.15-Android.apk",
-  "size": 222848002,
-  "sha256": "a35b0157099813fc15e2b83e6f3140b397cf6802a6904a995bdb98e2190eeda2",
-  "released": "2026-11-27",
-  "notes": "New in 1.4.15: films whose sound is Dolby (AC-3 / E-AC-3), DTS or MP2 are no longer silent - the player now decodes them itself where the phone cannot. Films in 10-bit H.265 that stopped with 'Playback failed' on phones without the hardware for them now open in a compatibility player (VLC) instead; the normal player is still used whenever it can play the film. Settings > About lists the open-source licences. The app is larger because it now carries these decoders."
+  "version": "1.4.16",
+  "versionCode": 32,
+  "file": "DeepFlux-1.4.16-Android.apk",
+  "size": 222929922,
+  "sha256": "02082ec464c892cfb7dac771ee06086f2d7decac032edaee3e5bb507e9633250",
+  "released": "2026-11-28",
+  "notes": "New in 1.4.16: Settings > AI agent - choose the AI provider (Venice, DeepSeek, OpenRouter or your own endpoint), the model and the thinking level; the other providers use your own key. Torrents that exist only in the newer v2 format can be added from magnet links, and a torrent added twice by different links shows as one row. Every chat is kept as a task under Tasks (top-left of the chat): reopen it later with its whole context, rename it, delete it, or start a new one."
 }
