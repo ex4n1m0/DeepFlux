@@ -783,6 +783,20 @@ class ChatLoopTest {
     }
 
     @Test
+    fun anAddressLeftOverFromTheCustomTabNeverReplacesVenicesOwn() {
+        // (Review 2026-11-28.) Typing an address on the Custom tab and tapping "Venice AI" left
+        // the address stored; every later send used to go there — with the built-in key.
+        torrents.setLlmBaseUrl("http://192.168.1.20:8000/v1")
+        await("the stored address") { torrents.prefs.value.llmBaseUrl == "http://192.168.1.20:8000/v1" }
+        client.script.addLast(ChatClient.Result.Content("ok"))
+        turn("hi")
+
+        val target = targets.single()
+        assertEquals("https://api.venice.ai/api/v1", target.endpoint.baseUrl)
+        assertEquals("venice", target.endpoint.providerId)
+    }
+
+    @Test
     fun veniceWithoutAnyKeySaysThereIsNoKey() {
         // A build without the built-in key, and nothing entered by the user.
         session = ChatSession(

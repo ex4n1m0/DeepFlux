@@ -441,4 +441,20 @@ interface AppStrings {
     val llmKeyHintDeepseek: String
     val llmKeyHintOpenrouter: String
     val llmKeyHintCustom: String
+
+    // Saved tasks (1.4.16): every conversation is kept; the list, Rename, Delete, New task.
+    val tasksTitle: String
+    val close: String
+    val newTask: String
+    val renameTask: String
+    val deleteTask: String
+    /** The "⋯" button of a task row (not a visible label). */
+    val taskActions: String
+    val tasksEmpty: String
+    /** Why the rows are disabled: a reply is running. */
+    val tasksBusy: String
+    val taskNameLabel: String
+    /** [name]: the task about to be deleted for good. */
+    val deleteTaskTitleFmt: String
+    val deleteTaskMsg: String
 }

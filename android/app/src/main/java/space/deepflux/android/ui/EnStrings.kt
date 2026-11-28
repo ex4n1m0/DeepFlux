@@ -313,8 +313,8 @@ object EnStrings : AppStrings {
     override val pageKeepsCrashing = "This page keeps crashing the browser. Reload to try again."
     override val updateCheckFailedFmt = "Update check failed: %s"
     override val updateWaitingNetwork = "Waiting for Wi-Fi or power — tap Update to retry"
-    override val clearChatTitle = "Clear this conversation?"
-    override val clearChatMsg = "The messages are removed from this device. This cannot be undone."
+    override val clearChatTitle = "Start a new task?"
+    override val clearChatMsg = "This conversation stays under Tasks. The new one starts empty."
     override val pauseAll = "Pause all"
     override val resumeAll = "Resume all"
     override val removeDownloadTitle = "Remove this download?"
@@ -413,4 +413,17 @@ object EnStrings : AppStrings {
     override val llmKeyHintDeepseek = "Get one at https://platform.deepseek.com/api_keys"
     override val llmKeyHintOpenrouter = "Get one at https://openrouter.ai/keys"
     override val llmKeyHintCustom = "An OpenAI-compatible endpoint: its base URL, a model name, and the key it asks for."
+
+    // Saved tasks (1.4.16)
+    override val tasksTitle = "Tasks"
+    override val close = "Close"
+    override val newTask = "New task"
+    override val renameTask = "Rename"
+    override val deleteTask = "Delete"
+    override val taskActions = "Task actions"
+    override val tasksEmpty = "No saved tasks yet. Every chat is kept here."
+    override val tasksBusy = "Stop the reply to open, rename or delete a task."
+    override val taskNameLabel = "Task name"
+    override val deleteTaskTitleFmt = "Delete “%1${'$'}s”?"
+    override val deleteTaskMsg = "This conversation is removed from this device. This cannot be undone."
 }

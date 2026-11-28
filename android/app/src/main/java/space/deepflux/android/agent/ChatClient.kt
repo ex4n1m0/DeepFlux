@@ -115,8 +115,9 @@ open class ChatClient(
 
             val code = conn.responseCode
             if (code != 200) {
-                val err = conn.errorStream?.bufferedReader()?.use { it.readText() }?.take(300) ?: ""
-                throw IllegalStateException("HTTP $code: $err")
+                // What the server said goes on screen and into the log: an endpoint can echo
+                // the request's Authorization header, so nothing that can be a key is kept.
+                throw IllegalStateException("HTTP $code: " + shownError(conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""))
             }
 
             val full = StringBuilder()
@@ -190,5 +191,18 @@ open class ChatClient(
 
     companion object {
         private const val TAG = "ChatClient"
+
+        /** "Bearer <something long>" anywhere in a server's text. */
+        private val BEARER = Regex("(?i)bearer\\s+[A-Za-z0-9._~+/=-]{8,}")
+    }
+
+    /**
+     * A server's error text as it may be shown and logged: any bearer token is cut out, and
+     * so is this client's own key wherever the server repeated it; then it is capped.
+     */
+    internal fun shownError(body: String): String {
+        var text = body.take(4000).replace(BEARER, "Bearer <redacted>")
+        if (apiKey.length >= 8) text = text.replace(apiKey, "<redacted>")
+        return text.trim().take(300)
     }
 }

@@ -308,8 +308,8 @@ object ZhStrings : AppStrings {
     override val pageKeepsCrashing = "该页面反复导致浏览器崩溃。重新加载可再试一次。"
     override val updateCheckFailedFmt = "检查更新失败：%s"
     override val updateWaitingNetwork = "等待 Wi-Fi 或充电 — 点“立即更新”重试"
-    override val clearChatTitle = "清除此对话？"
-    override val clearChatMsg = "消息将从本设备删除，且无法撤销。"
+    override val clearChatTitle = "开始新任务？"
+    override val clearChatMsg = "此对话会保留在“任务”中，新任务从空白开始。"
     override val pauseAll = "全部暂停"
     override val resumeAll = "全部继续"
     override val removeDownloadTitle = "移除此下载？"
@@ -406,4 +406,17 @@ object ZhStrings : AppStrings {
     override val llmKeyHintDeepseek = "在 https://platform.deepseek.com/api_keys 获取"
     override val llmKeyHintOpenrouter = "在 https://openrouter.ai/keys 获取"
     override val llmKeyHintCustom = "兼容 OpenAI 的接口：填写接口地址、模型名称和它要求的密钥。"
+
+    // 已保存的任务（1.4.16）
+    override val tasksTitle = "任务"
+    override val close = "关闭"
+    override val newTask = "新任务"
+    override val renameTask = "重命名"
+    override val deleteTask = "删除"
+    override val taskActions = "任务操作"
+    override val tasksEmpty = "还没有保存的任务。每次对话都会保存在这里。"
+    override val tasksBusy = "请先停止回复，再打开、重命名或删除任务。"
+    override val taskNameLabel = "任务名称"
+    override val deleteTaskTitleFmt = "删除“%1${'$'}s”？"
+    override val deleteTaskMsg = "此对话将从本设备删除，且无法撤销。"
 }

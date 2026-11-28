@@ -97,6 +97,45 @@ class SettingsBackupLlmTest {
     }
 
     @Test
+    fun aDesktopExportWithoutAKkeyBringsNoKeyHereEither() {
+        // The provider and the key come as a pair. The key used to be written only when the
+        // desktop had one — so a key on this device stayed and went to the imported provider.
+        val desktop = JSONObject().put(
+            "llm",
+            JSONObject().put("provider", "custom").put("base_url", "http://relay.example/v1").put("api_key", ""),
+        ).toString().toByteArray()
+        val writes = imported(desktop)
+        assertEquals("custom", writes["llm_provider"])
+        assertEquals("http://relay.example/v1", writes["llm_base_url"])
+        assertEquals("no key there means no key here", "", writes["custom_api_key"])
+    }
+
+    @Test
+    fun onlyTheFilesThisAppPutsIntoAnExportAreWrittenOnImport() {
+        // It used to take any name without ".." — and so could plant a saved task (attacker-written
+        // turns, fed to the model as earlier context) or the torrent list.
+        for (fine in listOf(
+            "browser_bookmarks.json", "browser_history.json", "rss_feeds.json", "player_positions.json", "chat_history.json",
+            "memory/USER.md", "memory/MEMORY.md", "memory/daily/2026-11-28.md",
+        )) assertTrue(fine, SettingsBackup.isExportedSidecar(fine))
+        val id = "a".repeat(32)
+        for (bad in listOf(
+            "agent_sessions/$id.json", "torrents_state.json", "../x.json", "/etc/passwd", "config.json", "install_id",
+            "memory/../../evil.md", "memory/daily/../../x.md", "memory/sub/dir/x.md", "memory/x.txt", "memory/", "memory",
+            "DeepFlux/evil.bin", "memory\\USER.md", "memory/USER.md/../x",
+        )) assertFalse(bad, SettingsBackup.isExportedSidecar(bad))
+
+        val dir = freshDir()
+        val payload = JSONObject().put("format", "deepflux-android").put("version", 1).put("prefs", JSONObject())
+            .put("files", JSONObject().put("agent_sessions/$id.json", "{\"schema\":1}")
+                .put("torrents_state.json", "[]").put("memory/USER.md", "# Memory")).toString().toByteArray()
+        SettingsBackup.applyFilesAndPrefs(payload, dir) { _, _ -> }
+        assertFalse(File(dir, "agent_sessions/$id.json").exists())
+        assertFalse(File(dir, "torrents_state.json").exists())
+        assertEquals("# Memory", File(dir, "memory/USER.md").readText())
+    }
+
+    @Test
     fun aDesktopExportOfTheProviderThisAppCannotTalkToBringsNeitherItsProviderNorItsKey() {
         // The desktop's "local" is a model served on the user's own GPU; this app has none of it.
         val desktop = JSONObject().put("llm", JSONObject().put("provider", "local").put("api_key", "sk-should-not-land")).toString().toByteArray()

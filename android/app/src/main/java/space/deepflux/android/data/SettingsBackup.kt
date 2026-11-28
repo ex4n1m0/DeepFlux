@@ -39,6 +39,17 @@ object SettingsBackup {
     /** The desktop providers this app can also talk to (its "local" one needs a GPU it does not bundle). */
     private val ANDROID_PROVIDERS = setOf("venice", "deepseek", "openrouter", "custom")
 
+    /** The sidecar files [buildPayload] writes at the root of `files/`. */
+    private val EXPORTED_SIDECARS = setOf(
+        "browser_bookmarks.json", "browser_history.json", "rss_feeds.json", "player_positions.json", "chat_history.json",
+    )
+
+    /** The agent's memory files: USER.md, MEMORY.md and the daily notes — markdown, directly in their folder. */
+    private val EXPORTED_MEMORY_FILE = Regex("memory/(?:[A-Za-z0-9_-]+|daily/[A-Za-z0-9_-]+)\\.md")
+
+    /** True for a file name an export of this app can contain — the only ones an import writes. */
+    fun isExportedSidecar(name: String): Boolean = name in EXPORTED_SIDECARS || EXPORTED_MEMORY_FILE.matches(name)
+
     // ---------------------------------------------------------------- crypto
 
     /** split secret: first half = HMAC signing, second half = AES (Fernet spec). */
@@ -200,7 +211,9 @@ object SettingsBackup {
             val files = data.optJSONObject("files") ?: JSONObject()
             var count = 0
             files.keys().forEach { name ->
-                if (name.contains("..") || name.startsWith("/")) return@forEach // path guard
+                // Only what this app itself puts into an export (1.4.16; it used to take any
+                // name without ".." — and so could plant a saved task, or the torrent list).
+                if (!isExportedSidecar(name)) return@forEach
                 val target = File(filesDir, name)
                 target.parentFile?.mkdirs()
                 target.writeText(files.optString(name), Charsets.UTF_8)
@@ -212,7 +225,9 @@ object SettingsBackup {
             val llm = data.optJSONObject("llm")
             if (llm != null) {
                 // The desktop's provider and key belong together — a key made for one
-                // service is no good at another, so they are imported as a pair or not at all.
+                // service is no good at another, so they come as a pair: with no key on the
+                // desktop, the key on this device is cleared too (it used to be kept, and
+                // went to the newly imported provider — 2026-11-28, review).
                 // "local" (the desktop's built-in model) has no counterpart here.
                 val provider = llm.optString("provider", "")
                 if (provider in ANDROID_PROVIDERS) {
@@ -221,9 +236,7 @@ object SettingsBackup {
                     setPref("llm_model", llm.optString("model", ""))
                     setPref("llm_effort", llm.optString("reasoning_effort", "").ifBlank { "low" })
                     setPref("llm_custom_sends_effort", llm.optBoolean("custom_reasoning_effort", false).toString())
-                    if (llm.optString("api_key", "").isNotEmpty()) {
-                        setPref("custom_api_key", llm.optString("api_key"))
-                    }
+                    setPref("custom_api_key", llm.optString("api_key", ""))
                 }
             }
             sb.append("imported desktop settings (AI provider and key)")

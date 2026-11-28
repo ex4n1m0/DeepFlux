@@ -90,7 +90,11 @@ object LlmPresets {
         val sendsEffort = if (custom) customSendsEffort else preset.reasoningEffort
         return LlmEndpoint(
             providerId = preset.id,
-            baseUrl = base.ifEmpty { preset.baseUrl },
+            // The typed address is the CUSTOM provider's alone. It used to replace every
+            // provider's address when one was stored: typed on the Custom tab and left behind
+            // (the field hides for the others), it made "Venice" talk elsewhere — with the
+            // built-in key. Found by two independent reviews of this version (2026-11-28).
+            baseUrl = if (custom) base else preset.baseUrl,
             model = normalizeModel(preset.id, model.trim().ifEmpty { preset.defaultModel }),
             effort = if (sendsEffort) preset.effortMap[level] ?: level else null,
         )
@@ -105,21 +109,31 @@ object LlmPresets {
         return model
     }
 
-    /** True when the built-in shared key can serve this provider (it is a Venice key). */
+    /** True for the provider the built-in shared key was made for (what the Settings card says). */
     fun builtInKeyWorksFor(providerId: String?): Boolean = byId(providerId).id == VENICE.id
 
     /**
-     * The key one request goes out with, or null when there is none to send.
-     *
-     * The user's own key always wins. The BUILT-IN shared key is a Venice key: it is used
-     * for Venice and is never handed to another provider or to an address the user typed —
-     * [builtInKey] is not even called for any other provider (1.4.16; a "custom" endpoint
-     * sent off with the built-in key would carry the owner's key to a stranger's server).
+     * True when the built-in shared key may serve THIS endpoint: it is a Venice key, so only
+     * Venice's own provider AT VENICE'S OWN ADDRESS gets it. Decided on the endpoint that was
+     * actually built — the second wall behind [resolve], which already gives every provider
+     * but "custom" its own address.
      */
-    fun apiKeyFor(providerId: String?, userKey: String, builtInKey: () -> String): String? {
+    fun builtInKeyMayServe(endpoint: LlmEndpoint): Boolean =
+        endpoint.providerId == VENICE.id && endpoint.baseUrl == VENICE.baseUrl
+
+    /**
+     * The key one request to [endpoint] goes out with, or null when there is none to send.
+     *
+     * The user's own key always wins. The BUILT-IN shared key is a Venice key: it goes to
+     * Venice's own address and nowhere else — never another company's API, never an address
+     * the user typed — and for any other endpoint [builtInKey] is not even called (1.4.16;
+     * a "custom" endpoint sent off with the built-in key would carry the owner's key to a
+     * stranger's server).
+     */
+    fun apiKeyFor(endpoint: LlmEndpoint, userKey: String, builtInKey: () -> String): String? {
         val own = userKey.trim()
         if (own.isNotEmpty()) return own
-        if (!builtInKeyWorksFor(providerId)) return null
+        if (!builtInKeyMayServe(endpoint)) return null
         return builtInKey().trim().ifEmpty { null }
     }
 }

@@ -72,6 +72,18 @@ class LlmWiringTest {
     }
 
     @Test
+    fun theTypedAddressIsTheCustomProvidersAloneAndTheKeyHasASecondWall() {
+        // (Two reviews, 2026-11-28.) The rules themselves are LlmPlanTest's; these are the lines.
+        val presets = source("src/main/java/space/deepflux/android/agent/LlmPresets.kt")
+        assertTrue(presets.contains("baseUrl = if (custom) base else preset.baseUrl,"))
+        assertFalse("the typed address never replaces another provider's own", "base.ifEmpty { preset.baseUrl }" in presets)
+        assertTrue(presets.contains("endpoint.providerId == VENICE.id && endpoint.baseUrl == VENICE.baseUrl"))
+        val plan = source("src/main/java/space/deepflux/android/agent/ChatPlan.kt")
+        assertTrue(plan.contains("LlmPresets.apiKeyFor(endpoint, prefs.customApiKey, builtInKey)"))
+        assertFalse("nothing may print the key by printing the plan", "data class ChatTarget" in plan || "data class Go(" in plan)
+    }
+
+    @Test
     fun theSettingsImportHandsEveryAiFieldToItsOwnSetter() {
         val screen = source("src/main/java/space/deepflux/android/ui/settings/SettingsScreen.kt")
         listOf(

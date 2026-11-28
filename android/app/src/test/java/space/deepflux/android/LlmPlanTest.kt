@@ -85,6 +85,36 @@ class LlmPlanTest {
     }
 
     @Test
+    fun aTypedAddressIsUsedByTheCustomProviderAlone() {
+        // (Two reviews, 2026-11-28.) The address field belongs to the Custom tab and hides for
+        // the other providers — but its VALUE stayed, and used to replace every provider's own
+        // address: back on "Venice AI", every request went to that address, built-in key included.
+        val venice = target(prefs(baseUrl = "http://192.168.1.20:8000/v1"))
+        assertEquals("https://api.venice.ai/api/v1", venice.endpoint.baseUrl)
+        assertEquals("venice", venice.endpoint.providerId)
+        assertEquals("the built-in key — for Venice's own address", "builtin-venice-key", venice.apiKey)
+        assertEquals(LlmPresets.DEEPSEEK.baseUrl, target(prefs(provider = "deepseek", key = "k", baseUrl = "http://x/v1")).endpoint.baseUrl)
+        assertEquals(LlmPresets.OPENROUTER.baseUrl, target(prefs(provider = "openrouter", key = "k", baseUrl = "http://x/v1")).endpoint.baseUrl)
+        assertEquals("a provider nobody knows reads as Venice — at Venice's address",
+            LlmPresets.VENICE.baseUrl, target(prefs(provider = "no-such-provider", baseUrl = "http://x/v1")).endpoint.baseUrl)
+        // For the custom provider it is the address, as before.
+        assertEquals("http://10.0.2.2:8791/v1", target(prefs(provider = "custom", key = "k", baseUrl = "http://10.0.2.2:8791/v1")).endpoint.baseUrl)
+    }
+
+    @Test
+    fun theBuiltInKeyIsHandedToNothingButVenicesOwnAddress() {
+        // The second wall: were an endpoint ever built with Venice's id and another address,
+        // the built-in key would still not be given out for it.
+        val stray = space.deepflux.android.agent.LlmEndpoint("venice", "https://somewhere-else.example/v1", "m", "low")
+        assertNull(LlmPresets.apiKeyFor(stray, "", builtIn))
+        assertEquals("not even read", 0, builtInReads)
+        assertFalse(LlmPresets.builtInKeyMayServe(stray))
+        assertEquals("the user's own key still goes where the user picked", "sk-user", LlmPresets.apiKeyFor(stray, "sk-user", builtIn))
+        val home = space.deepflux.android.agent.LlmEndpoint("venice", LlmPresets.VENICE.baseUrl, "m", "low")
+        assertEquals("builtin-venice-key", LlmPresets.apiKeyFor(home, "", builtIn))
+    }
+
+    @Test
     fun aCustomEndpointNeedsAnAddress() {
         val plan = planSend(prefs(provider = "custom", key = "sk-user", baseUrl = "   "), builtIn)
         assertTrue(plan is ChatPlan.BadSettings)

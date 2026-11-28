@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +51,7 @@ import space.deepflux.android.agent.ChatClient
 import space.deepflux.android.agent.ChatPlan
 import space.deepflux.android.agent.ChatTarget
 import space.deepflux.android.agent.planSend
+import space.deepflux.android.agent.SessionStore
 import space.deepflux.android.agent.PublicUrls
 import space.deepflux.android.agent.UntrustedResults
 import space.deepflux.android.data.EmbeddedKey
@@ -74,6 +76,12 @@ data class ChatBubble(
      * removed.
      */
     val id: Long = nextBubbleId.getAndIncrement(),
+    /**
+     * For the one-line note that tools ran ("⚡ tool: web_search, …"): the tools' names, so
+     * the note is worded again in the language of the day when a task is reopened (1.4.16).
+     * Null for every other bubble.
+     */
+    val toolNames: String? = null,
 )
 
 /**
@@ -82,6 +90,13 @@ data class ChatBubble(
  * why its answer is missing. Model-facing only — never shown.
  */
 private const val STOPPED_NOTE = "(Your previous reply was stopped by the user before it began.)"
+
+/**
+ * Context placeholder for a turn that failed before any text — its question was dropped from
+ * the context when the failure was shown; when the task is reopened it comes back with this
+ * note, so the turn is closed and the roles alternate.
+ */
+private const val FAILED_NOTE = "(Your previous reply failed before it began.)"
 
 /**
  * Largest tool result handed to the model (characters). A scanned page or a
@@ -96,9 +111,12 @@ private const val OPEN_FILE_SCAN_LIMIT = 50_000
  * Agent chat surface: a tool-carrying conversation with the model — the
  * Android twin of the desktop Agent tab. Torrent tools since v0.4; IPTV
  * tools (list/play/stop channels) added 2026-11-14 — the owner's test
- * "have the agent run an IPTV channel" is now a first-class flow. History
- * is kept for the session, key = user's own or the built-in shared
- * DeepSeek key (same stance as the desktop app).
+ * "have the agent run an IPTV channel" is now a first-class flow. The key
+ * is the user's own or the built-in one (the desktop's stance). Since
+ * 1.4.16 every conversation is a saved TASK (agent.SessionStore): opening
+ * the list of them, reopening one with the model's WHOLE context, Rename
+ * and Delete live here — the screen (TasksPanel) only shows what this
+ * class says.
  *
  * ALWAYS-YOLO (owner decision 2026-11-16): every tool call executes
  * immediately — there is NO confirmation UI and none may be added (the
@@ -131,6 +149,11 @@ class ChatSession(
      * tests count the calls, which proves another provider never makes it be read.
      */
     private val builtInKey: () -> String = { EmbeddedKey.veniceKey() },
+    /**
+     * Runs something on the app's thread. The app posts to its main thread; a test runs it at
+     * once (Robolectric's main thread only moves when the test tells it to).
+     */
+    private val onUiThread: (() -> Unit) -> Unit = { run -> android.os.Handler(android.os.Looper.getMainLooper()).post(run) },
     /** URL policy for agent-supplied download / feed URLs (tests inject a fake resolver). */
     private val publicUrlCheck: (url: String) -> String? = { PublicUrls.rejection(it) },
     /**
@@ -161,6 +184,60 @@ class ChatSession(
 
     /** Phase C1: desktop-format markdown memory (files under filesDir/memory). */
     private val memory = space.deepflux.android.memory.MemoryStore(appContext.filesDir)
+
+    // ------------------------------------------------------------------ saved tasks (1.4.16)
+    //
+    // Every conversation is a TASK kept on the device — the desktop's agent sessions
+    // (owner 2026-11-22: "the agent should have a left side bar with sessions, like
+    // zcode, we can call them tasks"). A task is created by the first message, saved as
+    // it goes, and opens again with the model's whole context. Before, the chat came back
+    // after a restart as text on a screen the model had never seen.
+    //
+    // Durable rules:
+    //  * nothing reopens at a start (the desktop's rule): a saved task opens when tapped;
+    //  * saves run ONE AT A TIME on their own thread, in order — a later snapshot is never
+    //    overtaken by an earlier one, and a delete queued after a save runs after it;
+    //  * a task is never switched, renamed or deleted while a turn runs: a turn must not
+    //    write its reply into another task (the generation guard is the second wall);
+    //  * what is saved is sanitized at save AND load (SessionStore.sanitize): a turn cut
+    //    off leaves no tool exchange the model's API would refuse;
+    //  * all local-only: the files are not in the device backup (BackupRulesTest's exact
+    //    allow-list) and not in the settings export.
+
+    private val tasks = SessionStore(java.io.File(appContext.filesDir, "agent_sessions"))
+
+    /** Every task on the device, most recently used first. */
+    private val _taskList = MutableStateFlow<List<SessionStore.Meta>>(emptyList())
+    val taskList: StateFlow<List<SessionStore.Meta>> = _taskList.asStateFlow()
+
+    /** The task the conversation on screen belongs to; null until something is said. */
+    private val _openTask = MutableStateFlow<String?>(null)
+    val openTask: StateFlow<String?> = _openTask.asStateFlow()
+
+    /** The open task's id and its name as the user gave it ("" = named after its first message). Guarded by [messagesLock]. */
+    private var openTaskId: String? = null
+    private var openTaskName = ""
+
+    /**
+     * Saves, renames, deletes — and the reading for an open — run here ONE AT A TIME, in the
+     * order they were asked: a later snapshot is never overtaken by an earlier one, and a
+     * delete queued after a save runs after it. One worker, which goes home after a quiet
+     * half-minute and is back for the next request: the session belongs to its screen's owner
+     * (a plain `remember`) and is built again when the Activity is recreated (a language or
+     * font change) — a thread that never ended would be one leaked per recreation (review
+     * 2026-11-28).
+     */
+    private val taskSaver = java.util.concurrent.ThreadPoolExecutor(
+        1, 1, 30L, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue(),
+    ) { r -> Thread(r, "task-save").apply { isDaemon = true } }.apply { allowCoreThreadTimeOut(true) }
+
+    /** Number of the open asked last: only the newest one is carried out. */
+    private val openRequests = java.util.concurrent.atomic.AtomicLong(0)
+
+    /** Runs [block] on the task thread. Nothing it throws leaves the thread; nothing is accepted once the app is going down. */
+    private fun onTaskThread(block: () -> Unit) {
+        runCatching { taskSaver.execute { runCatching(block).onFailure { android.util.Log.w("ChatSession", "task thread: ${it.message}") } } }
+    }
 
     private val _messages = MutableStateFlow<List<ChatBubble>>(emptyList())
     val messages: StateFlow<List<ChatBubble>> = _messages.asStateFlow()
@@ -288,45 +365,218 @@ class ChatSession(
     }
 
     init {
-        // Restore persisted chat on boot
-        Thread {
-            val saved = repository.loadChatHistory()
-            if (saved.isNotBlank()) {
-                runCatching {
-                    val arr = org.json.JSONArray(saved)
-                    val bubbles = mutableListOf<ChatBubble>()
-                    for (i in 0 until arr.length()) {
-                        val o = arr.getJSONObject(i)
-                        bubbles.add(
-                            ChatBubble(
-                                role = o.optString("role", "assistant"),
-                                content = o.optString("content", ""),
-                                reasoning = o.optString("reasoning", ""),
-                            )
-                        )
-                    }
-                    if (bubbles.isNotEmpty()) _messages.value = bubbles
-                }
-            }
-        }.apply { isDaemon = true }.start()
+        Thread({
+            // The chat of versions before 1.4.16 — text on a screen — becomes a task, once.
+            adoptLegacyChat()
+            // The list. Nothing is reopened here.
+            publishTasks()
+        }, "tasks-load").apply { isDaemon = true }.start()
     }
 
-    private fun persistMessages() {
-        val arr = org.json.JSONArray()
-        // Persist last 30 bubbles (tool notes excluded)
-        val persistable = _messages.value.filter { it.role != "error" }
-            .takeLast(30)
-        for (b in persistable) {
-            arr.put(
-                org.json.JSONObject()
-                    .put("role", b.role)
-                    .put("content", b.content)
-                    .put("reasoning", b.reasoning)
-            )
+    /** The list as it is on disk. (Reads a directory: called from the task threads, never the UI's.) */
+    private fun publishTasks() {
+        _taskList.value = runCatching { tasks.list() }.getOrDefault(_taskList.value)
+    }
+
+    private fun toolNotePrefix(): String = Strings.t.toolNoteFmt.substringBefore('%')
+
+    /**
+     * Until 1.4.15 the chat kept its last 30 bubbles in one settings value and showed them
+     * again at every start — text the model had never seen. It becomes ONE task, with the
+     * exchange it adds up to as the model's context (the error bubbles and the screen's
+     * tool notes are not the model's words). The value is cleared once it is adopted, or
+     * when there is nothing in it to adopt; a chat that could not be WRITTEN is left, to be
+     * adopted at the next start.
+     */
+    private fun adoptLegacyChat() {
+        val saved = runCatching { repository.loadChatHistory() }.getOrDefault("")
+        if (saved.isBlank() || saved.trim() == "[]") return
+        fun clearLegacy() = repository.saveChatHistory(org.json.JSONArray().toString())
+        val arr = runCatching { org.json.JSONArray(saved) }.getOrNull()
+        if (arr == null || arr.length() == 0) {
+            clearLegacy()
+            return
         }
-        Thread {
-            runCatching { repository.saveChatHistory(arr.toString()) }
-        }.apply { isDaemon = true }.start()
+        val lines = mutableListOf<SessionStore.Line>()
+        val messages = mutableListOf<ChatClient.Message>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val role = o.optString("role", "")
+            val text = o.optString("content", "")
+            when {
+                role == "user" && text.isNotBlank() -> {
+                    lines += SessionStore.Line("user", text)
+                    messages += ChatClient.Message("user", text)
+                }
+                role == "assistant" && text.isNotBlank() && !text.startsWith(toolNotePrefix()) -> {
+                    lines += SessionStore.Line("agent", text, o.optString("reasoning", ""))
+                    messages += ChatClient.Message("assistant", text)
+                }
+            }
+        }
+        if (lines.isEmpty() || tasks.save(SessionStore.newId(), "", messages, lines)) clearLegacy()
+    }
+
+    /** The one-line note that tools ran. [names] as the tool loop lists them. */
+    private fun toolNote(names: String) = ChatBubble("assistant", Strings.t.toolNoteFmt.format(names), toolNames = names)
+
+    /** A saved line as it is shown again. Kinds are the desktop's (agent/sessions.py); what is not known is not shown. */
+    private fun bubbleOf(line: SessionStore.Line): ChatBubble? = when (line.kind) {
+        "user" -> ChatBubble("user", line.text)
+        "agent" -> ChatBubble("assistant", line.text, reasoning = line.reasoning)
+        "event" -> toolNote(line.text)
+        else -> null
+    }
+
+    /** The conversation as it is SHOWN: what the user said, the notes that tools ran, the agent's answers with their thinking. Errors are of the moment. */
+    private fun transcriptOf(bubbles: List<ChatBubble>): List<SessionStore.Line> = bubbles.mapNotNull { b ->
+        when {
+            b.role == "user" -> SessionStore.Line("user", b.content)
+            b.role == "assistant" && b.toolNames != null -> SessionStore.Line("event", b.toolNames)
+            // (The bubble of a round that only called tools stays empty: not a line.)
+            b.role == "assistant" && !b.streaming && b.content.isNotBlank() ->
+                SessionStore.Line("agent", b.content, b.reasoning)
+            else -> null
+        }
+    }
+
+    /**
+     * Saves the conversation on screen as its task: a snapshot is taken here, under
+     * [messagesLock], and written on the task thread. [history] is the list the conversation
+     * is using. Nothing happens while no task is open (nothing has been said yet).
+     */
+    private fun saveOpenTaskLocked(history: List<ChatClient.Message>) {
+        val id = openTaskId ?: return
+        val name = openTaskName
+        val messages = history.toList()
+        val lines = transcriptOf(_messages.value)
+        onTaskThread {
+            tasks.save(id, name, messages, lines)
+            publishTasks()
+        }
+    }
+
+    /**
+     * A task's messages as the model sees them again: the system prompt first, and never a
+     * question left unanswered at the end — when a turn was cut off before any tool exchange,
+     * a note closes it, so the roles alternate (the same note a Stop leaves).
+     */
+    private fun restoredHistory(task: SessionStore.Task): List<ChatClient.Message> {
+        val withPrompt = if (task.messages.firstOrNull()?.role == "system") {
+            task.messages
+        } else {
+            listOf(ChatClient.Message("system", systemPrompt())) + task.messages
+        }
+        val lastLine = task.transcript.lastOrNull()
+        val historyEndsOnIt = lastLine != null &&
+            withPrompt.lastOrNull()?.let { it.role == "user" && it.content == lastLine.text } == true
+        return when {
+            // A turn that FAILED: its question was dropped from the context — so that a retry
+            // is clean — but stayed on the screen. Shown, it is said: the model gets the
+            // question back, closed by a note (review 2026-11-28).
+            lastLine?.kind == "user" && !historyEndsOnIt ->
+                withPrompt + ChatClient.Message("user", lastLine.text) + ChatClient.Message("assistant", FAILED_NOTE)
+            // A turn cut off before any answer: the question is the last thing said.
+            withPrompt.lastOrNull()?.role == "user" -> withPrompt + ChatClient.Message("assistant", STOPPED_NOTE)
+            else -> withPrompt
+        }
+    }
+
+    /**
+     * Opens a saved task in place of the conversation on screen — its text, and the model's
+     * whole context with it. False while a turn runs (stop it first: a turn must never write
+     * its reply into another task) and for a task that is not there.
+     *
+     * The file is read on the task thread, behind every save still waiting — so what opens is
+     * never older than what was said — and never on the app's thread (a long task is
+     * megabytes; parsing it there was a visible freeze). The screen changes when it is read
+     * ([onUiThread]). What the user did in the meantime wins: a newer tap, or a message sent,
+     * and this open is dropped.
+     */
+    fun openTask(id: String): Boolean {
+        synchronized(messagesLock) {
+            if (_busy.value) return false
+            if (openTaskId == id && _messages.value.isNotEmpty()) return true // on screen already
+        }
+        if (_taskList.value.none { it.id == id }) return false
+        val request = openRequests.incrementAndGet()
+        val turnsSeen = turnGeneration.get()
+        onTaskThread {
+            val task = runCatching { tasks.load(id) }.getOrNull() ?: return@onTaskThread
+            onUiThread {
+                synchronized(messagesLock) {
+                    if (openRequests.get() != request || turnGeneration.get() != turnsSeen || _busy.value) return@onUiThread
+                    saveOpenTaskLocked(history)               // the task left is kept as it stands
+                    turnGeneration.incrementAndGet()
+                    openTaskId = task.id
+                    openTaskName = task.name
+                    history = restoredHistory(task).toMutableList()
+                    _messages.value = task.transcript.mapNotNull(::bubbleOf)
+                    _openTask.value = task.id
+                }
+            }
+        }
+        return true
+    }
+
+    /** A new, empty task. What was on screen is kept — as its task. Same as [clear]. */
+    fun newTask() = clear()
+
+    /**
+     * Clear the screen (owner request 2026-11-15) — since 1.4.16 the same as "new task":
+     * stops any running turn, empties the bubbles AND the model's context (it used to keep
+     * the old context, so the model still "remembered" a cleared chat). The conversation
+     * itself is kept under Tasks; the banner idle state returns.
+     */
+    fun clear() {
+        stop()
+        synchronized(messagesLock) {
+            saveOpenTaskLocked(history)
+            turnGeneration.incrementAndGet()
+            openTaskId = null
+            openTaskName = ""
+            _openTask.value = null
+            history = mutableListOf(ChatClient.Message("system", systemPrompt()))
+            _messages.value = emptyList()
+            _busy.value = false
+        }
+    }
+
+    /** Renames a task. The open one keeps the name through its later saves. */
+    fun renameTask(id: String, name: String) {
+        val clean = name.trim()
+        if (clean.isEmpty()) return
+        synchronized(messagesLock) {
+            if (openTaskId == id) openTaskName = clean
+        }
+        onTaskThread {
+            tasks.rename(id, clean)
+            publishTasks()
+        }
+    }
+
+    /**
+     * Deletes a task for good. Deleting the OPEN one empties the screen — and it is not
+     * saved again: the id is dropped first, the delete is queued after every save already
+     * waiting, and nothing is queued after it.
+     */
+    fun deleteTask(id: String) {
+        synchronized(messagesLock) {
+            if (openTaskId == id) {
+                stop()
+                turnGeneration.incrementAndGet()
+                openTaskId = null
+                openTaskName = ""
+                _openTask.value = null
+                history = mutableListOf(ChatClient.Message("system", systemPrompt()))
+                _messages.value = emptyList()
+                _busy.value = false
+            }
+        }
+        onTaskThread {
+            tasks.delete(id)
+            publishTasks()
+        }
     }
 
     /**
@@ -345,25 +595,6 @@ class ChatSession(
     /** The user tapped a magnet in a reply: their own request, so it gets the confirmation like every tapped link. */
     fun addTorrent(magnet: String) = repository.requestAddMagnet(magnet, userInitiated = true)
 
-    /**
-     * Clear the conversation (owner request 2026-11-15): stops any running
-     * turn, wipes the bubbles AND the model's context (it used to keep the
-     * old context, so the model still "remembered" a cleared chat), and
-     * persists an empty history so a restart doesn't resurrect the chat.
-     * The banner idle state returns.
-     */
-    fun clear() {
-        stop()
-        synchronized(messagesLock) {
-            turnGeneration.incrementAndGet()
-            history = mutableListOf(ChatClient.Message("system", systemPrompt()))
-            _messages.value = emptyList()
-            _busy.value = false
-        }
-        Thread {
-            runCatching { repository.saveChatHistory(org.json.JSONArray().toString()) }
-        }.apply { isDaemon = true }.start()
-    }
 
     /**
      * Serialises every change of the bubble list — and makes "still the
@@ -875,16 +1106,29 @@ class ChatSession(
         _busy.value = true
         history.add(ChatClient.Message("user", text))
         updateMessages { it + ChatBubble("user", text) }
+        synchronized(messagesLock) {
+            if (openTaskId == null) {
+                // Created by the first message, named after it.
+                openTaskId = SessionStore.newId()
+                openTaskName = ""
+                _openTask.value = openTaskId
+            }
+            // On disk from the first moment: a process killed mid-turn leaves the question.
+            saveOpenTaskLocked(history)
+        }
 
         val client = clientFor(target)
         activeClient.set(client)
-        // THIS turn's own state. Nothing global is reset for it: the worker
-        // used to share one `stopped` flag and the session's `history`
-        // variable, so a newer send un-stopped an old worker that was still
-        // inside a slow tool, and that worker then wrote its tool result
-        // into whatever list `history` pointed at by then — after a Clear,
-        // the brand-new context (review finding 2026-11-24).
-        val turn = Turn(turnGeneration.incrementAndGet(), history)
+        // THIS turn's own state — its own COPY of the context included (1.4.16). The worker
+        // appends to that copy alone; the session's `history` is touched only on the app's
+        // thread, and replaced by the turn's list when the turn is over. Nothing global is
+        // reset for the turn: the worker used to share one `stopped` flag and the session's
+        // `history` list, so a newer send un-stopped an old worker that was still inside a
+        // slow tool, and that worker then wrote its tool result into whatever list `history`
+        // pointed at by then — after a Clear, the brand-new context (review finding
+        // 2026-11-24); and a New task reading the list while the worker appended to it could
+        // still have met mid-iteration (review 2026-11-28).
+        val turn = Turn(turnGeneration.incrementAndGet(), history.toMutableList())
         activeTurn = turn
         val worker = Thread {
             try {
@@ -940,8 +1184,6 @@ class ChatSession(
                                 updateMessages {
                                     it.filterIndexed { i, _ -> i != idx } + ChatBubble("assistant", Strings.t.emptyReplyFallback)
                                 }
-                            } else {
-                                persistMessages()
                             }
                             return@Thread
                         }
@@ -959,7 +1201,7 @@ class ChatSession(
                             // show a tool note bubble
                             val names = result.calls.joinToString(", ") { it.name }
                             updateMessages {
-                                it + ChatBubble("assistant", Strings.t.toolNoteFmt.format(names), streaming = false)
+                                it + toolNote(names)
                             }
                             for (tc in result.calls) {
                                 // A tool already running cannot be interrupted,
@@ -1003,7 +1245,13 @@ class ChatSession(
             } finally {
                 // A superseded turn must not touch a newer turn's state.
                 synchronized(messagesLock) {
-                    if (turnGeneration.get() == turn.generation) _busy.value = false
+                    if (turnGeneration.get() == turn.generation) {
+                        _busy.value = false
+                        // The turn is over and nothing dangles: its list is the context from
+                        // here on, and the task on disk is the whole of it.
+                        history = turn.history
+                        saveOpenTaskLocked(history)
+                    }
                 }
                 activeClient.compareAndSet(client, null)
             }
@@ -1088,6 +1336,10 @@ fun ChatScreen(session: ChatSession, openUrl: (String) -> Unit = {}) {
     // a half-typed message used to vanish with it.
     var input by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var confirmClear by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    // Tasks (1.4.16): the list of saved conversations, as a panel over the chat.
+    val tasks by session.taskList.collectAsState()
+    val openTask by session.openTask.collectAsState()
+    var showTasks by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -1098,168 +1350,200 @@ fun ChatScreen(session: ChatSession, openUrl: (String) -> Unit = {}) {
         if (messages.isNotEmpty() && atBottom) listState.scrollToItem(messages.size - 1)
     }
 
-    Column(modifier = Modifier.fillMaxSize().imePadding()) {
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (messages.isEmpty()) {
-                // The desktop Agent tab's idle state: the owner's Nov banner
-                // (same asset, DeepFluxNovBanner.webp), aspect-preserved,
-                // nothing else — owner 2026-11-15: no example text, and the
-                // empty state is painted with the banner's OWN background
-                // (its edges are rgb(0,0,2)) so no "square" outline shows
-                // against the app's #05070C base. Gone once a chat starts.
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(BannerBackground),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Image(
-                            painter = painterResource(space.deepflux.android.R.drawable.banner_agent),
-                            contentDescription = "DeepFlux",
-                            // Fit keeps the whole banner visible at its 2057:764
-                            // aspect ratio at every width.
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp)
-                                .heightIn(max = 300.dp),
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        // Always-visible build tag (owner 2026-11-15): lets a
-                        // tester read the running version off the idle screen.
-                        Text(
-                            "v${space.deepflux.android.BuildConfig.VERSION_NAME}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = DimText.copy(alpha = 0.7f),
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxSize(),
-                    // Top room for the clear button so it never sits on a bubble.
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 12.dp, end = 12.dp, top = 48.dp, bottom = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    items(messages, key = { it.id }) { bubble ->
-                        // A link in a reply is the user's own tap: a magnet is
-                        // offered as a torrent (the confirmation), a page
-                        // opens in the in-app browser.
-                        Bubble(
-                            bubble,
-                            onLink = { link ->
-                                when (link) {
-                                    is LinkOpen.Magnet -> session.addTorrent(link.magnet)
-                                    is LinkOpen.Web -> openUrl(link.url)
-                                }
-                            },
-                        )
-                    }
-                }
-                // "Back to the latest" — shown only once the user scrolled up
-                // while messages keep arriving.
-                if (!atBottom) {
-                    androidx.compose.material3.SmallFloatingActionButton(
-                        onClick = { scope.launch { listState.animateScrollToItem(messages.lastIndex) } },
-                        containerColor = Card,
-                        contentColor = Accent,
+    // The system Back button closes the task list; it must not leave the chat.
+    androidx.activity.compose.BackHandler(enabled = showTasks) { showTasks = false }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.fillMaxSize().imePadding()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                if (messages.isEmpty()) {
+                    // The desktop Agent tab's idle state: the owner's Nov banner
+                    // (same asset, DeepFluxNovBanner.webp), aspect-preserved,
+                    // nothing else — owner 2026-11-15: no example text, and the
+                    // empty state is painted with the banner's OWN background
+                    // (its edges are rgb(0,0,2)) so no "square" outline shows
+                    // against the app's #05070C base. Gone once a chat starts.
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 8.dp),
+                            .fillMaxSize()
+                            .background(BannerBackground),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Text("↓", style = MaterialTheme.typography.labelLarge)
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Image(
+                                painter = painterResource(space.deepflux.android.R.drawable.banner_agent),
+                                contentDescription = "DeepFlux",
+                                // Fit keeps the whole banner visible at its 2057:764
+                                // aspect ratio at every width.
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp)
+                                    .heightIn(max = 300.dp),
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            // Always-visible build tag (owner 2026-11-15): lets a
+                            // tester read the running version off the idle screen.
+                            Text(
+                                "v${space.deepflux.android.BuildConfig.VERSION_NAME}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = DimText.copy(alpha = 0.7f),
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize(),
+                        // Top room for the clear button so it never sits on a bubble.
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 12.dp, end = 12.dp, top = 48.dp, bottom = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(messages, key = { it.id }) { bubble ->
+                            // A link in a reply is the user's own tap: a magnet is
+                            // offered as a torrent (the confirmation), a page
+                            // opens in the in-app browser.
+                            Bubble(
+                                bubble,
+                                onLink = { link ->
+                                    when (link) {
+                                        is LinkOpen.Magnet -> session.addTorrent(link.magnet)
+                                        is LinkOpen.Web -> openUrl(link.url)
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    // "Back to the latest" — shown only once the user scrolled up
+                    // while messages keep arriving.
+                    if (!atBottom) {
+                        androidx.compose.material3.SmallFloatingActionButton(
+                            onClick = { scope.launch { listState.animateScrollToItem(messages.lastIndex) } },
+                            containerColor = Card,
+                            contentColor = Accent,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 8.dp),
+                        ) {
+                            Text("↓", style = MaterialTheme.typography.labelLarge)
+                        }
                     }
                 }
-            }
-            // Clear-chat button (owner request 2026-11-15), top-right of the
-            // message area while a conversation exists. It asks first: one
-            // stray tap used to wipe the whole conversation for good.
-            if (messages.isNotEmpty()) {
+                // Tasks (1.4.16), top-left: every conversation is kept; this opens the list.
                 IconButton(
-                    onClick = { confirmClear = true },
-                    modifier = Modifier.align(Alignment.TopEnd),
+                    onClick = { showTasks = true },
+                    modifier = Modifier.align(Alignment.TopStart),
                 ) {
-                    Icon(Icons.Filled.Delete, contentDescription = Strings.t.clearChatTitle, tint = DimText)
+                    Icon(Icons.Filled.Menu, contentDescription = Strings.t.tasksTitle, tint = DimText)
                 }
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            fun submit() {
-                if (busy || input.isBlank()) return
-                session.send(input.trim())
-                input = ""
-                // A message the user just sent is always brought into view.
-                scope.launch { listState.animateScrollToItem(messages.size) }
-            }
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                placeholder = { Text(Strings.t.messagePlaceholder) },
-                modifier = Modifier.weight(1f),
-                maxLines = 4,
-                // Stays enabled while the agent works, so the next message
-                // can be typed ahead (it used to lock until the turn ended).
-                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                    imeAction = androidx.compose.ui.text.input.ImeAction.Send,
-                ),
-                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSend = { submit() }),
-            )
-            Spacer(Modifier.width(8.dp))
-            // Voice input (plan §13 #11): the system speech UI, no permission
-            // needed (the recognizer app handles its own mic access).
-            val ctx = androidx.compose.ui.platform.LocalContext.current
-            val speechAvailable = remember {
-                android.speech.SpeechRecognizer.isRecognitionAvailable(ctx)
-            }
-            if (speechAvailable) {
-                val speechLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-                    androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
-                ) { result ->
-                    val spoken = result.data
-                        ?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)
-                        ?.firstOrNull()
-                    if (!spoken.isNullOrBlank()) {
-                        input = if (input.isBlank()) spoken else "$input $spoken"
+                // Clear-chat button (owner request 2026-11-15), top-right of the
+                // message area while a conversation exists. It asks first. Since 1.4.16
+                // what was said stays under Tasks — only the screen starts over.
+                if (messages.isNotEmpty()) {
+                    IconButton(
+                        onClick = { confirmClear = true },
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    ) {
+                        Icon(Icons.Filled.Delete, contentDescription = Strings.t.clearChatTitle, tint = DimText)
                     }
                 }
-                IconButton(onClick = {
-                    val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                        putExtra(
-                            android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                            android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                fun submit() {
+                    if (busy || input.isBlank()) return
+                    session.send(input.trim())
+                    input = ""
+                    // A message the user just sent is always brought into view.
+                    scope.launch { listState.animateScrollToItem(messages.size) }
+                }
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    placeholder = { Text(Strings.t.messagePlaceholder) },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 4,
+                    // Stays enabled while the agent works, so the next message
+                    // can be typed ahead (it used to lock until the turn ended).
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Send,
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSend = { submit() }),
+                )
+                Spacer(Modifier.width(8.dp))
+                // Voice input (plan §13 #11): the system speech UI, no permission
+                // needed (the recognizer app handles its own mic access).
+                val ctx = androidx.compose.ui.platform.LocalContext.current
+                val speechAvailable = remember {
+                    android.speech.SpeechRecognizer.isRecognitionAvailable(ctx)
+                }
+                if (speechAvailable) {
+                    val speechLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+                    ) { result ->
+                        val spoken = result.data
+                            ?.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS)
+                            ?.firstOrNull()
+                        if (!spoken.isNullOrBlank()) {
+                            input = if (input.isBlank()) spoken else "$input $spoken"
+                        }
+                    }
+                    IconButton(onClick = {
+                        val intent = android.content.Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                            putExtra(
+                                android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                                android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+                            )
+                            putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, Strings.t.messagePlaceholder)
+                        }
+                        runCatching { speechLauncher.launch(intent) }
+                    }) {
+                        Icon(
+                            space.deepflux.android.ui.AppIcons.Mic,
+                            contentDescription = Strings.t.voiceInput,
+                            tint = Accent,
                         )
-                        putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, Strings.t.messagePlaceholder)
                     }
-                    runCatching { speechLauncher.launch(intent) }
-                }) {
-                    Icon(
-                        space.deepflux.android.ui.AppIcons.Mic,
-                        contentDescription = Strings.t.voiceInput,
-                        tint = Accent,
-                    )
+                }
+                if (busy) {
+                    androidx.compose.material3.OutlinedButton(
+                        onClick = { session.stop() },
+                        modifier = Modifier.padding(0.dp),
+                    ) { Text(Strings.t.stop, style = MaterialTheme.typography.labelSmall) }
+                } else {
+                    IconButton(
+                        enabled = input.isNotBlank(),
+                        onClick = { submit() },
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = Strings.t.send, tint = Accent)
+                    }
                 }
             }
-            if (busy) {
-                androidx.compose.material3.OutlinedButton(
-                    onClick = { session.stop() },
-                    modifier = Modifier.padding(0.dp),
-                ) { Text(Strings.t.stop, style = MaterialTheme.typography.labelSmall) }
-            } else {
-                IconButton(
-                    enabled = input.isNotBlank(),
-                    onClick = { submit() },
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = Strings.t.send, tint = Accent)
-                }
             }
+        if (showTasks) {
+            TasksPanel(
+                tasks = tasks,
+                openTask = openTask,
+                busy = busy,
+                // Either way the user wants the chat now: the list gets out of the way (emulator, 2026-11-28 —
+                // it used to stay open over the conversation it had just changed to).
+                onOpen = { id ->
+                    session.openTask(id)
+                    showTasks = false
+                },
+                onRename = { id, name -> session.renameTask(id, name) },
+                onDelete = { session.deleteTask(it) },
+                onNew = {
+                    session.newTask()
+                    showTasks = false
+                },
+                onClose = { showTasks = false },
+            )
         }
     }
 
@@ -1271,8 +1555,8 @@ fun ChatScreen(session: ChatSession, openUrl: (String) -> Unit = {}) {
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {
                     confirmClear = false
-                    session.clear()
-                }) { Text(Strings.t.remove, color = space.deepflux.android.ui.theme.ErrorRed) }
+                    session.newTask()
+                }) { Text(Strings.t.newTask, color = Accent) }
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = { confirmClear = false }) { Text(Strings.t.cancel) }
@@ -1288,7 +1572,8 @@ private fun Bubble(bubble: ChatBubble, onLink: (LinkOpen) -> Unit) {
     // The agent's replies are markdown — bold, lists, code, tables — and were
     // shown raw ("**bold**", "#" and table pipes). While a reply streams
     // the half-written markers simply show literally until they close.
-    val asMarkdown = !mine && !isError && !bubble.content.startsWith(Strings.t.toolNoteFmt.substringBefore('%'))
+    // A tool note is a line of its own (its kind is on the bubble, not guessed from its text).
+    val asMarkdown = !mine && !isError && bubble.toolNames == null
     // Keyed by the bubble's OWN id — not its text (the key changed with
     // every streamed token and "show all reasoning" snapped shut again
     // each time it was tapped during a reply), and not its position

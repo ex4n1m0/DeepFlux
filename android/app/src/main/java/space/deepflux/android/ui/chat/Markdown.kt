@@ -125,10 +125,62 @@ fun MarkdownText(
     modifier: Modifier = Modifier,
     onLink: (LinkOpen) -> Unit,
 ) {
-    val root = remember(markdown) { PARSER.parse(markdown) }
+    // Null only when nesting was too deep even for the guarded text: shown as it is, then.
+    val root = remember(markdown) { parseSafely(markdown) }
+    if (root == null) {
+        Text(markdown, style = MaterialTheme.typography.bodyMedium, modifier = modifier)
+        return
+    }
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(4.dp)) {
         RenderBlocks(root, onLink, depth = 0)
     }
+}
+
+/**
+ * The document, or null when the parser overflowed on the nesting (1.4.16; review). The
+ * PARSER recurses per level of blocks inside blocks — measured on this JVM: fine at 6,400
+ * quotes in a row, over the stack well before 20,000 — so the renderer's own depth limit
+ * alone did not save the app; a reply like that, saved as a task, would have crashed it at
+ * every reopen. Two walls: [parseable] first, and the overflow caught last.
+ */
+internal fun parseSafely(text: String): Node? = try {
+    PARSER.parse(parseable(text))
+} catch (e: StackOverflowError) {
+    null
+}
+
+/** Quote markers one line may open onto the parser; a longer run is cut to this. */
+private const val QUOTE_RUN_LIMIT = 24
+
+/**
+ * The text with absurd nesting taken out before the parser sees it: a line opening with
+ * more than [QUOTE_RUN_LIMIT] quote markers keeps that many, then an ellipsis — the surplus
+ * markers are dropped (they carry nothing). ">>>>…" is one block per character to the
+ * parser, and each level is a frame on the app's thread.
+ *
+ * Counted in a loop, NOT with a regex of a repeated group: Java's regex engine recurses per
+ * repetition and overflowed on the very run this guards against (measured 2026-11-28).
+ */
+internal fun parseable(text: String): String {
+    if ('>' !in text) return text
+    val out = ArrayList<String>()
+    var changed = false
+    for (line in text.lineSequence()) {
+        var i = 0
+        var markers = 0
+        while (i < line.length) {
+            val c = line[i]
+            if (c == '>') markers++ else if (c != ' ' && c != '\t') break
+            i++
+        }
+        if (markers > QUOTE_RUN_LIMIT) {
+            out += "> ".repeat(QUOTE_RUN_LIMIT) + "… " + line.substring(i).trimStart()
+            changed = true
+        } else {
+            out += line
+        }
+    }
+    return if (changed) out.joinToString("\n") else text
 }
 
 @Composable
@@ -142,6 +194,15 @@ private fun RenderBlocks(parent: Node, onLink: (LinkOpen) -> Unit, depth: Int) {
 
 @Composable
 private fun RenderBlock(node: Node, onLink: (LinkOpen) -> Unit, depth: Int) {
+    // Past the limit a block is shown as its plain text, taken iteratively: a pathological
+    // reply must not recurse without end — ">>>>…" is one quote per character, "- - - -" a
+    // list per dash. (Until 1.4.16 a quote inside a quote did not count as a level at all;
+    // and since replies are saved as tasks, such a one would have crashed the app at every
+    // reopen.) Text and paragraphs are shown as they are at any depth.
+    if (depth >= MAX_DEPTH && !isTextual(node)) {
+        Text(flatTextOf(node), style = MaterialTheme.typography.bodyMedium)
+        return
+    }
     when (node) {
         is Paragraph -> Text(inlineMarkdown(node, onLink), style = MaterialTheme.typography.bodyMedium)
         is Heading -> Text(
@@ -166,8 +227,9 @@ private fun RenderBlock(node: Node, onLink: (LinkOpen) -> Unit, depth: Int) {
             modifier = Modifier.padding(vertical = 2.dp),
         ) {
             Column(modifier = Modifier.padding(start = 10.dp, top = 4.dp, end = 10.dp, bottom = 4.dp)) {
-                // A quote's paragraphs inside carry their own text style.
-                RenderBlocks(node, onLink, depth)
+                // A quote's paragraphs inside carry their own text style. One level deeper:
+                // a quote in a quote is a block in a block like any other.
+                RenderBlocks(node, onLink, nestedDepth(depth))
             }
         }
         is ThematicBreak -> HorizontalDivider(
@@ -194,7 +256,7 @@ private fun RenderBlock(node: Node, onLink: (LinkOpen) -> Unit, depth: Int) {
  */
 @Composable
 private fun RenderList(list: Node, onLink: (LinkOpen) -> Unit, depth: Int, marker: () -> String) {
-    val nested = if (depth < MAX_DEPTH) depth + 1 else depth
+    val nested = nestedDepth(depth)
     var item = list.firstChild
     while (item is ListItem) {
         Row(modifier = Modifier.fillMaxWidth().padding(start = (depth * 16).dp)) {
@@ -222,7 +284,45 @@ private fun RenderList(list: Node, onLink: (LinkOpen) -> Unit, depth: Int, marke
     }
 }
 
+/** Blocks inside blocks stop here: past it a block is shown as its plain text. */
 private const val MAX_DEPTH = 12
+
+/** How deep the INSIDE of a block goes: one more than the block, up to the limit. */
+internal fun nestedDepth(depth: Int): Int = if (depth < MAX_DEPTH) depth + 1 else depth
+
+/** The nodes shown as they are at any depth: a paragraph and what can sit inside one. */
+private fun isTextual(node: Node): Boolean =
+    node is Paragraph || node is Text || node is Code || node is SoftLineBreak || node is HardLineBreak ||
+        node is Emphasis || node is StrongEmphasis || node is Link || node is Image
+
+/**
+ * The plain text of everything inside a block, taken WITHOUT recursing (its own stack):
+ * it is used exactly when the structure is too deep to recurse into.
+ */
+internal fun flatTextOf(root: Node): String {
+    val sb = StringBuilder()
+    val stack = ArrayDeque<Node>()
+    var n = root.firstChild
+    while (true) {
+        if (n == null) {
+            if (stack.isEmpty()) break
+            n = stack.removeLast().next
+            continue
+        }
+        when (n) {
+            is Text -> sb.append(n.literal)
+            is Code -> sb.append(n.literal)
+            is SoftLineBreak, is HardLineBreak -> sb.append(' ')
+            else -> {
+                stack.addLast(n)
+                n = n.firstChild
+                continue
+            }
+        }
+        n = n.next
+    }
+    return sb.toString()
+}
 
 @Composable
 private fun CodeBlock(code: String) {

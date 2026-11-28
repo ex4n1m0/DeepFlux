@@ -2,12 +2,20 @@ package space.deepflux.android.agent
 
 import space.deepflux.android.data.AppPrefs
 
-/** Where one turn's requests go, and with which key (the conversation is passed separately). */
-data class ChatTarget(val endpoint: LlmEndpoint, val apiKey: String)
+/**
+ * Where one turn's requests go, and with which key (the conversation is passed separately).
+ * Not a data class on purpose: a data class prints every field, and nothing that prints
+ * this may print the key.
+ */
+class ChatTarget(val endpoint: LlmEndpoint, val apiKey: String) {
+    override fun toString(): String = "ChatTarget($endpoint)"
+}
 
 /** What a send needs — or why it cannot go out. */
 sealed class ChatPlan {
-    data class Go(val target: ChatTarget) : ChatPlan()
+    class Go(val target: ChatTarget) : ChatPlan() {
+        override fun toString(): String = "ChatPlan.Go($target)"
+    }
 
     /** Another provider than Venice, and the user has entered no key of their own. [provider] is its id. */
     data class NeedsOwnKey(val provider: String) : ChatPlan()
@@ -31,9 +39,9 @@ fun planSend(prefs: AppPrefs, builtInKey: () -> String): ChatPlan = try {
     val endpoint = LlmPresets.resolve(
         prefs.llmProvider, prefs.llmBaseUrl, prefs.llmModel, prefs.llmEffort, prefs.llmCustomSendsEffort,
     )
-    when (val key = LlmPresets.apiKeyFor(endpoint.providerId, prefs.customApiKey, builtInKey)) {
+    when (val key = LlmPresets.apiKeyFor(endpoint, prefs.customApiKey, builtInKey)) {
         null ->
-            if (LlmPresets.builtInKeyWorksFor(endpoint.providerId)) ChatPlan.NoKey
+            if (LlmPresets.builtInKeyMayServe(endpoint)) ChatPlan.NoKey
             else ChatPlan.NeedsOwnKey(endpoint.providerId)
         else -> ChatPlan.Go(ChatTarget(endpoint, key))
     }

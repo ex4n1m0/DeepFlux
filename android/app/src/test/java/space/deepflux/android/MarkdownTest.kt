@@ -4,6 +4,7 @@ import android.app.Application
 import org.commonmark.node.FencedCodeBlock
 import org.commonmark.ext.gfm.tables.TableBlock
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -12,6 +13,10 @@ import space.deepflux.android.ui.chat.LinkOpen
 import space.deepflux.android.ui.chat.chatMarkdownParser
 import space.deepflux.android.ui.chat.inlineMarkdown
 import space.deepflux.android.ui.chat.linkOpenFor
+import space.deepflux.android.ui.chat.flatTextOf
+import space.deepflux.android.ui.chat.nestedDepth
+import space.deepflux.android.ui.chat.parseSafely
+import space.deepflux.android.ui.chat.parseable
 import space.deepflux.android.ui.chat.plainTextOf
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -37,6 +42,32 @@ class MarkdownTest {
 
     private fun tap(link: LinkAnnotation.Clickable, opened: MutableList<LinkOpen>) {
         link.linkInteractionListener!!.onClick(link)
+    }
+
+    @Test
+    fun nestingEndsAtTheLimitAndIsTakenApartWithoutRecursing() {
+        // (Review 2026-11-28.) A quote in a quote did not count as a level: ">>>>…" is one
+        // quote per character — a frame on the app's thread in the PARSER already — and since
+        // replies are saved, such a task would have crashed the app at every reopen.
+        assertEquals(1, nestedDepth(0))
+        assertEquals(12, nestedDepth(11))
+        assertTrue("never below the limit once it is reached", nestedDepth(5000) >= nestedDepth(11))
+
+        // The parser never sees an absurd run.
+        val longRun = ">".repeat(20_000) + " deep inside"
+        assertEquals("> ".repeat(24) + "… deep inside", parseable(longRun))
+        assertEquals("a normal quote is left alone", "> quoted", parseable("> quoted"))
+        assertEquals("text without quotes is left alone", "a > b", parseable("a > b"))
+        val quotes = parseSafely(longRun)
+        assertNotNull("20,000 quotes do not overflow the parser", quotes)
+        assertTrue(flatTextOf(quotes!!).trim(), flatTextOf(quotes!!).trim().endsWith("deep inside"))
+
+        // Whatever still overflows the parser is answered with null, not with a crash.
+        val list = StringBuilder()
+        repeat(3000) { i -> list.append("  ".repeat(i)).append("- ").append(10.toChar()) }
+        list.append("  ".repeat(3000)).append("- leaf")
+        val deep = parseSafely(list.toString())
+        if (deep != null) assertEquals("leaf", flatTextOf(deep).trim())
     }
 
     @Test

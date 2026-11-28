@@ -54,14 +54,40 @@ class SessionStore(private val dir: File) {
     private fun path(id: String): File? =
         if (ID.matches(id)) File(dir, "$id.json") else null
 
-    /** Saved tasks, most recently updated first. Unreadable files are skipped, never listed. */
+    /** What this store last read or wrote of one file: its time, its row, and its `created_at`. */
+    private class Cached(val mtime: Long, val meta: Meta, val createdAt: String)
+
+    /**
+     * The last read of each file, by file name. A save re-reads the task that changed, not
+     * every task on the device — a heavy user has hundreds, and the chat saves after every
+     * turn; a write updates its own entry, so the list after a save parses nothing. Guarded
+     * by [lock]; an entry is used only while the file's time is still the one it was read with.
+     */
+    private val listed = HashMap<String, Cached>()
+
+    /**
+     * Saved tasks, most recently updated first. Unreadable files are skipped, never listed.
+     *
+     * `updated_at` has whole seconds (the desktop's format): two tasks saved inside one
+     * second would come in no order at all, so those are told apart by the file's own
+     * time — the envelope is left exactly as both apps write it.
+     */
     fun list(): List<Meta> = synchronized(lock) {
-        dir.listFiles { f -> f.name.endsWith(".json") && f.isFile }
-            ?.mapNotNull { file ->
-                runCatching { readEnvelope(file) }.getOrNull()?.let { metaOf(it) }
-            }
-            ?.sortedByDescending { it.updatedAt }
-            ?: emptyList()
+        val files = dir.listFiles { f -> f.name.endsWith(".json") && f.isFile } ?: return@synchronized emptyList()
+        listed.keys.retainAll(files.mapTo(HashSet()) { it.name })
+        files
+            .mapNotNull { file -> cachedOf(file)?.let { it.meta to it.mtime } }
+            .sortedWith(compareByDescending<Pair<Meta, Long>> { it.first.updatedAt }.thenByDescending { it.second })
+            .map { it.first }
+    }
+
+    /** The file's entry in [listed], read now if it changed since it was last read. Null for no such task, or one that cannot be read. */
+    private fun cachedOf(file: File): Cached? {
+        val mtime = file.lastModified()
+        listed[file.name]?.takeIf { it.mtime == mtime }?.let { return it }
+        return runCatching { readEnvelope(file) }.getOrNull()?.let { e ->
+            Cached(mtime, metaOf(e), e.optString("created_at")).also { listed[file.name] = it }
+        }
     }
 
     fun load(id: String): Task? = synchronized(lock) {
@@ -77,7 +103,8 @@ class SessionStore(private val dir: File) {
         synchronized(lock) {
             val file = path(id) ?: return false
             val now = now()
-            val existing = runCatching { readEnvelope(file) }.getOrNull()
+            // created_at from what is known of the file; it is read again only if it changed since.
+            val existingCreatedAt = cachedOf(file)?.createdAt
             val envelope = JSONObject()
                 .put("schema", SCHEMA)
                 .put("id", id)
@@ -85,11 +112,11 @@ class SessionStore(private val dir: File) {
                     "name",
                     name.trim().ifBlank { autoName(transcript.firstOrNull { it.kind == "user" }?.text ?: "") },
                 )
-                .put("created_at", existing?.optString("created_at")?.takeIf { it.isNotBlank() } ?: now)
+                .put("created_at", existingCreatedAt?.takeIf { it.isNotBlank() } ?: now)
                 .put("updated_at", now)
                 .put("messages", messagesToJson(sanitize(messages)))
                 .put("transcript", transcriptToJson(transcript))
-            writeAtomic(file, envelope)
+            writeAtomic(file, envelope).also { if (it) remember(file, envelope) }
         }
 
     fun rename(id: String, name: String): Boolean = synchronized(lock) {
@@ -99,12 +126,18 @@ class SessionStore(private val dir: File) {
         val envelope = runCatching { readEnvelope(file) }.getOrNull() ?: return false
         envelope.put("name", clean.take(MAX_NAME_LEN * 2)) // custom names may run longer
         envelope.put("updated_at", now())
-        writeAtomic(file, envelope)
+        writeAtomic(file, envelope).also { if (it) remember(file, envelope) }
     }
 
     fun delete(id: String): Boolean = synchronized(lock) {
         val file = path(id) ?: return false
+        listed.remove(file.name)
         file.delete()
+    }
+
+    /** After a write of [file]: what it says is known, no reading back. */
+    private fun remember(file: File, envelope: JSONObject) {
+        listed[file.name] = Cached(file.lastModified(), metaOf(envelope), envelope.optString("created_at"))
     }
 
     // ------------------------------------------------------------------ format
@@ -176,7 +209,13 @@ class SessionStore(private val dir: File) {
     private fun writeAtomic(file: File, envelope: JSONObject): Boolean = runCatching {
         dir.mkdirs()
         val tmp = File(dir, file.name + ".tmp")
-        tmp.writeText(envelope.toString())
+        // Written through a stream that is synced before the move: after a power loss the
+        // file is the old one or the new one — never the empty one a rename of unsynced data
+        // leaves behind (which would be no task at all: unreadable, and never listed).
+        java.io.FileOutputStream(tmp).use { out ->
+            out.write(envelope.toString().toByteArray(Charsets.UTF_8))
+            out.fd.sync()
+        }
         try {
             Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         } catch (e: java.nio.file.AtomicMoveNotSupportedException) {

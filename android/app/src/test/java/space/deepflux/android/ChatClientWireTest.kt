@@ -132,6 +132,48 @@ class ChatClientWireTest {
     }
 
     @Test
+    fun aServersErrorTextNeverCarriesWhatCouldBeAKey() {
+        // (Review 2026-11-28.) The error body goes on screen and into the log, and an endpoint
+        // can echo the request's Authorization header.
+        server.route("/v1/chat/completions") {
+            TinyHttpServer.Response(status = 401, body = """{"error":"rejected Authorization: Bearer sk-test-0123456789 and token sk-test-0123456789 too"}""".toByteArray())
+        }
+        try {
+            ChatClient(server.url("/v1"), "sk-test-0123456789", "model-x").complete(listOf(ChatClient.Message("user", "hello")))
+            fail("a refused request must throw")
+        } catch (e: IllegalStateException) {
+            val message = e.message ?: ""
+            assertFalse(message, message.contains("sk-test-0123456789"))
+            assertTrue(message, message.contains("Bearer <redacted>"))
+            assertTrue(message, message.contains("<redacted>"))
+            assertTrue("still says what happened", message.startsWith("HTTP 401"))
+        }
+        val client = ChatClient(server.url("/v1"), "sk-test", "model-x")
+        assertTrue(client.shownError("x".repeat(5000) + " Bearer abcdefghijklmnop").length <= 300)
+    }
+
+    @Test
+    fun aBearerTokenThatIsNotThisClientsOwnIsCutOutAsWell() {
+        // A server can repeat a token of somebody else's — an upstream provider's, another
+        // user's. It is a credential wherever it came from, and neither the chat nor the log
+        // is a place for it. (The test above only ever saw THIS client's key come back, so
+        // it could not tell the bearer rule from the own-key rule: a mutation showed that.)
+        val client = ChatClient(server.url("/v1"), "sk-test", "model-x")
+        val shown = client.shownError(
+            """{"error":"upstream refused: authorization: Bearer sk-live-SomebodyElsesKey0123456789 — retry later"}""",
+        )
+        assertFalse(shown, shown.contains("sk-live-SomebodyElsesKey0123456789"))
+        assertTrue(shown, shown.contains("Bearer <redacted>"))
+        assertTrue("still says what happened", shown.contains("upstream refused"))
+        // Whatever its case, the token goes (the cut is written "Bearer <redacted>", in one
+        // case); whatever is too short to be a token is left as it is.
+        val upper = client.shownError("authorization: BEARER abcdefghijklmnop")
+        assertFalse(upper, upper.contains("abcdefghijklmno"))
+        assertTrue(upper, upper.contains("Bearer <redacted>"))
+        assertTrue(client.shownError("bearer abc").contains("bearer abc"))
+    }
+
+    @Test
     fun anErrorAnswerIsReportedWithItsCodeAndWhatTheServerSaid() {
         server.route("/v1/chat/completions") { TinyHttpServer.Response(status = 401, body = """{"error":"invalid api key"}""".toByteArray()) }
         try {
