@@ -3773,6 +3773,22 @@ gui/commander_rename.py, gui/commander_bridge.py. Durable rules — do not regre
 
 ## Android parity + review rounds (2026-11-23/24) — durable rules (1.4.13, RELEASED 2026-11-24)
 
+STATE (2026-11-28): TEST BUILD, not released. Android 1.4.16 / versionCode 32
+is on the site as an UNLINKED test build for the owner's phone (222929922
+bytes = 212.6 MiB, sha256
+02082ec464c892cfb7dac771ee06086f2d7decac032edaee3e5bb507e9633250, same
+signing cert as 1.4.14/1.4.15): both pages and `latest-android.json` STAY on
+1.4.15 until the owner's word "release" (the ritual is the 1.4.15 one just
+below: 4 hrefs, the size line COMPUTED — 212.6 MB — the sha, the feed with
+versionCode 32, then delete the 1.4.15 APK). Three pieces: the AI provider /
+model / thinking level as settings (the built-in key is Venice's alone, two
+walls), v2-only magnets + torrent identity (KNOWN GAP 10 closed) — including
+the "twins in the session" fix that only the REAL engine could show — and
+saved tasks (the desktop's agent sessions). Suite 551 / 0. NEXT version
+1.4.17 / versionCode 33. Verified on the emulator only: nothing of 1.4.16 has
+run on a phone. What it adds and how it was verified: "Android 1.4.16" at the
+END of this file.
+
 STATE (2026-11-27, evening): RELEASED. Android 1.4.15 / versionCode 31 is
 LIVE — the test build byte for byte (222848002 bytes, sha256
 a35b0157099813fc15e2b83e6f3140b397cf6802a6904a995bdb98e2190eeda2, same
@@ -4656,6 +4672,12 @@ take from an alert what is needed IN the callback; never keep the alert.
   it is NOT in the released 1.4.15 (that version spent its round on the
   codecs). Cosmetic, same day: the confirmation shows a torrent's name
   ("V2Only"), the list shows its single file ("v2.bin").
+  BOTH CLOSED IN 1.4.16 (test build 2026-11-28 — still not in the released
+  1.4.15): gap 10 outright; gap 4 together with a defect that closing gap 10
+  made REACHABLE (two magnets of one hybrid torrent wedged both entries
+  forever — the library refuses their metadata and stops both; the app now
+  resolves it). "Twins in the session" under "Android 1.4.16" at the END of
+  this file.
 
 Still unverified anywhere: the wake lock after a 60 s stall (does an
 inbound peer wake the radio?), a physical device's battery policy for
@@ -4894,3 +4916,356 @@ expensive next time):
  * Looking up "Check for updates" case-insensitively matched "Auto-check for
    updates" first (the toggle row). Tap by the node whose text is EQUAL, or
    read the coordinates from a fresh dump.
+
+## Android 1.4.16 (2026-11-27/28) — the AI is the user's choice; v2-only magnets; saved tasks; twins in the session
+
+WHY: the owner's "ok go for the next version" after 1.4.15, in the roadmap's recorded order:
+wire what was drafted with tests but never connected (LlmPresets, SessionStore), close KNOWN
+GAP 10 (v2-only magnets), and carry the rest of the roadmap over. Three commits on
+`android-1.4.13` (and the main branch `svp-out-of-process`, kept equal): the provider (1),
+torrent identity (2), saved tasks (3). Two independent reviews and what the emulator found
+ride with them — the last of it BELOW the identity part ("twins in the session"): a defect
+this version alone could reach, found by running the real engine, not by any unit test.
+
+A — THE AI PROVIDER, MODEL AND THINKING LEVEL ARE SETTINGS (agent/LlmPresets.kt,
+agent/ChatPlan.kt, data/AppSettings.kt, ui/settings/AiAgentCard.kt). Until now the chat
+talked to Venice, with the default model and NO thinking level, whoever the user picked.
+ * Five settings: `llm_provider` (venice | deepseek | openrouter | custom; Venice out of
+   the box), `llm_base_url`, `llm_model` ("" = the provider's default), `llm_effort`
+   (none | low | medium | high | max; LOW by default — owner 2026-11-21) and
+   `llm_custom_sends_effort`. Model + base URL are saved in ONE edit.
+ * The request carries `reasoning_effort` exactly as the desktop sends it — by the preset
+   (Venice has no "medium": sent as "high"; OpenRouter's "max" is "xhigh"); nothing where
+   the endpoint takes none. The thinking stream is read under both names (`reasoning_content`
+   — DeepSeek, Venice — and `reasoning` — OpenRouter), and only when it is a string.
+ * THE KEY RULE (the one with teeth): the user's own key always wins. The BUILT-IN shared key
+   is a Venice key — used for Venice and NOTHING else: never another company's API, never an
+   address the user typed, and for any other provider it is not even READ
+   (`LlmPresets.apiKeyFor(endpoint, userKey, builtInKey: () -> String)`). Two walls, because
+   the review found the first one alone had a hole: a base URL STORED in the settings used to
+   replace every provider's own address — with the built-in key then on its way to that
+   address. Now the typed address is Custom's alone (`resolve`), AND the key is handed out
+   only for Venice at Venice's own address (`builtInKeyMayServe`). A request that cannot
+   go out says WHY, in the chat: another provider without a key of the user's own names that
+   provider and points at Settings (a `ChatPlan.NeedsOwnKey`, compared BY VALUE); a custom
+   endpoint without an address says so; Venice with no key at all says there is none.
+ * Tests inject the client; the production line that builds it is pinned by source
+   (LlmWiringTest): the client gets the whole `ChatTarget` — address, key, model, thinking
+   level — and nowhere the constructor's defaults. `ChatTarget` is no data class (its
+   `toString` would print the key), and a server's error text is redacted before it reaches
+   the chat or the log (`shownError`: any bearer token — somebody else's too — and the
+   client's own key; the test for "somebody else's" was missing until a mutation showed it).
+ * The .dfc export carries the five settings; an export made before them leaves them alone;
+   a DESKTOP export brings provider and key together or not at all (an empty key clears this
+   device's), its "local" provider (a model on the user's own GPU, which this app has not)
+   brings neither, and an import writes only the sidecar files this app itself exports
+   (`isExportedSidecar`: a crafted archive could name any file before the review).
+ * SIDE EFFECT WORTH MORE THAN IT LOOKS: the 22 ChatLoopTest tests that skipped in every
+   build without an embedded key — every CI run — now run everywhere. They drive the loop
+   through a scripted model and never needed a real key; they skipped only because the chat
+   refused to send without one. The key comes from a stand-in in tests now
+   (`ChatSession(builtInKey = { … })`). Expect `0 skipped` for ChatLoopTest on CI.
+
+B — TORRENT IDENTITY FOR V2 (engine/MagnetParser.kt, engine/TorrentMeta.kt,
+engine/TorrentEngine.kt, engine/TorrentRepository.kt; KNOWN GAP 10 and gap (4) are CLOSED).
+ * THE NAMING RULE — measured on libtorrent 2.1.1 with the desktop's library
+   (`_gate98/android/hybrid_name_check.py`, `hybrid_metadata_check.py`), and what the
+   emulator's 2.1.0 does:
+   — A torrent the library knows by BOTH hashes (added from its .torrent file) is named by
+   the FIRST 20 BYTES of its v2 hash (`info_hashes().get_best()`), and is found by either
+   hash.
+   — Added by a MAGNET it is named by the hash the magnet carried, and found by that one
+   ONLY — until its metadata arrives. From then on it is known by both hashes and, for a
+   hybrid torrent, RENAMED to the first 20 bytes of its v2 hash (a v1 magnet's hybrid
+   torrent: v1 hash, then the truncated v2 — that rename is why `entryOfEngineHash` exists;
+   found on the emulator 2026-11-25).
+   — In this app the entry's key is the magnet's hash (40 hex; of a v2-only magnet's 64-hex
+   `btih` its first 20 bytes) or, for a file, the engine's name. The status poll finds each
+   entry's torrent by the entry's OWN key (so the rename costs nothing); everything that
+   comes FROM the engine — the name on an alert — is asked whose it is first.
+ * A v2-only MAGNET carries the WHOLE 64-hex v2 hash under `btih` (BEP 52) — "no magnet" to
+   the app until now. `MagnetParser.infoHashHex` takes its first 40 hex. The engine parses a
+   v2 hash ONLY as `xt=urn:btmh:1220<64 hex>` (measured: the `btih` spelling gets "invalid
+   info-hash"), so `MagnetParser.forEngine` respells it for the engine call alone.
+ * THE MAGNET SAVED WITH A TORRENT MUST NAME IT: `MagnetParser.magnetFor(v1Hash, v2Hash)` —
+   by the v1 hash when it has one (every hybrid torrent is linked that way, every client
+   understands it), else by the WHOLE v2 hash. Never from the 20-byte name alone: a 40-hex
+   `btih` is a v1 info-hash to every client, and the first half of a v2 hash names no
+   torrent. That is what was saved for every torrent added from a .torrent FILE until
+   1.4.15 (`"magnet:?xt=urn:btih:" + hash`) — right for a v1 torrent, a magnet to no
+   torrent for a v2-only or hybrid one. It did no harm while the kept .torrent existed;
+   without that it restored nothing. So: the engine now also tells the WHOLE v2 hash
+   (`TorrentFileAdd.Added.v2Hash`, 64 hex), and the entry is saved with `magnetFor`.
+ * HEALED AT EVERY START, from the kept file's own hashes: a saved magnet that does not
+   name the torrent (`MagnetParser.namesTorrent`) is replaced by the right one and
+   persisted — a list written by 1.4.15 or earlier puts itself right at the first start
+   with this version. A magnet a site wrote (with its trackers, by the v1 hash) NAMES the
+   torrent and is left alone. With no kept file there is nothing to tell the hashes from:
+   the magnet is left as it is, never replaced by a guess.
+ * ONE TORRENT, ONE ROW, by whichever of its hashes it was added — when the engine can
+   tell: a hybrid torrent added from a file is keyed by the engine's name (its v2 one);
+   asked for again by its v1 magnet once it has its metadata, `addMagnet` asks the engine
+   the torrent's name (`engineHashOf`) and finds the entry — "already in list", not a second
+   row (seen on the emulator: the second magnet added 5 s after the first never made a
+   second row). The reverse order was handled before. The confirmation of a .torrent FILE is
+   keyed by the engine's name too (`PendingAdd.infoHash = info.engineHash`) and finds an
+   entry under either hash; declining the file also quiets the same torrent re-offered as a
+   magnet (`PendingAdd.altHash`) — and the other way round.
+ * TWINS IN THE SESSION — what the LIBRARY does, and what the app does about it (found on
+   the emulator 2026-11-28, measured on libtorrent 2.1.1 — `hybrid_wedge.py`,
+   `hybrid_wedge2.py`; durable):
+   — A hybrid torrent added by its v1 magnet AND by its v2 one BEFORE either had its
+   metadata is two entries and two session torrents: nothing can know they are one. The
+   moment a peer offers the metadata to EITHER, the library REFUSES it, stops BOTH with
+   error 19 "torrent already exists in session"
+   (`TorrentEngineApi.DUPLICATE_TORRENT_ERROR`; `ErrorCode.value` is a property), and leaves
+   the choice to the client. An unrelated metadata-less torrent is untouched. Neither ever
+   gets its metadata while both are in the session: on the emulator both rows sat at
+   "Fetching info" for good. 1.4.16 alone could reach it (1.4.15 refused v2 magnets
+   outright). A merge that waits for "metadata arrived" can NEVER run for this pair — the
+   first version of the fix did exactly that, and only the real engine showed it.
+   — THE FIX (`TorrentRepository.resolveTwins`): the group is read from the ENGINE
+   (`hasDuplicateError`), never from the alert's one torrent; NOTHING is merged yet —
+   without the metadata a group of four does not say which two are which. The entry added
+   FIRST keeps its torrent and is resumed (unless the user paused it; the error clears on
+   resume — measured) and is told the peer addresses the others' magnets carried (its own
+   may have none that answer). Every other member's torrent leaves the session and its entry
+   WAITS (`twinsWaiting`; never persisted — a start puts every entry back into the engine,
+   and whatever wedged them is resolved again the same way). At the next metadata arrival
+   (`readmitTwins`, BEFORE the merge) every waiting entry's magnet is asked of the engine
+   again, and the ENGINE tells twins from strangers: a magnet of a torrent the session holds
+   is answered with THAT torrent, no second one (measured), and `mergeDuplicatesOf` makes the
+   entries one; a stranger's is simply added and goes on to its own metadata — two wedged
+   pairs at once converge in one extra round, never into one row. Waiting entries come back
+   at once when THEIR survivor is removed (any other removal leaves them where they are);
+   one paused by hand while it waited (the agent: no row shows it) comes back paused. The
+   library's error is not shown as a failure notice — it resolves itself; each of the pair's
+   alerts asks for the whole group after `TWINS_SETTLE_MS`.
+   — The merge itself, as the device showed it after the first fix (each with a test): on
+   equal add times the LIST's first entry stays, not the one the engine's alert named; a
+   torrent brought back from its kept file is told its magnet's `x.pe=` addresses again —
+   they are not in a .torrent, and a trackerless magnet had NO peer until the next start
+   (0 B for good); a dropped twin's kept file does not stay behind with no entry when the
+   survivor has its own. And ONE MERGE AT A TIME (`mergeMutex`): the merge at the end of
+   a start and the one a metadata alert calls were free to work on the same pair at once —
+   the second then found the first's kept file written but not yet moved, and left it under
+   the dropped key (a test of the tie in the added times caught it). The interleaving itself
+   has no test of its own — it needs two coroutines inside one merge; it is removed by
+   construction.
+   — KNOWN LIMIT: the survivor keeps its own TRACKERS; the other entry's are not added
+   (the engine has no call for it). With a trackerless survivor and a tracked twin the
+   survivor waits for its metadata until the user removes it (the twin then comes back
+   alone).
+ * THE APP'S OWN READER (TorrentMeta, before the engine sees a file) tells the three
+   hashes: `v1Hash` (SHA-1 of the info dictionary, v1 and hybrid), `v2Hash` (SHA-256 of the
+   info dictionary, v2 and hybrid — all 64 hex), `engineHash` (the naming rule above).
+   `infoHash` is the old accessor: the v1 hash — and for a v2-only torrent, which has none,
+   the engine's name (until 1.4.15 it was the SHA-1 of the info dictionary whatever the
+   torrent was: for a v2-only torrent a value that names no torrent).
+ * THE LESSON THAT COST AN EVENING — `piece layers` is NOT inside `info`: it is a key of
+   the metainfo's TOP dictionary, after `info` (BEP 52; see it in the reference torrents).
+   So the v2 info-hash is the SHA-256 of the info dictionary AS IT IS, with nothing left
+   out — the layers are simply outside every info-hash. I had written an exclusion of them
+   from inside `info`, where they never are: dead code that happened to give the right
+   hash. Found by a mutation that removed it and changed nothing (teeth m6), then by
+   brute-forcing WHICH contiguous slice of the file carries libtorrent's hash. A mutation
+   that "survives" is a question, never a verdict: read it.
+ * REFERENCE TORRENTS (tests: RefTorrents.kt): a v1-only, a HYBRID and a V2-ONLY torrent of
+   the same two files, MADE BY libtorrent 2.1.1 itself (`_gate98/android/
+   gen_ref_torrents.py`, scratch) with the library's own hashes embedded — so the reader is
+   checked against the library, never against the reader's own idea. Multi-file on purpose.
+   Rebuild them with the script when libtorrent moves.
+ * The test engine (FakeTorrentEngine) answers a file that really is v2 the way the real one
+   does — by TorrentMeta's three hashes — and remembers what it holds (`held`): asked by
+   ANY of a held torrent's hashes, it answers with the engine's name, as `info_hash()` does.
+   What the fake CANNOT show is what the session does with two of one torrent: that was
+   measured with the real library and watched on the emulator.
+
+C — EVERY CONVERSATION IS A SAVED TASK (ui/chat/ChatScreen.kt `ChatSession`,
+ui/chat/TasksPanel.kt, agent/SessionStore.kt) — the desktop's agent sessions (owner
+2026-11-22: "a left side bar with sessions, like zcode, we can call them tasks"). One JSON
+file per task under `files/agent_sessions/`, the desktop's envelope (schema 1), kinds as the
+desktop's (`user`, `agent`, `event` for the tool notes). Before, the chat came back after a
+restart as text on a screen the model had never seen.
+ * A task is created by the FIRST message (named after it) and saved: with the question,
+   before any answer (a process killed mid-turn leaves the question); at the end of every
+   turn — in the `finally`, so a failure or a Stop saves too; when a new task starts; when
+   another is opened. Saved = the model's messages AND the lines shown. Errors are of the
+   moment and never saved; the empty bubble of a round that only called tools is no line.
+   A turn that FAILED leaves its question on screen but out of the model's context — so
+   reopened, the question is handed back, closed by a note (review 2026-11-28).
+ * Saves, renames and deletes run ONE AT A TIME on their own thread, in the order asked: a
+   later snapshot is never overtaken by an earlier one, and a delete queued after a save
+   runs after it. The file is flushed to disk before it replaces the old one. Deleting the
+   OPEN task drops its id first (nothing saves it again), then queues the delete. The saver
+   thread retires when idle (one per window, none left behind).
+ * A turn must never write its reply into another task: nothing is opened, renamed or
+   deleted while a turn runs (`openTask` answers false; the panel disables its rows);
+   "New task" stops the turn as the clear button always did, and keeps what was said. Each
+   turn owns a COPY of the context, adopted under the lock when it ends — the app's thread
+   may read the list meanwhile. A task opens on the task thread behind queued saves and is
+   shown on the app thread only if nothing was switched or started meanwhile. The
+   generation guard is the last wall.
+ * NOTHING REOPENS AT A START (the desktop's rule): the screen is blank, the list is there,
+   a task opens when tapped — with the model's WHOLE context. A history that ends on an
+   unanswered question (a turn cut off before any tool exchange) gets the Stop note, so the
+   roles alternate; one without a system prompt gets the current one.
+ * THE CHAT OF EARLIER VERSIONS (≤ 1.4.15: the last 30 bubbles in one settings value) is
+   adopted as ONE task, once — its exchange as the model's context, without the error
+   bubbles and the screen's tool notes — and the value is cleared. One that cannot be read
+   is cleared; one that cannot be WRITTEN is left, to be adopted at the next start.
+ * The list is most recently used first. `updated_at` has whole seconds (the desktop's
+   format): ties are broken by the file's own time, the envelope untouched. The list caches
+   what it read per file (by file time; dropped on every write by this store): a save
+   re-reads the task that changed, not every task on the device.
+ * ALL LOCAL-ONLY, deliberately: NOT in the device backup (BackupRulesTest's exact
+   allow-list — it holds the chat log out for the same reason), NOT in the .dfc export (the
+   desktop does not export its sessions either).
+ * The panel (TasksPanel) is a pure view over the session: a name over a dim preview, "⋯"
+   for Rename and Delete (labeled — the desktop's lesson: icon-only reads as mystery
+   glyphs), "New task" labeled, Delete asks first; the system Back button closes it, and
+   so does opening a task or starting a new one (it stayed open until the emulator showed
+   it). The clear button's dialog now says the conversation stays under Tasks.
+ * A tool note is a bubble of its own kind (`ChatBubble.toolNames` = the tools' names): the
+   note is worded again in the language of the day when a task is reopened, and "is this
+   markdown?" no longer guesses from the text.
+ * MARKDOWN NESTING (review): ">>>>…" is one quote per character to the commonmark parser,
+   a frame each, and a reply is SAVED — such a task crashed the app at every reopen. Three
+   walls: a line opening with more than 24 quote markers is cut to that many plus an
+   ellipsis before the parser sees it (`parseable`, counted in a LOOP — a regex with a
+   repeated group overflowed on the very run it guarded against); the renderer flattens
+   past MAX_DEPTH; `parseSafely` answers null on a StackOverflowError and the text is shown
+   as it is.
+
+TESTS (2026-11-28). LlmPlanTest (13), ChatClientWireTest (8), ChatLoopTest (29),
+SettingsBackupLlmTest (7) + LlmSettingsStoreTest (2), StringsCatalogTest (3 — EVERY catalog
+entry, both languages, same placeholders), LlmWiringTest (7); TorrentIdentityV2Test (11),
+TorrentV2IdentityTest (31), TorrentIdentityTest (47); ChatTasksTest (23), MarkdownTest (9),
+SessionStoreTest (10). The WHOLE suite: 551 tests, 0 failures, 5 host-skips (this
+machine's symlink / POSIX ones).
+TEETH (teeth_llm.py, teeth_v2.py, teeth_tasks.py — scratch; the mutated bytes are computed
+first, every file restored from its first bytes in a finally, the tree checked against a
+snapshot taken before each run): the provider 28 of 28; the identity 24 of 24 and the twins
+19 of 19; the saved tasks 23 of 23 — on the final code. Read by hand on the way: one
+equivalent mutation (a dead exclusion — B above), one survivor that was a MISSING test (a
+foreign bearer token), one that was a DRIVER gap (the Markdown test ran in no table), one
+that was a TEST NOT ASKING ITS QUESTION (the tie in the added times: with a kept file for
+the first entry the merge at the start had folded the pair before the line under test ran —
+and chasing it showed merges running at once, above), seven anchors gone stale as the code
+they read moved, three mutations that broke the build, and two flaky BASELINES — tests of
+mine that added torrents back-to-back and raced on the millisecond (a red baseline stops
+the run before any mutation, as it should). A mutation driver restores EVERY file under
+`android/app/src` when it ends: no source edit while one runs, and a build only before or
+after, never during.
+
+HOW IT WAS VERIFIED ON THE EMULATOR (Android 15, signed release builds; the owner's
+built-in AI key was NEVER spent — the chat talked only to a local stand-in endpoint with a
+dummy key):
+ * build 6419a694 (chat, settings and tasks sources identical to the final build): a
+   v2-only MAGNET end to end — added, listed by the engine's 20-byte name, metadata kept
+   under c7cf…5e7c.torrent, downloaded to 100 %, saved whole; restart from the kept file
+   and by the saved magnet with the kept file gone; a 1.4.15-style list healed at a start.
+   The Settings card (Custom provider with its address field). A chat turn through the
+   stand-in: `POST /v1/chat/completions`, `Bearer` = the dummy key, the model and
+   `reasoning_effort: low` on the wire, 28 tools with the request, the reply rendered. The
+   refusal text for DeepSeek and for Custom without a key — no request left the device. The
+   tasks panel: open, New task, rename, delete, the empty state; a restart starts BLANK and
+   the panel lists the task; the panel closes on open, on New task and on Back; the saved
+   file on the device is the desktop's envelope.
+ * build ec64453f (the first twin fix), over a wedged two-entry state: the library's
+   verdict, "1 torrent was another one's twin — … goes on alone", two rows to one in a
+   second, the survivor's metadata, "merged into …", and after a restart the download —
+   which showed the two merge defects above (no peer until a restart; a kept file left
+   behind).
+ * build fcd9e2c8 (the twin fix complete, before the merges were made one at a time), from
+   a fresh install: the first magnet (no peer address) →
+   "Fetching info"; the second (with one) confirmed → "Torrents (2)" → the verdict →
+   "merged into 0da53763…" 5 s later → ONE row, Seeding, 16 s after the second Add — no
+   restart, no tap. One kept file, one saved entry (its magnet names the torrent), no
+   failure notice, Seeding again after a restart, no crash record. The tasks panel blank at
+   a fresh start; the settings page renders. (On build 83516dbf — one peer-address line in
+   `resolveTwins` away from the final: both magnets WITH a peer address, the second added
+   5 s after the first, by which time the first had its metadata — "already in list", one
+   row, never wedged.)
+ * build 02082ec4 (FINAL — the serialized merges; its sha256 read back from the installed
+   `base.apk`), the same twin scenario from a fresh install: two rows → "1 torrent was
+   another one's twin" → "merged into 0da53763…" 5 s later → ONE row, Seeding 23 s after
+   the second Add; one kept file, one saved entry, no failure notice, Seeding again after a
+   restart, the tasks panel blank, the only exit record my own force-stop, nothing in the
+   crash buffer.
+
+NOT IN 1.4.16 (the roadmap, in order): Commander copy/move + new folder; segmented HTTP +
+rate limits; RSS background polling (WorkManager); browser tab persistence; later: Site
+Grabber / agent video lane, Xtream VOD + series, metadata lanes, Help/User Guide,
+icon/bottom-bar polish.
+NOT VERIFIED: anything on a REAL PHONE (the emulator only; Android 9 not run for this
+version); the providers against their REAL endpoints (DeepSeek, OpenRouter, a real Venice
+model) — only a local OpenAI-compatible stand-in was talked to, so whether each provider
+accepts `reasoning_effort` as sent is not observed; hybrid torrents in a real swarm (the
+seeder was on loopback, trackerless); the ZH wording on screen (catalog-tested); the legacy
+chat adoption on a device that really ran ≤ 1.4.15, and the .dfc import against a real
+DESKTOP export (both unit-tested with hand-built files); the tasks panel on a tablet/TV
+layout.
+
+TOOLING LESSONS OF THIS VERSION (all mine):
+ * THE REAL ENGINE FINDS WHAT NO FAKE CAN: the wedge above was invisible to every green
+   identity test of the day (72 of them) — the fake cannot misbehave the way the library
+   does. For a new interaction with libtorrent, run the real engine on the emulator BEFORE
+   the release build, and measure the library itself on the PC (`_gate98/android/
+   hybrid_*.py`: two sessions on loopback, a seeder and a leecher, every alert printed).
+ * A SURVIVED MUTATION IS A QUESTION. It is an equivalent mutation (dead code — B), a
+   missing test, a DRIVER gap, or a real hole; the answer comes from READING, at the lowest
+   level that can tell: run the compiled class from the jar with `java` (no Gradle, no
+   Robolectric), and when a hash is involved, brute-force which slice of the input carries
+   it. A mutation table must list the CLASS that holds the test of each of its rules. A red
+   BASELINE stops the run before any mutation — read it first; it was my test, not the code.
+ * THE SEEDER (the test harness, not the app): `add_files` of a folder KEEPS the folder
+   ("HybridPack/h.bin"), so the save path is the folder HOLDING that — with it one level
+   too low the seeder holds the metadata and no data, and uploads nothing while looking
+   connected ("peers 1"). Print the seeder's OWN state / progress / is_seeding every few
+   seconds. Every desktop test process shares ONE peer id: the seeder drops the next as
+   "duplicate peer-id" and ignores that id for a minute — restart the seeder between runs.
+   The app's two twin torrents connect at once under one id, so the survivor's metadata
+   takes a minute after a wedge. An engine that met a refused connection backs off that
+   peer for a long time: start the seeder BEFORE adding.
+ * A TEST THAT ADDS ENTRIES BACK-TO-BACK races on the millisecond (which was "first" is
+   the worker threads' to say): await each add; when a tie IS the point, write it into the
+   saved state.
+ * The false alarm before all that: I blamed Gradle's daemon for "stale compiles" —
+   UP-TO-DATE and FROM-CACHE are Gradle being RIGHT that these exact inputs were built
+   before (the same mutation re-run, or an equivalent one whose class it already had).
+   Compile status belongs next to a verdict as information, not as a verdict.
+ * A mutation must keep the build VALID: a build break proves nothing (three of mine broke
+   it — an unbalanced `when` branch; a removed null-check the compiler's smart cast relied
+   on; an unbalanced bracket).
+ * The shell's inline heredoc collapses `\\` on this machine — a script with backslashes in
+   it goes through a FILE (the Write tool), never a heredoc. Met it three times this version.
+ * TinyHttpServer captures the body of a POST now (`Request.body`): what a client really
+   sends can be asserted, not inferred.
+ * JUnit's `assertEquals(message, expected, actual)` takes the message FIRST — a non-literal
+   first argument is the mistake to grep for. Kotlin reflection (`kotlin.reflect.full`) is
+   not on the test classpath: use Java reflection on the interface's getters. The string
+   catalogs are OBJECTS (`EnStrings`, no parentheses). libtorrent4j's `ErrorCode.value` and
+   `.message` are properties.
+ * The settings store is ONE file for the whole test run: a test class that changes a
+   setting resets ALL of them in `setUp` — a forgotten one (the custom-endpoint thinking
+   flag) leaked into the next 20 tests.
+ * A scripted model must behave like a real one or the test lies: it streams its answer
+   through `onDelta` (the bubble is filled from the stream, not from the result), and it
+   takes its script entry BEFORE it waits on a gate (the model has decided; delivery is
+   slow). A request carries what was said BEFORE the turn — never this turn's answer.
+ * "The turn is running" has two parts a moment apart (the session is busy; the reply's
+   bubble is up): await both, or the test is a coin toss.
+ * DRIVING THE EMULATOR: uiautomator lookups are case-insensitive SUBSTRINGS — "ALLOW"
+   matched the notification prompt's TITLE before its button; tap by coordinates read from
+   a fresh dump, or by a text only one node has. ENTER in the chat input only inserts a
+   newline: tap the Send icon. `pm clear` resets permissions too: the notification prompt
+   and the first-run dialog come back at the next start — look at the WHOLE screen when a
+   lookup comes back empty.
+ * A SOURCE PIN MUST NOT DEPEND ON LINE ENDS: a fresh Windows checkout is CRLF and a
+   working copy edited in place may be LF. One pin that matched across lines passed in my
+   tree for weeks and failed on a fresh checkout of the very commit that carried it — found
+   by building that commit ALONE in a `git worktree` (`git worktree add --detach <dir>
+   <commit>`, copy `android/local.properties`, run the suite) before pushing a series. The
+   helpers that read the app's sources (`appSource`) make the line ends one now; a new
+   one must too. CI is Linux (LF) and cannot see this class of failure.

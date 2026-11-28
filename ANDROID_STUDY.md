@@ -1226,3 +1226,40 @@ crashes and zero ANRs on the emulator. versionCode 30,
 pages and `latest-android.json` stay on 1.4.13 until the owner's word.
 Rules: `AGENTS.md`, end of the "Android parity + review rounds"
 section.
+
+## §16 — 1.4.16 (2026-11-27/28, TEST BUILD, UNLINKED): the AI is the user's choice; v2-only magnets; saved tasks
+
+Three pieces, in the roadmap's order, after the codecs (1.4.15).
+(1) The AI provider, model and thinking level are SETTINGS — Venice,
+DeepSeek, OpenRouter or a custom OpenAI-compatible endpoint — and the
+request carries what the desktop sends (`reasoning_effort` by preset).
+The built-in shared key is a Venice key: used for Venice at Venice's own
+address and not even read otherwise (two walls — a review found that a
+stored address replaced every provider's own). A request that cannot go
+out says why. 22 chat-loop tests that skipped on every CI run now run.
+(2) Torrent identity for v2: a v2-only magnet (64 hex) is a magnet; the
+magnet saved with a torrent names the torrent (v1, else the whole v2
+hash) and a list written by 1.4.15 is healed at the first start.
+(3) Saved tasks: every conversation is a file under
+`files/agent_sessions/` in the desktop's envelope, reopened with the
+model's whole context; nothing reopens at a start.
+The finding of the round came from running the REAL engine, after 72
+identity tests were green: one hybrid torrent added by both of its
+magnets before either had its metadata is two session torrents, and the
+LIBRARY then refuses the metadata to both — error 19, both stopped — and
+leaves the choice to the client. Both rows sat at "Fetching info" for
+good; reachable since this version alone (1.4.15 refused v2 magnets). The
+app now reads the group from the engine, keeps the first entry's torrent,
+takes the others out of the session, and asks for them again once the
+survivor has its metadata — the engine itself tells twins from
+strangers. On the emulator: two rows to one, Seeding 16 s after the
+second add, no restart. The test engine could not show it: a fake does
+not misbehave the way the library does. Measure the library on the PC
+and run the real engine before the release build.
+551 unit tests (5 skip on a Windows host); 28 + 19 + 23 mutations each
+fail their own test. versionCode 32, 222929922 bytes, sha256
+02082ec464c892cfb7dac771ee06086f2d7decac032edaee3e5bb507e9633250,
+signer as before. On the site as a test build, DELIBERATELY UNLINKED:
+pages and `latest-android.json` stay on 1.4.15 until the owner's word.
+Nothing of 1.4.16 has run on a phone. Rules and the precise naming rule:
+`AGENTS.md`, "Android 1.4.16" at the end.
