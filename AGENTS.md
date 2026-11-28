@@ -5269,3 +5269,16 @@ TOOLING LESSONS OF THIS VERSION (all mine):
    <commit>`, copy `android/local.properties`, run the suite) before pushing a series. The
    helpers that read the app's sources (`appSource`) make the line ends one now; a new
    one must too. CI is Linux (LF) and cannot see this class of failure.
+ * CI IS A LINUX RUNNER AND A KEYLESS BUILD: it runs what a Windows host skips, and since
+   1.4.16 also the 22 chat-loop tests that used to skip on every keyless CI run. On the first
+   push two of mine failed THERE and nowhere else (551 ran, 0 skipped). (1) A NEW
+   repository's prefs START AS THE DEFAULTS, and the defaults are the out-of-box values: a
+   reset that awaits those proves nothing — the store's own values (the previous test's)
+   arrive a moment later, and on the slower runner that moment covered the whole test
+   (awaited "low", sent with "max"). A value that is nobody's default is written and SEEN
+   first now (`ChatLoopTest.setAiSettings`, `ChatTasksTest.setUp`). (2) The start restores
+   the saved entries INTO the engine; an add that lands while that runs is handed to the
+   engine twice — by the add, then by the restore (harmless with the real engine, counted in
+   the fake's list). No test adds before the first poll now. For the real "expected / but
+   was", read the XML in the CI job's test-report artifact (the console log names the test
+   and the line only).

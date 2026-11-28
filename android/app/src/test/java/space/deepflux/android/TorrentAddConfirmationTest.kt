@@ -264,6 +264,8 @@ class TorrentAddConfirmationTest {
         engine = FakeTorrentEngine()
         repo = TorrentRepository(context, engine)
         repo.start()
+        // No add before the start's restore is over (TorrentV2IdentityTest.repo says why).
+        await("the start's first poll") { engine.snapshots >= 1 }
     }
 
     @org.junit.After

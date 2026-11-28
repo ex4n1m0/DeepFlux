@@ -88,6 +88,11 @@ class ChatTasksTest {
         torrents.saveChatHistory(org.json.JSONArray().toString())
         await("the old-style chat to be empty") { torrents.loadChatHistory() == "[]" }
         // Whatever ChatLoopTest (or an earlier test here) left in the one settings file of the run.
+        // A NEW repository's prefs start as the defaults — which ARE these values — so awaiting
+        // them alone proves nothing (ChatLoopTest.setAiSettings says it at length). A value that
+        // is nobody's default is written and seen first.
+        torrents.setLlmEffort("medium")
+        await("the settings store answering") { torrents.prefs.value.llmEffort == "medium" }
         torrents.setLlmCustomSendsEffort(false)
         torrents.setLlmProvider("venice")
         torrents.setCustomApiKey("")

@@ -60,7 +60,14 @@ class TorrentV2IdentityTest {
     }
 
     private fun repo(engine: FakeTorrentEngine = FakeTorrentEngine()): TorrentRepository =
-        TorrentRepository(context, engine).also { repos += it }.also { it.start() }
+        TorrentRepository(context, engine).also { repos += it }.also { it.start() }.also {
+            // The start restores the saved entries INTO the engine. An add that arrives while
+            // that is still running is handed to the engine twice — by the add, then by the
+            // restore (harmless with the real engine, which holds the torrent already; counted
+            // in the fake's list). No test adds before the start's first poll says it is over
+            // (CI's Linux runner met it, 2026-11-28).
+            await("the start's first poll") { engine.snapshots >= 1 }
+        }
 
     private fun noticesOf(r: TorrentRepository): MutableList<String> {
         val seen = CopyOnWriteArrayList<String>()

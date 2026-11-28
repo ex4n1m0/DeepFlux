@@ -134,6 +134,8 @@ class ChatLoopTest {
         context = RecordingContext(ApplicationProvider.getApplicationContext())
         engine = FakeTorrentEngine()
         torrents = TorrentRepository(context, engine).also { it.start() }
+        // No add before the start's restore is over (TorrentV2IdentityTest.repo says why).
+        await("the start's first poll") { engine.snapshots >= 1 }
         emptyPersistedHistory()
         resetAiSettings()
         targets.clear()
@@ -200,6 +202,14 @@ class ChatLoopTest {
 
     /** Writes the AI settings and waits until the chat will see them. */
     private fun setAiSettings(provider: String, key: String, baseUrl: String = "", model: String = "", effort: String = "low") {
+        // A NEW repository's prefs start as the defaults — and the defaults ARE the out-of-box
+        // values, so awaiting those alone proved nothing: the store's own values (the previous
+        // test's) arrived a moment later. On CI's Linux runner that moment covered the whole
+        // test: awaited "low", sent with "max" (2026-11-28). So a value that is nobody's default
+        // is written and SEEN first — it can only be seen once every earlier write has landed —
+        // and only then the ones asked for.
+        torrents.setLlmEffort("medium")
+        await("the settings store answering") { torrents.prefs.value.llmEffort == "medium" }
         torrents.setLlmProvider(provider)
         torrents.setCustomApiKey(key)
         torrents.setLlmModelAndBaseUrl(model, baseUrl)

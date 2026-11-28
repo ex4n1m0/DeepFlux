@@ -51,6 +51,8 @@ class RssLinkPolicyTest {
         context = RecordingContext(ApplicationProvider.getApplicationContext())
         engine = FakeTorrentEngine()
         torrents = TorrentRepository(context, engine).also { it.start() }
+        // No add before the start's restore is over (TorrentV2IdentityTest.repo says why).
+        await("the start's first poll") { engine.snapshots >= 1 }
         server = TinyHttpServer()
         http = HttpDownloadRepository(
             context, File(context.filesDir, "dl"), gateOk = { true }, notify = {},
