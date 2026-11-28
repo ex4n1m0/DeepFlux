@@ -90,20 +90,33 @@ class ChatTasksTest {
         // Whatever ChatLoopTest (or an earlier test here) left in the one settings file of the run.
         // A NEW repository's prefs start as the defaults — which ARE these values — so awaiting
         // them alone proves nothing (ChatLoopTest.setAiSettings says it at length). A value that
-        // is nobody's default is written and seen first.
-        torrents.setLlmEffort("medium")
-        await("the settings store answering") { torrents.prefs.value.llmEffort == "medium" }
-        torrents.setLlmCustomSendsEffort(false)
-        torrents.setLlmProvider("venice")
-        torrents.setCustomApiKey("")
-        torrents.setLlmModelAndBaseUrl("", "")
-        torrents.setLlmEffort("low")
-        await("the out-of-box AI settings") {
-            val p = torrents.prefs.value
-            p.llmProvider == "venice" && p.customApiKey == "" && p.llmBaseUrl == "" && p.llmModel == "" && !p.llmCustomSendsEffort
-        }
+        // is nobody's default is written and seen first; a write not seen in two seconds is
+        // written again (ChatLoopTest.settingsShown says why).
+        settingsShown("the settings store answering", { torrents.setLlmEffort("medium") }) { it.llmEffort == "medium" }
+        settingsShown("the out-of-box AI settings", {
+            torrents.setLlmCustomSendsEffort(false)
+            torrents.setLlmProvider("venice")
+            torrents.setCustomApiKey("")
+            torrents.setLlmModelAndBaseUrl("", "")
+            torrents.setLlmEffort("low")
+        }) { p -> p.llmProvider == "venice" && p.customApiKey == "" && p.llmBaseUrl == "" && p.llmModel == "" && !p.llmCustomSendsEffort }
         client = Scripted()
         session = make()
+    }
+
+    /** Writes settings and waits until the chat's prefs show them, writing again when a write is not seen (ChatLoopTest.settingsShown). */
+    private fun settingsShown(what: String, write: () -> Unit, shown: (space.deepflux.android.data.AppPrefs) -> Boolean) {
+        val deadline = System.currentTimeMillis() + 10_000
+        var written = 0L
+        while (!shown(torrents.prefs.value)) {
+            val now = System.currentTimeMillis()
+            if (now - written >= 2_000) {
+                if (written != 0L && now > deadline) org.junit.Assert.fail("timed out waiting for $what — the prefs now: ${torrents.prefs.value}")
+                written = now
+                write()
+            }
+            Thread.sleep(25)
+        }
     }
 
     @After

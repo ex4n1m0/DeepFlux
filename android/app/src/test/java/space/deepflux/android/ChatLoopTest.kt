@@ -208,16 +208,36 @@ class ChatLoopTest {
         // test: awaited "low", sent with "max" (2026-11-28). So a value that is nobody's default
         // is written and SEEN first — it can only be seen once every earlier write has landed —
         // and only then the ones asked for.
-        torrents.setLlmEffort("medium")
-        await("the settings store answering") { torrents.prefs.value.llmEffort == "medium" }
-        torrents.setLlmProvider(provider)
-        torrents.setCustomApiKey(key)
-        torrents.setLlmModelAndBaseUrl(model, baseUrl)
-        torrents.setLlmEffort(effort)
-        await("the AI settings") {
-            val p = torrents.prefs.value
+        settingsShown("the settings store answering", { torrents.setLlmEffort("medium") }) { it.llmEffort == "medium" }
+        settingsShown("the AI settings", {
+            torrents.setLlmProvider(provider)
+            torrents.setCustomApiKey(key)
+            torrents.setLlmModelAndBaseUrl(model, baseUrl)
+            torrents.setLlmEffort(effort)
+        }) { p ->
             p.llmProvider == provider && p.customApiKey == key && p.llmModel == model &&
                 p.llmBaseUrl == baseUrl && p.llmEffort == effort && !p.llmCustomSendsEffort
+        }
+    }
+
+    /**
+     * Writes settings and waits until the chat's prefs show them — writing again when a write
+     * is not seen within two seconds, for up to ten. A write that is simply lost must not
+     * fail a test: on CI one test's first write was not seen for ten seconds while the next
+     * test's was seen at once (2026-11-28, not reproduced here, so not explained). If the
+     * store never answers, the failure says what the prefs held.
+     */
+    private fun settingsShown(what: String, write: () -> Unit, shown: (space.deepflux.android.data.AppPrefs) -> Boolean) {
+        val deadline = System.currentTimeMillis() + 10_000
+        var written = 0L
+        while (!shown(torrents.prefs.value)) {
+            val now = System.currentTimeMillis()
+            if (now - written >= 2_000) {
+                if (written != 0L && now > deadline) org.junit.Assert.fail("timed out waiting for $what — the prefs now: ${torrents.prefs.value}")
+                written = now
+                write()
+            }
+            Thread.sleep(25)
         }
     }
 
@@ -236,9 +256,19 @@ class ChatLoopTest {
 
     /** Sends a message and waits until the turn is completely over. */
     private fun turn(text: String) {
+        val requestsBefore = client.requests.size
+        val refusalsBefore = session.messages.value.count { it.role == "error" }
         session.send(text)
-        assertTrue("the session needs a key to send at all", session.busy.value)
-        await("the turn to end") { !session.busy.value }
+        // NOT `busy` read at once: a scripted model answers at once, and on a fast runner the
+        // whole turn was over before this thread looked — `busy` read false with everything in
+        // order (CI, 2026-11-28). What is waited for is the END of the turn — reached when the
+        // session is not busy and the send went somewhere: to the model, or back as a refusal.
+        await("the turn to end, or the session to refuse the send") {
+            !session.busy.value &&
+                (client.requests.size > requestsBefore || session.messages.value.count { it.role == "error" } > refusalsBefore)
+        }
+        // And a turn that reaches the model is the point: a refusal is still a failure here.
+        assertTrue("the session needs a key to send at all (no request reached the model)", client.requests.size > requestsBefore)
     }
 
     private fun dump(): String =

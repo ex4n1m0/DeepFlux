@@ -5281,4 +5281,14 @@ TOOLING LESSONS OF THIS VERSION (all mine):
    engine twice — by the add, then by the restore (harmless with the real engine, counted in
    the fake's list). No test adds before the first poll now. For the real "expected / but
    was", read the XML in the CI job's test-report artifact (the console log names the test
-   and the line only).
+   and the line only). The second CI run brought two more, both in the tests again: (3)
+   `ChatLoopTest.turn` read `busy` right after `send()` — a scripted model answers at once,
+   and on the fast runner the whole turn was over before that look; the helper waits for the
+   turn's END now and still requires that a request reached the model (a first version that
+   accepted "a refusal on screen" would have let refused sends pass — the provider table was
+   re-run to be sure it does not). (4) One test's settings write was not seen for ten
+   seconds while the next test's was seen at once — not reproduced here, so NOT explained:
+   the wait writes again after two seconds, and its failure text says what the prefs held.
+   (5) A MUTATION CHAIN STOPPED BY HAND leaves the file it was mutating altered in the
+   working copy (the driver restores on a normal exit only): `git status` and restore it
+   before anything else.
